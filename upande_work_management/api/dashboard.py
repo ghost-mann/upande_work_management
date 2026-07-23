@@ -893,17 +893,24 @@ def wm_dashboard(**kwargs):
                 asg_names.append(srow.assignment)
             if srow.left_emp and srow.left_emp not in emp_ids:
                 emp_ids.append(srow.left_emp)
+        # every mid-period joiner (Active with a start date) — matched ones become the
+        # replacement side of a swap; unmatched ones are standalone "Joined" events
+        joiners = frappe.db.sql("""
+            SELECT we.parent, we.employee, we.employee_name, we.start_date,
+                   a.planner_request plan, a.farm, a.task
+            FROM `tabWork Assignment Employee` we
+            INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
+            WHERE we.status = 'Active' AND we.start_date IS NOT NULL
+            ORDER BY we.start_date DESC
+            LIMIT 400
+        """, as_dict=True)
         reps_map = {}
-        if asg_names:
-            ph = ",".join(["%s"] * len(asg_names))
-            reprows = frappe.db.sql("""
-                SELECT parent, employee, employee_name, start_date
-                FROM `tabWork Assignment Employee`
-                WHERE parent IN (""" + ph + """) AND status = 'Active' AND start_date IS NOT NULL
-                ORDER BY start_date
-            """, tuple(asg_names), as_dict=True)
-            for rr in reprows:
-                reps_map.setdefault(rr.parent, []).append(rr)
+        for rr in joiners:
+            reps_map.setdefault(rr.parent, []).append(rr)
+            if rr.parent not in asg_names:
+                asg_names.append(rr.parent)
+            if rr.employee and rr.employee not in emp_ids:
+                emp_ids.append(rr.employee)
         contrib = {}
         if emp_ids and asg_names:
             ph1 = ",".join(["%s"] * len(emp_ids))
@@ -922,12 +929,18 @@ def wm_dashboard(**kwargs):
             """, tuple(emp_ids) + tuple(asg_names), as_dict=True)
             for cr in crows:
                 contrib[(cr.emp, cr.asg)] = cr
+        matched = {}
         for srow in subs:
             rep = None
             for rr in reps_map.get(srow.assignment, []):
+                if matched.get((srow.assignment, rr.employee)):
+                    continue
                 if not srow.left_date or (rr.start_date and str(rr.start_date) >= str(srow.left_date)):
                     rep = rr
                     break
+            if rep:
+                matched[(srow.assignment, rep.employee)] = 1
+            srow["kind"] = "Swap" if rep else "Left"
             srow["rep_emp"] = rep.employee if rep else None
             srow["rep_name"] = rep.employee_name if rep else None
             srow["rep_start"] = str(rep.start_date) if rep and rep.start_date else None
@@ -936,6 +949,24 @@ def wm_dashboard(**kwargs):
             srow["left_days"] = frappe.utils.cint(cr.days) if cr else 0
             srow["left_pay"] = frappe.utils.flt(cr.pay) if cr else 0
             srow["left_date"] = str(srow.left_date) if srow.left_date else None
+            srow["event_date"] = srow["left_date"]
+        # standalone joins: mid-period additions with no leaver matched to them
+        for rr in joiners:
+            if matched.get((rr.parent, rr.employee)):
+                continue
+            cr = contrib.get((rr.employee, rr.parent))
+            subs.append({
+                "assignment": rr.parent, "plan": rr.plan, "farm": rr.farm, "task": rr.task,
+                "kind": "Joined",
+                "left_emp": None, "left_name": None, "left_date": None,
+                "rep_emp": rr.employee, "rep_name": rr.employee_name,
+                "rep_start": str(rr.start_date) if rr.start_date else None,
+                "left_qty": frappe.utils.flt(cr.qty) if cr else 0,
+                "left_days": frappe.utils.cint(cr.days) if cr else 0,
+                "left_pay": frappe.utils.flt(cr.pay) if cr else 0,
+                "event_date": str(rr.start_date) if rr.start_date else None,
+            })
+        subs = sorted(subs, key=lambda x: x.get("event_date") or "", reverse=True)
         out["subs"] = subs
 
     elif action == "timeline":

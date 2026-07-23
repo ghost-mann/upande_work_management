@@ -237,8 +237,8 @@
           '<div id="et-summary" class="et-summary"></div>'+
           '<div id="et-list"><div class="empty">Type a worker name above to see their assignments.</div></div>'+
         '</div></div>'+
-      '<div class="sech">Worker substitutions &mdash; swaps mid-period</div>'+
-      '<div class="card"><div class="hd"><h3>Substitution history</h3><div class="cap">left worker keeps pay for days worked; qty still counts to the plan</div></div><div class="bd"><div class="pex-filters" id="subs-filters"><select id="subs-farm"><option value="">All farms</option></select></div><div id="wm-subs" style="max-height:360px;overflow:auto">Loading&hellip;</div></div></div>'+
+      '<div class="sech">Crew movements &mdash; who left, who joined, who swapped</div>'+
+      '<div class="card"><div class="hd"><h3>Substitution history</h3><div class="cap">every mid-period movement &middot; a leaver keeps pay for days worked; Days/Qty/Pay are what that row&rsquo;s worker did on the plan</div></div><div class="bd"><div class="pex-filters" id="subs-filters"><select id="subs-farm"><option value="">All farms</option></select></div><div id="wm-subs" style="max-height:360px;overflow:auto">Loading&hellip;</div></div></div>'+
       '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered</div>'+
       '<div class="card"><div class="hd"><h3>Plans, assignments &amp; actuals over time</h3><div class="cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
         '<div class="bd">'+
@@ -1515,26 +1515,33 @@
     var box=el("wm-subs"); if(!box) return;
     var ffarm=(el("subs-farm")&&el("subs-farm").value)||"";
     var rows=(SUBS_ROWS||[]).filter(function(r){ return !ffarm || r.farm===ffarm; });
-    if(!rows.length){ box.innerHTML='<div class="empty">'+(ffarm?("No substitutions for "+esc(ffarm)+"."):"No substitutions yet.")+'</div>'; return; }
-    var h='<table><thead><tr><th>Plan</th><th>Farm</th><th>Task</th><th>Worker left</th><th class="n">Last day</th><th class="n">Days done</th><th class="n">Qty done</th><th class="n">Pay earned</th><th>Replacement</th><th class="n">Started</th></tr></thead><tbody>';
+    if(!rows.length){ box.innerHTML='<div class="empty">'+(ffarm?("No crew movements for "+esc(ffarm)+"."):"No crew movements yet.")+'</div>'; return; }
+    var h='<table><thead><tr><th>Event</th><th>Plan</th><th>Farm</th><th>Task</th><th>Worker left</th><th class="n">Last day</th><th>Worker joined</th><th class="n">Joined on</th><th class="n">Days done</th><th class="n">Qty done</th><th class="n">Pay earned</th></tr></thead><tbody>';
     rows.forEach(function(r){
-      var leftCell = '<a href="#" class="subs-emplink" data-emp="'+esc(r.left_emp||"")+'" style="text-decoration:line-through;color:#999">'+esc(r.left_name||r.left_emp)+'</a>';
+      var kind=r.kind||(r.rep_name?"Swap":"Left");
+      var kindTag=kind==="Joined"?'<span class="tag" style="background:rgba(10,122,67,.12);color:#0a7a43;border-color:transparent">Joined</span>'
+        :kind==="Swap"?'<span class="tag" style="background:rgba(37,99,235,.10);color:#2563eb;border-color:transparent">Swap</span>'
+        :'<span class="tag hot">Left</span>';
+      var leftCell = r.left_emp
+        ? '<a href="#" class="subs-emplink" data-emp="'+esc(r.left_emp)+'" style="text-decoration:line-through;color:#999">'+esc(r.left_name||r.left_emp)+'</a>'
+        : '<span style="color:var(--mute)">— added to crew</span>';
       var repCell = r.rep_name
         ? (r.rep_emp
             ? '<a href="#" class="subs-emplink" data-emp="'+esc(r.rep_emp)+'" style="color:#0a7a43;font-weight:600">'+esc(r.rep_name)+'</a>'
             : '<span style="color:#0a7a43;font-weight:600">'+esc(r.rep_name)+'</span>')
         : '—';
       h+='<tr>'+
+         '<td>'+kindTag+'</td>'+
          '<td>'+esc(r.plan)+'</td>'+
          '<td>'+esc(r.farm)+'</td>'+
          '<td>'+esc(r.task)+'</td>'+
          '<td>'+leftCell+'</td>'+
          '<td class="n">'+esc(r.left_date||"—")+'</td>'+
+         '<td>'+repCell+'</td>'+
+         '<td class="n">'+esc(r.rep_start||"—")+'</td>'+
          '<td class="n m">'+fmt(r.left_days)+'</td>'+
          '<td class="n m">'+fmt(r.left_qty)+'</td>'+
          '<td class="n m">'+fmt(r.left_pay)+'</td>'+
-         '<td>'+repCell+'</td>'+
-         '<td class="n">'+esc(r.rep_start||"—")+'</td>'+
          '</tr>';
     });
     h+='</tbody></table>';
