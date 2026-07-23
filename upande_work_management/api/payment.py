@@ -955,19 +955,23 @@ def wm_payment(**kwargs):
                 sconds = sconds + " AND we.work_date <= %s"
                 sparams.append(dto)
             agg = frappe.db.sql("""
-                SELECT we.employee_name nm, MAX(ac.farm) farm,
+                SELECT ac.name actuals, ac.farm farm, ac.task task, we.employee_name nm,
                        COUNT(DISTINCT we.work_date) days,
                        COALESCE(SUM(we.actual_quantity),0) qty,
                        COALESCE(SUM(we.amount),0) owed
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 WHERE """ + sconds + """
+                GROUP BY ac.name, ac.farm, ac.task, we.employee_name
+                ORDER BY MIN(we.work_date)
             """, tuple(sparams), as_dict=True)
-            if not agg or frappe.utils.flt(agg[0].owed) <= 0:
+            total_owed = 0
+            for g in agg:
+                total_owed = total_owed + frappe.utils.flt(g.owed)
+            if not agg or total_owed <= 0:
                 out["error"] = "No unpaid confirmed earnings for this worker in the window"
             else:
-                g = agg[0]
-                ename = g.nm or frappe.db.get_value("Employee", emp, "employee_name") or emp
+                ename = agg[0].nm or frappe.db.get_value("Employee", emp, "employee_name") or emp
                 d = frappe.new_doc("Work Management Payment")
                 d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                 d.company = DEFAULT_COMPANY
@@ -980,26 +984,42 @@ def wm_payment(**kwargs):
                         d.period_to = dto
                 except Exception:
                     pass
-                row = d.append("lines", {})
-                row.employee = emp
-                row.employee_name = ename
-                row.farm = g.farm
-                row.days = g.days
-                row.qty = g.qty
-                row.paid_workers = 1
-                row.amount = frappe.utils.flt(g.owed)
-                d.grand_total = frappe.utils.flt(g.owed)
+                # one traceable line per actuals doc this worker earned on
+                for g in agg:
+                    if frappe.utils.flt(g.owed) <= 0:
+                        continue
+                    row = d.append("lines", {})
+                    row.actuals = g.actuals
+                    row.employee = emp
+                    row.employee_name = ename
+                    row.farm = g.farm
+                    row.task = g.task
+                    row.days = g.days
+                    row.qty = g.qty
+                    row.paid_workers = 1
+                    row.amount = frappe.utils.flt(g.owed)
+                d.grand_total = total_owed
                 d.total_workers = 1
-                d.total_actuals = 1
+                d.total_actuals = len(d.lines)
                 d.flags.ignore_permissions = True
                 d.insert(ignore_permissions=True)
                 frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Pending Accounts", update_modified=False)
+                # stamp the reference on the included rows (NOT paid yet) so the
+                # worker shows as "Sent to accounts" until accounts releases it
+                refrows = frappe.db.sql("""
+                    SELECT we.name rowname FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE """ + sconds + """
+                """, tuple(sparams), as_dict=True)
+                for rr in refrows:
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "payment_ref", d.name, update_modified=False)
+                frappe.db.commit()
                 out["name"] = d.name
                 out["workflow_state"] = "Pending Accounts"
                 out["employee"] = emp
                 out["employee_name"] = ename
-                out["amount"] = frappe.utils.flt(g.owed)
-                out["days"] = frappe.utils.cint(g.days)
+                out["amount"] = total_owed
+                out["days"] = sum(frappe.utils.cint(x.days) for x in agg)
 
     # ===== DASHBOARD (fast: grouped queries) =====
     else:

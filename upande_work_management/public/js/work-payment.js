@@ -1031,7 +1031,7 @@
             .then(function(d){
               rv.disabled=false;
               if(d.error){ toast(d.error,"bad"); return; }
-              toast((info.employee_name||info.employee)+" marked reviewed","good");
+              toast((info.employee_name||info.employee)+" marked reviewed — now approve & send to accounts","good");
               openWorkerReview(info.employee, WR);
               if(WR.refresh) WR.refresh();
             })
