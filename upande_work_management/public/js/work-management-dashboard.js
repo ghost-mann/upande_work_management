@@ -158,8 +158,6 @@
           '</div>'+
           '<div id="wm-combo" style="max-height:420px;overflow:auto"></div>'+
         '</div></div>'+
-      '<div class="sech">Farm breakdown (detail)</div>'+
-      '<div class="card"><div class="bd">'+farmTable(farms)+'</div></div>'+
       '<div class="sech">Pipeline Explorer &mdash; drill into planning, assigning, actuals &amp; payment</div>'+
       '<div class="card"><div class="hd"><h3>All records</h3><div class="cap">click any row for full detail &middot; filter and browse each stage</div></div>'+
         '<div class="bd">'+
@@ -241,21 +239,32 @@
         '</div></div>'+
       '<div class="sech">Worker substitutions &mdash; swaps mid-period</div>'+
       '<div class="card"><div class="hd"><h3>Substitution history</h3><div class="cap">left worker keeps pay for days worked; qty still counts to the plan</div></div><div class="bd"><div class="pex-filters" id="subs-filters"><select id="subs-farm"><option value="">All farms</option></select></div><div id="wm-subs" style="max-height:360px;overflow:auto">Loading&hellip;</div></div></div>'+
-      '<div class="sech">Actuals calendar &mdash; daily work across a plan’s period</div>'+
-      '<div class="card"><div class="hd"><h3>Daily actuals</h3><div class="cap">pick a plan to see its month grid</div></div><div class="bd"><select id="wm-cal-pick" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;max-width:520px;background:#fff"><option value="">— select a plan —</option></select><div id="wm-cal-box" style="margin-top:14px"></div></div></div>'+
+      '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered</div>'+
+      '<div class="card"><div class="hd"><h3>Plans, assignments &amp; actuals over time</h3><div class="cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
+        '<div class="bd">'+
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">'+
+            '<div><div class="tl-lab">Farm</div><select id="wm-tl-farm" class="tl-in"><option value="">All farms</option></select></div>'+
+            '<div><div class="tl-lab">From</div><input type="date" id="wm-tl-from" class="tl-in"></div>'+
+            '<div><div class="tl-lab">To</div><input type="date" id="wm-tl-to" class="tl-in"></div>'+
+            '<button type="button" class="refresh" id="wm-tl-apply" style="margin-bottom:1px">Apply</button>'+
+            '<span style="flex:1"></span>'+
+            '<div id="wm-tl-measure" style="display:inline-flex;gap:2px;background:var(--wash);border:1px solid var(--line);border-radius:999px;padding:3px">'+
+              '<button type="button" data-m="qty" class="on">Quantity</button>'+
+              '<button type="button" data-m="val">KES</button>'+
+            '</div>'+
+          '</div>'+
+          '<div id="wm-tl-chart" style="min-height:240px"><div class="empty">Loading timeline&hellip;</div></div>'+
+        '</div></div>'+
       '<div class="sech">Action queues</div>'+
-      '<div class="grid2">'+
-        qCard("Plans &rarr; farm manager",(D.plan_pending||[]),
-          [["farm","Farm",0],["block_section","Block",0],["task","Task",0],["people_per_day","Ppl",1],["total_cost","Cost",1]])+
-        qCard("Assignments &rarr; HR head",(D.asg_pending||[]),
-          [["farm","Farm",0],["task","Task",0],["planned_people","Plan",1],["assigned_count","Asg",1],["variance","Var",1]])+
-      '</div>'+
-      '<div class="grid2" style="margin-top:18px">'+
-        actCard(D.act_pending||[])+
-        payCard(D.pay_pending_list||[])+
-      '</div>';
+      '<div class="card"><div class="hd"><h3>Everything waiting on someone</h3><div class="cap">one queue at a time &middot; full-width</div></div>'+
+        '<div class="bd">'+
+          '<div class="subtabs" id="wm-q-tabs"></div>'+
+          '<div id="wm-q-body" style="max-height:420px;overflow:auto;margin-top:10px"></div>'+
+        '</div></div>';
     comboInit(D);
     initCharts();
+    initQueues(D);
+    initTimeline();
   }
 
   // ============ APPROVAL SPEED (step by step) ============
@@ -333,15 +342,15 @@
         wireApprPeople(pp); };
     });
   }
-  var AN = { data:null, tab:"appr", apprFilter:"" };
+  var AN = { data:null, tab:"out", apprFilter:"" };
   function initCharts(){
-    var tabs=[["appr","Approver ranking"],["out","Output by week"],["pay","Pay by week"],["wrk","Workers by week"],["task","Top tasks"],["farm","Farm share"]];
+    var tabs=[["out","Output by week"],["pay","Pay by week"],["wrk","Workers by week"],["task","Top tasks"]];
     var host=el("wm-an-tabs"); if(!host) return;
     host.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button");
       b.textContent=t[1]; b.setAttribute("data-an",t[0]);
-      b.style.cssText="font-family:inherit;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);background:#fff;color:var(--mute);padding:6px 11px;cursor:pointer";
+      b.style.cssText="font-family:inherit;font-size:11px;font-weight:600;letter-spacing:.02em;border:1px solid var(--line);background:rgba(255,255,255,.7);color:var(--mute);padding:7px 15px;cursor:pointer;border-radius:999px;transition:all .15s";
       b.onclick=function(){ AN.tab=t[0]; paintAnTabs(); drawAnalytic(); };
       host.appendChild(b);
     });
@@ -376,18 +385,23 @@
     if(!rows||!rows.length) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
     var max=0; rows.forEach(function(r){ var v=Number(r[key])||0; if(v>max) max=v; });
     if(max<=0) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
-    var h='<div style="display:flex;align-items:flex-end;gap:6px;height:170px;padding-top:4px">';
-    rows.forEach(function(r){
+    var peakIdx=-1; rows.forEach(function(r,i){ if((Number(r[key])||0)===max && peakIdx<0) peakIdx=i; });
+    var h='<div style="position:relative;padding-top:6px">'+
+      '<div style="position:absolute;left:0;right:0;top:6px;bottom:38px;pointer-events:none;background:repeating-linear-gradient(to top,transparent 0,transparent calc(25% - 1px),rgba(10,10,10,0.05) calc(25% - 1px),rgba(10,10,10,0.05) 25%)"></div>'+
+      '<div style="display:flex;align-items:flex-end;gap:8px;height:190px;position:relative">';
+    rows.forEach(function(r,i){
       var v=Number(r[key])||0;
-      var hh=Math.max(2,Math.round(v/max*120));
-      h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:0">'+
-        '<div style="font-size:9px;color:var(--mute);font-variant-numeric:tabular-nums;white-space:nowrap">'+valFn(v)+'</div>'+
-        '<div style="width:100%;max-width:38px;background:'+color+';height:'+hh+'px" title="week of '+esc(r.wstart)+'"></div>'+
-        '<div style="font-size:9px;color:var(--mute);margin-top:4px;white-space:nowrap">'+wkLabel(r.wstart)+'</div>'+
+      var hh=Math.max(3,Math.round(v/max*130));
+      var lastOrPeak=(i===rows.length-1)||(i===peakIdx);
+      h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:0" title="week of '+esc(r.wstart)+' · '+valFn(v)+'">'+
+        '<div style="font-size:9.5px;color:'+(lastOrPeak?"var(--ink)":"var(--mute)")+';font-weight:'+(lastOrPeak?"700":"500")+';font-variant-numeric:tabular-nums;white-space:nowrap;margin-bottom:3px">'+(lastOrPeak?valFn(v):"&nbsp;")+'</div>'+
+        '<div style="width:100%;max-width:42px;height:'+hh+'px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,'+color+' 0%,'+color+'cc 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)"></div>'+
+        '<div style="width:100%;max-width:42px;height:2px;background:rgba(10,10,10,.18);border-radius:1px;margin-top:2px"></div>'+
+        '<div style="font-size:9px;color:var(--mute);margin-top:5px;white-space:nowrap">'+wkLabel(r.wstart)+'</div>'+
       '</div>';
     });
-    h+='</div>';
-    h+='<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+capText+' Labels are the Monday each week starts.</div>';
+    h+='</div></div>';
+    h+='<div style="font-size:10.5px;color:var(--mute);margin-top:10px">'+capText+' Labels mark the peak and the latest week; hover any bar for its value. Weeks start Monday.</div>';
     return h;
   }
   function anBarsH(rows, labelKey, color, valFn, subFn, capText){
@@ -400,10 +414,10 @@
       var v=Number(r.pay)||0;
       var w=Math.max(2,Math.round(v/max*100));
       var pct=total>0?Math.round(v/total*100):0;
-      h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
+      h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px" title="'+esc(r[labelKey]||"")+' · '+valFn(v,pct)+'">'+
         '<div style="width:200px;min-width:120px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><b>'+esc(r[labelKey]||"—")+'</b></div>'+
-        '<div style="flex:1"><div style="background:var(--faint);height:14px"><div style="background:'+color+';height:14px;width:'+w+'%"></div></div></div>'+
-        '<div style="width:170px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums">'+valFn(v,pct)+'<br><span style="color:var(--mute);font-size:9.5px">'+subFn(r)+'</span></div>'+
+        '<div style="flex:1"><div style="background:rgba(10,10,10,.05);height:12px;border-radius:999px;overflow:hidden"><div style="background:linear-gradient(90deg,'+color+'b3,'+color+');height:12px;width:'+w+'%;border-radius:999px;box-shadow:inset 0 1px 0 rgba(255,255,255,.25)"></div></div></div>'+
+        '<div style="width:180px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums">'+valFn(v,pct)+'<br><span style="color:var(--mute);font-size:9.5px">'+subFn(r)+'</span></div>'+
       '</div>';
     });
     h+='<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+capText+'</div>';
@@ -469,12 +483,7 @@
     var bd=el("wm-an-body"); if(!bd) return;
     if(!AN.data){ bd.innerHTML='<div style="padding:16px;color:var(--mute)">Loading charts…</div>'; return; }
     var wk=AN.data.weekly||[];
-    if(AN.tab==="appr"){
-      bd.innerHTML=anApprovers(AN.data.approvers||[], AN.data.apr_names||{}, AN.data.apr_window||null);
-      bd.querySelectorAll("[data-gf]").forEach(function(b){
-        b.onclick=function(ev){ ev.stopPropagation(); AN.apprFilter=b.getAttribute("data-gf"); drawAnalytic(); };
-      });
-    } else if(AN.tab==="out"){
+    if(AN.tab==="out"){
       bd.innerHTML=anBarsV(wk,"qty","#0a7a43",function(v){return money(v);},
         "How much confirmed work got done each week.");
     } else if(AN.tab==="pay"){
@@ -488,11 +497,6 @@
         function(v,pct){ return "KES "+money(v)+" · "+pct+"%"; },
         function(r){ return money(r.qty)+" units · "+fmt(r.workers)+" people"; },
         "Your 10 biggest tasks by confirmed pay.");
-    } else if(AN.tab==="farm"){
-      bd.innerHTML=anBarsH(AN.data.farm_share||[],"farm","#2563eb",
-        function(v,pct){ return "KES "+money(v)+" · "+pct+"%"; },
-        function(r){ return money(r.qty)+" units · "+fmt(r.workers)+" people"; },
-        "Each farm’s share of confirmed pay.");
     }
   }
 
@@ -1609,6 +1613,197 @@
   function cflt(n){ n=parseFloat(n); return isNaN(n)?0:n; }
   function ckfmt(n){ n=cflt(n); if(n>=1000) return "KES "+(n/1000).toLocaleString("en-KE",{maximumFractionDigits:1})+"k"; return "KES "+fmt(n); }
 
+  // ============ ACTION QUEUES (one card, mini tabs) ============
+  var QT={tab:"plans"};
+  function initQueues(D){
+    var defs=[
+      ["plans","Plans → farm manager",(D.plan_pending||[]).length],
+      ["asg","Assignments → HR head",(D.asg_pending||[]).length],
+      ["act","Actuals in approval",(D.act_pending||[]).length],
+      ["pay","Payments → accounts",(D.pay_pending_list||[]).length]
+    ];
+    var host=el("wm-q-tabs"); if(!host) return;
+    host.innerHTML="";
+    defs.forEach(function(t){
+      var b=document.createElement("button");
+      b.type="button"; b.className="subtab"+(QT.tab===t[0]?" on":"");
+      b.setAttribute("data-q",t[0]);
+      b.innerHTML=t[1]+' <span style="font-variant-numeric:tabular-nums;opacity:.75">· '+fmt(t[2])+'</span>';
+      b.onclick=function(){ QT.tab=t[0];
+        host.querySelectorAll(".subtab").forEach(function(x){ x.classList.toggle("on", x.getAttribute("data-q")===t[0]); });
+        drawQueue(D); };
+      host.appendChild(b);
+    });
+    drawQueue(D);
+  }
+  function qTable(rows, heads, cells){
+    if(!rows.length) return '<div class="empty">Nothing waiting here — queue is clear.</div>';
+    var h='<table><thead><tr>';
+    heads.forEach(function(x){ h+='<th'+(x[1]?' class="n"':'')+'>'+x[0]+'</th>'; });
+    h+='</tr></thead><tbody>';
+    rows.forEach(function(r){ h+='<tr>'+cells(r)+'</tr>'; });
+    return h+'</tbody></table>';
+  }
+  function drawQueue(D){
+    var box=el("wm-q-body"); if(!box) return;
+    if(QT.tab==="plans"){
+      box.innerHTML=qTable(D.plan_pending||[],
+        [["Ref"],["Farm"],["Block"],["Task"],["People/day",1],["Cost KES",1]],
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(lbl(r.block_section)||"—")+'</td><td>'+esc(r.task||"—")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.total_cost)+'</td>'; });
+    } else if(QT.tab==="asg"){
+      box.innerHTML=qTable(D.asg_pending||[],
+        [["Ref"],["Farm"],["Task"],["Planned",1],["Assigned",1],["Variance",1]],
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(r.task||"—")+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+fmt(r.variance)+'</td>'; });
+    } else if(QT.tab==="act"){
+      box.innerHTML=qTable(D.act_pending||[],
+        [["Ref"],["Farm"],["Task"],["Stage"],["Pay KES",1]],
+        function(r){ var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
+          return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(r.task||"—")+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
+    } else {
+      box.innerHTML=qTable(D.pay_pending_list||[],
+        [["Ref"],["Run"],["Workers",1],["Total KES",1]],
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.run_title||"—")+'</td><td class="n m">'+fmt(r.total_workers)+'</td><td class="n m">'+fmt(r.grand_total)+'</td>'; });
+    }
+  }
+
+  // ============ DELIVERY TIMELINE (plans vs assignments vs actuals) ============
+  var TL={measure:"qty", data:null};
+  function initTimeline(){
+    var ap=el("wm-tl-apply"); if(!ap) return;
+    if(!el("wm-tl-from").value){
+      var d=new Date(); d.setDate(d.getDate()-41);
+      el("wm-tl-from").value=d.toISOString().slice(0,10);
+    }
+    if(!el("wm-tl-to").value) el("wm-tl-to").value=new Date().toISOString().slice(0,10);
+    ap.onclick=loadTimeline;
+    el("wm-tl-farm").onchange=loadTimeline;
+    el("wm-tl-measure").querySelectorAll("button").forEach(function(b){
+      b.onclick=function(){
+        TL.measure=b.getAttribute("data-m");
+        el("wm-tl-measure").querySelectorAll("button").forEach(function(x){ x.classList.toggle("on", x===b); });
+        renderTimeline();
+      };
+    });
+    loadTimeline();
+  }
+  function loadTimeline(){
+    var box=el("wm-tl-chart"); if(!box) return;
+    box.innerHTML='<div class="empty">Loading timeline…</div>';
+    call({action:"timeline", farm:el("wm-tl-farm").value||"",
+          from_date:el("wm-tl-from").value||"", to_date:el("wm-tl-to").value||""})
+      .then(function(d){
+        if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+        TL.data=d;
+        var fs=el("wm-tl-farm");
+        if(fs && fs.options.length<=1 && (d.farms||[]).length){
+          (d.farms||[]).forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
+        }
+        renderTimeline();
+      })
+      .catch(function(e){ box.innerHTML='<div class="empty">Could not load the timeline: '+esc(e.message)+'</div>'; });
+  }
+  function tlShort(iso){
+    var d=new Date(iso+"T00:00:00"); if(isNaN(d)) return iso;
+    return d.getDate()+" "+["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+  }
+  function tlNum(v){
+    if(v>=1e6) return (v/1e6).toLocaleString("en-KE",{maximumFractionDigits:1})+"M";
+    if(v>=1e3) return (v/1e3).toLocaleString("en-KE",{maximumFractionDigits:1})+"k";
+    return fmt(v);
+  }
+  function renderTimeline(){
+    var box=el("wm-tl-chart"); if(!box||!TL.data) return;
+    var days=TL.data.days||[];
+    var m=TL.measure;
+    var S=[
+      {key:"planned_"+m, name:"Planned", color:"#a06000", dash:"6 5"},
+      {key:"assigned_"+m,name:"Assigned",color:"#2563eb", dash:""},
+      {key:"actual_"+m,  name:"Actual",  color:"#0a7a43", dash:"", area:1}
+    ];
+    var max=0;
+    days.forEach(function(r){ S.forEach(function(sr){ var v=Number(r[sr.key])||0; if(v>max) max=v; }); });
+    if(!days.length||max<=0){ box.innerHTML='<div class="empty">No plans or confirmed work in this window.</div>'; return; }
+    var W=Math.max(560, box.clientWidth||860), H=280;
+    var L=52,R=16,T=14,B=30;
+    var iw=W-L-R, ih=H-T-B;
+    var ymax=max*1.1;
+    function X(i){ return L + (days.length===1?iw/2:(i/(days.length-1))*iw); }
+    function Y(v){ return T + ih - (v/ymax)*ih; }
+    function path(key){
+      var pth="";
+      days.forEach(function(r,i){ pth+=(i?"L":"M")+X(i).toFixed(1)+","+Y(Number(r[key])||0).toFixed(1); });
+      return pth;
+    }
+    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="Daily planned, assigned and actual '+(m==="qty"?"quantity":"value")+'">';
+    // gridlines + y labels
+    for(var gi=0;gi<=4;gi++){
+      var gv=ymax*gi/4, gy=Y(gv);
+      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,0.06)" stroke-width="1"/>';
+      g+='<text x="'+(L-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780">'+tlNum(gv)+'</text>';
+    }
+    // x ticks (~6)
+    var step=Math.max(1,Math.round(days.length/6));
+    for(var xi=0;xi<days.length;xi+=step){
+      g+='<text x="'+X(xi).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780">'+tlShort(days[xi].d)+'</text>';
+    }
+    // actual area fill
+    var area="M"+X(0).toFixed(1)+","+Y(0).toFixed(1);
+    days.forEach(function(r,i){ area+="L"+X(i).toFixed(1)+","+Y(Number(r["actual_"+m])||0).toFixed(1); });
+    area+="L"+X(days.length-1).toFixed(1)+","+Y(0).toFixed(1)+"Z";
+    g+='<path d="'+area+'" fill="rgba(10,122,67,0.09)"/>';
+    // lines
+    S.forEach(function(sr){
+      g+='<path d="'+path(sr.key)+'" fill="none" stroke="'+sr.color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"'+(sr.dash?' stroke-dasharray="'+sr.dash+'"':'')+'/>';
+    });
+    // direct labels at line ends
+    S.forEach(function(sr,si){
+      var lv=Number(days[days.length-1][sr.key])||0;
+      g+='<text x="'+(W-R)+'" y="'+(Y(lv)+(si===0?-6:si===1?-6:12)).toFixed(1)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="9.5" font-weight="600" fill="'+sr.color+'">'+sr.name+'</text>';
+    });
+    // hover layer
+    g+='<line id="wm-tl-cross" x1="0" y1="'+T+'" x2="0" y2="'+(T+ih)+'" stroke="rgba(10,10,10,0.35)" stroke-width="1" style="display:none"/>';
+    S.forEach(function(sr,si){
+      g+='<circle id="wm-tl-dot'+si+'" r="4" fill="'+sr.color+'" stroke="#fff" stroke-width="1.5" style="display:none"/>';
+    });
+    g+='<rect id="wm-tl-hover" x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="transparent"/>';
+    g+='</svg>';
+    var legend='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--ink);margin:2px 0 8px">'+
+      S.map(function(sr){ return '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:16px;height:0;border-top:2px '+(sr.dash?"dashed":"solid")+' '+sr.color+'"></i>'+sr.name+(sr.name==="Planned"?" (approved plans)":sr.name==="Assigned"?" (staffed share)":" (confirmed)")+'</span>'; }).join("")+
+      '</div>';
+    box.innerHTML=legend+'<div style="position:relative">'+g+'<div id="wm-tl-tip" style="position:absolute;pointer-events:none;display:none;background:rgba(10,10,10,0.92);color:#fafaf6;border-radius:10px;padding:8px 11px;font-size:11px;line-height:1.5;white-space:nowrap;z-index:5"></div></div>';
+    // wire hover
+    var svg=box.querySelector("svg"), hov=box.querySelector("#wm-tl-hover"),
+        cross=box.querySelector("#wm-tl-cross"), tip=box.querySelector("#wm-tl-tip");
+    function pt(evt){
+      var r=svg.getBoundingClientRect();
+      return (evt.clientX-r.left)*(W/r.width);
+    }
+    hov.addEventListener("mousemove",function(evt){
+      var mx=pt(evt);
+      var idx=Math.round((mx-L)/(iw)*(days.length-1));
+      idx=Math.max(0,Math.min(days.length-1,idx));
+      var r=days[idx], cx=X(idx);
+      cross.setAttribute("x1",cx); cross.setAttribute("x2",cx); cross.style.display="";
+      S.forEach(function(sr,si){
+        var dot=box.querySelector("#wm-tl-dot"+si);
+        dot.setAttribute("cx",cx); dot.setAttribute("cy",Y(Number(r[sr.key])||0)); dot.style.display="";
+      });
+      var unit=m==="qty"?" units":" KES";
+      tip.innerHTML='<b>'+tlShort(r.d)+'</b><br>'+
+        S.map(function(sr){ return '<span style="color:'+sr.color.replace("#a06000","#e3b25f").replace("#2563eb","#93b8f8").replace("#0a7a43","#7fd0a2")+'">●</span> '+sr.name+': <b>'+fmt(Number(r[sr.key])||0)+'</b>'; }).join("<br>")+
+        '<span style="opacity:.6">'+unit+'</span>';
+      tip.style.display="";
+      var rct=svg.getBoundingClientRect();
+      var px=(cx/W)*rct.width;
+      tip.style.left=Math.min(px+14, rct.width-190)+"px";
+      tip.style.top="18px";
+    });
+    hov.addEventListener("mouseleave",function(){
+      cross.style.display="none"; tip.style.display="none";
+      S.forEach(function(sr,si){ box.querySelector("#wm-tl-dot"+si).style.display="none"; });
+    });
+  }
+
   function load(){
     el("wm-body").innerHTML=skeleton();
     call({action:"dash"}).then(function(D){
@@ -1619,7 +1814,6 @@
       wireCostCentre();
       wireTracker();
       loadSubs();
-      initCalPicker();
     }).catch(function(e){
       el("wm-body").innerHTML='<div class="err">Could not load dashboard: '+esc(e&&e.message?e.message:e)+' &mdash; <a href="#" onclick="location.reload();return false;">retry</a></div>';
     });

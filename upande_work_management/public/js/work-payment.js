@@ -290,15 +290,16 @@
   }
 
   function renderBuildKpis(d){
-    // "Payable now" = sum of unpaid owed across the (unfiltered) window from the farms summary,
-    // but if farm chips are active we show the filtered grand_total the API returned.
-    var payableTotal = 0, payableWorkers = 0;
+    var payable=0, toreview=0, reviewed=0, sent=0;
     ST.workers.forEach(function(w){
-      if(w.payable){ payableTotal += (w.owed||0); payableWorkers += 1; }
+      if(w.pay_status==="Unpaid"){ toreview+=1; payable+=(w.unpaid_amt||w.owed||0); }
+      else if(w.pay_status==="Reviewed"){ reviewed+=1; payable+=(w.unpaid_amt||w.owed||0); }
+      else if(w.pay_status==="Sent to accounts"){ sent+=1; }
     });
-    el("k-owed").textContent    = fmt(payableTotal);
-    el("k-workers").textContent = fmt(payableWorkers);
-    syncSelectionKpis();
+    el("k-owed").textContent=fmt(payable);
+    el("k-toreview").textContent=fmt(toreview);
+    el("k-reviewed").textContent=fmt(reviewed);
+    el("k-sent").textContent=fmt(sent);
   }
 
   function renderFarmChips(){
@@ -332,54 +333,56 @@
     var box=el("build-body");
     var rows=(ST.workers||[]).filter(passesSearch);
     if(!rows.length){
-      box.innerHTML='<div class="empty"><b>No workers here</b>No confirmed, unpaid work matches this window and filter. Widen the dates or clear the farm filter.</div>';
+      box.innerHTML='<div class="empty"><b>No workers here</b>No confirmed work matches this window and filter. Widen the dates or clear the farm filter.</div>';
       return;
     }
-    // payable rows first, then submitted, then paid; each group by farm/name order preserved
-    var order={Unpaid:0,Submitted:1,Paid:2};
-    rows.sort(function(a,b){ return (order[a.pay_status]||0)-(order[b.pay_status]||0); });
-
-    var payableCount=rows.filter(function(w){return w.payable;}).length;
+    var order={"Unpaid":0,"Reviewed":1,"Sent to accounts":2,"Paid":3};
+    rows.sort(function(a,b){
+      var oa=order[a.pay_status]!=null?order[a.pay_status]:0, ob=order[b.pay_status]!=null?order[b.pay_status]:0;
+      if(oa!==ob) return oa-ob;
+      return (b.unpaid_amt||b.owed||0)-(a.unpaid_amt||a.owed||0);
+    });
     var h='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
-      '<th class="c"><input type="checkbox" id="pick-all" title="Select all payable"></th>'+
-      '<th>Worker</th><th>Farm</th><th class="n">Days</th><th class="n">Qty</th>'+
-      '<th class="n">Owed</th><th class="c">Status</th></tr></thead><tbody>';
+      '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
+      '<th class="n">Earned KES</th><th class="n">Unpaid KES</th><th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
     rows.forEach(function(w){
-      var payable=!!w.payable;
-      var pickedCls=ST.picked[w.emp]?" picked":"";
-      var notpayCls=payable?"":" notpay";
-      var statusTag='<span class="tag '+(w.pay_status||"unpaid").toLowerCase()+'">'+esc(w.pay_status||"Unpaid")+'</span>';
+      var unpaid=w.unpaid_amt!=null?w.unpaid_amt:w.owed;
+      var acts='<button type="button" class="btn sm" data-review="'+esc(w.emp)+'">Review</button>';
+      if(w.pay_status==="Reviewed"){
+        acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
+      } else if(w.pay_status==="Unpaid"){
+        acts+=' <button type="button" class="btn sm" disabled title="Review this worker first — approval unlocks after review" style="opacity:.45">Send to accounts</button>';
+      }
       var runRef=w.run_ref?('<div style="font-size:9px;color:var(--mute);margin-top:2px">'+esc(w.run_ref)+'</div>'):'';
-      var cb = payable
-        ? '<input type="checkbox" class="pick" data-emp="'+esc(w.emp)+'"'+(ST.picked[w.emp]?" checked":"")+'>'
-        : '<input type="checkbox" disabled title="Not payable ('+esc(w.pay_status)+')">';
-      h+='<tr class="'+pickedCls+notpayCls+'" data-emp="'+esc(w.emp)+'">'+
-        '<td class="c">'+cb+'</td>'+
-        '<td><span class="rowlink" data-detail="'+esc(w.emp)+'">'+esc(w.emp_name||w.emp)+'</span></td>'+
+      h+='<tr class="'+(w.pay_status==="Paid"?"notpay":"")+'">'+
+        '<td><span class="rowlink" data-review="'+esc(w.emp)+'">'+esc(w.emp_name||w.emp)+'</span></td>'+
+        '<td class="m">'+esc(w.emp)+'</td>'+
         '<td>'+esc(w.farm||"—")+'</td>'+
+        '<td class="m">'+esc(dshort(w.wfrom))+' &rarr; '+esc(dshort(w.wto))+'</td>'+
         '<td class="n m">'+fmt(w.days)+'</td>'+
         '<td class="n m">'+fmt(w.qty)+'</td>'+
         '<td class="n m">'+money(w.owed)+'</td>'+
-        '<td class="c">'+statusTag+runRef+'</td></tr>';
+        '<td class="n m">'+money(unpaid)+'</td>'+
+        '<td class="c">'+payTag(w.pay_status)+runRef+'</td>'+
+        '<td class="c" style="white-space:nowrap">'+acts+'</td></tr>';
     });
     h+='</tbody></table></div></div>';
-    h+='<div class="note">Showing '+rows.length+' worker'+(rows.length===1?"":"s")+' · '+payableCount+' payable. Paid and submitted rows are shown for context but can’t be re-paid.</div>';
+    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically.</div>';
     box.innerHTML=h;
-
-    // wire checkboxes
-    box.querySelectorAll("input.pick").forEach(function(cb){
-      cb.onchange=function(){ togglePick(cb.getAttribute("data-emp"), cb.checked); };
+    box.querySelectorAll("[data-review]").forEach(function(a){
+      a.onclick=function(){ openWorkerReview(a.getAttribute("data-review"), payWindow()); };
     });
-    var pickAll=el("pick-all");
-    if(pickAll){
-      pickAll.onchange=function(){
-        rows.forEach(function(w){ if(w.payable) setPick(w.emp, pickAll.checked); });
-        renderPayable(d); syncSelectionKpis();
+    box.querySelectorAll("[data-send]").forEach(function(b){
+      b.onclick=function(){
+        approveWorker(b.getAttribute("data-send"), b.getAttribute("data-nm"),
+          parseFloat(b.getAttribute("data-amt"))||0, payWindow());
       };
-    }
-    box.querySelectorAll("[data-detail]").forEach(function(a){
-      a.onclick=function(){ openWorkerDetail(a.getAttribute("data-detail")); };
     });
+  }
+
+  function payWindow(){
+    var r=range();
+    return { from:r.from, to:r.to, refresh:function(){ loadPayable(); refreshAccountsCount(); } };
   }
 
   function workerByEmp(emp){
@@ -398,17 +401,7 @@
     syncSelectionKpis();
   }
 
-  function syncSelectionKpis(){
-    var keys=Object.keys(ST.picked);
-    var total=0; keys.forEach(function(k){ total += (ST.picked[k].owed||0); });
-    el("k-selected").textContent = keys.length;
-    el("k-runtotal").textContent = fmt(total);
-    // dock
-    var dock=el("pay-dock");
-    dock.classList.toggle("hidden", keys.length===0);
-    el("dk-count").textContent = keys.length;
-    el("dk-total").textContent = money(total);
-  }
+  function syncSelectionKpis(){ /* selection dock removed — workers are paid one at a time */ }
 
   function clearPicks(){
     ST.picked={};
@@ -463,8 +456,7 @@
     var m=el("pay-detail-modal");
     var card=m.querySelector(".modal-card");
     if(card) card.classList.remove("xl");
-    var ap=el("pd-approve");
-    if(ap){ ap.style.display="none"; ap.onclick=null; }
+    ["pd-approve","pd-review"].forEach(function(id){ var x=el(id); if(x){ x.style.display="none"; x.onclick=null; } });
     el("pd-name").firstChild.textContent="Worker";
     el("pd-sub").textContent=emp;
     el("pd-body").innerHTML='<div class="loading">Loading jobs…</div>';
@@ -678,7 +670,7 @@
   }
 
   function payTag(s){
-    var m={"Paid":"paid","Part paid":"submitted","In run (awaiting accounts)":"submitted","Unpaid":"unpaid"};
+    var m={"Paid":"paid","Part paid":"submitted","In run (awaiting accounts)":"submitted","Unpaid":"unpaid","Reviewed":"reviewed","Sent to accounts":"sent","Submitted":"sent"};
     var c=m[s]||"";
     return '<span class="tag '+c+'">'+esc(s||"")+'</span>';
   }
@@ -772,7 +764,7 @@
       g.qty+=(r.qty||0);
       g.amount+=(r.amount||0);
       if(r.pay_status==="Paid"){ g.paid_amt+=(r.amount||0); }
-      else if(r.in_payroll){ g.unpaid_amt+=(r.amount||0); }
+      else if(r.in_payroll){ g.unpaid_amt+=(r.amount||0); if(!r.reviewed) g.unreviewed_amt=(g.unreviewed_amt||0)+(r.amount||0); }
       if(r.run_ref) g.runs[r.run_ref]=1;
     });
     var rows=Object.keys(map).map(function(k){
@@ -783,6 +775,7 @@
       g.run_list=Object.keys(g.runs).sort().join(", ");
       if(g.amount>0 && g.paid_amt>=g.amount-0.001) g.status="Paid";
       else if(g.paid_amt>0) g.status="Part paid";
+      else if((g.unreviewed_amt||0)<=0.001) g.status="Reviewed";
       else g.status="Unpaid";
       return g;
     });
@@ -815,8 +808,8 @@
       flt.forEach(function(g){
         tq+=g.qty; te+=g.amount; tp+=g.paid_amt; tu+=g.unpaid_amt;
         var acts='<button type="button" class="btn sm" data-review="'+esc(g.emp)+'">Review</button>';
-        if(g.unpaid_amt>0.001){
-          acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.unpaid_amt+'">Approve &rarr; Accounts</button>';
+        if(g.unpaid_amt>0.001 && g.status==="Reviewed"){
+          acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.unpaid_amt+'">Send to accounts</button>';
         }
         t+='<tr><td><span class="rowlink" data-review="'+esc(g.emp)+'">'+esc(g.nm)+'</span></td>'+
           '<td class="m">'+esc(g.emp)+'</td><td>'+esc(g.farm_list)+'</td>'+
@@ -834,7 +827,7 @@
       });
       el("auw-body").querySelectorAll("[data-approve]").forEach(function(b){
         b.onclick=function(){
-          approveWorker(b.getAttribute("data-approve"), b.getAttribute("data-nm"), parseFloat(b.getAttribute("data-amt"))||0);
+          approveWorker(b.getAttribute("data-approve"), b.getAttribute("data-nm"), parseFloat(b.getAttribute("data-amt"))||0, auditWindow());
         };
       });
     }
@@ -843,18 +836,23 @@
   }
 
   // ── one worker, in depth: every task, period, payment ──
-  function openWorkerAudit(emp){
+  var WR={from:"",to:"",refresh:null};
+  function auditWindow(){
+    return { from:el("au-from").value||"", to:el("au-to").value||"",
+             refresh:function(){ loadAudit(); refreshAccountsCount(); } };
+  }
+  function openWorkerAudit(emp){ openWorkerReview(emp, auditWindow()); }
+  function openWorkerReview(emp, win){
+    WR=win||{from:"",to:"",refresh:null};
     var m=el("pay-detail-modal");
     var card=m.querySelector(".modal-card");
     if(card) card.classList.add("xl");
-    var ap=el("pd-approve");
-    if(ap){ ap.style.display="none"; ap.onclick=null; }
+    ["pd-approve","pd-review"].forEach(function(id){ var x=el(id); if(x){ x.style.display="none"; x.onclick=null; } });
     el("pd-name").firstChild.textContent="Worker review";
     el("pd-sub").textContent=emp;
     el("pd-body").innerHTML='<div class="loading">Building work history&hellip;</div>';
     m.classList.add("on");
-    call({ action:"pay_worker_history", employee:emp,
-           from_date:el("au-from").value||"", to_date:el("au-to").value||"" })
+    call({ action:"pay_worker_history", employee:emp, from_date:WR.from, to_date:WR.to })
       .then(function(d){
         if(d.error){ el("pd-body").innerHTML='<div class="err">'+esc(d.error)+'</div>'; return; }
         renderWorkerHistory(d);
@@ -1018,16 +1016,35 @@
     el("pd-body").querySelectorAll("[data-run]").forEach(function(a){
       a.onclick=function(){ openRunDetail(a.getAttribute("data-run")); };
     });
-    // footer approve button — pay this one person
-    var ap=el("pd-approve");
+    // footer: review first, then approve — one worker at a time
+    var ap=el("pd-approve"), rv=el("pd-review");
+    var unpaid=k.unpaid_amt||0, unreviewed=k.unreviewed_amt||0;
+    if(rv){
+      if(unpaid>0.001 && unreviewed>0.001){
+        rv.style.display="";
+        rv.textContent="Mark reviewed · "+money(unpaid);
+        rv.onclick=function(){
+          rv.disabled=true;
+          call({ action:"pay_worker_review", employee:info.employee, from_date:WR.from, to_date:WR.to }, true)
+            .then(function(d){
+              rv.disabled=false;
+              if(d.error){ toast(d.error,"bad"); return; }
+              toast((info.employee_name||info.employee)+" marked reviewed","good");
+              openWorkerReview(info.employee, WR);
+              if(WR.refresh) WR.refresh();
+            })
+            .catch(function(e){ rv.disabled=false; toast("Could not mark reviewed: "+e.message,"bad"); });
+        };
+      } else {
+        rv.style.display="none"; rv.onclick=null;
+      }
+    }
     if(ap){
-      if((k.unpaid_amt||0)>0.001){
+      if(unpaid>0.001 && unreviewed<=0.001){
         ap.style.display="";
-        ap.textContent="Approve & send "+money(k.unpaid_amt)+" to accounts";
+        ap.textContent="Approve & send "+money(unpaid)+" to accounts";
         ap.onclick=function(){
-          approveWorker(info.employee, info.employee_name||info.employee, k.unpaid_amt, function(){
-            el("pay-detail-modal").classList.remove("on");
-          });
+          approveWorker(info.employee, info.employee_name||info.employee, unpaid, WR);
         };
       } else {
         ap.style.display="none"; ap.onclick=null;
@@ -1035,23 +1052,21 @@
     }
   }
 
-  function approveWorker(emp, nm, amount, after){
+  function approveWorker(emp, nm, amount, win){
+    win=win||auditWindow();
     confirmModal(
       "Approve & send to accounts",
       '<p style="margin:0 0 10px">Send <b>'+esc(nm)+'</b>&rsquo;s unpaid confirmed earnings of <b>'+money(amount)+'</b> to accounts?</p>'+
-      '<p class="note" style="margin:0">This creates a single-worker payment run for the audit window ('+
-      esc(el("au-from").value||"start")+' &rarr; '+esc(el("au-to").value||"today")+
-      ') and marks it <b>Pending Accounts</b>. Accounts releases the money and the worker&rsquo;s rows are stamped paid.</p>',
+      '<p class="note" style="margin:0">Work window '+esc(win.from||"start")+' &rarr; '+esc(win.to||"today")+
+      '. A payment reference is created for this worker alone and handed to accounts as <b>Pending Accounts</b>; when accounts releases it the worker&rsquo;s rows are stamped paid.</p>',
       "Approve & send",
       function(){
-        call({ action:"pay_worker_submit", employee:emp,
-               from_date:el("au-from").value||"", to_date:el("au-to").value||"" }, true)
+        call({ action:"pay_worker_submit", employee:emp, from_date:win.from||"", to_date:win.to||"" }, true)
           .then(function(d){
             if(d.error){ toast(d.error,"bad"); return; }
             toast((d.employee_name||emp)+" · "+money(d.amount)+" sent to accounts ("+d.name+")","good");
-            if(after) after();
-            loadAudit();
-            refreshAccountsCount();
+            var m=el("pay-detail-modal"); if(m) m.classList.remove("on");
+            if(win.refresh) win.refresh();
           })
           .catch(function(e){ toast("Could not submit: "+e.message,"bad"); });
       },
@@ -1313,8 +1328,8 @@
     el("pf-search").addEventListener("input", function(){ if(ST.workers.length) renderPayable({}); });
 
     // dock
-    el("dk-clear").onclick=clearPicks;
-    el("dk-create").onclick=createRun;
+    if(el("dk-clear")) el("dk-clear").onclick=clearPicks;
+    if(el("dk-create")) el("dk-create").onclick=createRun;
 
     wireModalsBackdrop();
 
