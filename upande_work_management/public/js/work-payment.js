@@ -941,7 +941,7 @@
 
     // ════ TAB 2 · WORK & DAYS ════
     h+='<div class="wr-sec" id="wr-work" style="display:none">';
-    h+='<div class="hint" style="margin-bottom:12px">One card per task. Under it, every day this worker’s output was recorded in Actuals — a day-row means “this person did this quantity on this date”.</div>';
+    h+='<div class="hint" style="margin-bottom:12px">One card per task. Under it, every day this worker’s output was recorded in Actuals — a day-row means “this person did this quantity on this date”. Unpaid days can be corrected with <b>Edit</b>: pay recomputes at the row’s rate and the worker goes back to “Unpaid” for re-review.</div>';
     if(!tasks.length){ h+='<div class="empty">No confirmed work in this window.</div>'; }
     tasks.forEach(function(t){
       var kk=(t.task||"")+"|"+(t.block||"")+"|"+(t.farm||"");
@@ -961,16 +961,17 @@
         '</div>'+
         (who.length?'<div style="padding:0 16px 8px;font-size:11px;color:var(--mute)">'+esc(who.join("  ·  "))+'</div>':'')+
         '<div class="tablescroll" style="max-height:320px"><table style="margin-top:0"><thead><tr>'+
-          '<th>Day worked</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th></tr></thead><tbody>';
+          '<th>Day worked</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th><th class="c">Edit</th></tr></thead><tbody>';
       rows.forEach(function(r){
         h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td>'+
-          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+          '<td class="n m" data-qcell>'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
           '<td class="c">'+(r.in_payroll? payTag(r.paid?"Paid":"Unpaid") : '<span class="tag">Not in payroll</span>')+'</td>'+
-          '<td class="m">'+esc(r.run_ref||"—")+'</td></tr>';
+          '<td class="m">'+esc(r.run_ref||"—")+'</td>'+
+          '<td class="c">'+(r.editable?'<span style="white-space:nowrap"><button type="button" class="btn sm" data-editday data-row="'+esc(r.rowname||"")+'" data-qty="'+(r.qty||0)+'">Edit</button></span>':"")+'</td></tr>';
       });
       h+='</tbody><tfoot><tr><th>'+fmt(t.days)+' days</th>'+
          '<th class="n">'+fmt(t.qty)+'</th><th class="n">'+fmt(t.rate,2)+' avg</th><th class="n">'+fmt(t.amount)+'</th>'+
-         '<th class="c" colspan="2">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
+         '<th class="c" colspan="3">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
       '</div>';
     });
     h+='</div>';
@@ -1016,6 +1017,7 @@
     el("pd-body").querySelectorAll("[data-run]").forEach(function(a){
       a.onclick=function(){ openRunDetail(a.getAttribute("data-run")); };
     });
+    wireDayEdits(el("pd-body"), info);
     // footer: review first, then approve — one worker at a time
     var ap=el("pd-approve"), rv=el("pd-review");
     var unpaid=k.unpaid_amt||0, unreviewed=k.unreviewed_amt||0;
@@ -1050,6 +1052,43 @@
         ap.style.display="none"; ap.onclick=null;
       }
     }
+  }
+
+  function wireDayEdits(scope, info){
+    scope.querySelectorAll("[data-editday]").forEach(function(b){
+      b.onclick=function(){
+        var tr=b.closest("tr");
+        if(!tr||tr.classList.contains("editing")) return;
+        tr.classList.add("editing");
+        var qtyCell=tr.querySelector("[data-qcell]");
+        var oldHtml=qtyCell.innerHTML;
+        var cur=parseFloat(b.getAttribute("data-qty"))||0;
+        qtyCell.innerHTML='<input type="number" step="any" min="0" value="'+cur+'" style="width:92px;font-family:inherit;font-size:12px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;text-align:right">';
+        var inp=qtyCell.querySelector("input"); inp.focus(); inp.select();
+        b.style.display="none";
+        var host=b.parentElement;
+        var sv=document.createElement("button"); sv.type="button"; sv.className="btn good sm"; sv.textContent="Save";
+        var cx=document.createElement("button"); cx.type="button"; cx.className="btn sm"; cx.textContent="Cancel"; cx.style.marginLeft="4px";
+        host.appendChild(sv); host.appendChild(cx);
+        function done(){ tr.classList.remove("editing"); sv.remove(); cx.remove(); b.style.display=""; }
+        cx.onclick=function(){ qtyCell.innerHTML=oldHtml; done(); };
+        inp.onkeydown=function(ev){ if(ev.key==="Enter") sv.click(); if(ev.key==="Escape") cx.click(); };
+        sv.onclick=function(){
+          var nq=parseFloat(inp.value);
+          if(isNaN(nq)||nq<0){ toast("Enter a valid quantity","bad"); return; }
+          sv.disabled=true;
+          call({ action:"pay_worker_edit_day", employee:info.employee,
+                 rowname:b.getAttribute("data-row"), qty:nq }, true)
+            .then(function(d){
+              if(d.error){ toast(d.error,"bad"); sv.disabled=false; return; }
+              toast("Corrected: "+fmt(nq)+" × "+fmt(d.rate,2)+" = "+money(d.amount),"good");
+              openWorkerReview(info.employee, WR);
+              if(WR.refresh) WR.refresh();
+            })
+            .catch(function(e){ toast("Could not save: "+e.message,"bad"); sv.disabled=false; });
+        };
+      };
+    });
   }
 
   function approveWorker(emp, nm, amount, win){

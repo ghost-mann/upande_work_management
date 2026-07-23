@@ -799,8 +799,8 @@ def wm_payment(**kwargs):
             out["tasks"] = tasks
             # raw daily log
             dl = frappe.db.sql("""
-                SELECT ac.name actuals, we.work_date wdate, ac.task task, ac.block_section block, ac.farm farm,
-                       we.actual_quantity qty, we.amount amount,
+                SELECT ac.name actuals, we.name rowname, we.work_date wdate, ac.task task, ac.block_section block, ac.farm farm,
+                       we.actual_quantity qty, we.amount amount, ac.rate doc_rate,
                        IFNULL(we.paid,0) paid, IFNULL(we.count_in_payroll,0) in_payroll,
                        IFNULL(we.custom_reviewed,0) reviewed, we.payment_ref run_ref
                 FROM `tabWork Actuals Employee` we
@@ -814,6 +814,9 @@ def wm_payment(**kwargs):
                 amt = frappe.utils.flt(r.amount)
                 daily.append({
                     "actuals": r.actuals,
+                    "rowname": r.rowname,
+                    "doc_rate": frappe.utils.flt(r.doc_rate),
+                    "editable": 1 if (not frappe.utils.cint(r.paid)) and frappe.utils.cint(r.in_payroll) else 0,
                     "wdate": str(r.wdate) if r.wdate else None,
                     "task": r.task, "block": r.block, "farm": r.farm,
                     "qty": qty, "amount": amt, "rate": (amt / qty) if qty else 0,
@@ -838,6 +841,66 @@ def wm_payment(**kwargs):
                     "days": frappe.utils.cint(r.days), "qty": frappe.utils.flt(r.qty),
                 })
             out["runs"] = runlist
+
+    elif action == "pay_worker_edit_day":
+        # Audit-stage correction: change the quantity recorded for one worker-day.
+        # Pay recomputes at that row's rate, parent totals are re-summed, and the
+        # row's review stamp resets so it must be re-reviewed before payment.
+        emp = frappe.form_dict.get("employee")
+        rowname = frappe.form_dict.get("rowname")
+        new_qty = frappe.utils.flt(frappe.form_dict.get("qty"))
+        if not emp or not rowname:
+            out["error"] = "employee and rowname are required"
+        elif new_qty < 0:
+            out["error"] = "Quantity cannot be negative"
+        else:
+            row = frappe.db.get_value("Work Actuals Employee", rowname,
+                ["name", "parent", "employee", "employee_name", "work_date",
+                 "actual_quantity", "amount", "paid", "count_in_payroll"], as_dict=True)
+            if not row:
+                out["error"] = "Record not found"
+            elif row.employee != emp:
+                out["error"] = "Record does not belong to this worker"
+            elif frappe.utils.cint(row.paid):
+                out["error"] = "This day is already paid and cannot be edited"
+            elif not frappe.utils.cint(row.count_in_payroll):
+                out["error"] = "This row is not payroll-counted (salaried) — nothing to edit"
+            else:
+                pstate = frappe.db.get_value("Work Management Actuals", row.parent, "workflow_state")
+                if pstate != "CONFIRMED":
+                    out["error"] = "Actuals doc is not CONFIRMED (state: " + str(pstate) + ")"
+                else:
+                    old_qty = frappe.utils.flt(row.actual_quantity)
+                    old_amt = frappe.utils.flt(row.amount)
+                    rate = (old_amt / old_qty) if old_qty else frappe.utils.flt(
+                        frappe.db.get_value("Work Management Actuals", row.parent, "rate"))
+                    new_amt = new_qty * rate
+                    frappe.db.set_value("Work Actuals Employee", rowname, "actual_quantity", new_qty, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rowname, "amount", new_amt, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rowname, "custom_reviewed", 0, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rowname, "custom_reviewed_by", None, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rowname, "custom_reviewed_at", None, update_modified=False)
+                    tots = frappe.db.sql("""
+                        SELECT COALESCE(SUM(actual_quantity),0) q, COALESCE(SUM(amount),0) p
+                        FROM `tabWork Actuals Employee` WHERE parent=%s
+                    """, (row.parent,), as_dict=True)
+                    if tots:
+                        frappe.db.set_value("Work Management Actuals", row.parent, "total_actual_qty", frappe.utils.flt(tots[0].q), update_modified=False)
+                        frappe.db.set_value("Work Management Actuals", row.parent, "total_payment", frappe.utils.flt(tots[0].p), update_modified=False)
+                    frappe.db.commit()
+                    try:
+                        frappe.get_doc("Work Management Actuals", row.parent).add_comment("Edited",
+                            "Audit correction: " + (row.employee_name or emp) + " on " + str(row.work_date) +
+                            " — qty " + str(old_qty) + " → " + str(new_qty) +
+                            ", pay " + str(round(old_amt, 2)) + " → " + str(round(new_amt, 2)) +
+                            " (by " + frappe.session.user + ")")
+                    except Exception:
+                        pass
+                    out["rowname"] = rowname
+                    out["qty"] = new_qty
+                    out["amount"] = new_amt
+                    out["rate"] = rate
+                    out["parent"] = row.parent
 
     elif action == "pay_worker_review":
         # Stamp ONE worker's unpaid confirmed rows in the window as reviewed —
