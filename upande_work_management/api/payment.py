@@ -682,10 +682,13 @@ def wm_payment(**kwargs):
                 "first_day": str(k.first_day) if k and k.first_day else None,
                 "last_day": str(k.last_day) if k and k.last_day else None,
             }
-            # per task/actuals doc: what was done, over what period, and how it was paid
+            # per actuals doc first, then merged per TASK (many docs are single-day,
+            # so grouping by task is what reads naturally: one card per task with
+            # its full worked period and every approver involved)
             grp = frappe.db.sql("""
                 SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
                        ac.assignment assignment, ac.rate doc_rate,
+                       ac.entered_by entered_by, ac.hr_approved_by hr_approved_by, ac.gm_approved_by gm_approved_by,
                        MIN(we.work_date) wfrom, MAX(we.work_date) wto,
                        COUNT(DISTINCT we.work_date) days,
                        COALESCE(SUM(we.actual_quantity),0) qty,
@@ -696,59 +699,112 @@ def wm_payment(**kwargs):
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 WHERE """ + hconds + """
-                GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.assignment, ac.rate
+                GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.assignment, ac.rate,
+                         ac.entered_by, ac.hr_approved_by, ac.gm_approved_by
                 ORDER BY MIN(we.work_date) DESC
             """, tuple(hparams), as_dict=True)
-            tasks = []
+            asg_cache = {}
+            tmap = {}
+            torder = []
             for g in grp:
-                pfrom = None
-                pto = None
-                planner = None
+                ai = None
                 if g.assignment:
-                    ai = frappe.db.get_value("Work Management Assigner", g.assignment,
-                        ["planner_request", "from_date", "to_date"], as_dict=True)
-                    if ai:
-                        planner = ai.planner_request
-                        pfrom = str(ai.from_date) if ai.from_date else None
-                        pto = str(ai.to_date) if ai.to_date else None
-                amt = frappe.utils.flt(g.amount)
-                paid = frappe.utils.flt(g.paid_amt)
-                unpaid = frappe.utils.flt(g.unpaid_amt)
-                if amt > 0 and paid >= amt - 0.001:
+                    ai = asg_cache.get(g.assignment)
+                    if ai is None:
+                        ai = frappe.db.get_value("Work Management Assigner", g.assignment,
+                            ["planner_request", "from_date", "to_date", "assigned_by", "approved_by"], as_dict=True)
+                        asg_cache[g.assignment] = ai
+                key = (g.task or "") + "|" + (g.block or "") + "|" + (g.farm or "")
+                t = tmap.get(key)
+                if not t:
+                    t = {"task": g.task, "block": g.block, "farm": g.farm,
+                         "plan_from": None, "plan_to": None, "work_from": None, "work_to": None,
+                         "days": 0, "qty": 0, "amount": 0, "paid_amt": 0, "unpaid_amt": 0,
+                         "docs": [], "assignments": {}, "runs": {}, "planners": {},
+                         "assigned_by": {}, "fm_approved_by": {}, "entered_by": {},
+                         "hr_approved_by": {}, "gm_approved_by": {}, "rate_num": 0}
+                    tmap[key] = t
+                    torder.append(key)
+                t["docs"].append(g.actuals)
+                if g.assignment:
+                    t["assignments"][g.assignment] = 1
+                if g.run_ref:
+                    t["runs"][g.run_ref] = 1
+                if ai:
+                    if ai.planner_request:
+                        t["planners"][ai.planner_request] = 1
+                    pf = str(ai.from_date) if ai.from_date else None
+                    pt = str(ai.to_date) if ai.to_date else None
+                    if pf and (not t["plan_from"] or pf < t["plan_from"]):
+                        t["plan_from"] = pf
+                    if pt and (not t["plan_to"] or pt > t["plan_to"]):
+                        t["plan_to"] = pt
+                    if ai.assigned_by:
+                        t["assigned_by"][ai.assigned_by] = 1
+                    if ai.approved_by:
+                        t["fm_approved_by"][ai.approved_by] = 1
+                for fld in ("entered_by", "hr_approved_by", "gm_approved_by"):
+                    v = g.get(fld)
+                    if v:
+                        t[fld][v] = 1
+                wf = str(g.wfrom) if g.wfrom else None
+                wt = str(g.wto) if g.wto else None
+                if wf and (not t["work_from"] or wf < t["work_from"]):
+                    t["work_from"] = wf
+                if wt and (not t["work_to"] or wt > t["work_to"]):
+                    t["work_to"] = wt
+                t["days"] = t["days"] + frappe.utils.cint(g.days)
+                t["qty"] = t["qty"] + frappe.utils.flt(g.qty)
+                t["amount"] = t["amount"] + frappe.utils.flt(g.amount)
+                t["paid_amt"] = t["paid_amt"] + frappe.utils.flt(g.paid_amt)
+                t["unpaid_amt"] = t["unpaid_amt"] + frappe.utils.flt(g.unpaid_amt)
+            tasks = []
+            for key in torder:
+                t = tmap[key]
+                amt = t["amount"]
+                if amt > 0 and t["paid_amt"] >= amt - 0.001:
                     pstat = "Paid"
-                elif paid > 0:
+                elif t["paid_amt"] > 0:
                     pstat = "Part paid"
                 else:
                     pstat = "Unpaid"
-                qty = frappe.utils.flt(g.qty)
                 tasks.append({
-                    "actuals": g.actuals, "farm": g.farm, "task": g.task, "block": g.block,
-                    "assignment": g.assignment, "planner": planner,
-                    "plan_from": pfrom, "plan_to": pto,
-                    "work_from": str(g.wfrom) if g.wfrom else None,
-                    "work_to": str(g.wto) if g.wto else None,
-                    "days": frappe.utils.cint(g.days), "qty": qty,
-                    "rate": (amt / qty) if qty else frappe.utils.flt(g.doc_rate),
-                    "amount": amt, "paid_amt": paid, "unpaid_amt": unpaid,
-                    "pay_status": pstat, "run_ref": g.run_ref,
+                    "task": t["task"], "block": t["block"], "farm": t["farm"],
+                    "plan_from": t["plan_from"], "plan_to": t["plan_to"],
+                    "work_from": t["work_from"], "work_to": t["work_to"],
+                    "days": t["days"], "qty": t["qty"],
+                    "rate": (amt / t["qty"]) if t["qty"] else 0,
+                    "amount": amt, "paid_amt": t["paid_amt"], "unpaid_amt": t["unpaid_amt"],
+                    "pay_status": pstat,
+                    "doc_count": len(t["docs"]),
+                    "assignments": sorted(t["assignments"].keys()),
+                    "planners": sorted(t["planners"].keys()),
+                    "runs": sorted(t["runs"].keys()),
+                    "assigned_by": sorted(t["assigned_by"].keys()),
+                    "fm_approved_by": sorted(t["fm_approved_by"].keys()),
+                    "entered_by": sorted(t["entered_by"].keys()),
+                    "hr_approved_by": sorted(t["hr_approved_by"].keys()),
+                    "gm_approved_by": sorted(t["gm_approved_by"].keys()),
                 })
+            tasks = sorted(tasks, key=lambda x: x["work_to"] or "", reverse=True)
             out["tasks"] = tasks
             # raw daily log
             dl = frappe.db.sql("""
-                SELECT we.work_date wdate, ac.task task, ac.block_section block, ac.farm farm,
+                SELECT ac.name actuals, we.work_date wdate, ac.task task, ac.block_section block, ac.farm farm,
                        we.actual_quantity qty, we.amount amount,
                        IFNULL(we.paid,0) paid, IFNULL(we.count_in_payroll,0) in_payroll,
                        we.payment_ref run_ref
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 WHERE """ + hconds + """
-                ORDER BY we.work_date DESC
+                ORDER BY we.work_date ASC
             """, tuple(hparams), as_dict=True)
             daily = []
             for r in dl:
                 qty = frappe.utils.flt(r.qty)
                 amt = frappe.utils.flt(r.amount)
                 daily.append({
+                    "actuals": r.actuals,
                     "wdate": str(r.wdate) if r.wdate else None,
                     "task": r.task, "block": r.block, "farm": r.farm,
                     "qty": qty, "amount": amt, "rate": (amt / qty) if qty else 0,
