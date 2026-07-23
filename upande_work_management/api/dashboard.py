@@ -1271,6 +1271,177 @@ def wm_dashboard(**kwargs):
         out["apr_names"] = names
         out["apr_window"] = {"from": cfrom, "to": cto}
 
+    elif action == "approver_kpis":
+        # Per-approver sign-off KPIs from the hour-level stage timestamps
+        # (custom_submitted_at → FM → HR → GM / accounts), plus the live backlog
+        # sitting at every sign-off queue. Powers the Approver KPIs board.
+        now_dt = frappe.utils.now_datetime()
+        kfrom = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -83)
+        kto = frappe.form_dict.get("to_date") or frappe.utils.today()
+        events = []
+
+        def hours_between(a, b):
+            try:
+                if not a or not b:
+                    return None
+                h = (frappe.utils.get_datetime(b) - frappe.utils.get_datetime(a)).total_seconds() / 3600.0
+                return h if h >= 0 else 0.0
+            except Exception:
+                return None
+
+        def collect(dtype, statefilter, who_field, start_fields, end_fields, step, group):
+            am = frappe.get_meta(dtype)
+            if not am.get_field(who_field):
+                return
+            fields = ["name", "creation", who_field]
+            for f in start_fields + end_fields:
+                if am.get_field(f):
+                    fields.append(f)
+            if am.get_field("farm"):
+                fields.append("farm")
+            rows = frappe.db.get_all(dtype, filters=statefilter, fields=list(set(fields)), limit=5000)
+            for r in rows:
+                who = r.get(who_field)
+                if not who:
+                    continue
+                start = None
+                for f in start_fields:
+                    if r.get(f):
+                        start = r.get(f)
+                        break
+                if not start:
+                    start = r.get("creation")
+                end = None
+                for f in end_fields:
+                    if r.get(f):
+                        end = r.get(f)
+                        break
+                h = hours_between(start, end)
+                if h is None:
+                    continue
+                endd = str(frappe.utils.get_datetime(end).date())
+                if endd < str(kfrom) or endd > str(kto):
+                    continue
+                events.append({"who": who, "step": step, "group": group, "h": h,
+                               "doc": r.get("name"), "farm": r.get("farm"), "end": endd})
+
+        collect("Work Management Planner", {"approved_by": ["is", "set"]}, "approved_by",
+                ["custom_submitted_at"], ["custom_approved_at", "approval_date"],
+                "Plan approval", "Work plans")
+        collect("Work Management Assigner", {"approved_by": ["is", "set"]}, "approved_by",
+                ["custom_submitted_at"], ["custom_gm_approved_at", "approval_date"],
+                "Assignment approval", "Assignments")
+        collect("Work Management Actuals", {"fm_approved_by": ["is", "set"]}, "fm_approved_by",
+                ["custom_submitted_at"], ["custom_fm_approved_at"],
+                "Actuals FM", "Work records")
+        collect("Work Management Actuals", {"hr_approved_by": ["is", "set"]}, "hr_approved_by",
+                ["custom_fm_approved_at", "custom_submitted_at"], ["custom_hr_approved_at", "hr_approval_date"],
+                "Actuals HR", "Work records")
+        collect("Work Management Actuals", {"gm_approved_by": ["is", "set"]}, "gm_approved_by",
+                ["custom_hr_approved_at", "custom_fm_approved_at", "custom_submitted_at"],
+                ["custom_gm_approved_at", "gm_approval_date"],
+                "Actuals GM", "Work records")
+        collect("Work Management Payment", {"accounts_approved_by": ["is", "set"]}, "accounts_approved_by",
+                ["custom_submitted_at", "creation"], ["custom_accounts_approved_at", "accounts_approval_date"],
+                "Accounts release", "Payments")
+
+        per = {}
+        allh = []
+        for e in events:
+            allh.append(e["h"])
+            pp = per.get(e["who"])
+            if not pp:
+                pp = {"who": e["who"], "n": 0, "hsum": 0.0, "hs": [], "b0": 0, "b1": 0, "b2": 0,
+                      "mx": 0.0, "mx_doc": None, "steps": {}, "weeks": {}, "farms": {}}
+                per[e["who"]] = pp
+            pp["n"] = pp["n"] + 1
+            pp["hsum"] = pp["hsum"] + e["h"]
+            pp["hs"].append(e["h"])
+            if e["h"] < 24:
+                pp["b0"] = pp["b0"] + 1
+            elif e["h"] <= 72:
+                pp["b1"] = pp["b1"] + 1
+            else:
+                pp["b2"] = pp["b2"] + 1
+            if e["h"] > pp["mx"]:
+                pp["mx"] = e["h"]
+                pp["mx_doc"] = e["doc"]
+            st = pp["steps"].get(e["step"]) or {"n": 0, "hsum": 0.0}
+            st["n"] = st["n"] + 1
+            st["hsum"] = st["hsum"] + e["h"]
+            pp["steps"][e["step"]] = st
+            wd = frappe.utils.getdate(e["end"])
+            monday = str(frappe.utils.add_days(wd, -wd.weekday()))
+            wk = pp["weeks"].get(monday) or {"n": 0, "hsum": 0.0}
+            wk["n"] = wk["n"] + 1
+            wk["hsum"] = wk["hsum"] + e["h"]
+            pp["weeks"][monday] = wk
+            if e.get("farm"):
+                pp["farms"][e["farm"]] = 1
+
+        aprs = []
+        for who in per:
+            pp = per[who]
+            hs = sorted(pp["hs"])
+            n = len(hs)
+            med = hs[n // 2] if n % 2 else (hs[n // 2 - 1] + hs[n // 2]) / 2.0
+            weekly = [{"wstart": k, "n": pp["weeks"][k]["n"],
+                       "avg_h": pp["weeks"][k]["hsum"] / pp["weeks"][k]["n"]} for k in sorted(pp["weeks"])]
+            steps = [{"step": k, "n": pp["steps"][k]["n"],
+                      "avg_h": pp["steps"][k]["hsum"] / pp["steps"][k]["n"]} for k in sorted(pp["steps"])]
+            aprs.append({"who": who,
+                         "name": frappe.db.get_value("User", who, "full_name") or who,
+                         "n": pp["n"], "avg_h": pp["hsum"] / pp["n"], "med_h": med,
+                         "b0": pp["b0"], "b1": pp["b1"], "b2": pp["b2"],
+                         "mx_h": pp["mx"], "mx_doc": pp["mx_doc"],
+                         "steps": steps, "weekly": weekly, "farms": sorted(pp["farms"].keys())})
+        aprs = sorted(aprs, key=lambda x: x["med_h"])
+        out["approvers"] = aprs
+        allh = sorted(allh)
+        out["team_med_h"] = (allh[len(allh) // 2] if len(allh) % 2 else
+                             (allh[len(allh) // 2 - 1] + allh[len(allh) // 2]) / 2.0) if allh else 0
+        out["events_n"] = len(events)
+
+        queues = []
+
+        def qcount(dtype, state, label, start_fields):
+            am = frappe.get_meta(dtype)
+            fields = ["name", "creation"]
+            for f in start_fields:
+                if am.get_field(f):
+                    fields.append(f)
+            rows = frappe.db.get_all(dtype, filters={"workflow_state": state},
+                                     fields=list(set(fields)), limit=2000)
+            ages = []
+            for r in rows:
+                st = None
+                for f in start_fields:
+                    if r.get(f):
+                        st = r.get(f)
+                        break
+                if not st:
+                    st = r.get("creation")
+                h = hours_between(st, now_dt)
+                if h is not None:
+                    ages.append(h)
+            fresh = len([a for a in ages if a < 24])
+            mid = len([a for a in ages if 24 <= a <= 72])
+            old = len([a for a in ages if a > 72])
+            queues.append({"label": label, "count": len(rows),
+                           "avg_h": (sum(ages) / len(ages)) if ages else 0,
+                           "fresh": fresh, "mid": mid, "old": old})
+
+        qcount("Work Management Planner", "Pending Approval", "Plans → Farm Manager", ["custom_submitted_at"])
+        qcount("Work Management Assigner", "Pending Farm Manager", "Assignments → FM", ["custom_submitted_at"])
+        qcount("Work Management Assigner", "Pending HR Head", "Assignments → HR", ["custom_fm_approved_at", "custom_submitted_at"])
+        qcount("Work Management Assigner", "Pending GM", "Assignments → GM", ["custom_hr_approved_at", "custom_submitted_at"])
+        qcount("Work Management Actuals", "Pending Farm Manager", "Actuals → FM", ["custom_submitted_at"])
+        qcount("Work Management Actuals", "Pending HR Head", "Actuals → HR", ["custom_fm_approved_at", "custom_submitted_at"])
+        qcount("Work Management Actuals", "Pending GM", "Actuals → GM", ["custom_hr_approved_at", "custom_submitted_at"])
+        qcount("Work Management Payment", "Pending Accounts", "Payments → Accounts", ["custom_submitted_at", "creation"])
+        out["queues"] = queues
+        out["window"] = {"from": str(kfrom), "to": str(kto)}
+
     elif action == "cost_center":
         # Block-as-cost-centre ranking: which block consumes the most money.
         # Two money columns side by side: labour spend (from confirmed actuals) and GL
