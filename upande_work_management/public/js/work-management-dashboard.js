@@ -106,7 +106,7 @@
           ["Crew-days of work",fmt(t.crew_days)],
           ["Sum of daily crews",fmt(t.planned_people)],
           ["Target output",fmt(t.planned_qty)],
-          ["Budgeted value",money(t.planned_value)+" KES"]])+
+          ["Planned value",money(t.planned_value)+" KES"]])+
         stageCard("ASSIGNED","#2563eb",[
           ["Assignments",fmt(t.assignments)],
           ["Assigned workers",fmt(t.assigned_workers)],
@@ -128,6 +128,7 @@
         '<span><b>Approved plans</b> — how many work plans are approved.</span>'+
         '<span><b>Crew-days of work</b> — total labour the plans need (workers/day × working days, across every plan). This is the real workload, not a headcount.</span>'+
         '<span><b>Sum of daily crews</b> — every plan’s people-per-day added up. It counts slots across plans, so it is normally far larger than the number of people you employ (that is why it can exceed your workforce).</span>'+
+        '<span><b>Planned value</b> — target output × rate across approved plans: what the planned work is worth when fully delivered.</span>'+
         '<span><b>Assigned workers</b> — distinct people actually put on jobs (each counted once).</span>'+
         '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
         '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
