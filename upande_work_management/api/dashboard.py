@@ -876,7 +876,7 @@ def wm_dashboard(**kwargs):
         out["plans"] = rows
 
     elif action == "substitutions":
-        # full substitution history for the dashboard: who left, who replaced, dates, contribution
+        # full substitution history — set-based (the old per-row loop timed out)
         subs = frappe.db.sql("""
             SELECT we.parent assignment, a.planner_request plan, a.farm, a.task,
                    we.employee left_emp, we.employee_name left_name, we.left_date
@@ -884,27 +884,140 @@ def wm_dashboard(**kwargs):
             INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
             WHERE we.status = 'Left'
             ORDER BY we.left_date DESC
+            LIMIT 400
         """, as_dict=True)
+        asg_names = []
+        emp_ids = []
         for srow in subs:
-            # the replacement(s) on the same assignment = Active rows with a start_date
-            reps = frappe.db.get_all("Work Assignment Employee",
-                filters={"parent": srow.assignment, "status": "Active", "start_date": [">=", srow.left_date]},
-                fields=["employee","employee_name","start_date"], order_by="start_date", limit=1)
-            srow["rep_emp"] = reps[0].employee if reps else None
-            srow["rep_name"] = reps[0].employee_name if reps else None
-            srow["rep_start"] = reps[0].start_date if reps else None
-            # left worker's confirmed contribution
-            lw = frappe.db.sql("""
-                SELECT COALESCE(SUM(we.actual_quantity),0) qty, COUNT(DISTINCT we.work_date) days,
+            if srow.assignment and srow.assignment not in asg_names:
+                asg_names.append(srow.assignment)
+            if srow.left_emp and srow.left_emp not in emp_ids:
+                emp_ids.append(srow.left_emp)
+        reps_map = {}
+        if asg_names:
+            ph = ",".join(["%s"] * len(asg_names))
+            reprows = frappe.db.sql("""
+                SELECT parent, employee, employee_name, start_date
+                FROM `tabWork Assignment Employee`
+                WHERE parent IN (""" + ph + """) AND status = 'Active' AND start_date IS NOT NULL
+                ORDER BY start_date
+            """, tuple(asg_names), as_dict=True)
+            for rr in reprows:
+                reps_map.setdefault(rr.parent, []).append(rr)
+        contrib = {}
+        if emp_ids and asg_names:
+            ph1 = ",".join(["%s"] * len(emp_ids))
+            ph2 = ",".join(["%s"] * len(asg_names))
+            crows = frappe.db.sql("""
+                SELECT we.employee emp, ac.assignment asg,
+                       COALESCE(SUM(we.actual_quantity),0) qty,
+                       COUNT(DISTINCT we.work_date) days,
                        COALESCE(SUM(we.amount),0) pay
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-                WHERE we.employee = %s AND ac.workflow_state='CONFIRMED'
-            """, (srow.left_emp,), as_dict=True)
-            srow["left_qty"] = lw[0].qty if lw else 0
-            srow["left_days"] = lw[0].days if lw else 0
-            srow["left_pay"] = lw[0].pay if lw else 0
+                WHERE ac.workflow_state='CONFIRMED'
+                  AND we.employee IN (""" + ph1 + """)
+                  AND ac.assignment IN (""" + ph2 + """)
+                GROUP BY we.employee, ac.assignment
+            """, tuple(emp_ids) + tuple(asg_names), as_dict=True)
+            for cr in crows:
+                contrib[(cr.emp, cr.asg)] = cr
+        for srow in subs:
+            rep = None
+            for rr in reps_map.get(srow.assignment, []):
+                if not srow.left_date or (rr.start_date and str(rr.start_date) >= str(srow.left_date)):
+                    rep = rr
+                    break
+            srow["rep_emp"] = rep.employee if rep else None
+            srow["rep_name"] = rep.employee_name if rep else None
+            srow["rep_start"] = str(rep.start_date) if rep and rep.start_date else None
+            cr = contrib.get((srow.left_emp, srow.assignment))
+            srow["left_qty"] = frappe.utils.flt(cr.qty) if cr else 0
+            srow["left_days"] = frappe.utils.cint(cr.days) if cr else 0
+            srow["left_pay"] = frappe.utils.flt(cr.pay) if cr else 0
+            srow["left_date"] = str(srow.left_date) if srow.left_date else None
         out["subs"] = subs
+
+    elif action == "timeline":
+        # Daily comparison series: planned output/value vs staffed (assigned) share vs
+        # confirmed actuals — for the delivery timeline chart. Optional farm + range.
+        tfarm = frappe.form_dict.get("farm")
+        tfrom = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -41)
+        tto = frappe.form_dict.get("to_date") or frappe.utils.today()
+        days_idx = {}
+        cursor = frappe.utils.getdate(tfrom)
+        endd = frappe.utils.getdate(tto)
+        guard = 0
+        while cursor <= endd and guard < 400:
+            days_idx[str(cursor)] = {"d": str(cursor), "planned_qty": 0, "assigned_qty": 0, "actual_qty": 0,
+                                     "planned_val": 0, "assigned_val": 0, "actual_val": 0}
+            cursor = frappe.utils.add_days(cursor, 1)
+            guard = guard + 1
+        # actuals per day
+        aconds = "ac.workflow_state='CONFIRMED' AND we.work_date >= %s AND we.work_date <= %s"
+        aparams = [tfrom, tto]
+        if tfarm:
+            aconds = aconds + " AND ac.farm = %s"
+            aparams.append(tfarm)
+        arows = frappe.db.sql("""
+            SELECT we.work_date d, COALESCE(SUM(we.actual_quantity),0) qty, COALESCE(SUM(we.amount),0) val
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE """ + aconds + """
+            GROUP BY we.work_date
+        """, tuple(aparams), as_dict=True)
+        for r in arows:
+            rec = days_idx.get(str(r.d))
+            if rec:
+                rec["actual_qty"] = frappe.utils.flt(r.qty)
+                rec["actual_val"] = frappe.utils.flt(r.val)
+        # approved plans overlapping the window -> spread daily share
+        pflt = {"workflow_state": ["in", ["Approved", "Assigned"]],
+                "from_date": ["<=", tto], "to_date": [">=", tfrom]}
+        if tfarm:
+            pflt["farm"] = tfarm
+        plans = frappe.db.get_all("Work Management Planner", filters=pflt,
+            fields=["name", "farm", "quantity", "total_cost", "working_days", "from_date", "to_date"],
+            limit=2000)
+        staffed = {}
+        if plans:
+            pnames = [p.name for p in plans]
+            ph = ",".join(["%s"] * len(pnames))
+            srws = frappe.db.sql("""
+                SELECT DISTINCT planner_request FROM `tabWork Management Assigner`
+                WHERE planner_request IN (""" + ph + """)
+                  AND workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+            """, tuple(pnames), as_dict=True)
+            for r in srws:
+                staffed[r.planner_request] = 1
+        for pl in plans:
+            wd = frappe.utils.cint(pl.working_days) or (frappe.utils.date_diff(pl.to_date, pl.from_date) + 1)
+            if wd <= 0:
+                continue
+            dq = frappe.utils.flt(pl.quantity) / wd
+            dv = frappe.utils.flt(pl.total_cost) / wd
+            is_staffed = staffed.get(pl.name)
+            cursor = frappe.utils.getdate(pl.from_date)
+            pend = frappe.utils.getdate(pl.to_date)
+            guard = 0
+            while cursor <= pend and guard < 400:
+                rec = days_idx.get(str(cursor))
+                if rec:
+                    rec["planned_qty"] = rec["planned_qty"] + dq
+                    rec["planned_val"] = rec["planned_val"] + dv
+                    if is_staffed:
+                        rec["assigned_qty"] = rec["assigned_qty"] + dq
+                        rec["assigned_val"] = rec["assigned_val"] + dv
+                cursor = frappe.utils.add_days(cursor, 1)
+                guard = guard + 1
+        series = []
+        for kd in sorted(days_idx.keys()):
+            series.append(days_idx[kd])
+        out["days"] = series
+        out["window"] = {"from": str(tfrom), "to": str(tto), "farm": tfarm or None}
+        tl_farms = frappe.db.sql("""SELECT DISTINCT farm FROM `tabWork Management Planner`
+            WHERE farm IS NOT NULL AND farm != '' ORDER BY farm""", as_dict=True)
+        out["farms"] = [f.farm for f in tl_farms]
 
     elif action == "plan_entries":
         nm = frappe.form_dict.get("planner")

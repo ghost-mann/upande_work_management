@@ -88,6 +88,8 @@
 #wpay .tag.unpaid{background:#fff;color:var(--ink);border-color:#94a3b8}
 #wpay .tag.submitted{background:var(--warn-wash);color:var(--warn);border-color:#fde68a}
 #wpay .tag.paid{background:var(--good);color:#fff;border-color:var(--good)}
+#wpay .tag.reviewed{background:var(--pay-wash);color:var(--pay);border-color:#ddd6fe}
+#wpay .tag.sent{background:var(--warn-wash);color:var(--warn);border-color:#fde68a}
 #wpay .tag.pending{background:var(--warn-wash);color:var(--warn);border-color:#fde68a}
 #wpay .tag.tw{background:var(--wash);color:var(--mute)}
 #wpay .tag.sal{background:var(--ink);color:#fff;border-color:var(--ink)}
@@ -202,7 +204,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   <div class="wm-ph">
     <div class="wm-ph__eyebrow">Upande &middot; Work Management</div>
     <h1 class="wm-ph__title">Payment</h1>
-    <p class="wm-ph__sub">Bundle confirmed actuals into payment runs and mark workers paid.</p>
+    <p class="wm-ph__sub">Pay workers one at a time: review each person’s confirmed work, approve it, and accounts releases the money.</p>
   </div>
 
 
@@ -210,9 +212,9 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   
 
   <nav class="tabs" id="pay-tabs">
-    <button data-tab="build" aria-selected="true">Build a run</button>
+    <button data-tab="build" aria-selected="true">Pay workers</button>
     <button data-tab="accounts" aria-selected="false">Awaiting accounts <span class="cnt" id="tab-acc-cnt" style="display:none">0</span></button>
-    <button data-tab="mine" aria-selected="false">My runs</button>
+    <button data-tab="mine" aria-selected="false">History</button>
     <button data-tab="audit" aria-selected="false">Audit</button>
     <button data-tab="insights" aria-selected="false">Insights</button>
   </nav>
@@ -221,9 +223,9 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   <div class="panel on" id="p-build">
     <div class="kpis" id="build-kpis">
       <div class="kpi" style="--kc:var(--pay)"><div class="k">Payable now</div><div class="v" id="k-owed">&mdash;</div><div class="u">KES &middot; unpaid confirmed</div></div>
-      <div class="kpi" style="--kc:var(--blue)"><div class="k">Workers</div><div class="v" id="k-workers">&mdash;</div><div class="u">with unpaid earnings</div></div>
-      <div class="kpi" style="--kc:var(--warn)"><div class="k">Selected</div><div class="v" id="k-selected">0</div><div class="u">in this run</div></div>
-      <div class="kpi" style="--kc:var(--good)"><div class="k">Run total</div><div class="v" id="k-runtotal">0</div><div class="u">KES &middot; to pay</div></div>
+      <div class="kpi" style="--kc:var(--blue)"><div class="k">To review</div><div class="v" id="k-toreview">&mdash;</div><div class="u">workers awaiting review</div></div>
+      <div class="kpi" style="--kc:var(--warn)"><div class="k">Reviewed</div><div class="v" id="k-reviewed">&mdash;</div><div class="u">ready to send to accounts</div></div>
+      <div class="kpi" style="--kc:var(--good)"><div class="k">Sent</div><div class="v" id="k-sent">&mdash;</div><div class="u">awaiting release by accounts</div></div>
     </div>
 
     <div class="filters">
@@ -245,25 +247,12 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
     <div class="farmchips" id="pay-farmchips"></div>
 
-    <div class="sech">Payable workers <span class="hint" id="build-hint">confirmed work, not yet paid</span></div>
+    <div class="sech">Workers <span class="hint" id="build-hint">everyone with confirmed work in this window &mdash; review and pay one at a time</span></div>
     <div id="build-body">
       <div class="loading">Loading payable workers&hellip;</div>
     </div>
 
-    <!-- selection dock -->
-    <div class="dock hidden" id="pay-dock">
-      <div class="dk-fig"><span class="dk-k">Selected</span><span class="dk-v" id="dk-count">0</span></div>
-      <div class="dk-fig"><span class="dk-k">Total</span><span class="dk-v pay" id="dk-total">KES 0</span></div>
-      <div class="dk-title">
-        <label class="fl" for="dk-runtitle" style="margin-bottom:4px;display:block">Run title</label>
-        <input type="text" id="dk-runtitle" placeholder="e.g. Week 27 piece-rate &mdash; Saboti + Vale">
-      </div>
-      <div class="dk-actions">
-        <button class="btn" id="dk-clear">Clear</button>
-        <button class="btn pay" id="dk-create">Create &amp; submit</button>
-      </div>
-    </div>
-  </div>
+    
 
   <!-- ═══════════ AWAITING ACCOUNTS ═══════════ -->
   <div class="panel" id="p-accounts">
@@ -325,6 +314,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
       <div class="modal-body" id="pd-body"><div class="loading">Loading&hellip;</div></div>
       <div class="modal-foot">
         <button type="button" class="btn" id="pd-dismiss">Close</button>
+        <button type="button" class="btn pay" id="pd-review" style="display:none">Mark reviewed</button>
         <button type="button" class="btn good" id="pd-approve" style="display:none">Approve &amp; send to accounts</button>
       </div>
     </div>

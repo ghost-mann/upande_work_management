@@ -150,8 +150,11 @@ def wm_payment(**kwargs):
         rows = frappe.db.sql("""
             SELECT we.employee emp, we.employee_name emp_name, ac.farm farm,
                    COUNT(DISTINCT we.work_date) days,
+                   MIN(we.work_date) wfrom, MAX(we.work_date) wto,
                    COALESCE(SUM(we.actual_quantity),0) qty,
                    COALESCE(SUM(we.amount),0) owed,
+                   COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 THEN we.amount ELSE 0 END),0) unpaid_amt,
+                   COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.custom_reviewed,0)=0 THEN we.amount ELSE 0 END),0) unreviewed_amt,
                    COUNT(DISTINCT ac.name) docs,
                    MIN(IFNULL(we.paid,0)) min_paid,
                    MAX(IFNULL(we.paid,0)) max_paid,
@@ -171,16 +174,19 @@ def wm_payment(**kwargs):
             if r.get("max_paid") == 1 and r.get("min_paid") == 1:
                 r["pay_status"] = "Paid"
             elif rref and runstate in ("Pending Accounts",):
-                r["pay_status"] = "Submitted"
-            elif rref and runstate == "Paid":
+                r["pay_status"] = "Sent to accounts"
+            elif rref and runstate == "Paid" and frappe.utils.flt(r.get("unpaid_amt")) <= 0.001:
                 r["pay_status"] = "Paid"
-            elif r.get("max_paid") == 1:
-                # some rows paid, some not -> treat as Submitted (partially in a run)
-                r["pay_status"] = "Submitted"
+            elif r.get("max_paid") == 1 and frappe.utils.flt(r.get("unpaid_amt")) <= 0.001:
+                r["pay_status"] = "Paid"
+            elif frappe.utils.flt(r.get("unreviewed_amt")) <= 0.001:
+                r["pay_status"] = "Reviewed"
             else:
                 r["pay_status"] = "Unpaid"
             r["run_ref"] = rref or None
-            r["payable"] = 1 if r["pay_status"] == "Unpaid" else 0
+            r["wfrom"] = str(r.get("wfrom")) if r.get("wfrom") else None
+            r["wto"] = str(r.get("wto")) if r.get("wto") else None
+            r["payable"] = 1 if r["pay_status"] in ("Unpaid", "Reviewed") else 0
         out["workers"] = rows
         tot = 0
         for r in rows:
@@ -424,7 +430,7 @@ def wm_payment(**kwargs):
                    we.employee emp, we.employee_name emp_name, we.employment_type emp_type,
                    we.work_date wdate, we.actual_quantity qty, we.amount amount,
                    IFNULL(we.count_in_payroll,0) in_payroll,
-                   IFNULL(we.paid,0) paid, we.payment_ref run_ref
+                   IFNULL(we.paid,0) paid, IFNULL(we.custom_reviewed,0) reviewed, we.payment_ref run_ref
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             WHERE """ + conds + """
@@ -438,7 +444,8 @@ def wm_payment(**kwargs):
                 "emp": d.emp, "emp_name": d.emp_name, "emp_type": d.emp_type,
                 "wdate": str(d.wdate) if d.wdate else None,
                 "qty": frappe.utils.flt(d.qty), "amount": frappe.utils.flt(d.amount),
-                "in_payroll": frappe.utils.cint(d.in_payroll), "pay_status": pstat, "run_ref": d.run_ref
+                "in_payroll": frappe.utils.cint(d.in_payroll), "pay_status": pstat, "run_ref": d.run_ref,
+                "reviewed": frappe.utils.cint(d.reviewed)
             })
         out["detail"] = detrows
         out["totals"] = {"tasks": t_tasks, "qty": t_qty, "total_pay": t_total,
@@ -661,6 +668,7 @@ def wm_payment(**kwargs):
                        COALESCE(SUM(we.amount),0) earned,
                        COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=1 THEN we.amount ELSE 0 END),0) paid_amt,
                        COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 THEN we.amount ELSE 0 END),0) unpaid_amt,
+                       COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND IFNULL(we.custom_reviewed,0)=0 THEN we.amount ELSE 0 END),0) unreviewed_amt,
                        MIN(we.work_date) first_day, MAX(we.work_date) last_day
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
@@ -678,6 +686,7 @@ def wm_payment(**kwargs):
                 "earned": earned,
                 "paid_amt": frappe.utils.flt(k.paid_amt) if k else 0,
                 "unpaid_amt": frappe.utils.flt(k.unpaid_amt) if k else 0,
+                "unreviewed_amt": frappe.utils.flt(k.unreviewed_amt) if k else 0,
                 "avg_per_day": (earned / days) if days else 0,
                 "first_day": str(k.first_day) if k and k.first_day else None,
                 "last_day": str(k.last_day) if k and k.last_day else None,
@@ -793,7 +802,7 @@ def wm_payment(**kwargs):
                 SELECT ac.name actuals, we.work_date wdate, ac.task task, ac.block_section block, ac.farm farm,
                        we.actual_quantity qty, we.amount amount,
                        IFNULL(we.paid,0) paid, IFNULL(we.count_in_payroll,0) in_payroll,
-                       we.payment_ref run_ref
+                       IFNULL(we.custom_reviewed,0) reviewed, we.payment_ref run_ref
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 WHERE """ + hconds + """
@@ -809,7 +818,7 @@ def wm_payment(**kwargs):
                     "task": r.task, "block": r.block, "farm": r.farm,
                     "qty": qty, "amount": amt, "rate": (amt / qty) if qty else 0,
                     "paid": frappe.utils.cint(r.paid), "in_payroll": frappe.utils.cint(r.in_payroll),
-                    "run_ref": r.run_ref,
+                    "reviewed": frappe.utils.cint(r.reviewed), "run_ref": r.run_ref,
                 })
             out["daily"] = daily
             # payment runs that include this worker
@@ -829,6 +838,41 @@ def wm_payment(**kwargs):
                     "days": frappe.utils.cint(r.days), "qty": frappe.utils.flt(r.qty),
                 })
             out["runs"] = runlist
+
+    elif action == "pay_worker_review":
+        # Stamp ONE worker's unpaid confirmed rows in the window as reviewed —
+        # the audit trail between "Unpaid" and "sent to accounts".
+        emp = frappe.form_dict.get("employee")
+        dfrom = frappe.form_dict.get("from_date")
+        dto = frappe.form_dict.get("to_date")
+        if not emp:
+            out["error"] = "employee is required"
+        else:
+            rconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+            rparams = [emp]
+            if dfrom:
+                rconds = rconds + " AND we.work_date >= %s"
+                rparams.append(dfrom)
+            if dto:
+                rconds = rconds + " AND we.work_date <= %s"
+                rparams.append(dto)
+            rows = frappe.db.sql("""
+                SELECT we.name rowname FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE """ + rconds + """
+            """, tuple(rparams), as_dict=True)
+            if not rows:
+                out["error"] = "No unpaid confirmed rows to review in this window"
+            else:
+                now = frappe.utils.now()
+                for r in rows:
+                    frappe.db.set_value("Work Actuals Employee", r.rowname, "custom_reviewed", 1, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", r.rowname, "custom_reviewed_by", frappe.session.user, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", r.rowname, "custom_reviewed_at", now, update_modified=False)
+                frappe.db.commit()
+                out["employee"] = emp
+                out["rows_reviewed"] = len(rows)
+                out["reviewed_by"] = frappe.session.user
 
     elif action == "pay_worker_submit":
         # Approve ONE worker's unpaid confirmed earnings and send them to accounts

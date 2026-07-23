@@ -14,7 +14,10 @@
   "count_in_payroll",
   "amount",
   "paid",
-  "payment_ref"
+  "payment_ref",
+  "custom_reviewed",
+  "custom_reviewed_by",
+  "custom_reviewed_at"
  ],
  "fields": [
   {
@@ -86,6 +89,24 @@
    "fieldname": "payment_ref",
    "fieldtype": "Data",
    "label": "Payment Ref",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_reviewed",
+   "fieldtype": "Check",
+   "label": "Reviewed"
+  },
+  {
+   "fieldname": "custom_reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_reviewed_at",
+   "fieldtype": "Datetime",
+   "label": "Reviewed At",
    "read_only": 1
   }
  ],
