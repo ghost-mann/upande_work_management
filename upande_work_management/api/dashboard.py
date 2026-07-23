@@ -1271,6 +1271,232 @@ def wm_dashboard(**kwargs):
         out["apr_names"] = names
         out["apr_window"] = {"from": cfrom, "to": cto}
 
+    elif action == "ops_kpis":
+        # Operations control board: where money & work stand at every stage (with
+        # age), how long until workers get paid, and each approver's desk measured
+        # by throughput and value — no minutes-to-approve noise.
+        now_dt = frappe.utils.now_datetime()
+        today_s = frappe.utils.today()
+        kfrom = frappe.form_dict.get("from_date") or frappe.utils.add_days(today_s, -83)
+        kto = frappe.form_dict.get("to_date") or today_s
+
+        def age_days(ts):
+            try:
+                if not ts:
+                    return None
+                d = (now_dt - frappe.utils.get_datetime(ts)).total_seconds() / 86400.0
+                return d if d >= 0 else 0.0
+            except Exception:
+                return None
+
+        # ---- 1 · STAGE LEDGER: value sitting at every step right now ----
+        ledger = []
+
+        def ledge(key, label, route, rows, val_field, ts_fields):
+            total = 0.0
+            oldest = 0.0
+            for r in rows:
+                total = total + frappe.utils.flt(r.get(val_field))
+                ts = None
+                for f in ts_fields:
+                    if r.get(f):
+                        ts = r.get(f)
+                        break
+                a = age_days(ts)
+                if a and a > oldest:
+                    oldest = a
+            ledger.append({"key": key, "label": label, "route": route,
+                           "count": len(rows), "value": total, "oldest_d": oldest})
+
+        ledge("plans_pending", "Plans awaiting approval", "/work-planner",
+            frappe.db.get_all("Work Management Planner", filters={"workflow_state": "Pending Approval"},
+                fields=["total_cost", "custom_submitted_at", "creation"], limit=2000),
+            "total_cost", ["custom_submitted_at", "creation"])
+        appr_plans = frappe.db.get_all("Work Management Planner",
+            filters={"workflow_state": ["in", ["Approved", "Assigned"]]},
+            fields=["name", "total_cost", "custom_approved_at", "approval_date"], limit=5000)
+        staffed_p = {}
+        if appr_plans:
+            pnames = [r.name for r in appr_plans]
+            ph = ",".join(["%s"] * len(pnames))
+            for r in frappe.db.sql("""SELECT DISTINCT planner_request p FROM `tabWork Management Assigner`
+                WHERE planner_request IN (""" + ph + """) AND workflow_state != 'Rejected'""",
+                tuple(pnames), as_dict=True):
+                staffed_p[r.p] = 1
+        unstaffed = [r for r in appr_plans if not staffed_p.get(r.name)]
+        ledge("plans_unstaffed", "Approved plans not yet staffed", "/work-assigner",
+            unstaffed, "total_cost", ["custom_approved_at", "approval_date"])
+        asg_rows = frappe.db.get_all("Work Management Assigner",
+            filters={"workflow_state": ["in", ["Pending Farm Manager", "Pending HR Head", "Pending GM"]]},
+            fields=["planned_cost", "custom_submitted_at", "creation"], limit=2000)
+        ledge("asg_pending", "Assignments in approval", "/work-assigner",
+            asg_rows, "planned_cost", ["custom_submitted_at", "creation"])
+        asg_ok = frappe.db.get_all("Work Management Assigner", filters={"workflow_state": "Assigned"},
+            fields=["name", "planned_cost", "custom_gm_approved_at", "approval_date"], limit=5000)
+        has_act = {}
+        if asg_ok:
+            anames = [r.name for r in asg_ok]
+            ph = ",".join(["%s"] * len(anames))
+            for r in frappe.db.sql("""SELECT DISTINCT assignment a FROM `tabWork Management Actuals`
+                WHERE assignment IN (""" + ph + """)""", tuple(anames), as_dict=True):
+                has_act[r.a] = 1
+        no_act = [r for r in asg_ok if not has_act.get(r.name)]
+        ledge("asg_noactuals", "Staffed, no actuals recorded yet", "/work-actuals",
+            no_act, "planned_cost", ["custom_gm_approved_at", "approval_date"])
+        act_rows = frappe.db.get_all("Work Management Actuals",
+            filters={"workflow_state": ["in", ["Pending Farm Manager", "Pending HR Head", "Pending GM"]]},
+            fields=["total_payment", "workflow_state", "custom_submitted_at", "creation"], limit=2000)
+        ledge("act_pending", "Actuals in approval (FM/HR/GM)", "/work-actuals",
+            act_rows, "total_payment", ["custom_submitted_at", "creation"])
+        cu = frappe.db.sql("""
+            SELECT COALESCE(SUM(we.amount),0) v, COUNT(DISTINCT we.employee) c, MIN(we.work_date) oldest
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0
+              AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND we.payment_ref IS NULL
+        """, as_dict=True)
+        ledger.append({"key": "confirmed_unpaid", "label": "Confirmed earnings not yet sent to accounts",
+            "route": "/work-payment", "count": frappe.utils.cint(cu[0].c) if cu else 0,
+            "value": frappe.utils.flt(cu[0].v) if cu else 0,
+            "oldest_d": frappe.utils.date_diff(today_s, cu[0].oldest) if cu and cu[0].oldest else 0})
+        ledge("sent_accounts", "Sent, awaiting release by accounts", "/work-payment",
+            frappe.db.get_all("Work Management Payment", filters={"workflow_state": "Pending Accounts"},
+                fields=["grand_total", "custom_submitted_at", "creation"], limit=2000),
+            "grand_total", ["custom_submitted_at", "creation"])
+        out["ledger"] = ledger
+
+        # ---- 2 · SPEED TO PAY: how long a day of work takes to reach the worker ----
+        pd_rows = frappe.db.sql("""
+            SELECT we.work_date wd, we.amount amt, p.accounts_approval_date paid_d,
+                   ac.gm_approval_date conf_d, ac.farm farm
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            LEFT JOIN `tabWork Management Payment` p ON we.payment_ref = p.name
+            WHERE IFNULL(we.paid,0)=1 AND we.amount>0 AND we.work_date >= %s AND we.work_date <= %s
+        """, (kfrom, kto), as_dict=True)
+        v_all = 0.0
+        vd_pay = 0.0
+        vd_conf = 0.0
+        v_conf = 0.0
+        farm_pay = {}
+        weeks_pay = {}
+        for r in pd_rows:
+            amt = frappe.utils.flt(r.amt)
+            if r.paid_d and r.wd:
+                dd = frappe.utils.date_diff(r.paid_d, r.wd)
+                if dd >= 0:
+                    v_all = v_all + amt
+                    vd_pay = vd_pay + amt * dd
+                    fp = farm_pay.get(r.farm) or {"v": 0.0, "vd": 0.0}
+                    fp["v"] = fp["v"] + amt
+                    fp["vd"] = fp["vd"] + amt * dd
+                    farm_pay[r.farm] = fp
+                    wd0 = frappe.utils.getdate(r.wd)
+                    monday = str(frappe.utils.add_days(wd0, -wd0.weekday()))
+                    wp = weeks_pay.get(monday) or {"v": 0.0, "vd": 0.0}
+                    wp["v"] = wp["v"] + amt
+                    wp["vd"] = wp["vd"] + amt * dd
+                    weeks_pay[monday] = wp
+            if r.conf_d and r.wd:
+                dc = frappe.utils.date_diff(r.conf_d, r.wd)
+                if dc >= 0:
+                    v_conf = v_conf + amt
+                    vd_conf = vd_conf + amt * dc
+        # confirmed-but-unpaid backlog also has an implicit wait (still counting)
+        out["speed"] = {
+            "days_to_pay": (vd_pay / v_all) if v_all else None,
+            "days_to_confirm": (vd_conf / v_conf) if v_conf else None,
+            "paid_value": v_all,
+            "farms": sorted([{"farm": f, "days": farm_pay[f]["vd"] / farm_pay[f]["v"]}
+                             for f in farm_pay if farm_pay[f]["v"]], key=lambda x: x["days"]),
+            "weekly": [{"wstart": k, "days": weeks_pay[k]["vd"] / weeks_pay[k]["v"]}
+                       for k in sorted(weeks_pay) if weeks_pay[k]["v"]],
+        }
+
+        # ---- 3 · APPROVER DESKS: throughput & value, no stopwatch ----
+        desks = {}
+        names2 = {}
+
+        def desk_add(dtype, statefilter, who_field, val_field, when_fields, unpaid_flag):
+            am = frappe.get_meta(dtype)
+            if not am.get_field(who_field):
+                return
+            fields = ["name", "creation", who_field, val_field]
+            for f in when_fields:
+                if am.get_field(f):
+                    fields.append(f)
+            if am.get_field("paid"):
+                fields.append("paid")
+            rows = frappe.db.get_all(dtype, filters=statefilter, fields=list(set(fields)), limit=5000)
+            for r in rows:
+                who = r.get(who_field)
+                if not who:
+                    continue
+                when = None
+                for f in when_fields:
+                    if r.get(f):
+                        when = r.get(f)
+                        break
+                if not when:
+                    when = r.get("creation")
+                wd = str(frappe.utils.get_datetime(when).date())
+                if wd < str(kfrom) or wd > str(kto):
+                    continue
+                dk = desks.get(who)
+                if not dk:
+                    dk = {"who": who, "n": 0, "value": 0.0, "weeks": {}, "unpaid_signed": 0.0, "groups": {}}
+                    desks[who] = dk
+                v = frappe.utils.flt(r.get(val_field))
+                dk["n"] = dk["n"] + 1
+                dk["value"] = dk["value"] + v
+                dk["groups"][dtype] = 1
+                d0 = frappe.utils.getdate(wd)
+                monday = str(frappe.utils.add_days(d0, -d0.weekday()))
+                wkk = dk["weeks"].get(monday) or {"n": 0, "v": 0.0}
+                wkk["n"] = wkk["n"] + 1
+                wkk["v"] = wkk["v"] + v
+                dk["weeks"][monday] = wkk
+                if unpaid_flag and not frappe.utils.cint(r.get("paid")):
+                    dk["unpaid_signed"] = dk["unpaid_signed"] + v
+                if who not in names2:
+                    names2[who] = frappe.db.get_value("User", who, "full_name") or who
+
+        desk_add("Work Management Planner", {"approved_by": ["is", "set"]}, "approved_by",
+                 "total_cost", ["custom_approved_at", "approval_date"], False)
+        desk_add("Work Management Assigner", {"approved_by": ["is", "set"]}, "approved_by",
+                 "planned_cost", ["custom_gm_approved_at", "approval_date"], False)
+        desk_add("Work Management Actuals", {"gm_approved_by": ["is", "set"]}, "gm_approved_by",
+                 "total_payment", ["custom_gm_approved_at", "gm_approval_date"], True)
+        desk_add("Work Management Actuals", {"hr_approved_by": ["is", "set"]}, "hr_approved_by",
+                 "total_payment", ["custom_hr_approved_at", "hr_approval_date"], False)
+        desk_add("Work Management Payment", {"accounts_approved_by": ["is", "set"]}, "accounts_approved_by",
+                 "grand_total", ["custom_accounts_approved_at", "accounts_approval_date"], False)
+        GLBL = {"Work Management Planner": "Plans", "Work Management Assigner": "Assignments",
+                "Work Management Actuals": "Actuals", "Work Management Payment": "Payments"}
+        dlist = []
+        this_monday = str(frappe.utils.add_days(frappe.utils.getdate(today_s),
+                                                -frappe.utils.getdate(today_s).weekday()))
+        for who in desks:
+            dk = desks[who]
+            weekly = [{"wstart": k, "n": dk["weeks"][k]["n"], "v": dk["weeks"][k]["v"]}
+                      for k in sorted(dk["weeks"])]
+            tw = dk["weeks"].get(this_monday) or {"n": 0, "v": 0.0}
+            dlist.append({"who": who, "name": names2.get(who) or who,
+                          "n": dk["n"], "value": dk["value"],
+                          "week_n": tw["n"], "week_v": tw["v"],
+                          "unpaid_signed": dk["unpaid_signed"],
+                          "weekly": weekly,
+                          "groups": sorted([GLBL.get(g, g) for g in dk["groups"]])})
+        dlist = sorted(dlist, key=lambda x: x["value"], reverse=True)
+        out["desks"] = dlist
+        # rejections per stage (attribution to a person is not stored — stage level)
+        out["rejected"] = {
+            "plans": frappe.db.count("Work Management Planner", {"workflow_state": "Rejected"}),
+            "assignments": frappe.db.count("Work Management Assigner", {"workflow_state": "Rejected"}),
+            "actuals": frappe.db.count("Work Management Actuals", {"workflow_state": "Rejected"}),
+        }
+        out["window"] = {"from": str(kfrom), "to": str(kto)}
+
     elif action == "approver_kpis":
         # Per-approver sign-off KPIs from the hour-level stage timestamps
         # (custom_submitted_at → FM → HR → GM / accounts), plus the live backlog
