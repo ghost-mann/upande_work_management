@@ -1,0 +1,57 @@
+[
+ {
+  "doctype": "Workflow State",
+  "name": "Approved",
+  "workflow_state_name": "Approved"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Assigned",
+  "workflow_state_name": "Assigned"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "CONFIRMED",
+  "workflow_state_name": "CONFIRMED"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Draft",
+  "workflow_state_name": "Draft"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Paid",
+  "workflow_state_name": "Paid"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Pending Accounts",
+  "workflow_state_name": "Pending Accounts"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Pending Approval",
+  "workflow_state_name": "Pending Approval"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Pending Farm Manager",
+  "workflow_state_name": "Pending Farm Manager"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Pending GM",
+  "workflow_state_name": "Pending GM"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Pending HR Head",
+  "workflow_state_name": "Pending HR Head"
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Rejected",
+  "workflow_state_name": "Rejected"
+ }
+]

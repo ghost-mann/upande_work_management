@@ -1,0 +1,74 @@
+[
+ {
+  "doctype": "Role",
+  "name": "Agriculture Manager",
+  "role_name": "Agriculture Manager",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "Coffee Clerk",
+  "role_name": "Coffee Clerk",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "Farm Manager",
+  "role_name": "Farm Manager",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "Farm Manager Endebess",
+  "role_name": "Farm Manager Endebess",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "Farm Manager Lokitela",
+  "role_name": "Farm Manager Lokitela",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "Farm Manager Saboti",
+  "role_name": "Farm Manager Saboti",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "Farm Manager Valle",
+  "role_name": "Farm Manager Valle",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "General Manager",
+  "role_name": "General Manager",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "HOD HR",
+  "role_name": "HOD HR",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "HR Clerk",
+  "role_name": "HR Clerk",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "HR Manager Kaitet",
+  "role_name": "HR Manager Kaitet",
+  "desk_access": 1
+ },
+ {
+  "doctype": "Role",
+  "name": "Production Section Head",
+  "role_name": "Production Section Head",
+  "desk_access": 1
+ }
+]

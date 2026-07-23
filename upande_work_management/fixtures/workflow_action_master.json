@@ -1,0 +1,47 @@
+[
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Approve",
+  "workflow_action_name": "Approve"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "FM Approve",
+  "workflow_action_name": "FM Approve"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "GM Approve",
+  "workflow_action_name": "GM Approve"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "HR Approve",
+  "workflow_action_name": "HR Approve"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Mark Paid",
+  "workflow_action_name": "Mark Paid"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Re-submit",
+  "workflow_action_name": "Re-submit"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Reject",
+  "workflow_action_name": "Reject"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Send to Accounts",
+  "workflow_action_name": "Send to Accounts"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Submit for Approval",
+  "workflow_action_name": "Submit for Approval"
+ }
+]

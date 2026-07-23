@@ -1,0 +1,880 @@
+[
+ {
+  "doctype": "Workflow",
+  "document_type": "Work Management Planner",
+  "is_active": 1,
+  "name": "Work Management Planner Approval",
+  "override_status": 0,
+  "send_email_alert": 0,
+  "states": [
+   {
+    "allow_edit": "Production Section Head",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "1",
+    "is_optional_state": 0,
+    "state": "Approved"
+   },
+   {
+    "allow_edit": "Production Section Head",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   }
+  ],
+  "transitions": [
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "Production Section Head",
+    "next_state": "Pending Approval",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Pending Approval",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "condition": "doc.farm == \"Saboti\"",
+    "next_state": "Approved",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "condition": "doc.farm == \"Saboti\"",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "condition": "doc.farm == \"Lokitela\"",
+    "next_state": "Approved",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "condition": "doc.farm == \"Lokitela\"",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "condition": "doc.farm == \"Endebess\"",
+    "next_state": "Approved",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "condition": "doc.farm == \"Endebess\"",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "condition": "doc.farm == \"Vale\"",
+    "next_state": "Approved",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "condition": "doc.farm == \"Vale\"",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Approved",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Approval"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "Production Section Head",
+    "next_state": "Pending Approval",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Pending Approval",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   }
+  ],
+  "workflow_name": "Work Management Planner Approval",
+  "workflow_state_field": "workflow_state"
+ },
+ {
+  "doctype": "Workflow",
+  "document_type": "Work Management Assigner",
+  "is_active": 1,
+  "name": "Work Management Assigner Approval",
+  "override_status": 0,
+  "send_email_alert": 0,
+  "states": [
+   {
+    "allow_edit": "HR User",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "HOD HR",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "allow_edit": "HOD HR",
+    "doc_status": "1",
+    "is_optional_state": 0,
+    "state": "Assigned"
+   },
+   {
+    "allow_edit": "HR User",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   },
+   {
+    "allow_edit": "HR Manager Kaitet",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "allow_edit": "HR Manager Kaitet",
+    "doc_status": "1",
+    "is_optional_state": 0,
+    "state": "Assigned"
+   },
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Saboti",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Lokitela",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Endebess",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Valle",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "General Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending GM"
+   },
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   },
+   {
+    "allow_edit": "Farm Manager Saboti",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "Farm Manager Saboti",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   },
+   {
+    "allow_edit": "Farm Manager Lokitela",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "Farm Manager Lokitela",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   },
+   {
+    "allow_edit": "Farm Manager Endebess",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "Farm Manager Endebess",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   },
+   {
+    "allow_edit": "Farm Manager Valle",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "Farm Manager Valle",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   }
+  ],
+  "transitions": [
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "HR User",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "HR Manager",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "HR Approve",
+    "allow_self_approval": 1,
+    "allowed": "HOD HR",
+    "next_state": "Pending GM",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "HOD HR",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "HR User",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "HR Manager",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "HR Approve",
+    "allow_self_approval": 1,
+    "allowed": "HR Manager Kaitet",
+    "next_state": "Pending GM",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "HR Manager Kaitet",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "GM Approve",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Assigned",
+    "send_email_to_creator": 0,
+    "state": "Pending GM"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending GM"
+   }
+  ],
+  "workflow_name": "Work Management Assigner Approval",
+  "workflow_state_field": "workflow_state"
+ },
+ {
+  "doctype": "Workflow",
+  "document_type": "Work Management Actuals",
+  "is_active": 1,
+  "name": "Work Management Actuals Approval",
+  "override_status": 0,
+  "send_email_alert": 0,
+  "states": [
+   {
+    "allow_edit": "HR Clerk",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "HOD HR",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "allow_edit": "General Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending GM"
+   },
+   {
+    "allow_edit": "General Manager",
+    "doc_status": "1",
+    "is_optional_state": 0,
+    "state": "CONFIRMED"
+   },
+   {
+    "allow_edit": "HR Clerk",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   },
+   {
+    "allow_edit": "HR Manager Kaitet",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Saboti",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Lokitela",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Endebess",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "allow_edit": "Farm Manager Valle",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Farm Manager"
+   }
+  ],
+  "transitions": [
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "HR Clerk",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Submit for Approval",
+    "allow_self_approval": 1,
+    "allowed": "HR User",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "HR Approve",
+    "allow_self_approval": 1,
+    "allowed": "HOD HR",
+    "next_state": "Pending GM",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "HOD HR",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "GM Approve",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "CONFIRMED",
+    "send_email_to_creator": 0,
+    "state": "Pending GM"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending GM"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "HR Clerk",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "HR User",
+    "next_state": "Pending Farm Manager",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "HR Approve",
+    "allow_self_approval": 1,
+    "allowed": "HR Manager Kaitet",
+    "next_state": "Pending GM",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "HR Manager Kaitet",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending HR Head"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Saboti",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Lokitela",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Endebess",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "FM Approve",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "next_state": "Pending HR Head",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager Valle",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Farm Manager"
+   }
+  ],
+  "workflow_name": "Work Management Actuals Approval",
+  "workflow_state_field": "workflow_state"
+ },
+ {
+  "doctype": "Workflow",
+  "document_type": "Work Management Payment",
+  "is_active": 1,
+  "name": "Work Management Payment Approval",
+  "override_status": 0,
+  "send_email_alert": 0,
+  "states": [
+   {
+    "allow_edit": "HR Clerk",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "Accounts Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Accounts"
+   },
+   {
+    "allow_edit": "Accounts Manager",
+    "doc_status": "1",
+    "is_optional_state": 0,
+    "state": "Paid"
+   },
+   {
+    "allow_edit": "HR Clerk",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   }
+  ],
+  "transitions": [
+   {
+    "action": "Send to Accounts",
+    "allow_self_approval": 1,
+    "allowed": "HR Clerk",
+    "next_state": "Pending Accounts",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Send to Accounts",
+    "allow_self_approval": 1,
+    "allowed": "HOD HR",
+    "next_state": "Pending Accounts",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Mark Paid",
+    "allow_self_approval": 1,
+    "allowed": "Accounts Manager",
+    "next_state": "Paid",
+    "send_email_to_creator": 0,
+    "state": "Pending Accounts"
+   },
+   {
+    "action": "Mark Paid",
+    "allow_self_approval": 1,
+    "allowed": "Accounts User",
+    "next_state": "Paid",
+    "send_email_to_creator": 0,
+    "state": "Pending Accounts"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "Accounts Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Accounts"
+   },
+   {
+    "action": "Re-submit",
+    "allow_self_approval": 1,
+    "allowed": "HR Clerk",
+    "next_state": "Pending Accounts",
+    "send_email_to_creator": 0,
+    "state": "Rejected"
+   },
+   {
+    "action": "Send to Accounts",
+    "allow_self_approval": 1,
+    "allowed": "HR Manager Kaitet",
+    "next_state": "Pending Accounts",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   }
+  ],
+  "workflow_name": "Work Management Payment Approval",
+  "workflow_state_field": "workflow_state"
+ }
+]
