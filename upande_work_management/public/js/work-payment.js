@@ -342,11 +342,16 @@
       if(oa!==ob) return oa-ob;
       return (b.unpaid_amt||b.owed||0)-(a.unpaid_amt||a.owed||0);
     });
-    var h='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
-      '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
-      '<th class="n">Earned KES</th><th class="n">Unpaid KES</th><th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
+    var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px"><span class="hint" id="pw-count">'+
+      fmt(rows.length)+' of '+fmt((ST.workers||[]).length)+' workers</span><span style="flex:1"></span>'+
+      '<span class="hint">Review each person, then approve &amp; send their pay to accounts &mdash; one at a time.</span></div>';
+    h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
+      '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
+      '<th class="n">Earned KES</th><th class="n">Paid KES</th><th class="n">Unpaid KES</th><th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
+    var tq=0, te=0, tp=0, tu=0;
     rows.forEach(function(w){
       var unpaid=w.unpaid_amt!=null?w.unpaid_amt:w.owed;
+      tq+=(w.qty||0); te+=(w.owed||0); tp+=(w.paid_amt||0); tu+=(unpaid||0);
       var acts='<button type="button" class="btn sm" data-review="'+esc(w.emp)+'">Review</button>';
       if(w.pay_status==="Reviewed"){
         acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
@@ -359,15 +364,19 @@
         '<td class="m">'+esc(w.emp)+'</td>'+
         '<td>'+esc(w.farm||"—")+'</td>'+
         '<td class="m">'+esc(dshort(w.wfrom))+' &rarr; '+esc(dshort(w.wto))+'</td>'+
+        '<td class="n m">'+fmt(w.tasks)+'</td>'+
         '<td class="n m">'+fmt(w.days)+'</td>'+
         '<td class="n m">'+fmt(w.qty)+'</td>'+
         '<td class="n m">'+money(w.owed)+'</td>'+
+        '<td class="n m">'+money(w.paid_amt)+'</td>'+
         '<td class="n m">'+money(unpaid)+'</td>'+
         '<td class="c">'+payTag(w.pay_status)+runRef+'</td>'+
         '<td class="c" style="white-space:nowrap">'+acts+'</td></tr>';
     });
-    h+='</tbody></table></div></div>';
-    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically.</div>';
+    h+='</tbody><tfoot><tr><th colspan="6">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
+       '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te)+'</th><th class="n">'+fmt(tp)+'</th><th class="n">'+fmt(tu)+'</th>'+
+       '<th colspan="2"></th></tr></tfoot></table></div></div>';
+    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review.</div>';
     box.innerHTML=h;
     box.querySelectorAll("[data-review]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-review"), payWindow()); };
@@ -515,22 +524,34 @@
   }
 
   function runCard(r, canPay){
-    var foot='<button type="button" class="btn sm" data-view="'+esc(r.name)+'">View lines</button>';
+    var foot='';
+    if(r.employee){
+      foot+='<button type="button" class="btn sm" data-wreview="'+esc(r.employee)+'" data-from="'+esc(r.period_from||"")+'" data-to="'+esc(r.period_to||"")+'">Review worker</button>';
+    }
+    foot+='<button type="button" class="btn sm" data-view="'+esc(r.name)+'">View lines</button>';
+    foot+='<button type="button" class="btn sm" data-withdraw="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" style="color:var(--warn);border-color:#fde68a">Return to unpaid</button>';
     if(canPay){
       foot+='<button type="button" class="btn good sm" data-paid="'+esc(r.name)+'">Mark paid</button>';
     }
     return '<div class="runcard">'+
       '<div class="rc-head">'+
         '<div><div class="rc-title">'+esc(r.run_title||r.name)+'</div>'+
-        '<div class="rc-sub">'+esc(r.name)+' · prepared by '+esc(r.prepared_by||"—")+' · '+esc(r.run_date||"")+'</div></div>'+
+        '<div class="rc-sub">'+esc(r.name)+' · prepared by '+esc(r.prepared_by||"—")+' · '+esc(r.run_date||"")+
+        (r.period_from?' · work '+esc(dshort(r.period_from))+' → '+esc(dshort(r.period_to)):'')+'</div></div>'+
         '<span class="tag pending">Pending accounts</span>'+
       '</div>'+
       '<div class="rc-figs">'+
-        '<div class="rc-fig"><div class="rf-k">Workers</div><div class="rf-v">'+fmt(r.total_workers)+'</div></div>'+
+        '<div class="rc-fig"><div class="rf-k">Worker'+(r.total_workers===1?'':'s')+'</div><div class="rf-v">'+(r.total_workers===1?esc(r.employee_name||"1"):fmt(r.total_workers))+'</div></div>'+
         '<div class="rc-fig"><div class="rf-k">Grand total</div><div class="rf-v">'+money(r.grand_total)+'</div></div>'+
       '</div>'+
       '<div class="rc-foot">'+foot+'</div>'+
     '</div>';
+  }
+
+  function accountsWindow(r){
+    return { from:r&&r.getAttribute?(r.getAttribute("data-from")||""):(r||{}).period_from||"",
+             to:r&&r.getAttribute?(r.getAttribute("data-to")||""):(r||{}).period_to||"",
+             refresh:function(){ loadAccounts(); refreshAccountsCount(); loadPayable(); } };
   }
 
   function wireRunCards(box){
@@ -540,6 +561,32 @@
     box.querySelectorAll("[data-paid]").forEach(function(b){
       b.onclick=function(){ markPaid(b.getAttribute("data-paid")); };
     });
+    box.querySelectorAll("[data-wreview]").forEach(function(b){
+      b.onclick=function(){ openWorkerReview(b.getAttribute("data-wreview"), accountsWindow(b)); };
+    });
+    box.querySelectorAll("[data-withdraw]").forEach(function(b){
+      b.onclick=function(){ withdrawRun(b.getAttribute("data-withdraw"), b.getAttribute("data-nm")); };
+    });
+  }
+
+  function withdrawRun(name, nm){
+    confirmModal(
+      "Return to unpaid",
+      '<p style="margin:0 0 10px">Take <b>'+esc(nm)+'</b> ('+esc(name)+') out of the accounts queue?</p>'+
+      '<p class="note" style="margin:0">The payment reference is removed, the worker goes back to <b>Unpaid</b> and their review is cleared — correct the days if needed, then review and send again.</p>',
+      "Return to unpaid",
+      function(){
+        call({ action:"pay_run_withdraw", name:name }, true)
+          .then(function(d){
+            if(d.error){ toast(d.error,"bad"); return; }
+            toast(esc(nm)+" returned to unpaid — redo review when ready","good");
+            loadAccounts();
+            refreshAccountsCount();
+            loadPayable();
+          })
+          .catch(function(e){ toast("Could not return: "+e.message,"bad"); });
+      }
+    );
   }
 
   function markPaid(name){
