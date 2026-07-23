@@ -165,6 +165,20 @@
 </style>
 <link rel="stylesheet" href="/assets/upande_work_management/css/wm-theme.css">
 
+<style>
+/* account button + menu */
+.wm-account{position:relative;display:flex}
+button.wm-avatar{border:0;cursor:pointer;transition:transform .15s,box-shadow .15s;font-family:"Poppins",sans-serif}
+button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgba(10,10,10,.5)}
+.wm-menu{position:absolute;top:calc(100% + 10px);right:0;min-width:235px;background:rgba(250,250,246,.93);-webkit-backdrop-filter:saturate(1.6) blur(22px);backdrop-filter:saturate(1.6) blur(22px);border:1px solid rgba(255,255,255,.8);border-radius:16px;box-shadow:0 30px 60px -20px rgba(10,10,10,.35),inset 0 0 0 1px rgba(10,10,10,.05);padding:8px;display:none;z-index:200}
+.wm-menu.on{display:block}
+.wm-menu__id{padding:10px 12px 9px;font:600 12px "Poppins",sans-serif;color:#0a0a0a;border-bottom:1px solid rgba(10,10,10,.07);margin-bottom:6px;word-break:break-all}
+.wm-menu__id small{display:block;font:500 9px "Poppins",sans-serif;text-transform:uppercase;letter-spacing:1.4px;color:#8a8780;margin-bottom:3px}
+.wm-menu a{display:block;padding:9px 12px;border-radius:10px;font:500 12.5px "Poppins",sans-serif;color:#3a3a34;text-decoration:none}
+.wm-menu a:hover{background:rgba(10,10,10,.05);color:#0a0a0a;text-decoration:none}
+.wm-menu a.danger{color:#b91c1c}
+.wm-menu a.danger:hover{background:rgba(185,28,28,.08);color:#b91c1c}
+</style>
 <div class="wm-canvas">
 <div id="wpay">
   <header class="wm-top">
@@ -174,7 +188,16 @@
       <div class="wm-top__product">Work Management<small>Command Centre</small></div>
     </div>
     <nav class="wm-top__nav"><a href="/work-management">Dashboard</a><a href="/work-planner">Planner</a><a href="/work-assigner">Assigner</a><a href="/work-actuals">Actuals</a><a href="/work-payment" class="on">Payment</a><a href="/app" class="desk">&larr; Desk</a></nav>
-    <div class="wm-top__right"><span class="who" id="pay-who">&hellip;</span><div class="wm-avatar" id="wm-avatar" aria-hidden="true">&middot;</div></div>
+    <div class="wm-top__right"><span class="who" id="pay-who">&hellip;</span><div class="wm-account" id="wm-account">
+      <button type="button" class="wm-avatar" id="wm-avatar" aria-haspopup="menu" aria-expanded="false" title="Account">&middot;</button>
+      <div class="wm-menu" id="wm-account-menu" role="menu">
+        <div class="wm-menu__id"><small>Signed in as</small><span id="wm-account-id">&hellip;</span></div>
+        <a href="/me" role="menuitem" id="wm-account-me">My account</a>
+        <a href="/app" role="menuitem" id="wm-account-desk">Open Desk</a>
+        <a href="/login" role="menuitem" id="wm-account-login" style="display:none">Log in</a>
+        <a href="/?cmd=web_logout" role="menuitem" class="danger" id="wm-account-logout">Log out</a>
+      </div>
+    </div></div>
   </header>
   <div class="wm-ph">
     <div class="wm-ph__eyebrow">Upande &middot; Work Management</div>
@@ -369,5 +392,37 @@
     }
     if (tries > 40) clearInterval(t);
   }, 250);
+})();
+</script>
+<script>
+(function () {
+  function cookie(n){ var m=document.cookie.match("(^|;)\\s*"+n+"\\s*=\\s*([^;]+)"); return m?decodeURIComponent(m[2]):""; }
+  var btn=document.getElementById("wm-avatar");
+  var menu=document.getElementById("wm-account-menu");
+  if(!btn||!menu) return;
+  var user=cookie("user_id")||"Guest";
+  var idbox=document.getElementById("wm-account-id");
+  var login=document.getElementById("wm-account-login");
+  var logout=document.getElementById("wm-account-logout");
+  var me=document.getElementById("wm-account-me");
+  if(user==="Guest"||!user){
+    if(idbox) idbox.parentElement.firstElementChild.textContent="Not signed in";
+    if(idbox) idbox.textContent="Log in to work here";
+    btn.textContent="\u2192";
+    if(login){ login.style.display=""; login.href="/login?redirect-to="+encodeURIComponent(location.pathname); }
+    if(logout) logout.style.display="none";
+    if(me) me.style.display="none";
+  } else {
+    if(idbox) idbox.textContent=user;
+  }
+  function close(){ menu.classList.remove("on"); btn.setAttribute("aria-expanded","false"); }
+  btn.addEventListener("click", function(e){
+    e.stopPropagation();
+    var on=!menu.classList.contains("on");
+    menu.classList.toggle("on", on);
+    btn.setAttribute("aria-expanded", on?"true":"false");
+  });
+  document.addEventListener("click", function(e){ if(!menu.contains(e.target)) close(); });
+  document.addEventListener("keydown", function(e){ if(e.key==="Escape") close(); });
 })();
 </script>
