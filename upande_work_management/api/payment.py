@@ -621,6 +621,223 @@ def wm_payment(**kwargs):
         out["farms"] = [f.farm for f in allf]
         out["window"] = {"farm": farm or None, "from": dfrom or None, "to": dto or None}
 
+    elif action == "pay_worker_history":
+        # In-depth overview of ONE worker: every confirmed job (paid or not),
+        # grouped per task/actuals doc with plan period, plus the raw daily log,
+        # payment runs and headline KPIs. Used by the Audit worker deep-dive.
+        emp = frappe.form_dict.get("employee")
+        dfrom = frappe.form_dict.get("from_date")
+        dto = frappe.form_dict.get("to_date")
+        if not emp:
+            out["error"] = "employee is required"
+        else:
+            hconds = "we.employee=%s AND ac.workflow_state='CONFIRMED'"
+            hparams = [emp]
+            if dfrom:
+                hconds = hconds + " AND we.work_date >= %s"
+                hparams.append(dfrom)
+            if dto:
+                hconds = hconds + " AND we.work_date <= %s"
+                hparams.append(dto)
+            einfo = frappe.db.get_value("Employee", emp,
+                ["employee_name", "custom_farm", "designation", "employment_type", "status", "date_of_joining"],
+                as_dict=True)
+            out["info"] = {
+                "employee": emp,
+                "employee_name": (einfo.employee_name if einfo else None) or emp,
+                "farm": einfo.custom_farm if einfo else None,
+                "designation": einfo.designation if einfo else None,
+                "employment_type": einfo.employment_type if einfo else None,
+                "status": einfo.status if einfo else None,
+                "date_of_joining": str(einfo.date_of_joining) if einfo and einfo.date_of_joining else None,
+            }
+            # KPIs across the window
+            kp = frappe.db.sql("""
+                SELECT COUNT(*) mandays,
+                       COUNT(DISTINCT we.work_date) days,
+                       COUNT(DISTINCT ac.task) tasks,
+                       COUNT(DISTINCT ac.name) docs,
+                       COALESCE(SUM(we.actual_quantity),0) qty,
+                       COALESCE(SUM(we.amount),0) earned,
+                       COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=1 THEN we.amount ELSE 0 END),0) paid_amt,
+                       COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 THEN we.amount ELSE 0 END),0) unpaid_amt,
+                       MIN(we.work_date) first_day, MAX(we.work_date) last_day
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE """ + hconds + """
+            """, tuple(hparams), as_dict=True)
+            k = kp[0] if kp else None
+            days = frappe.utils.cint(k.days) if k else 0
+            earned = frappe.utils.flt(k.earned) if k else 0
+            out["kpi"] = {
+                "mandays": frappe.utils.cint(k.mandays) if k else 0,
+                "days": days,
+                "tasks": frappe.utils.cint(k.tasks) if k else 0,
+                "docs": frappe.utils.cint(k.docs) if k else 0,
+                "qty": frappe.utils.flt(k.qty) if k else 0,
+                "earned": earned,
+                "paid_amt": frappe.utils.flt(k.paid_amt) if k else 0,
+                "unpaid_amt": frappe.utils.flt(k.unpaid_amt) if k else 0,
+                "avg_per_day": (earned / days) if days else 0,
+                "first_day": str(k.first_day) if k and k.first_day else None,
+                "last_day": str(k.last_day) if k and k.last_day else None,
+            }
+            # per task/actuals doc: what was done, over what period, and how it was paid
+            grp = frappe.db.sql("""
+                SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
+                       ac.assignment assignment, ac.rate doc_rate,
+                       MIN(we.work_date) wfrom, MAX(we.work_date) wto,
+                       COUNT(DISTINCT we.work_date) days,
+                       COALESCE(SUM(we.actual_quantity),0) qty,
+                       COALESCE(SUM(we.amount),0) amount,
+                       COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=1 THEN we.amount ELSE 0 END),0) paid_amt,
+                       COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 THEN we.amount ELSE 0 END),0) unpaid_amt,
+                       MAX(we.payment_ref) run_ref
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE """ + hconds + """
+                GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.assignment, ac.rate
+                ORDER BY MIN(we.work_date) DESC
+            """, tuple(hparams), as_dict=True)
+            tasks = []
+            for g in grp:
+                pfrom = None
+                pto = None
+                planner = None
+                if g.assignment:
+                    ai = frappe.db.get_value("Work Management Assigner", g.assignment,
+                        ["planner_request", "from_date", "to_date"], as_dict=True)
+                    if ai:
+                        planner = ai.planner_request
+                        pfrom = str(ai.from_date) if ai.from_date else None
+                        pto = str(ai.to_date) if ai.to_date else None
+                amt = frappe.utils.flt(g.amount)
+                paid = frappe.utils.flt(g.paid_amt)
+                unpaid = frappe.utils.flt(g.unpaid_amt)
+                if amt > 0 and paid >= amt - 0.001:
+                    pstat = "Paid"
+                elif paid > 0:
+                    pstat = "Part paid"
+                else:
+                    pstat = "Unpaid"
+                qty = frappe.utils.flt(g.qty)
+                tasks.append({
+                    "actuals": g.actuals, "farm": g.farm, "task": g.task, "block": g.block,
+                    "assignment": g.assignment, "planner": planner,
+                    "plan_from": pfrom, "plan_to": pto,
+                    "work_from": str(g.wfrom) if g.wfrom else None,
+                    "work_to": str(g.wto) if g.wto else None,
+                    "days": frappe.utils.cint(g.days), "qty": qty,
+                    "rate": (amt / qty) if qty else frappe.utils.flt(g.doc_rate),
+                    "amount": amt, "paid_amt": paid, "unpaid_amt": unpaid,
+                    "pay_status": pstat, "run_ref": g.run_ref,
+                })
+            out["tasks"] = tasks
+            # raw daily log
+            dl = frappe.db.sql("""
+                SELECT we.work_date wdate, ac.task task, ac.block_section block, ac.farm farm,
+                       we.actual_quantity qty, we.amount amount,
+                       IFNULL(we.paid,0) paid, IFNULL(we.count_in_payroll,0) in_payroll,
+                       we.payment_ref run_ref
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE """ + hconds + """
+                ORDER BY we.work_date DESC
+            """, tuple(hparams), as_dict=True)
+            daily = []
+            for r in dl:
+                qty = frappe.utils.flt(r.qty)
+                amt = frappe.utils.flt(r.amount)
+                daily.append({
+                    "wdate": str(r.wdate) if r.wdate else None,
+                    "task": r.task, "block": r.block, "farm": r.farm,
+                    "qty": qty, "amount": amt, "rate": (amt / qty) if qty else 0,
+                    "paid": frappe.utils.cint(r.paid), "in_payroll": frappe.utils.cint(r.in_payroll),
+                    "run_ref": r.run_ref,
+                })
+            out["daily"] = daily
+            # payment runs that include this worker
+            runs = frappe.db.sql("""
+                SELECT p.name run, p.run_title title, p.run_date rdate, p.workflow_state state,
+                       l.amount amount, l.days days, l.qty qty
+                FROM `tabWork Payment Line` l
+                INNER JOIN `tabWork Management Payment` p ON l.parent = p.name
+                WHERE l.employee = %s
+                ORDER BY p.run_date DESC LIMIT 100
+            """, (emp,), as_dict=True)
+            runlist = []
+            for r in runs:
+                runlist.append({
+                    "run": r.run, "title": r.title, "date": str(r.rdate) if r.rdate else None,
+                    "state": r.state, "amount": frappe.utils.flt(r.amount),
+                    "days": frappe.utils.cint(r.days), "qty": frappe.utils.flt(r.qty),
+                })
+            out["runs"] = runlist
+
+    elif action == "pay_worker_submit":
+        # Approve ONE worker's unpaid confirmed earnings and send them to accounts
+        # as a single-worker payment run (workers are paid one at a time).
+        emp = frappe.form_dict.get("employee")
+        dfrom = frappe.form_dict.get("from_date")
+        dto = frappe.form_dict.get("to_date")
+        if not emp:
+            out["error"] = "employee is required"
+        else:
+            sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+            sparams = [emp]
+            if dfrom:
+                sconds = sconds + " AND we.work_date >= %s"
+                sparams.append(dfrom)
+            if dto:
+                sconds = sconds + " AND we.work_date <= %s"
+                sparams.append(dto)
+            agg = frappe.db.sql("""
+                SELECT we.employee_name nm, MAX(ac.farm) farm,
+                       COUNT(DISTINCT we.work_date) days,
+                       COALESCE(SUM(we.actual_quantity),0) qty,
+                       COALESCE(SUM(we.amount),0) owed
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE """ + sconds + """
+            """, tuple(sparams), as_dict=True)
+            if not agg or frappe.utils.flt(agg[0].owed) <= 0:
+                out["error"] = "No unpaid confirmed earnings for this worker in the window"
+            else:
+                g = agg[0]
+                ename = g.nm or frappe.db.get_value("Employee", emp, "employee_name") or emp
+                d = frappe.new_doc("Work Management Payment")
+                d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
+                d.company = DEFAULT_COMPANY
+                d.run_date = frappe.utils.today()
+                d.prepared_by = frappe.session.user
+                try:
+                    if dfrom:
+                        d.period_from = dfrom
+                    if dto:
+                        d.period_to = dto
+                except Exception:
+                    pass
+                row = d.append("lines", {})
+                row.employee = emp
+                row.employee_name = ename
+                row.farm = g.farm
+                row.days = g.days
+                row.qty = g.qty
+                row.paid_workers = 1
+                row.amount = frappe.utils.flt(g.owed)
+                d.grand_total = frappe.utils.flt(g.owed)
+                d.total_workers = 1
+                d.total_actuals = 1
+                d.flags.ignore_permissions = True
+                d.insert(ignore_permissions=True)
+                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Pending Accounts", update_modified=False)
+                out["name"] = d.name
+                out["workflow_state"] = "Pending Accounts"
+                out["employee"] = emp
+                out["employee_name"] = ename
+                out["amount"] = frappe.utils.flt(g.owed)
+                out["days"] = frappe.utils.cint(g.days)
+
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)
