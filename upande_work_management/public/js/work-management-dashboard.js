@@ -137,11 +137,9 @@
       '<div class="sech">Workers &amp; value per farm</div>'+
       '<div class="card"><div class="bd" id="wm-farmstrip">'+farmStrip(farms)+'</div></div>'+
       // ===== approval speed: how long each sign-off step takes =====
-      '<div class="sech">Approval speed &mdash; step by step</div>'+
-      '<div class="card"><div class="hd"><h3>Every sign-off step</h3><div class="cap">how long each step usually takes, and what’s waiting there now</div></div>'+
-        '<div class="bd">'+apprEff(D.approval_eff, D.approver_names)+
-          '<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--faint)"><div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-bottom:8px">Approver ranking &mdash; fastest sign-off first</div><div id="wm-appr-people" style="color:var(--mute)">Loading ranking…</div></div>'+
-        '</div></div>'+
+      '<div class="sech">Approver KPIs &mdash; turnaround, backlog &amp; direction</div>'+
+      '<div class="card"><div class="hd"><h3>Sign-off performance</h3><div class="cap">the approvers keep this pipeline moving &mdash; how fast each turns work around, what is stuck at their desk, and which way they are trending &middot; last 12 weeks</div></div>'+
+        '<div class="bd" id="wm-apk-body"><div class="loading">Measuring sign-offs&hellip;</div></div></div>'+
       // ===== trends & analytics tabs =====
       '<div class="sech">Trends &amp; analytics</div>'+
       '<div class="card"><div class="hd"><h3>What the numbers are doing</h3><div class="cap">confirmed work only &middot; last 12 weeks</div></div>'+
@@ -265,6 +263,7 @@
     initCharts();
     initQueues(D);
     initTimeline();
+    initApproverKpis();
   }
 
   // ============ APPROVAL SPEED (step by step) ============
@@ -1809,6 +1808,170 @@
       cross.style.display="none"; tip.style.display="none";
       S.forEach(function(sr,si){ box.querySelector("#wm-tl-dot"+si).style.display="none"; });
     });
+  }
+
+  // ============ APPROVER KPIs (comparison · backlog · direction) ============
+  var APK={data:null};
+  var APK_C={good:"#0a7a43",mid:"#d9a514",bad:"#b91c1c"};
+  function initApproverKpis(){
+    var box=el("wm-apk-body"); if(!box) return;
+    call({action:"approver_kpis"}).then(function(d){
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      APK.data=d; renderApk();
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not measure sign-offs: '+esc(e.message)+'</div>'; });
+  }
+  function fmtH(h){
+    if(h==null) return "—";
+    if(h<1) return Math.round(h*60)+"m";
+    if(h<48) return (Math.round(h*10)/10)+"h";
+    return (Math.round(h/24*10)/10)+"d";
+  }
+  function apkBand(a){
+    var sd=a.n?(a.b0/a.n):0;
+    return sd>=0.8?APK_C.good:(sd>=0.5?APK_C.mid:APK_C.bad);
+  }
+  function renderApk(){
+    var box=el("wm-apk-body"); if(!box||!APK.data) return;
+    var d=APK.data;
+    var all=(d.approvers||[]);
+    var aprs=all.filter(function(a){ return a.n>=3; });
+    var small=all.length-aprs.length;
+    if(!all.length){ box.innerHTML='<div class="empty">No sign-offs recorded yet — KPIs appear as approvers start working.</div>'; return; }
+    aprs.sort(function(x,y){ return x.avg_h-y.avg_h; });
+    var totN=0, totW=0;
+    all.forEach(function(a){ totN+=a.n; totW+=a.avg_h*a.n; });
+    var teamAvg=totN?(totW/totN):0;
+
+    var h='';
+    // ── 1 · live backlog per sign-off desk ──
+    var queues=(d.queues||[]).filter(function(q){ return q.count>0; });
+    h+='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-bottom:8px">Waiting right now — by sign-off desk</div>';
+    if(!queues.length){
+      h+='<div style="padding:12px 16px;border:1px dashed var(--line);border-radius:12px;color:var(--mute);font-size:12px;margin-bottom:18px">Nothing is waiting at any desk — the pipeline is clear.</div>';
+    } else {
+      h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">';
+      queues.forEach(function(q){
+        var ring=q.old>0?"box-shadow:inset 0 0 0 1.5px "+APK_C.bad+";":"";
+        h+='<div style="border:1px solid var(--line);border-radius:14px;padding:10px 14px;background:var(--wash);'+ring+'min-width:150px">'+
+          '<div style="font-size:10.5px;color:var(--mute);font-weight:600">'+esc(q.label)+'</div>'+
+          '<div style="font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0">'+fmt(q.count)+'<span style="font-size:10px;color:var(--mute);font-weight:500"> waiting · avg '+fmtH(q.avg_h)+'</span></div>'+
+          '<div style="display:flex;gap:8px;font-size:9.5px;font-weight:600">'+
+            (q.fresh?'<span style="color:'+APK_C.good+'">'+fmt(q.fresh)+' &lt;1d</span>':'')+
+            (q.mid?'<span style="color:#8a6a10">'+fmt(q.mid)+' 1–3d</span>':'')+
+            (q.old?'<span style="color:'+APK_C.bad+'">'+fmt(q.old)+' &gt;3d</span>':'')+
+          '</div></div>';
+      });
+      h+='</div>';
+    }
+
+    // ── 2+3 · comparison + speed mix ──
+    var maxAvg=teamAvg;
+    aprs.forEach(function(a){ if(a.avg_h>maxAvg) maxAvg=a.avg_h; });
+    maxAvg=maxAvg*1.12||1;
+    h+='<div class="grid2">';
+    // turnaround comparison
+    h+='<div><div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-bottom:10px">Turnaround — average time to sign off</div>';
+    aprs.forEach(function(a){
+      var w=Math.max(1.2,a.avg_h/maxAvg*100);
+      var band=apkBand(a);
+      var chips=a.steps.map(function(st){ return st.step.replace("Actuals ","").replace(" approval",""); }).join(" · ");
+      h+='<div style="margin-bottom:11px" title="'+esc(a.name)+' — avg '+fmtH(a.avg_h)+' across '+fmt(a.n)+' sign-offs; worst '+fmtH(a.mx_h)+'">'+
+        '<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px">'+
+          '<span><b>'+esc(a.name)+'</b> <span style="color:var(--mute);font-size:10px">'+esc(chips)+'</span></span>'+
+          '<span class="m" style="color:var(--ink)">'+fmtH(a.avg_h)+' <span style="color:var(--mute)">avg · '+fmt(a.n)+' signed</span></span>'+
+        '</div>'+
+        '<div style="position:relative;height:10px;background:rgba(10,10,10,.05);border-radius:999px">'+
+          '<div style="position:absolute;left:0;top:0;height:10px;width:'+w+'%;border-radius:999px;background:linear-gradient(90deg,'+band+'b3,'+band+')"></div>'+
+          '<div style="position:absolute;left:'+Math.min(99,teamAvg/maxAvg*100)+'%;top:-3px;height:16px;width:0;border-left:2px dashed rgba(10,10,10,.4)" title="team average '+fmtH(teamAvg)+'"></div>'+
+        '</div></div>';
+    });
+    h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Dashed line = team average ('+fmtH(teamAvg)+'). Bar colour = share signed the same day: <span style="color:'+APK_C.good+';font-weight:600">≥80%</span> · <span style="color:#8a6a10;font-weight:600">50–79%</span> · <span style="color:'+APK_C.bad+';font-weight:600">&lt;50%</span>.'+(small?' '+fmt(small)+' occasional approver'+(small===1?'':'s')+' with under 3 sign-offs not charted.':'')+'</div></div>';
+    // speed mix
+    h+='<div><div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-bottom:10px">Speed mix — every sign-off by how long it waited</div>';
+    aprs.forEach(function(a){
+      var p0=a.n?a.b0/a.n*100:0, p1=a.n?a.b1/a.n*100:0, p2=a.n?a.b2/a.n*100:0;
+      function seg(p,c,lab,dark){
+        if(p<=0) return "";
+        var txt=p>=12?('<span style="font-size:9px;font-weight:700;color:'+(dark?"#fff":"var(--ink)")+'">'+Math.round(p)+'%</span>'):'';
+        return '<div style="width:'+p+'%;background:'+c+';display:flex;align-items:center;justify-content:center" title="'+lab+'">'+txt+'</div>';
+      }
+      h+='<div style="margin-bottom:11px">'+
+        '<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px">'+
+          '<b>'+esc(a.name)+'</b>'+
+          '<span class="m" style="color:var(--mute);font-size:10px">'+fmt(a.b0)+' · '+fmt(a.b1)+' · <span style="color:'+(a.b2?APK_C.bad:"var(--mute)")+';font-weight:'+(a.b2?700:400)+'">'+fmt(a.b2)+'</span></span>'+
+        '</div>'+
+        '<div style="display:flex;height:14px;border-radius:999px;overflow:hidden;gap:2px;background:rgba(10,10,10,.04)">'+
+          seg(p0,APK_C.good,"same day · "+fmt(a.b0),true)+
+          seg(p1,APK_C.mid,"1–3 days · "+fmt(a.b1),false)+
+          seg(p2,APK_C.bad,"over 3 days · "+fmt(a.b2),true)+
+        '</div></div>';
+    });
+    h+='<div class="clegend" style="margin-top:6px;font-size:10px;color:var(--mute)">'+
+      '<span><i style="background:'+APK_C.good+';width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>Same day</span>'+
+      '<span><i style="background:'+APK_C.mid+';width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>1–3 days</span>'+
+      '<span><i style="background:'+APK_C.bad+';width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>Over 3 days — the delays to chase</span>'+
+    '</div></div>';
+    h+='</div>';
+
+    // ── 4 · direction: weekly small multiples ──
+    var wmax=0;
+    aprs.forEach(function(a){ (a.weekly||[]).forEach(function(w){ if(w.avg_h>wmax) wmax=w.avg_h; }); });
+    if(wmax>0){
+      h+='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:16px 0 10px">Direction — average turnaround per week</div>';
+      h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:12px">';
+      aprs.forEach(function(a){
+        var wk=a.weekly||[];
+        if(wk.length<2){ return; }
+        var W=200,H=46,n=wk.length;
+        function X(i){ return 4+(i/(n-1))*(W-8); }
+        function Y(v){ return H-6-(v/(wmax||1))*(H-14); }
+        var pth=""; wk.forEach(function(w,i){ pth+=(i?"L":"M")+X(i).toFixed(1)+","+Y(w.avg_h).toFixed(1); });
+        var last=wk[n-1], prevAvg=a.avg_h||0.0001;
+        var worse=last.avg_h>Math.max(prevAvg*1.5,4), better=last.avg_h<prevAvg*0.6;
+        var dotc=worse?APK_C.bad:(better?APK_C.good:"#5a5a52");
+        var dir=worse?"▲ slowing":(better?"▼ speeding up":"steady");
+        h+='<div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--wash)">'+
+          '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><b>'+esc(a.name)+'</b>'+
+          '<span style="color:'+dotc+';font-weight:600;font-size:10px">'+dir+'</span></div>'+
+          '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">'+
+            '<path d="'+pth+'" fill="none" stroke="#2a2a26" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'+
+            '<circle cx="'+X(n-1).toFixed(1)+'" cy="'+Y(last.avg_h).toFixed(1)+'" r="3.5" fill="'+dotc+'" stroke="#fff" stroke-width="1.2"/>'+
+          '</svg>'+
+          '<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--mute)"><span>'+esc(wkLabel(wk[0].wstart))+'</span><span>latest '+fmtH(last.avg_h)+'</span></div>'+
+        '</div>';
+      });
+      h+='</div>';
+    }
+
+    // ── 5 · signals: strengths & weaknesses, written out ──
+    var sig=[];
+    if(aprs.length){
+      var fast=aprs[0];
+      sig.push(['good','Fastest desk: <b>'+esc(fast.name)+'</b> — '+fmtH(fast.avg_h)+' average over '+fmt(fast.n)+' sign-offs.']);
+      var busiest=aprs.slice().sort(function(x,y){ return y.n-x.n; })[0];
+      if(busiest) sig.push(['good','Heaviest load: <b>'+esc(busiest.name)+'</b> carries '+fmt(busiest.n)+' of '+fmt(totN)+' sign-offs ('+Math.round(busiest.n/totN*100)+'% of the pipeline).']);
+      var tail=aprs.slice().sort(function(x,y){ return y.b2-x.b2; })[0];
+      if(tail&&tail.b2>0) sig.push(['bad','Biggest slow tail: <b>'+esc(tail.name)+'</b> — '+fmt(tail.b2)+' sign-off'+(tail.b2===1?'':'s')+' took over 3 days (worst '+fmtH(tail.mx_h)+(tail.mx_doc?' on '+esc(tail.mx_doc):'')+').']);
+      aprs.forEach(function(a){
+        var wk=a.weekly||[]; if(wk.length<2) return;
+        var last=wk[wk.length-1];
+        if(last.n>=5&&last.avg_h>Math.max(a.avg_h*1.5,4)) sig.push(['bad','<b>'+esc(a.name)+'</b> is slowing down: '+fmtH(last.avg_h)+' this week vs '+fmtH(a.avg_h)+' overall.']);
+      });
+      (d.queues||[]).forEach(function(q){
+        if(q.old>0) sig.push(['bad','<b>'+esc(q.label)+'</b> has '+fmt(q.old)+' document'+(q.old===1?'':'s')+' waiting over 3 days — the clearest delay to chase today.']);
+      });
+    }
+    if(sig.length){
+      h+='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:16px 0 8px">Signals — strengths &amp; weaknesses</div>';
+      h+='<div style="display:flex;flex-direction:column;gap:6px">';
+      sig.slice(0,8).forEach(function(x){
+        var c=x[0]==='bad'?APK_C.bad:APK_C.good;
+        h+='<div style="display:flex;gap:9px;align-items:baseline;font-size:12px"><i style="width:8px;height:8px;border-radius:50%;background:'+c+';flex-shrink:0;position:relative;top:0"></i><span>'+x[1]+'</span></div>';
+      });
+      h+='</div>';
+    }
+    h+='<div style="font-size:10px;color:var(--mute);margin-top:12px">Timing measured stage-to-stage from submission and approval timestamps · window '+esc((d.window||{}).from||"")+' → '+esc((d.window||{}).to||"")+' · '+fmt(d.events_n)+' sign-offs.</div>';
+    box.innerHTML=h;
   }
 
   function load(){
