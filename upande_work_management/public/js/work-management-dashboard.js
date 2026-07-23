@@ -1835,132 +1835,204 @@
   function renderOps(){
     var box=el("wm-apk-body"); if(!box||!OPS.data) return;
     var d=OPS.data;
-    var h='';
+    var C=OPS_C;
+    function panel(title,cap,body){
+      return '<div style="border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--wash)">'+
+        '<div style="font-size:11px;font-weight:700;letter-spacing:.02em">'+title+'</div>'+
+        '<div style="font-size:9.5px;color:var(--mute);margin:1px 0 10px">'+cap+'</div>'+body+'</div>';
+    }
 
-    // ── 1 · pipeline ledger ──
+    // ════ CHART A · money by stage, stacked by age ════
     var ledger=(d.ledger||[]);
-    var lmax=1; ledger.forEach(function(l){ if(l.value>lmax) lmax=l.value; });
-    h+='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-bottom:10px">Pipeline ledger — where the money is right now</div>';
-    ledger.forEach(function(l){
-      var w=Math.max(0.6,l.value/lmax*100);
-      var stuck=l.oldest_d>7&&l.value>0;
-      h+='<div style="display:grid;grid-template-columns:280px 1fr 210px;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--faint)">'+
-        '<div style="font-size:12px'+(stuck?';font-weight:600':'')+'">'+esc(l.label)+
-          '<div style="font-size:9.5px;color:var(--mute)">'+fmt(l.count)+' '+(l.key==="confirmed_unpaid"?"workers":"documents")+'</div></div>'+
-        '<div><div style="background:rgba(10,10,10,.05);height:14px;border-radius:999px;overflow:hidden">'+
-          (l.value>0?'<div style="height:14px;width:'+w+'%;border-radius:999px;background:linear-gradient(90deg,'+(stuck?OPS_C.bad:"#2a2a26")+'b3,'+(stuck?OPS_C.bad:"#2a2a26")+')"></div>':'')+
-        '</div></div>'+
-        '<div style="text-align:right;font-size:12px;white-space:nowrap"><b class="m">KES '+kesShort(l.value)+'</b> '+agePill(l.oldest_d)+
-          ' <a href="'+esc(l.route)+'" style="font-size:10px;font-weight:600;color:var(--blue);text-decoration:none">open →</a></div>'+
-      '</div>';
-    });
-    h+='<div style="font-size:10px;color:var(--mute);margin:8px 0 0">Red bars have documents older than 7 days — that is where the pipeline is leaking. “open →” takes you to the page where it gets fixed.</div>';
-
-    // ── 2 · speed to pay ──
-    var sp=d.speed||{};
-    h+='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:18px 0 10px">Speed to pay — a day of work becoming money</div>';
-    if(sp.days_to_pay==null){
-      var cu=null; ledger.forEach(function(l){ if(l.key==="confirmed_unpaid") cu=l; });
-      h+='<div style="padding:13px 16px;border:1px solid '+OPS_C.bad+'33;background:'+OPS_C.bad+'0d;border-radius:12px;font-size:12.5px">'+
-        '<b>No wages have reached a worker in this window yet.</b>'+
-        (cu&&cu.value>0?' KES '+kesShort(cu.value)+' of confirmed earnings for '+fmt(cu.count)+' workers is sitting unpaid — the oldest work was done '+Math.round(cu.oldest_d)+' days ago.':'')+
-        (sp.days_to_confirm!=null?' Work is taking <b>'+(Math.round(sp.days_to_confirm*10)/10)+' days</b> on average to get confirmed.':'')+
-      '</div>';
-    } else {
-      h+='<div class="grid2"><div><div class="kpis" style="grid-template-columns:1fr 1fr">'+
-        '<div class="kpi" style="--kc:var(--good)"><div class="k">Work → paid</div><div class="v">'+(Math.round(sp.days_to_pay*10)/10)+'</div><div class="u">days · value-weighted · KES '+kesShort(sp.paid_value)+' paid</div></div>'+
-        '<div class="kpi" style="--kc:var(--blue)"><div class="k">Work → confirmed</div><div class="v">'+(sp.days_to_confirm!=null?(Math.round(sp.days_to_confirm*10)/10):"—")+'</div><div class="u">days · sign-off chain</div></div>'+
-      '</div>';
-      var fmx=0; (sp.farms||[]).forEach(function(f){ if(f.days>fmx) fmx=f.days; });
-      (sp.farms||[]).forEach(function(f){
-        var w=Math.max(2,f.days/(fmx||1)*100);
-        h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:11.5px">'+
-          '<div style="width:90px"><b>'+esc(f.farm)+'</b></div>'+
-          '<div style="flex:1"><div style="background:rgba(10,10,10,.05);height:10px;border-radius:999px"><div style="height:10px;width:'+w+'%;border-radius:999px;background:#2a2a26"></div></div></div>'+
-          '<div class="m" style="width:52px;text-align:right">'+(Math.round(f.days*10)/10)+'d</div></div>';
+    var SHORT={plans_pending:"Awaiting\napproval",plans_unstaffed:"Approved,\nnot staffed",asg_pending:"Assignments\nin approval",
+               asg_noactuals:"Staffed,\nno actuals",act_pending:"Actuals\nin approval",confirmed_unpaid:"Confirmed,\nnot sent",sent_accounts:"At\naccounts"};
+    var chartA='';
+    (function(){
+      var W=660,H=310,L=54,R=12,T=16,B=64,iw=W-L-R,ih=H-T-B;
+      var max=0; ledger.forEach(function(l){ if(l.value>max) max=l.value; });
+      if(max<=0){ chartA='<div class="empty">No money in the pipeline.</div>'; return; }
+      var ymax=max*1.12, n=ledger.length, bw=Math.min(58,iw/n*0.58);
+      function X(i){ return L+iw*(i+0.5)/n; }
+      function Y(v){ return T+ih-(v/ymax)*ih; }
+      var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
+      for(var gi=0;gi<=4;gi++){ var gv=ymax*gi/4, gy=Y(gv);
+        g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
+           '<text x="'+(L-7)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(gv)+'</text>'; }
+      ledger.forEach(function(l,i){
+        var x=X(i)-bw/2, y=Y(0);
+        [["v_fresh",C.good,"under 3 days"],["v_mid",C.mid,"3–7 days"],["v_old",C.bad,"over 7 days"]].forEach(function(seg){
+          var v=l[seg[0]]||0; if(v<=0) return;
+          var hpx=(v/ymax)*ih, ny=y-hpx;
+          g+='<rect x="'+x.toFixed(1)+'" y="'+ny.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(1.5,hpx-1).toFixed(1)+'" rx="3" fill="'+seg[1]+'"><title>'+esc(l.label)+' · '+seg[2]+' · KES '+kesShort(v)+'</title></rect>';
+          y=ny-2;
+        });
+        if(l.value>0) g+='<text x="'+X(i).toFixed(1)+'" y="'+(Y(l.value)-8)+'" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(l.value)+'</text>';
+        var lab=(SHORT[l.key]||l.label).split("\n");
+        lab.forEach(function(t,li){
+          g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+14+li*11)+'" text-anchor="middle" font-size="8.8" fill="#5a5a52" font-family="Poppins,sans-serif">'+esc(t)+'</text>';
+        });
+        g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+14+lab.length*11)+'" text-anchor="middle" font-size="8.2" fill="#9a978e" font-family="Poppins,sans-serif">'+fmt(l.count)+(l.key==="confirmed_unpaid"?" workers":" docs")+'</text>';
       });
-      h+='</div><div>';
-      var wk=(sp.weekly||[]);
-      if(wk.length>1){
-        var W=420,H=150,L=34,R=10,T=10,B=24, ih=H-T-B, iw=W-L-R;
-        var ymax=0; wk.forEach(function(x){ if(x.days>ymax) ymax=x.days; }); ymax=ymax*1.15||1;
-        function X(i){ return L+(i/(wk.length-1))*iw; }
-        function Y(v){ return T+ih-(v/ymax)*ih; }
-        var pth=""; wk.forEach(function(x,i){ pth+=(i?"L":"M")+X(i).toFixed(1)+","+Y(x.days).toFixed(1); });
-        var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
-        for(var gi=0;gi<=3;gi++){ var gy=T+ih*gi/3;
-          g+='<line x1="'+L+'" y1="'+gy+'" x2="'+(W-R)+'" y2="'+gy+'" stroke="rgba(10,10,10,.06)"/>'+
-             '<text x="'+(L-6)+'" y="'+(gy+3)+'" text-anchor="end" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+(Math.round(ymax*(1-gi/3)*10)/10)+'</text>'; }
-        g+='<path d="'+pth+'" fill="none" stroke="#0a7a43" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-        g+='<text x="'+L+'" y="'+(H-6)+'" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+esc(wkLabel(wk[0].wstart))+'</text>'+
-           '<text x="'+(W-R)+'" y="'+(H-6)+'" text-anchor="end" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+esc(wkLabel(wk[wk.length-1].wstart))+'</text>';
-        g+='</svg>';
-        h+='<div style="font-size:10px;color:var(--mute);margin-bottom:4px">Days from work to pay, week by week — should trend down.</div>'+g;
-      }
-      h+='</div></div>';
-    }
+      g+='</svg>';
+      var legend='<div class="clegend" style="font-size:10px;margin-top:4px">'+
+        '<span><i style="background:'+C.good+';width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>Under 3 days</span>'+
+        '<span><i style="background:'+C.mid+';width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>3–7 days</span>'+
+        '<span><i style="background:'+C.bad+';width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>Over 7 days — stuck</span>'+
+        '<span style="margin-left:auto">'+ledger.map(function(l){ return '<a href="'+esc(l.route)+'" style="color:var(--blue);text-decoration:none;font-weight:600;margin-left:8px">'+esc((SHORT[l.key]||"").split("\n")[0].toLowerCase())+' →</a>'; }).join("")+'</span></div>';
+      chartA=g+legend;
+    })();
 
-    // ── 3 · approver desks ──
-    var desks=(d.desks||[]);
-    h+='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:18px 0 10px">Approver desks — what each person moves</div>';
-    if(!desks.length){ h+='<div class="empty">No sign-offs in this window.</div>'; }
-    else{
-      var vmax=0; desks.forEach(function(x){ if(x.value>vmax) vmax=x.value; });
-      h+='<div class="tablewrap"><table style="margin-top:0"><thead><tr>'+
-        '<th>Approver</th><th>Signs</th><th class="n">This week</th><th class="n">12 weeks</th>'+
-        '<th style="min-width:140px">Value moved</th><th style="min-width:110px">Weekly rhythm</th>'+
-        '<th class="n">Signed, workers still unpaid</th></tr></thead><tbody>';
-      desks.forEach(function(x){
-        var w=Math.max(1,x.value/(vmax||1)*100);
-        var wk2=x.weekly||[]; var spark='';
-        if(wk2.length>1){
-          var sm=0; wk2.forEach(function(z){ if(z.v>sm) sm=z.v; });
-          spark='<div style="display:flex;align-items:flex-end;gap:2px;height:26px">'+
-            wk2.map(function(z){ return '<div style="flex:1;max-width:9px;height:'+Math.max(2,z.v/(sm||1)*24)+'px;background:#2a2a26;border-radius:2px 2px 0 0" title="week of '+esc(z.wstart)+' · KES '+kesShort(z.v)+'"></div>'; }).join("")+'</div>';
+    // ════ CHART B · approvers: value moved vs still unpaid ════
+    var desks=(d.desks||[]).slice(0,8);
+    var chartB='';
+    (function(){
+      if(!desks.length){ chartB='<div class="empty">No sign-offs in this window.</div>'; return; }
+      var max=0; desks.forEach(function(x){ if(x.value>max) max=x.value; if(x.unpaid_signed>max) max=x.unpaid_signed; });
+      var W=660, rowH=42, H=desks.length*rowH+34, L=150, R=64, iw=W-L-R;
+      function XV(v){ return L+(v/(max*1.06||1))*iw; }
+      var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
+      for(var gi=1;gi<=4;gi++){ var gx=L+iw*gi/4;
+        g+='<line x1="'+gx.toFixed(1)+'" y1="6" x2="'+gx.toFixed(1)+'" y2="'+(H-24)+'" stroke="rgba(10,10,10,.05)"/>'+
+           '<text x="'+gx.toFixed(1)+'" y="'+(H-10)+'" text-anchor="middle" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(max*1.06*gi/4)+'</text>'; }
+      desks.forEach(function(x,i){
+        var y0=8+i*rowH;
+        g+='<text x="'+(L-8)+'" y="'+(y0+15)+'" text-anchor="end" font-size="10.5" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(x.name.length>18?x.name.slice(0,17)+"…":x.name)+'</text>';
+        g+='<rect x="'+L+'" y="'+(y0+2)+'" width="'+Math.max(2,XV(x.value)-L).toFixed(1)+'" height="12" rx="6" fill="#2a2a26"><title>'+esc(x.name)+' · moved KES '+kesShort(x.value)+' ('+fmt(x.n)+' sign-offs)</title></rect>';
+        g+='<text x="'+(XV(x.value)+5).toFixed(1)+'" y="'+(y0+12)+'" font-size="9" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(x.value)+'</text>';
+        if(x.unpaid_signed>0){
+          g+='<rect x="'+L+'" y="'+(y0+17)+'" width="'+Math.max(2,XV(x.unpaid_signed)-L).toFixed(1)+'" height="12" rx="6" fill="'+C.bad+'"><title>'+esc(x.name)+' · signed but workers still unpaid: KES '+kesShort(x.unpaid_signed)+'</title></rect>';
+          g+='<text x="'+(XV(x.unpaid_signed)+5).toFixed(1)+'" y="'+(y0+27)+'" font-size="9" font-weight="700" fill="'+C.bad+'" font-family="Poppins,sans-serif">'+kesShort(x.unpaid_signed)+'</text>';
         }
-        var up=x.unpaid_signed>0
-          ? '<span style="color:'+OPS_C.bad+';font-weight:700">KES '+kesShort(x.unpaid_signed)+'</span>'
-          : '<span style="color:var(--mute)">—</span>';
-        h+='<tr>'+
-          '<td><b>'+esc(x.name)+'</b></td>'+
-          '<td style="font-size:10px;color:var(--mute)">'+esc((x.groups||[]).join(" · "))+'</td>'+
-          '<td class="n m">'+fmt(x.week_n)+'<div style="font-size:9px;color:var(--mute)">KES '+kesShort(x.week_v)+'</div></td>'+
-          '<td class="n m">'+fmt(x.n)+'</td>'+
-          '<td><div style="background:rgba(10,10,10,.05);height:10px;border-radius:999px"><div style="height:10px;width:'+w+'%;border-radius:999px;background:linear-gradient(90deg,#2a2a26b3,#2a2a26)"></div></div>'+
-            '<div style="font-size:9px;color:var(--mute);margin-top:2px" class="m">KES '+kesShort(x.value)+'</div></td>'+
-          '<td>'+spark+'</td>'+
-          '<td class="n">'+up+'</td></tr>';
       });
-      h+='</tbody></table></div>';
-      var rej=d.rejected||{};
-      h+='<div style="font-size:10px;color:var(--mute);margin-top:8px">“Signed, workers still unpaid” = actuals this person confirmed whose workers have not been paid — the accountability trail. Rejected so far: '+fmt(rej.plans||0)+' plans · '+fmt(rej.assignments||0)+' assignments · '+fmt(rej.actuals||0)+' actuals.</div>';
+      g+='</svg>';
+      chartB=g+'<div class="clegend" style="font-size:10px;margin-top:4px">'+
+        '<span><i style="background:#2a2a26;width:14px;height:6px;border-radius:3px;display:inline-block;margin-right:5px"></i>Value signed · 12 weeks</span>'+
+        '<span><i style="background:'+C.bad+';width:14px;height:6px;border-radius:3px;display:inline-block;margin-right:5px"></i>Of it, workers still unpaid</span></div>';
+    })();
+
+    // ════ CHART C · week by week, value signed per approver ════
+    var chartC='';
+    (function(){
+      var COLS=["#2563eb","#0a7a43","#d9a514","#7c3aed"];
+      var top=(d.desks||[]).filter(function(x){ return (x.weekly||[]).length>=2; }).slice(0,4);
+      if(top.length<2){ chartC='<div class="empty">Not enough weekly history to compare yet.</div>'; return; }
+      var weeks={};
+      top.forEach(function(x){ (x.weekly||[]).forEach(function(w){ weeks[w.wstart]=1; }); });
+      var wk=Object.keys(weeks).sort();
+      var max=0;
+      var series=top.map(function(x,si){
+        var m={}; (x.weekly||[]).forEach(function(w){ m[w.wstart]=w.v; });
+        var pts=wk.map(function(k){ var v=m[k]||0; if(v>max) max=v; return v; });
+        return {name:x.name,color:COLS[si],pts:pts};
+      });
+      var W=660,H=280,L=54,R=118,T=14,B=26,iw=W-L-R,ih=H-T-B;
+      var ymax=max*1.12||1;
+      function X(i){ return L+(wk.length===1?iw/2:(i/(wk.length-1))*iw); }
+      function Y(v){ return T+ih-(v/ymax)*ih; }
+      var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
+      for(var gi=0;gi<=4;gi++){ var gy=Y(ymax*gi/4);
+        g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
+           '<text x="'+(L-7)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(ymax*gi/4)+'</text>'; }
+      var step=Math.max(1,Math.round(wk.length/5));
+      for(var xi=0;xi<wk.length;xi+=step){
+        g+='<text x="'+X(xi).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+esc(wkLabel(wk[xi]))+'</text>';
+      }
+      series.forEach(function(sr){
+        var pth=""; sr.pts.forEach(function(v,i){ pth+=(i?"L":"M")+X(i).toFixed(1)+","+Y(v).toFixed(1); });
+        g+='<path d="'+pth+'" fill="none" stroke="'+sr.color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+        sr.pts.forEach(function(v,i){
+          g+='<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="3" fill="'+sr.color+'" stroke="#fff" stroke-width="1"><title>'+esc(sr.name)+' · week of '+esc(wkLabel(wk[i]))+' · KES '+kesShort(v)+'</title></circle>';
+        });
+        var lv=sr.pts[sr.pts.length-1];
+        g+='<text x="'+(W-R+6)+'" y="'+(Y(lv)+3).toFixed(1)+'" font-size="9.5" font-weight="700" fill="'+sr.color+'" font-family="Poppins,sans-serif">'+esc(sr.name.split(" ")[0])+' '+kesShort(lv)+'</text>';
+      });
+      g+='</svg>';
+      chartC=g;
+    })();
+
+    // ════ CHART D · speed to pay OR unpaid ageing ════
+    var sp=d.speed||{};
+    var chartD='', dTitle='', dCap='';
+    if(sp.days_to_pay!=null && (sp.weekly||[]).length>1){
+      dTitle='Speed to pay — days from work to money';
+      dCap='value-weighted · should trend down';
+      var wk2=sp.weekly;
+      var W=660,H=280,L=44,R=16,T=14,B=26,iw=W-L-R,ih=H-T-B;
+      var ymax=0; wk2.forEach(function(x){ if(x.days>ymax) ymax=x.days; }); ymax=ymax*1.15||1;
+      function X2(i){ return L+(i/(wk2.length-1))*iw; }
+      function Y2(v){ return T+ih-(v/ymax)*ih; }
+      var pth=""; wk2.forEach(function(x,i){ pth+=(i?"L":"M")+X2(i).toFixed(1)+","+Y2(x.days).toFixed(1); });
+      var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
+      for(var gi=0;gi<=4;gi++){ var gy=Y2(ymax*gi/4);
+        g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
+           '<text x="'+(L-7)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+(Math.round(ymax*gi/4*10)/10)+'d</text>'; }
+      g+='<path d="'+pth+'" fill="none" stroke="'+C.good+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+      wk2.forEach(function(x,i){
+        g+='<circle cx="'+X2(i).toFixed(1)+'" cy="'+Y2(x.days).toFixed(1)+'" r="3.5" fill="'+C.good+'" stroke="#fff" stroke-width="1.2"><title>week of '+esc(wkLabel(x.wstart))+' · '+(Math.round(x.days*10)/10)+' days to pay</title></circle>';
+      });
+      g+='<text x="'+L+'" y="'+(H-8)+'" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+esc(wkLabel(wk2[0].wstart))+'</text>'+
+         '<text x="'+(W-R)+'" y="'+(H-8)+'" text-anchor="end" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+esc(wkLabel(wk2[wk2.length-1].wstart))+'</text></svg>';
+      chartD=g;
+    } else {
+      dTitle='Unpaid earnings, by how old the work is';
+      dCap='money owed to workers — nothing has been released yet';
+      var cu=null; ledger.forEach(function(l){ if(l.key==="confirmed_unpaid") cu=l; });
+      if(!cu||cu.value<=0){ chartD='<div class="empty">No confirmed unpaid earnings.</div>'; }
+      else{
+        var rows=[["Work under 3 days old",cu.v_fresh,C.good],["3–7 days old",cu.v_mid,C.mid],["Over 7 days old",cu.v_old,C.bad]];
+        var mx=0; rows.forEach(function(r){ if(r[1]>mx) mx=r[1]; });
+        var W3=660,rowH3=56,H3=rows.length*rowH3+30,L3=150,R3=70,iw3=W3-L3-R3;
+        var g='<svg viewBox="0 0 '+W3+' '+H3+'" style="width:100%;height:auto;display:block">';
+        for(var gi=1;gi<=4;gi++){ var gx=L3+iw3*gi/4;
+          g+='<line x1="'+gx.toFixed(1)+'" y1="6" x2="'+gx.toFixed(1)+'" y2="'+(H3-22)+'" stroke="rgba(10,10,10,.05)"/>'+
+             '<text x="'+gx.toFixed(1)+'" y="'+(H3-8)+'" text-anchor="middle" font-size="9" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(mx*1.06*gi/4)+'</text>'; }
+        rows.forEach(function(r,i){
+          var y0=12+i*rowH3;
+          var w=Math.max(2,(r[1]/(mx*1.06||1))*iw3);
+          g+='<text x="'+(L3-8)+'" y="'+(y0+19)+'" text-anchor="end" font-size="10.5" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+r[0]+'</text>';
+          g+='<rect x="'+L3+'" y="'+(y0+6)+'" width="'+w.toFixed(1)+'" height="20" rx="10" fill="'+r[2]+'"><title>'+r[0]+' · KES '+kesShort(r[1])+'</title></rect>';
+          g+='<text x="'+(L3+w+6).toFixed(1)+'" y="'+(y0+20)+'" font-size="10" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(r[1])+'</text>';
+        });
+        g+='</svg>';
+        chartD='<div style="padding:9px 12px;border:1px solid '+C.bad+'33;background:'+C.bad+'0d;border-radius:10px;font-size:11.5px;margin-bottom:8px"><b>KES '+kesShort(cu.value)+'</b> owed to <b>'+fmt(cu.count)+' workers</b> · oldest work '+Math.round(cu.oldest_d)+' days ago · <a href="/work-payment" style="color:var(--blue);font-weight:600;text-decoration:none">go pay →</a></div>'+g;
+      }
     }
 
-    // ── 4 · signals ──
+    // ════ assemble ════
+    var h='<div class="grid2" style="margin-bottom:14px">'+
+      panel('Money in the pipeline — by stage and age','KES at every step right now · red = sitting over 7 days',chartA)+
+      panel('Approvers compared — value signed vs still unpaid','top '+desks.length+' by value moved · 12 weeks',chartB)+
+    '</div>'+
+    '<div class="grid2">'+
+      panel('Week by week — value signed per approver','the working rhythm of the top approvers',chartC)+
+      panel(dTitle,dCap,chartD)+
+    '</div>';
+
+    // signals
     var sig=[];
     var worst=null;
-    ledger.forEach(function(l){ if(l.value>0&&l.oldest_d>7&&(!worst||l.value>worst.value)) worst=l; });
-    if(worst) sig.push(['bad','<b>'+esc(worst.label)+'</b>: KES '+kesShort(worst.value)+' stuck, oldest '+Math.round(worst.oldest_d)+' days — start here.']);
+    ledger.forEach(function(l){ if(l.v_old>0&&(!worst||l.v_old>worst.v_old)) worst=l; });
+    if(worst) sig.push(['bad','<b>'+esc(worst.label)+'</b>: KES '+kesShort(worst.v_old)+' has been sitting over 7 days — start here.']);
     ledger.forEach(function(l){
-      if(l.key==="plans_unstaffed"&&l.count>0) sig.push(['bad',fmt(l.count)+' approved plans worth KES '+kesShort(l.value)+' have <b>no crew assigned</b> — approved work that is not happening.']);
-      if(l.key==="asg_noactuals"&&l.count>0) sig.push(['bad',fmt(l.count)+' staffed assignments (KES '+kesShort(l.value)+') have <b>no output recorded</b> yet.']);
+      if(l.key==="plans_unstaffed"&&l.count>0) sig.push(['bad',fmt(l.count)+' approved plans worth KES '+kesShort(l.value)+' have <b>no crew assigned</b>.']);
+      if(l.key==="asg_noactuals"&&l.count>0) sig.push(['bad',fmt(l.count)+' staffed assignments (KES '+kesShort(l.value)+') have <b>no output recorded</b>.']);
     });
-    if(desks.length){
-      var top=desks[0];
-      sig.push(['good','<b>'+esc(top.name)+'</b> moves the most value: KES '+kesShort(top.value)+' across '+fmt(top.n)+' sign-offs ('+fmt(top.week_n)+' this week).']);
-      var upl=desks.slice().sort(function(a,b){ return b.unpaid_signed-a.unpaid_signed; })[0];
+    if((d.desks||[]).length){
+      var top1=d.desks[0];
+      sig.push(['good','<b>'+esc(top1.name)+'</b> moves the most value: KES '+kesShort(top1.value)+' across '+fmt(top1.n)+' sign-offs.']);
+      var upl=d.desks.slice().sort(function(a,b){ return b.unpaid_signed-a.unpaid_signed; })[0];
       if(upl&&upl.unpaid_signed>0) sig.push(['bad','KES '+kesShort(upl.unpaid_signed)+' confirmed by <b>'+esc(upl.name)+'</b> has not reached workers yet.']);
     }
     if(sig.length){
       h+='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:16px 0 8px">Signals — act on these</div>';
       h+='<div style="display:flex;flex-direction:column;gap:6px">';
       sig.slice(0,6).forEach(function(x){
-        var c=x[0]==='bad'?OPS_C.bad:OPS_C.good;
+        var c=x[0]==='bad'?C.bad:C.good;
         h+='<div style="display:flex;gap:9px;align-items:baseline;font-size:12px"><i style="width:8px;height:8px;border-radius:50%;background:'+c+';flex-shrink:0"></i><span>'+x[1]+'</span></div>';
       });
       h+='</div>';
     }
-    h+='<div style="font-size:10px;color:var(--mute);margin-top:12px">Window '+esc((d.window||{}).from||"")+' → '+esc((d.window||{}).to||"")+' · amounts from the documents at each stage.</div>';
+    h+='<div style="font-size:10px;color:var(--mute);margin-top:12px">Window '+esc((d.window||{}).from||"")+' → '+esc((d.window||{}).to||"")+' · hover any bar or point for exact figures.</div>';
     box.innerHTML=h;
   }
 

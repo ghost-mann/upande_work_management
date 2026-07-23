@@ -1295,18 +1295,31 @@ def wm_dashboard(**kwargs):
         def ledge(key, label, route, rows, val_field, ts_fields):
             total = 0.0
             oldest = 0.0
+            v_fresh = 0.0
+            v_mid = 0.0
+            v_old = 0.0
             for r in rows:
-                total = total + frappe.utils.flt(r.get(val_field))
+                v = frappe.utils.flt(r.get(val_field))
+                total = total + v
                 ts = None
                 for f in ts_fields:
                     if r.get(f):
                         ts = r.get(f)
                         break
                 a = age_days(ts)
-                if a and a > oldest:
+                if a is None:
+                    a = 0
+                if a > oldest:
                     oldest = a
+                if a < 3:
+                    v_fresh = v_fresh + v
+                elif a <= 7:
+                    v_mid = v_mid + v
+                else:
+                    v_old = v_old + v
             ledger.append({"key": key, "label": label, "route": route,
-                           "count": len(rows), "value": total, "oldest_d": oldest})
+                           "count": len(rows), "value": total, "oldest_d": oldest,
+                           "v_fresh": v_fresh, "v_mid": v_mid, "v_old": v_old})
 
         ledge("plans_pending", "Plans awaiting approval", "/work-planner",
             frappe.db.get_all("Work Management Planner", filters={"workflow_state": "Pending Approval"},
@@ -1349,16 +1362,22 @@ def wm_dashboard(**kwargs):
         ledge("act_pending", "Actuals in approval (FM/HR/GM)", "/work-actuals",
             act_rows, "total_payment", ["custom_submitted_at", "creation"])
         cu = frappe.db.sql("""
-            SELECT COALESCE(SUM(we.amount),0) v, COUNT(DISTINCT we.employee) c, MIN(we.work_date) oldest
+            SELECT COALESCE(SUM(we.amount),0) v, COUNT(DISTINCT we.employee) c, MIN(we.work_date) oldest,
+                   COALESCE(SUM(CASE WHEN DATEDIFF(%s, we.work_date) < 3 THEN we.amount ELSE 0 END),0) vf,
+                   COALESCE(SUM(CASE WHEN DATEDIFF(%s, we.work_date) BETWEEN 3 AND 7 THEN we.amount ELSE 0 END),0) vm,
+                   COALESCE(SUM(CASE WHEN DATEDIFF(%s, we.work_date) > 7 THEN we.amount ELSE 0 END),0) vo
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             WHERE ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0
               AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND we.payment_ref IS NULL
-        """, as_dict=True)
+        """, (today_s, today_s, today_s), as_dict=True)
         ledger.append({"key": "confirmed_unpaid", "label": "Confirmed earnings not yet sent to accounts",
             "route": "/work-payment", "count": frappe.utils.cint(cu[0].c) if cu else 0,
             "value": frappe.utils.flt(cu[0].v) if cu else 0,
-            "oldest_d": frappe.utils.date_diff(today_s, cu[0].oldest) if cu and cu[0].oldest else 0})
+            "oldest_d": frappe.utils.date_diff(today_s, cu[0].oldest) if cu and cu[0].oldest else 0,
+            "v_fresh": frappe.utils.flt(cu[0].vf) if cu else 0,
+            "v_mid": frappe.utils.flt(cu[0].vm) if cu else 0,
+            "v_old": frappe.utils.flt(cu[0].vo) if cu else 0})
         ledge("sent_accounts", "Sent, awaiting release by accounts", "/work-payment",
             frappe.db.get_all("Work Management Payment", filters={"workflow_state": "Pending Accounts"},
                 fields=["grand_total", "custom_submitted_at", "creation"], limit=2000),
