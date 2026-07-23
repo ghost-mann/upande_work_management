@@ -1,0 +1,552 @@
+{
+ "allow_rename": 1,
+ "autoname": "format:WMAC-{#####}",
+ "creation": "2026-07-23 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "assignment",
+  "workflow_state",
+  "cb_top",
+  "farm",
+  "planner_request",
+  "sb_work",
+  "block_section",
+  "task",
+  "task_kpi",
+  "rate",
+  "cb_work",
+  "from_date",
+  "to_date",
+  "planned_people",
+  "planned_cost",
+  "sb_actuals",
+  "employees",
+  "sb_money",
+  "total_actual_qty",
+  "custom_tw_qty",
+  "actual_people",
+  "payroll_people",
+  "cb_money",
+  "cost_variance",
+  "total_payment",
+  "sb_audit",
+  "entered_by",
+  "entry_date",
+  "hr_approved_by",
+  "hr_approval_date",
+  "cb_audit",
+  "gm_approved_by",
+  "gm_approval_date",
+  "custom_closed_early",
+  "paid",
+  "payment_ref",
+  "amended_from",
+  "custom_balance_qty",
+  "custom_close_reason",
+  "custom_fm_approved_at",
+  "custom_gm_approved_at",
+  "custom_hr_approved_at",
+  "custom_salaried_qty",
+  "custom_submitted_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "assignment",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Assignment",
+   "options": "Work Management Assigner",
+   "reqd": 1
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Workflow State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_top",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "assignment.farm",
+   "fieldname": "farm",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Farm",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "assignment.planner_request",
+   "fieldname": "planner_request",
+   "fieldtype": "Link",
+   "label": "Planner",
+   "options": "Work Management Planner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_work",
+   "fieldtype": "Section Break",
+   "label": "Work (from plan)"
+  },
+  {
+   "fetch_from": "assignment.block_section",
+   "fieldname": "block_section",
+   "fieldtype": "Link",
+   "label": "Block / Section",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "assignment.task",
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "label": "Task",
+   "options": "Task",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "assignment.task_kpi",
+   "fieldname": "task_kpi",
+   "fieldtype": "Data",
+   "label": "Task - KPI",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "label": "Rate (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_work",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "assignment.from_date",
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "label": "From",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "assignment.to_date",
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "To",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "assignment.planned_people",
+   "fieldname": "planned_people",
+   "fieldtype": "Int",
+   "label": "Planned People/Day",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "assignment.planned_cost",
+   "fieldname": "planned_cost",
+   "fieldtype": "Currency",
+   "label": "Planned Cost (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_actuals",
+   "fieldtype": "Section Break",
+   "label": "Actual Work Done (per worker)"
+  },
+  {
+   "fieldname": "employees",
+   "fieldtype": "Table",
+   "label": "Employees",
+   "options": "Work Actuals Employee"
+  },
+  {
+   "fieldname": "sb_money",
+   "fieldtype": "Section Break",
+   "label": "Payment Summary"
+  },
+  {
+   "fieldname": "total_actual_qty",
+   "fieldtype": "Float",
+   "label": "Total Actual Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_tw_qty",
+   "fieldtype": "Float",
+   "label": "Task-worker Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_people",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Actual People",
+   "read_only": 1
+  },
+  {
+   "description": "Task Workers only (permanent excluded)",
+   "fieldname": "payroll_people",
+   "fieldtype": "Int",
+   "label": "Paid Workers",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_money",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cost_variance",
+   "fieldtype": "Currency",
+   "label": "Cost Variance vs Plan",
+   "read_only": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "total_payment",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total Payment (KES)",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_audit",
+   "fieldtype": "Section Break",
+   "label": "Entry & Approvals"
+  },
+  {
+   "fieldname": "entered_by",
+   "fieldtype": "Link",
+   "label": "Entered By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "entry_date",
+   "fieldtype": "Date",
+   "label": "Entry Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "hr_approved_by",
+   "fieldtype": "Link",
+   "label": "HR Head Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "hr_approval_date",
+   "fieldtype": "Date",
+   "label": "HR Approval Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_audit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "gm_approved_by",
+   "fieldtype": "Link",
+   "label": "GM Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gm_approval_date",
+   "fieldtype": "Date",
+   "label": "GM Approval Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_closed_early",
+   "fieldtype": "Check",
+   "label": "Closed Early",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "paid",
+   "fieldtype": "Check",
+   "label": "Sent to Payment",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payment_ref",
+   "fieldtype": "Data",
+   "label": "Payment Ref",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Work Management Actuals",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "custom_balance_qty",
+   "fieldtype": "Float",
+   "label": "Balance vs Target",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_close_reason",
+   "fieldtype": "Small Text",
+   "label": "Close Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_fm_approved_at",
+   "fieldtype": "Datetime",
+   "label": "FM Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_gm_approved_at",
+   "fieldtype": "Datetime",
+   "label": "GM Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_hr_approved_at",
+   "fieldtype": "Datetime",
+   "label": "HR Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_salaried_qty",
+   "fieldtype": "Float",
+   "label": "Salaried Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_submitted_at",
+   "fieldtype": "Datetime",
+   "label": "Submitted At",
+   "read_only": 1
+  }
+ ],
+ "idx": 0,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Actuals",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Clerk",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HOD HR",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "General Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager Kaitet",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Saboti",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Lokitela",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Endebess",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Valle",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Section Head",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "assignment",
+ "track_changes": 1
+}

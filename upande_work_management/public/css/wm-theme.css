@@ -1,0 +1,391 @@
+/* ============================================================
+   Upande Work Management — glass theme
+   Loads AFTER each page's base stylesheet and re-skins it:
+   the base sheet keeps every layout rule; this layer swaps the
+   palette (via the shared CSS variables the base and the JS both
+   use) and turns the major surfaces into frosted glass floating
+   on a warm paper canvas.
+   Pages: #wmp dashboard · #wpp planner · #wap assigner
+          #acp actuals  · #wpay payment
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap");
+
+/* ---------- canvas: warm paper + ambient washes for the glass to refract */
+body:has(.wm-canvas) {
+  background: #f3f2ed;
+  min-height: 100vh;
+}
+body:has(.wm-canvas)::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(46rem 30rem at 12% -6%, var(--wm-stage-soft, rgba(217, 165, 20, 0.13)), transparent 60%),
+    radial-gradient(40rem 28rem at 96% 12%, rgba(34, 136, 131, 0.08), transparent 65%),
+    radial-gradient(52rem 36rem at 50% 115%, rgba(10, 10, 10, 0.05), transparent 60%);
+}
+/* take the page over — hide the frappe website chrome */
+body:has(.wm-canvas) .navbar,
+body:has(.wm-canvas) header.navbar,
+body:has(.wm-canvas) .page-breadcrumbs,
+body:has(.wm-canvas) .page-header,
+body:has(.wm-canvas) .web-footer,
+body:has(.wm-canvas) footer,
+body:has(.wm-canvas) .website-edit-button,
+body:has(.wm-canvas) .scroll-to-top {
+  display: none !important;
+}
+body:has(.wm-canvas) .page_content { margin: 0; padding: 0; }
+body:has(.wm-canvas) .container,
+body:has(.wm-canvas) .page-content-wrapper {
+  max-width: 100%;
+  padding: 0;
+  margin: 0;
+}
+.wm-canvas { position: relative; z-index: 1; }
+
+/* ---------- palette swap: the variables every base rule + JS string uses */
+#wmp, #wpp, #wap, #acp, #wpay {
+  --ink: #0a0a0a;
+  --mute: #7c7a72;            /* warm grey instead of slate */
+  --faint: rgba(10, 10, 10, 0.055);
+  --line: rgba(10, 10, 10, 0.09);
+  --wash: rgba(10, 10, 10, 0.035);
+  --hatch: #cfcdc5;
+  --gold: #d9a514;
+  --r: 18px;
+  --rs: 11px;
+  --sh: 0 1px 0 rgba(10, 10, 10, 0.03), 0 10px 30px -18px rgba(10, 10, 10, 0.14);
+  --shm: 0 1px 0 rgba(10, 10, 10, 0.04), 0 26px 48px -24px rgba(10, 10, 10, 0.22);
+  /* frosted surface tokens */
+  --glass: rgba(255, 255, 255, 0.58);
+  --glass-strong: rgba(255, 255, 255, 0.74);
+  --glass-edge: rgba(255, 255, 255, 0.72);
+  --glass-blur: saturate(1.5) blur(18px);
+  font-family: "Poppins", system-ui, sans-serif;
+  color: var(--ink);
+}
+/* per-page stage hue (eyebrow tick, active glow, ambient wash) */
+#wmp  { --stage: #d9a514; --wm-stage-soft: rgba(217, 165, 20, 0.14); }
+#wpp  { --stage: #2563eb; --wm-stage-soft: rgba(37, 99, 235, 0.10); }
+#wap  { --stage: #7c3aed; --wm-stage-soft: rgba(124, 58, 237, 0.09); }
+#acp  { --stage: #0a7a43; --wm-stage-soft: rgba(10, 122, 67, 0.10); }
+#wpay { --stage: #a06000; --wm-stage-soft: rgba(160, 96, 0, 0.11); }
+
+:is(#wmp, #wpp, #wap, #acp, #wpay) { max-width: 1420px; padding: 0 34px 90px; }
+@media (max-width: 760px) { :is(#wmp, #wpp, #wap, #acp, #wpay) { padding: 0 14px 70px; } }
+
+/* ============================================================
+   TOPBAR — the frosted command deck (new shell markup)
+   ============================================================ */
+.wm-top {
+  position: sticky;
+  top: 10px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 14px 0 0;
+  padding: 10px 12px 10px 20px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 0 0 1px rgba(10, 10, 10, 0.045), var(--sh);
+  border-radius: 999px;
+}
+.wm-top__brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.wm-top__logo { height: 26px; width: auto; display: block; }
+.wm-top__divider { width: 1px; height: 22px; background: rgba(10, 10, 10, 0.12); }
+.wm-top__product { font: 600 13.5px/1.15 "Poppins", sans-serif; color: var(--ink); letter-spacing: -0.2px; white-space: nowrap; }
+.wm-top__product small {
+  display: block;
+  font: 500 9px/1.4 "Poppins", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  color: var(--mute);
+}
+.wm-top__nav { display: flex; gap: 3px; margin-left: 8px; flex-wrap: wrap; }
+.wm-top__nav a {
+  font: 500 12px "Poppins", sans-serif;
+  color: #55534c;
+  text-decoration: none;
+  padding: 8px 15px;
+  border-radius: 999px;
+  transition: background 0.18s, color 0.18s;
+  white-space: nowrap;
+}
+.wm-top__nav a:hover { background: rgba(10, 10, 10, 0.05); color: var(--ink); text-decoration: none; }
+.wm-top__nav a.on {
+  background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%);
+  color: #fafaf6;
+  box-shadow: 0 6px 16px -6px rgba(10, 10, 10, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+.wm-top__nav a.desk { color: var(--mute); font-size: 11px; }
+.wm-top__right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.wm-top__right .who { font: 500 11.5px "Poppins", sans-serif; color: var(--mute); }
+.wm-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%);
+  color: #fafaf6;
+  display: grid;
+  place-items: center;
+  font: 600 11px "Poppins", sans-serif;
+  letter-spacing: 0.4px;
+  flex-shrink: 0;
+}
+@media (max-width: 980px) {
+  .wm-top { border-radius: 24px; flex-wrap: wrap; padding: 12px 16px; top: 0; }
+  .wm-top__right { margin-left: 0; }
+}
+
+/* ---------- page head: the one serif moment */
+.wm-ph { margin: 34px 2px 10px; }
+.wm-ph__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font: 500 10.5px "Poppins", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 2.2px;
+  color: var(--mute);
+  margin-bottom: 10px;
+}
+.wm-ph__eyebrow::before { content: ""; width: 20px; height: 2px; border-radius: 2px; background: var(--stage, #0a0a0a); }
+.wm-ph__title {
+  font: 600 clamp(30px, 4.4vw, 44px)/1.02 "Fraunces", Georgia, serif;
+  letter-spacing: -0.8px;
+  color: var(--ink);
+  margin: 0;
+}
+.wm-ph__sub { margin-top: 8px; font: 400 13.5px "Poppins", sans-serif; color: #6a6860; max-width: 74ch; }
+
+/* ============================================================
+   RE-SKIN of the shared base components
+   ============================================================ */
+
+/* old header bar leftovers (if any page keeps a .bar) */
+:is(#wmp, #wpp, #wap, #acp, #wpay) .bar { border-bottom: 0; }
+
+/* --- tabs (JS-built) --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) nav.tabs,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .subtabs,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .pex-tabs {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 0 0 1px rgba(10, 10, 10, 0.04), var(--sh);
+  border-radius: 999px;
+  padding: 5px;
+  gap: 3px;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) nav.tabs button,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .subtab {
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  font-weight: 500;
+  padding: 9px 17px;
+  border-radius: 999px;
+  color: #56544d;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) nav.tabs button:hover { background: rgba(255, 255, 255, 0.85); color: var(--ink); }
+:is(#wmp, #wpp, #wap, #acp, #wpay) nav.tabs button[aria-selected="true"],
+:is(#wmp, #wpp, #wap, #acp, #wpay) .subtab.on {
+  background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%);
+  border-color: transparent;
+  color: #fafaf6;
+  box-shadow: 0 8px 18px -8px rgba(10, 10, 10, 0.5);
+}
+
+/* --- KPI cards → glass tiles with a stage-glow keyline --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) .kpi {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 0 0 1px rgba(10, 10, 10, 0.04), var(--sh);
+  border-radius: 20px;
+  padding: 18px 20px;
+  transition: transform 0.22s, box-shadow 0.22s;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) .kpi:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px rgba(10, 10, 10, 0.05), var(--shm); }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .kpi::before { height: 3px; left: 20px; right: auto; width: 26px; top: 14px; border-radius: 3px; opacity: 0.9; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .kpi .k { margin-top: 8px; color: #8a877e; letter-spacing: 0.12em; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .kpi .v { font-weight: 600; letter-spacing: -0.035em; font-feature-settings: "tnum"; }
+
+/* --- buttons --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) button.btn,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .lfb-clear,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .refresh,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .wm-dr-apply {
+  background: rgba(255, 255, 255, 0.66);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(10, 10, 10, 0.12);
+  border-radius: 999px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  box-shadow: var(--sh);
+  transition: transform 0.16s, box-shadow 0.16s, border-color 0.16s, background 0.16s;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) button.btn:hover:not(:disabled),
+:is(#wmp, #wpp, #wap, #acp, #wpay) .refresh:hover,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .wm-dr-apply:hover {
+  border-color: rgba(10, 10, 10, 0.55);
+  transform: translateY(-1px);
+  box-shadow: var(--shm);
+  background: rgba(255, 255, 255, 0.9);
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) button.btn.solid {
+  background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%);
+  border-color: transparent;
+  color: #fafaf6;
+  box-shadow: 0 10px 22px -10px rgba(10, 10, 10, 0.55);
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) button.btn.solid:hover:not(:disabled) { opacity: 1; filter: brightness(1.25); background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%); }
+
+/* --- inputs / selects: quiet glass fields --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) select,
+:is(#wmp, #wpp, #wap, #acp, #wpay) input:not([type="range"]):not([type="checkbox"]):not([type="radio"]) {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(10, 10, 10, 0.1);
+  border-radius: 12px;
+  font-family: "Poppins", sans-serif;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) select:focus,
+:is(#wmp, #wpp, #wap, #acp, #wpay) input:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.1);
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) label.fl { color: #8a877e; }
+
+/* --- block chips + generic chips --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.bk, .fchip, .allchip) {
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(10, 10, 10, 0.1);
+  border-radius: 999px;
+  transition: all 0.15s;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.bk, .fchip, .allchip):hover { border-color: rgba(10, 10, 10, 0.5); }
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.bk.on, .fchip.on, .allchip.on) {
+  background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%);
+  border-color: transparent;
+  color: #fafaf6;
+  box-shadow: 0 6px 14px -7px rgba(10, 10, 10, 0.5);
+}
+
+/* --- section headings --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) .sech {
+  color: #918e84;
+  letter-spacing: 0.2em;
+  border-bottom: 1px solid rgba(10, 10, 10, 0.07);
+}
+
+/* --- tables: airy, hairline, tabular numerals --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) th { color: #918e84; border-bottom: 1px solid rgba(10, 10, 10, 0.1); }
+:is(#wmp, #wpp, #wap, #acp, #wpay) td { border-bottom: 1px solid rgba(10, 10, 10, 0.055); font-feature-settings: "tnum"; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) tbody tr:hover { background: rgba(255, 255, 255, 0.55); }
+
+/* --- status tags: soft translucent fills, no harsh solids --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) .tag { background: rgba(10, 10, 10, 0.045); border-color: transparent; border-radius: 999px; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .tag.appr,
+:is(#wmp, #wpp, #wap, #acp, #wpay) .tag.paid { background: rgba(10, 122, 67, 0.13); color: #0a6a3b; border-color: transparent; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .tag.pend { background: rgba(217, 150, 46, 0.16); color: #8d5c09; border-color: transparent; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .tag.rej { background: rgba(185, 28, 28, 0.13); color: #a02020; border-color: transparent; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .tag.draft { background: rgba(10, 10, 10, 0.05); color: #6a6860; }
+
+/* --- panels of glass: every boxed surface the pages draw --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay)
+  :is(.lfb, .empty, .cmp, .detail, .banner, .dock, .runcard, .et-card, .fs-card, .stagecard,
+      .rc-head, .cb-tot-card, .sk-kpi, .pl-filters, .asg-filters, .filters, .wm-daterange,
+      .cal-g, .cal-sum, .rel-box, .sub-bar, .fstrip, .wm-dwrap, .legend, .explain) {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 0 0 1px rgba(10, 10, 10, 0.04), var(--sh);
+  border-radius: 18px;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) .empty { border-style: dashed; border-color: rgba(10, 10, 10, 0.14); background: rgba(255, 255, 255, 0.35); color: #8a877e; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) .cmp {
+  border-left: 0;
+  box-shadow: inset 3px 0 0 var(--blue), inset 0 0 0 1px rgba(10, 10, 10, 0.04), var(--sh);
+  border-radius: 6px 16px 16px 6px;
+  color: #4c4a44;
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) .cmp b { color: var(--ink); }
+
+/* --- list rows (planner list, assigner plan list, actuals list) --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.pl-row, .asg-row, .emrow, .trow, .wtrow, .sc-row) { border-radius: 12px; transition: background 0.15s; }
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.pl-row, .asg-row, .emrow):hover { background: rgba(255, 255, 255, 0.6); }
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.pl-row.sel, .asg-row.sel) {
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: inset 0 0 0 1.5px var(--ink), var(--sh);
+}
+
+/* --- modals: heavy frost, deep shadow --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.modal-card, .submodal-card, .pex-sheet, .pex-modal, .wm-detail) {
+  background: rgba(250, 250, 246, 0.9);
+  -webkit-backdrop-filter: saturate(1.6) blur(26px);
+  backdrop-filter: saturate(1.6) blur(26px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 22px;
+  box-shadow: 0 40px 90px -30px rgba(10, 10, 10, 0.45), inset 0 0 0 1px rgba(10, 10, 10, 0.05);
+}
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(.modal, .pex-over) { background: rgba(30, 29, 26, 0.35); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+
+/* --- toast: dark glass pill --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) .toast {
+  background: rgba(10, 10, 10, 0.88);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-radius: 999px;
+  box-shadow: 0 18px 40px -12px rgba(10, 10, 10, 0.5);
+}
+
+/* --- dashboard date-range strip --- */
+#wmp .wm-daterange { border-radius: 999px; padding: 10px 18px; }
+#wmp .wm-dr-presets button { border-radius: 999px; font-weight: 500; }
+#wmp .wm-dr-presets button.on { background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%); color: #fafaf6; border-color: transparent; }
+#wmp .wm-dr-apply {
+  background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%);
+  color: #fafaf6;
+  border-color: transparent;
+  text-transform: none;
+}
+#wmp .wm-dr-apply:hover { background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%); color: #fafaf6; filter: brightness(1.25); }
+
+/* --- old inline nav (JS re-renders .wmnav in some flows): match the deck --- */
+.wmnav {
+  background: var(--glass, rgba(255, 255, 255, 0.58));
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+}
+.wmnav-link { text-transform: none; letter-spacing: 0.02em; font-size: 12px; font-weight: 500; color: #56544d; }
+.wmnav-link.solid, .wmnav a.on { background: linear-gradient(135deg, #0a0a0a 0%, #3a3a34 100%); color: #fafaf6; border-color: transparent; }
+
+/* --- focus visibility + reduced motion --- */
+:is(#wmp, #wpp, #wap, #acp, #wpay) :is(button, a, select, input):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wm-canvas *, .wm-canvas *::before, .wm-canvas *::after { transition: none !important; animation: none !important; }
+}
+
+/* --- print: drop the frost --- */
+@media print {
+  body:has(.wm-canvas)::before { display: none; }
+  .wm-top { position: static; box-shadow: none; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+}

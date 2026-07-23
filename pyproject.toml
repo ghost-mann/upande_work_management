@@ -1,0 +1,14 @@
+[project]
+name = "upande_work_management"
+authors = [{ name = "Upande Ltd", email = "dev@upande.com" }]
+description = "Farm work management command centre: plan task work, assign crews, capture actuals and run worker payments."
+requires-python = ">=3.10"
+readme = "README.md"
+dynamic = ["version"]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.bench.frappe-dependencies]
+frappe = ">=15.0.0,<17.0.0"

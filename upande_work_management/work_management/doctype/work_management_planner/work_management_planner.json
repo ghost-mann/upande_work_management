@@ -1,0 +1,537 @@
+{
+ "allow_rename": 1,
+ "autoname": "format:WM-{farm}-{#####}",
+ "creation": "2026-07-23 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "farm",
+  "company",
+  "status",
+  "cb_dates",
+  "from_date",
+  "to_date",
+  "working_days",
+  "sb_blocks",
+  "block_section",
+  "extra_blocks",
+  "sb_work",
+  "task",
+  "task_kpi",
+  "cb_work",
+  "uom",
+  "daily_target",
+  "rate",
+  "sb_calc",
+  "quantity",
+  "custom_tw_qty",
+  "people_per_day",
+  "cb_calc",
+  "person_days",
+  "total_hours",
+  "total_cost",
+  "sb_burndown",
+  "fulfilled_qty",
+  "remaining_qty",
+  "cb_burndown",
+  "fulfilment_pct",
+  "over_target",
+  "custom_close_state",
+  "sb_audit",
+  "requested_by",
+  "request_date",
+  "cb_audit",
+  "approved_by",
+  "approval_date",
+  "workflow_state",
+  "amended_from",
+  "custom_approved_at",
+  "custom_balance_qty",
+  "custom_close_reason",
+  "custom_close_request_date",
+  "custom_closed_by",
+  "custom_closed_date",
+  "custom_close_requested_by",
+  "custom_salaried_qty",
+  "custom_submitted_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "farm",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Farm",
+   "options": "\nSaboti\nLokitela\nVale\nEndebess",
+   "reqd": 1
+  },
+  {
+   "default": "Kaitet Ltd.",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "default": "Planning",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Planning\nAssigned\nActuals\nClosed"
+  },
+  {
+   "fieldname": "cb_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "label": "From Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "To Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "working_days",
+   "fieldtype": "Int",
+   "label": "Working Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_blocks",
+   "fieldtype": "Section Break",
+   "label": "Blocks / Sections"
+  },
+  {
+   "fieldname": "block_section",
+   "fieldtype": "Link",
+   "label": "Block / Section",
+   "options": "Warehouse"
+  },
+  {
+   "description": "Primary block is above; add more here to cover several blocks in one request.",
+   "fieldname": "extra_blocks",
+   "fieldtype": "Table",
+   "label": "Additional Blocks / Sections",
+   "options": "Work Planner Block"
+  },
+  {
+   "fieldname": "sb_work",
+   "fieldtype": "Section Break",
+   "label": "Work"
+  },
+  {
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Task",
+   "options": "Task",
+   "reqd": 1
+  },
+  {
+   "fieldname": "task_kpi",
+   "fieldtype": "Data",
+   "label": "Task - KPI",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_work",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "task.custom_uom",
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UoM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "task.custom_daily_target",
+   "fieldname": "daily_target",
+   "fieldtype": "Float",
+   "label": "Daily Target",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "task.custom_rate",
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "label": "Rate (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_calc",
+   "fieldtype": "Section Break",
+   "label": "Quantity & Workforce"
+  },
+  {
+   "fieldname": "quantity",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Quantity (total)",
+   "reqd": 1
+  },
+  {
+   "fieldname": "custom_tw_qty",
+   "fieldtype": "Float",
+   "label": "Task-worker Delivered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "people_per_day",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "People / Day",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_calc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "person_days",
+   "fieldtype": "Int",
+   "label": "Mandays",
+   "read_only": 1
+  },
+  {
+   "description": "Mon-Fri 8h, Sat 6h, Sun 8h across the plan period",
+   "fieldname": "total_hours",
+   "fieldtype": "Float",
+   "label": "Total Hours",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total Cost (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_burndown",
+   "fieldtype": "Section Break",
+   "label": "Fulfilment"
+  },
+  {
+   "description": "Sum of confirmed actuals against this plan",
+   "fieldname": "fulfilled_qty",
+   "fieldtype": "Float",
+   "label": "Fulfilled Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remaining_qty",
+   "fieldtype": "Float",
+   "label": "Remaining Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_burndown",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fulfilment_pct",
+   "fieldtype": "Percent",
+   "label": "Fulfilment %",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "over_target",
+   "fieldtype": "Check",
+   "label": "Over Target",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_close_state",
+   "fieldtype": "Select",
+   "label": "Close State",
+   "options": "\nClose Requested\nClosed",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_audit",
+   "fieldtype": "Section Break",
+   "label": "Request & Approval"
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_date",
+   "fieldtype": "Date",
+   "label": "Request Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_audit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approval_date",
+   "fieldtype": "Date",
+   "label": "Approval Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Workflow State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Work Management Planner",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "custom_approved_at",
+   "fieldtype": "Datetime",
+   "label": "Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_balance_qty",
+   "fieldtype": "Float",
+   "label": "Balance (Target - Delivered)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_close_reason",
+   "fieldtype": "Small Text",
+   "label": "Close Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_close_request_date",
+   "fieldtype": "Date",
+   "label": "Close Request Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_closed_by",
+   "fieldtype": "Link",
+   "label": "Closed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_closed_date",
+   "fieldtype": "Date",
+   "label": "Closed Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_close_requested_by",
+   "fieldtype": "Link",
+   "label": "Close Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_salaried_qty",
+   "fieldtype": "Float",
+   "label": "Salaried Delivered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_submitted_at",
+   "fieldtype": "Datetime",
+   "label": "Submitted At",
+   "read_only": 1
+  }
+ ],
+ "idx": 0,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Planner",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Section Head",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Saboti",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Lokitela",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Endebess",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Valle",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HOD HR",
+   "share": 1,
+   "submit": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "General Manager",
+   "share": 1,
+   "submit": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "submit": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Agriculture Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager Kaitet",
+   "share": 1,
+   "submit": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,438 @@
+{
+ "allow_rename": 1,
+ "autoname": "format:WMA-{#####}",
+ "creation": "2026-07-23 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "planner_request",
+  "workflow_state",
+  "cb_top",
+  "farm",
+  "company",
+  "sb_work",
+  "block_section",
+  "task",
+  "task_kpi",
+  "cb_work",
+  "from_date",
+  "to_date",
+  "planned_people",
+  "planned_cost",
+  "sb_assign",
+  "employees",
+  "sb_summary",
+  "assigned_count",
+  "cb_summary",
+  "variance",
+  "sb_audit",
+  "assigned_by",
+  "assign_date",
+  "cb_audit",
+  "approved_by",
+  "approval_date",
+  "amended_from",
+  "custom_fm_approved_at",
+  "custom_gm_approved_at",
+  "custom_hr_approved_at",
+  "custom_submitted_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "planner_request",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Planner Request",
+   "options": "Work Management Planner",
+   "reqd": 1
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Workflow State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_top",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "planner_request.farm",
+   "fieldname": "farm",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Farm",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "planner_request.company",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_work",
+   "fieldtype": "Section Break",
+   "label": "Work (from plan)"
+  },
+  {
+   "fetch_from": "planner_request.block_section",
+   "fieldname": "block_section",
+   "fieldtype": "Link",
+   "label": "Block / Section",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "planner_request.task",
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "label": "Task",
+   "options": "Task",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "planner_request.task_kpi",
+   "fieldname": "task_kpi",
+   "fieldtype": "Data",
+   "label": "Task - KPI",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_work",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "planner_request.from_date",
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "label": "From",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "planner_request.to_date",
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "To",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "planner_request.people_per_day",
+   "fieldname": "planned_people",
+   "fieldtype": "Int",
+   "label": "Planned People/Day",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "planner_request.total_cost",
+   "fieldname": "planned_cost",
+   "fieldtype": "Currency",
+   "label": "Planned Cost (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_assign",
+   "fieldtype": "Section Break",
+   "label": "Assigned Workers"
+  },
+  {
+   "fieldname": "employees",
+   "fieldtype": "Table",
+   "label": "Employees",
+   "options": "Work Assignment Employee"
+  },
+  {
+   "fieldname": "sb_summary",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "assigned_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Assigned Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "variance",
+   "fieldtype": "Int",
+   "label": "Variance vs Plan",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_audit",
+   "fieldtype": "Section Break",
+   "label": "Assignment & Approval"
+  },
+  {
+   "fieldname": "assigned_by",
+   "fieldtype": "Link",
+   "label": "Assigned By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assign_date",
+   "fieldtype": "Date",
+   "label": "Assign Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_audit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approval_date",
+   "fieldtype": "Date",
+   "label": "Approval Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Work Management Assigner",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "custom_fm_approved_at",
+   "fieldtype": "Datetime",
+   "label": "FM Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_gm_approved_at",
+   "fieldtype": "Datetime",
+   "label": "GM Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_hr_approved_at",
+   "fieldtype": "Datetime",
+   "label": "HR Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_submitted_at",
+   "fieldtype": "Datetime",
+   "label": "Submitted At",
+   "read_only": 1
+  }
+ ],
+ "idx": 0,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Assigner",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HOD HR",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "General Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager Kaitet",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Saboti",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Lokitela",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Endebess",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager Valle",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Section Head",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "planner_request",
+ "track_changes": 1
+}

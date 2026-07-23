@@ -1,0 +1,47 @@
+{
+ "creation": "2026-07-23 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "farm",
+  "project",
+  "approver_role"
+ ],
+ "fields": [
+  {
+   "fieldname": "farm",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Farm",
+   "reqd": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Cost Project",
+   "options": "Project"
+  },
+  {
+   "fieldname": "approver_role",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Approver Role",
+   "options": "Role"
+  }
+ ],
+ "idx": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "WM Farm",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
