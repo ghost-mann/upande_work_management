@@ -673,8 +673,8 @@
       '<th style="position:sticky;top:0;background:#fff;z-index:1">HR · GM confirmed</th></tr></thead><tbody>';
     plans.forEach(function(x){
       var leak = x.planned_v>0 && x.confirmed_v<x.planned_v*0.5;
-      h+='<tr>'+
-        '<td class="m" style="font-size:10.5px">'+esc(x.plan)+'<div style="font-size:9px;color:var(--mute)">'+esc(x.state||"")+'</div></td>'+
+      h+='<tr class="wm-vf-row" data-plan="'+esc(x.plan)+'" style="cursor:pointer" title="Click to see every worker on this plan — planned vs actual vs paid">'+
+        '<td class="m" style="font-size:10.5px"><span style="color:var(--blue);font-weight:700">'+esc(x.plan)+'</span><div style="font-size:9px;color:var(--mute)">'+esc(x.state||"")+' · click for workers</div></td>'+
         '<td style="white-space:normal;max-width:190px"><b>'+esc(x.farm||"—")+'</b> · '+esc(x.task||"—")+'<div style="font-size:9.5px;color:var(--mute)">'+esc(lbl(x.block)||"")+' · '+fmt(x.qty)+' '+esc(x.uom||"")+' @ '+fmt(x.rate,2)+'</div></td>'+
         '<td class="m" style="font-size:10px;white-space:nowrap">'+esc(x.from_date||"")+'<br>'+esc(x.to_date||"")+'</td>'+
         '<td>'+hbar(x.planned_v,"#a06000","planned")+hbar(x.assigned_v,"#2563eb","assigned")+hbar(x.confirmed_v,"#0a7a43","confirmed")+'</td>'+
@@ -686,6 +686,89 @@
     });
     h+='</tbody></table>';
     box.innerHTML=h;
+    box.querySelectorAll(".wm-vf-row").forEach(function(tr){
+      tr.addEventListener("click",function(){ toggleFlowDetail(tr); });
+    });
+  }
+
+  function toggleFlowDetail(tr){
+    var open=tr.nextElementSibling;
+    if(open&&open.classList.contains("wm-vf-detail")){ open.remove(); return; }
+    // close any other open detail
+    var tbl=tr.closest("table");
+    tbl.querySelectorAll(".wm-vf-detail").forEach(function(x){ x.remove(); });
+    var plan=tr.getAttribute("data-plan");
+    var cols=tr.children.length;
+    var dtr=document.createElement("tr");
+    dtr.className="wm-vf-detail";
+    dtr.innerHTML='<td colspan="'+cols+'" style="background:var(--wash);padding:14px 16px"><div class="loading">Loading workers on '+esc(plan)+'…</div></td>';
+    tr.parentNode.insertBefore(dtr, tr.nextSibling);
+    call({action:"flow_plan_detail", plan:plan}).then(function(d){
+      if(d.error){ dtr.firstChild.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      dtr.firstChild.innerHTML=flowDetailHtml(d);
+    }).catch(function(e){ dtr.firstChild.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+
+  function flowDetailHtml(d){
+    var pl=d.plan||{}, emps=d.employees||[];
+    var exp=d.expected_per_worker||{};
+    var h='<div style="display:flex;gap:8px 24px;flex-wrap:wrap;font-size:11.5px;margin-bottom:10px">'+
+      '<span><b>'+esc(pl.task||"")+'</b> · '+esc(lbl(pl.block)||"")+' · '+esc(pl.farm||"")+'</span>'+
+      '<span><b style="color:var(--ink)">Expected per worker:</b> '+fmt(exp.qty)+' '+esc(pl.uom||"")+' = KES '+fmt(exp.value)+' ('+fmt(pl.daily_target)+'/day × '+fmt(pl.working_days)+' days @ '+fmt(pl.rate,2)+')</span>'+
+      '<span><b style="color:var(--ink)">Assignments:</b> '+(d.assignments||[]).map(function(a){ return esc(a.name)+' ('+esc(a.state)+')'; }).join(", ")+'</span>'+
+    '</div>';
+    if(!emps.length) return h+'<div class="empty">No workers assigned to this plan yet.</div>';
+    var max=0;
+    emps.forEach(function(e){ if(e.expected_v>max) max=e.expected_v; if(e.act_v>max) max=e.act_v; });
+    max=max||1;
+    function mbar(v,color,label){
+      var w=Math.max(v>0?1.5:0, v/max*100);
+      return '<div style="display:flex;align-items:center;gap:5px;margin:1px 0">'+
+        '<div style="flex:1;background:rgba(10,10,10,.06);height:8px;border-radius:999px;overflow:hidden">'+
+          (v>0?'<div style="height:8px;width:'+w+'%;border-radius:999px;background:'+color+'" title="'+label+' KES '+fmt(v)+'"></div>':'')+
+        '</div><span class="m" style="width:50px;text-align:right;font-size:9px">'+(v>0?kesShort(v):"—")+'</span></div>';
+    }
+    var tq=0, tv=0, tp=0, tu=0;
+    h+='<div style="max-height:380px;overflow:auto"><table style="margin-top:0;background:#fff;border-radius:10px"><thead><tr>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Worker</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">ID</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Status</th>'+
+      '<th class="n" style="position:sticky;top:0;background:#fff;z-index:1">Days</th>'+
+      '<th class="n" style="position:sticky;top:0;background:#fff;z-index:1">Qty done / expected</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1;min-width:200px">Expected / Actual / Paid</th>'+
+      '<th class="n" style="position:sticky;top:0;background:#fff;z-index:1">Actual KES</th>'+
+      '<th class="n" style="position:sticky;top:0;background:#fff;z-index:1">Paid</th>'+
+      '<th class="n" style="position:sticky;top:0;background:#fff;z-index:1">Unpaid</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Run</th></tr></thead><tbody>';
+    emps.forEach(function(e){
+      tq+=e.act_qty; tv+=e.act_v; tp+=e.paid_v; tu+=e.unpaid_v;
+      var pct=e.expected_qty>0?Math.round(e.act_qty/e.expected_qty*100):null;
+      var pctTag=pct==null?"":(' <span style="font-size:9px;font-weight:700;color:'+(pct>=100?"#0a7a43":pct>=60?"#8a6a10":"#b91c1c")+'">'+pct+'%</span>');
+      var st=e.status==="Left"?'<span class="tag hot">Left'+(e.left_date?' '+esc(e.left_date):'')+'</span>'
+            :e.start_date?'<span class="tag" style="background:rgba(10,122,67,.12);color:#0a7a43;border-color:transparent">Joined '+esc(e.start_date)+'</span>'
+            :'<span class="tag">'+esc(e.status||"Active")+'</span>';
+      h+='<tr>'+
+        '<td><b>'+esc(e.name)+'</b></td>'+
+        '<td class="m" style="font-size:10px">'+esc(e.emp)+'</td>'+
+        '<td>'+st+'</td>'+
+        '<td class="n m">'+fmt(e.act_days)+'</td>'+
+        '<td class="n m">'+fmt(e.act_qty)+' / '+fmt(e.expected_qty)+pctTag+'</td>'+
+        '<td>'+mbar(e.expected_v,"#a06000","expected")+mbar(e.act_v,"#2563eb","actual")+mbar(e.paid_v,"#0a7a43","paid")+'</td>'+
+        '<td class="n m">'+fmt(e.act_v)+'</td>'+
+        '<td class="n m">'+(e.paid_v>0?fmt(e.paid_v):"—")+'</td>'+
+        '<td class="n m" style="color:'+(e.unpaid_v>0?"#b91c1c":"var(--mute)")+';font-weight:'+(e.unpaid_v>0?700:400)+'">'+(e.unpaid_v>0?fmt(e.unpaid_v):"—")+'</td>'+
+        '<td class="m" style="font-size:9.5px">'+esc((e.runs||[]).join(", ")||"—")+'</td>'+
+        '</tr>';
+    });
+    h+='</tbody><tfoot><tr><th colspan="3">TOTAL · '+fmt(emps.length)+' workers</th>'+
+       '<th></th><th class="n">'+fmt(tq)+' '+esc(pl.uom||"")+'</th><th></th>'+
+       '<th class="n">'+fmt(tv)+'</th><th class="n">'+fmt(tp)+'</th><th class="n">'+fmt(tu)+'</th><th></th></tr></tfoot></table></div>';
+    h+='<div class="clegend" style="font-size:10px;margin-top:8px">'+
+      '<span><i style="background:#a06000;width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>Expected (plan target)</span>'+
+      '<span><i style="background:#2563eb;width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>Actual confirmed</span>'+
+      '<span><i style="background:#0a7a43;width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px"></i>Paid out</span>'+
+      '<span style="margin-left:auto">% = quantity done vs the plan\'s per-worker target</span></div>';
+    return h;
   }
 
   function comboInit(D){

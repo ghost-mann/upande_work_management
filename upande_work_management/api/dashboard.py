@@ -1700,6 +1700,104 @@ def wm_dashboard(**kwargs):
         out["farms"] = [x.farm for x in fl_farms]
         out["window"] = {"from": str(ffrom), "to": str(fto), "farm": ffarm or None}
 
+    elif action == "flow_plan_detail":
+        # One plan, drilled to every employee: what they were expected to deliver,
+        # what they actually did, and what has been paid — the pipeline per person.
+        fpd = frappe.form_dict.get("plan")
+        pl = frappe.db.get_value("Work Management Planner", fpd,
+            ["name", "farm", "task", "block_section", "uom", "rate", "daily_target",
+             "working_days", "quantity", "total_cost", "from_date", "to_date", "workflow_state"],
+            as_dict=True)
+        if not pl:
+            out["error"] = "Plan not found"
+        else:
+            out["plan"] = {
+                "name": pl.name, "farm": pl.farm, "task": pl.task, "block": pl.block_section,
+                "uom": pl.uom, "rate": frappe.utils.flt(pl.rate),
+                "daily_target": frappe.utils.flt(pl.daily_target),
+                "working_days": frappe.utils.cint(pl.working_days),
+                "quantity": frappe.utils.flt(pl.quantity),
+                "total_cost": frappe.utils.flt(pl.total_cost),
+                "from_date": str(pl.from_date) if pl.from_date else None,
+                "to_date": str(pl.to_date) if pl.to_date else None,
+                "state": pl.workflow_state,
+            }
+            asgs = frappe.db.get_all("Work Management Assigner",
+                filters={"planner_request": fpd, "workflow_state": ["!=", "Rejected"]},
+                fields=["name", "workflow_state", "from_date", "to_date"], limit=200)
+            out["assignments"] = [{"name": a.name, "state": a.workflow_state,
+                                   "from_date": str(a.from_date) if a.from_date else None,
+                                   "to_date": str(a.to_date) if a.to_date else None} for a in asgs]
+            emp_map = {}
+            if asgs:
+                anames = [a.name for a in asgs]
+                ph = ",".join(["%s"] * len(anames))
+                for r in frappe.db.sql("""
+                    SELECT we.parent asg, we.employee emp, we.employee_name nm,
+                           IFNULL(we.status,'Active') status, we.start_date, we.left_date
+                    FROM `tabWork Assignment Employee` we
+                    WHERE we.parent IN (""" + ph + """)
+                """, tuple(anames), as_dict=True):
+                    e = emp_map.get(r.emp)
+                    if not e:
+                        e = {"emp": r.emp, "name": r.nm or r.emp, "status": r.status,
+                             "asgs": [], "start_date": None, "left_date": None,
+                             "act_qty": 0.0, "act_v": 0.0, "act_days": 0,
+                             "paid_v": 0.0, "unpaid_v": 0.0, "runs": {}}
+                        emp_map[r.emp] = e
+                    e["asgs"].append(r.asg)
+                    if r.status == "Left":
+                        e["status"] = "Left"
+                        e["left_date"] = str(r.left_date) if r.left_date else e["left_date"]
+                    if r.start_date and not e["start_date"]:
+                        e["start_date"] = str(r.start_date)
+                arow = frappe.db.sql("""
+                    SELECT we.employee emp, we.employee_name nm,
+                           COALESCE(SUM(we.actual_quantity),0) qty,
+                           COALESCE(SUM(we.amount),0) v,
+                           COUNT(DISTINCT we.work_date) days,
+                           COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=1 THEN we.amount ELSE 0 END),0) paid_v,
+                           COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 THEN we.amount ELSE 0 END),0) unpaid_v,
+                           GROUP_CONCAT(DISTINCT we.payment_ref) runs
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    INNER JOIN `tabWork Management Assigner` a ON ac.assignment = a.name
+                    WHERE a.planner_request = %s AND ac.workflow_state = 'CONFIRMED'
+                    GROUP BY we.employee, we.employee_name
+                """, (fpd,), as_dict=True)
+                for r in arow:
+                    e = emp_map.get(r.emp)
+                    if not e:
+                        e = {"emp": r.emp, "name": r.nm or r.emp, "status": "(actuals only)",
+                             "asgs": [], "start_date": None, "left_date": None,
+                             "act_qty": 0.0, "act_v": 0.0, "act_days": 0,
+                             "paid_v": 0.0, "unpaid_v": 0.0, "runs": {}}
+                        emp_map[r.emp] = e
+                    e["act_qty"] = frappe.utils.flt(r.qty)
+                    e["act_v"] = frappe.utils.flt(r.v)
+                    e["act_days"] = frappe.utils.cint(r.days)
+                    e["paid_v"] = frappe.utils.flt(r.paid_v)
+                    e["unpaid_v"] = frappe.utils.flt(r.unpaid_v)
+                    if r.runs:
+                        for rn in str(r.runs).split(","):
+                            if rn:
+                                e["runs"][rn] = 1
+            exp_qty = frappe.utils.flt(pl.daily_target) * frappe.utils.cint(pl.working_days)
+            exp_v = exp_qty * frappe.utils.flt(pl.rate)
+            emps = []
+            for k in emp_map:
+                e = emp_map[k]
+                emps.append({"emp": e["emp"], "name": e["name"], "status": e["status"],
+                             "assignments": sorted(set(e["asgs"])),
+                             "start_date": e["start_date"], "left_date": e["left_date"],
+                             "expected_qty": exp_qty, "expected_v": exp_v,
+                             "act_qty": e["act_qty"], "act_v": e["act_v"], "act_days": e["act_days"],
+                             "paid_v": e["paid_v"], "unpaid_v": e["unpaid_v"],
+                             "runs": sorted(e["runs"].keys())})
+            emps = sorted(emps, key=lambda x: x["act_v"], reverse=True)
+            out["employees"] = emps
+            out["expected_per_worker"] = {"qty": exp_qty, "value": exp_v}
+
     elif action == "approver_kpis":
         # Per-approver sign-off KPIs from the hour-level stage timestamps
         # (custom_submitted_at → FM → HR → GM / accounts), plus the live backlog
