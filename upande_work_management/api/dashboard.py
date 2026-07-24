@@ -1700,6 +1700,62 @@ def wm_dashboard(**kwargs):
         out["farms"] = [x.farm for x in fl_farms]
         out["window"] = {"from": str(ffrom), "to": str(fto), "farm": ffarm or None}
 
+    elif action == "performers":
+        # Ranking of the pipeline STAFF: plan creators, plan approvers, assigners,
+        # assignment approvers, actuals enterers, HR/GM approvers, accounts —
+        # count + value handled per role per person, in a window.
+        pfrom = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -83)
+        pto = frappe.form_dict.get("to_date") or frappe.utils.today()
+        people = {}
+        pnames_cache = {}
+
+        def pperson(who):
+            pp = people.get(who)
+            if not pp:
+                if who not in pnames_cache:
+                    pnames_cache[who] = frappe.db.get_value("User", who, "full_name") or who
+                pp = {"who": who, "name": pnames_cache[who], "roles": {}, "total_v": 0.0, "total_n": 0}
+                people[who] = pp
+            return pp
+
+        def prole(role_key, dtype, who_field, val_field, date_field, extra_filters):
+            am = frappe.get_meta(dtype)
+            if not am.get_field(who_field) or not am.get_field(date_field):
+                return
+            flt = {who_field: ["is", "set"], date_field: ["between", [pfrom, pto]]}
+            if extra_filters:
+                flt.update(extra_filters)
+            rows = frappe.db.get_all(dtype, filters=flt, fields=[who_field, val_field], limit=8000)
+            for r in rows:
+                who = r.get(who_field)
+                if not who:
+                    continue
+                pp = pperson(who)
+                g = pp["roles"].get(role_key) or {"n": 0, "v": 0.0}
+                g["n"] = g["n"] + 1
+                g["v"] = g["v"] + frappe.utils.flt(r.get(val_field))
+                pp["roles"][role_key] = g
+                pp["total_v"] = pp["total_v"] + frappe.utils.flt(r.get(val_field))
+                pp["total_n"] = pp["total_n"] + 1
+
+        prole("plan_created", "Work Management Planner", "requested_by", "total_cost", "request_date", None)
+        prole("plan_approved", "Work Management Planner", "approved_by", "total_cost", "approval_date", None)
+        prole("assigned", "Work Management Assigner", "assigned_by", "planned_cost", "assign_date", None)
+        prole("asg_approved", "Work Management Assigner", "approved_by", "planned_cost", "approval_date", None)
+        prole("actuals_entered", "Work Management Actuals", "entered_by", "total_payment", "entry_date", None)
+        prole("hr_approved", "Work Management Actuals", "hr_approved_by", "total_payment", "hr_approval_date", None)
+        prole("gm_confirmed", "Work Management Actuals", "gm_approved_by", "total_payment", "gm_approval_date", None)
+        prole("pay_released", "Work Management Payment", "accounts_approved_by", "grand_total", "accounts_approval_date", None)
+
+        plist = []
+        for who in people:
+            pp = people[who]
+            plist.append({"who": who, "name": pp["name"], "roles": pp["roles"],
+                          "total_v": pp["total_v"], "total_n": pp["total_n"]})
+        plist = sorted(plist, key=lambda x: x["total_v"], reverse=True)
+        out["performers"] = plist
+        out["window"] = {"from": str(pfrom), "to": str(pto)}
+
     elif action == "flow_plan_detail":
         # One plan, drilled to every employee: what they were expected to deliver,
         # what they actually did, and what has been paid — the pipeline per person.
