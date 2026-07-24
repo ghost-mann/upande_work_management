@@ -2183,7 +2183,7 @@
     });
     t+='</tbody></table></div>'+
       '<div style="font-size:10px;color:var(--mute);margin-top:8px">Counts are documents handled in that role; KES is the value on them. Window '+esc((PERF.data.window||{}).from||"")+' → '+esc((PERF.data.window||{}).to||"")+'.</div>';
-    box.innerHTML=legend+g+t;
+    box.innerHTML=legend+'<div style="max-height:520px;overflow-y:auto;border:1px solid var(--faint);border-radius:12px;padding:4px 8px">'+g+'</div>'+t;
   }
 
   function load(){
