@@ -1629,6 +1629,77 @@ def wm_dashboard(**kwargs):
         }
         out["window"] = {"from": str(kfrom), "to": str(kto)}
 
+    elif action == "flow_plans":
+        # Per-plan value flow with accountability: who created / approved the plan,
+        # who staffed it, who entered and confirmed the actuals, and how much value
+        # made it through each stage. Filters: farm + date range (plan period overlap).
+        ffarm = frappe.form_dict.get("farm")
+        ffrom = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -83)
+        fto = frappe.form_dict.get("to_date") or frappe.utils.today()
+        pflt = {"from_date": ["<=", fto], "to_date": [">=", ffrom]}
+        if ffarm:
+            pflt["farm"] = ffarm
+        plans = frappe.db.get_all("Work Management Planner", filters=pflt,
+            fields=["name", "farm", "task", "block_section", "from_date", "to_date",
+                    "quantity", "uom", "rate", "total_cost", "workflow_state",
+                    "requested_by", "approved_by", "approval_date"],
+            order_by="from_date desc", limit=300)
+        pnames = [r.name for r in plans]
+        asg_val = {}
+        asg_by = {}
+        act_val = {}
+        act_ent = {}
+        act_gm = {}
+        act_hr = {}
+        if pnames:
+            ph = ",".join(["%s"] * len(pnames))
+            for r in frappe.db.sql("""
+                SELECT planner_request p, COALESCE(SUM(planned_cost),0) v,
+                       GROUP_CONCAT(DISTINCT assigned_by) ab
+                FROM `tabWork Management Assigner`
+                WHERE planner_request IN (""" + ph + """) AND workflow_state != 'Rejected'
+                GROUP BY planner_request
+            """, tuple(pnames), as_dict=True):
+                asg_val[r.p] = frappe.utils.flt(r.v)
+                asg_by[r.p] = r.ab
+            for r in frappe.db.sql("""
+                SELECT a.planner_request p, COALESCE(SUM(ac.total_payment),0) v,
+                       GROUP_CONCAT(DISTINCT ac.entered_by) eb,
+                       GROUP_CONCAT(DISTINCT ac.gm_approved_by) gb,
+                       GROUP_CONCAT(DISTINCT ac.hr_approved_by) hb
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` a ON ac.assignment = a.name
+                WHERE a.planner_request IN (""" + ph + """) AND ac.workflow_state = 'CONFIRMED'
+                GROUP BY a.planner_request
+            """, tuple(pnames), as_dict=True):
+                act_val[r.p] = frappe.utils.flt(r.v)
+                act_ent[r.p] = r.eb
+                act_gm[r.p] = r.gb
+                act_hr[r.p] = r.hb
+        fp = []
+        for r in plans:
+            fp.append({
+                "plan": r.name, "farm": r.farm, "task": r.task, "block": r.block_section,
+                "from_date": str(r.from_date) if r.from_date else None,
+                "to_date": str(r.to_date) if r.to_date else None,
+                "state": r.workflow_state,
+                "qty": frappe.utils.flt(r.quantity), "uom": r.uom, "rate": frappe.utils.flt(r.rate),
+                "planned_v": frappe.utils.flt(r.total_cost),
+                "assigned_v": asg_val.get(r.name, 0),
+                "confirmed_v": act_val.get(r.name, 0),
+                "created_by": r.requested_by,
+                "plan_approved_by": r.approved_by,
+                "assigned_by": asg_by.get(r.name),
+                "entered_by": act_ent.get(r.name),
+                "hr_by": act_hr.get(r.name),
+                "gm_by": act_gm.get(r.name),
+            })
+        out["plans"] = fp
+        fl_farms = frappe.db.sql("""SELECT DISTINCT farm FROM `tabWork Management Planner`
+            WHERE farm IS NOT NULL AND farm != '' ORDER BY farm""", as_dict=True)
+        out["farms"] = [x.farm for x in fl_farms]
+        out["window"] = {"from": str(ffrom), "to": str(fto), "farm": ffarm or None}
+
     elif action == "approver_kpis":
         # Per-approver sign-off KPIs from the hour-level stage timestamps
         # (custom_submitted_at → FM → HR → GM / accounts), plus the live backlog

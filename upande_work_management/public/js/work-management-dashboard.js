@@ -603,7 +603,89 @@
     return '<div style="font-size:12px;color:var(--mute);margin:2px 0 8px">Value approved at each stage per week — plans should be matched by staffing, and staffing by confirmed work. A widening gap between bars is work leaking between stages.</div>'+g+
       '<div class="clegend" style="font-size:11px;margin-top:6px">'+
       SERIES.map(function(sr){ return '<span><i style="background:'+sr[2]+';width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px"></i>'+sr[1]+'</span>'; }).join("")+
-      '</div>';
+      '</div>'+
+      '<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:18px 0 8px">Per plan — value through the stages, and who touched it</div>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
+        '<div><div class="tl-lab">Farm</div><select id="wm-vf-farm" class="tl-in"><option value="">All farms</option></select></div>'+
+        '<div><div class="tl-lab">Plan period from</div><input type="date" id="wm-vf-from" class="tl-in"></div>'+
+        '<div><div class="tl-lab">to</div><input type="date" id="wm-vf-to" class="tl-in"></div>'+
+        '<button type="button" class="refresh" id="wm-vf-apply" style="margin-bottom:1px">Apply</button>'+
+        '<span class="cap" id="wm-vf-count" style="margin-left:auto"></span>'+
+      '</div>'+
+      '<div id="wm-vf-table" style="max-height:460px;overflow:auto"><div class="loading">Loading plans…</div></div>';
+  }
+
+  function vfShort(u){
+    if(!u) return "—";
+    return String(u).split(",").map(function(x){ return x.replace(/@.*$/,""); }).join(", ");
+  }
+  function initFlowPlans(){
+    var ap=el("wm-vf-apply"); if(!ap) return;
+    if(!el("wm-vf-from").value){
+      var d=new Date(); d.setDate(d.getDate()-27);
+      el("wm-vf-from").value=d.toISOString().slice(0,10);
+    }
+    if(!el("wm-vf-to").value) el("wm-vf-to").value=new Date().toISOString().slice(0,10);
+    ap.onclick=loadFlowPlans;
+    el("wm-vf-farm").onchange=loadFlowPlans;
+    loadFlowPlans();
+  }
+  function loadFlowPlans(){
+    var box=el("wm-vf-table"); if(!box) return;
+    box.innerHTML='<div class="loading">Loading plans…</div>';
+    call({action:"flow_plans", farm:el("wm-vf-farm").value||"",
+          from_date:el("wm-vf-from").value||"", to_date:el("wm-vf-to").value||""})
+      .then(function(d){
+        if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+        var fs=el("wm-vf-farm");
+        if(fs && fs.options.length<=1 && (d.farms||[]).length){
+          (d.farms||[]).forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
+          if(d.window&&d.window.farm) fs.value=d.window.farm;
+        }
+        renderFlowPlans(d.plans||[]);
+      })
+      .catch(function(e){ box.innerHTML='<div class="empty">Could not load plans: '+esc(e.message)+'</div>'; });
+  }
+  function renderFlowPlans(plans){
+    var box=el("wm-vf-table"); if(!box) return;
+    var cnt=el("wm-vf-count");
+    if(cnt) cnt.textContent=fmt(plans.length)+" plan"+(plans.length===1?"":"s");
+    if(!plans.length){ box.innerHTML='<div class="empty">No plans in this window.</div>'; return; }
+    var max=0;
+    plans.forEach(function(x){ ["planned_v","assigned_v","confirmed_v"].forEach(function(k){ if(x[k]>max) max=x[k]; }); });
+    max=max||1;
+    function hbar(v,color,label){
+      var w=Math.max(v>0?1.5:0, v/max*100);
+      return '<div style="display:flex;align-items:center;gap:6px;margin:1.5px 0">'+
+        '<div style="flex:1;background:rgba(10,10,10,.05);height:9px;border-radius:999px;overflow:hidden">'+
+          (v>0?'<div style="height:9px;width:'+w+'%;border-radius:999px;background:'+color+'" title="'+label+' KES '+kesShort(v)+'"></div>':'')+
+        '</div>'+
+        '<span class="m" style="width:56px;text-align:right;font-size:9.5px;color:var(--ink)">'+ (v>0?kesShort(v):"—") +'</span></div>';
+    }
+    var h='<table style="margin-top:0"><thead><tr>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Plan</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Farm · Task</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Period</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1;min-width:230px">Planned / Assigned / Confirmed</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Created</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Plan approved</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">Actuals entered</th>'+
+      '<th style="position:sticky;top:0;background:#fff;z-index:1">HR · GM confirmed</th></tr></thead><tbody>';
+    plans.forEach(function(x){
+      var leak = x.planned_v>0 && x.confirmed_v<x.planned_v*0.5;
+      h+='<tr>'+
+        '<td class="m" style="font-size:10.5px">'+esc(x.plan)+'<div style="font-size:9px;color:var(--mute)">'+esc(x.state||"")+'</div></td>'+
+        '<td style="white-space:normal;max-width:190px"><b>'+esc(x.farm||"—")+'</b> · '+esc(x.task||"—")+'<div style="font-size:9.5px;color:var(--mute)">'+esc(lbl(x.block)||"")+' · '+fmt(x.qty)+' '+esc(x.uom||"")+' @ '+fmt(x.rate,2)+'</div></td>'+
+        '<td class="m" style="font-size:10px;white-space:nowrap">'+esc(x.from_date||"")+'<br>'+esc(x.to_date||"")+'</td>'+
+        '<td>'+hbar(x.planned_v,"#a06000","planned")+hbar(x.assigned_v,"#2563eb","assigned")+hbar(x.confirmed_v,"#0a7a43","confirmed")+'</td>'+
+        '<td style="font-size:10.5px">'+esc(vfShort(x.created_by))+'</td>'+
+        '<td style="font-size:10.5px">'+esc(vfShort(x.plan_approved_by))+'</td>'+
+        '<td style="font-size:10.5px">'+esc(vfShort(x.entered_by))+'</td>'+
+        '<td style="font-size:10.5px">'+esc(vfShort(x.hr_by))+' · '+esc(vfShort(x.gm_by))+'</td>'+
+        '</tr>';
+    });
+    h+='</tbody></table>';
+    box.innerHTML=h;
   }
 
   function comboInit(D){
@@ -629,11 +711,12 @@
     var box=el("wm-combo"); if(!box) return;
     var D=COMBO.D||{}; var f=D.funnel||{}; var rows=D.farms||[];
     var h="";
+    box.style.maxHeight = COMBO.tab==="flow" ? "none" : "420px";
     if(COMBO.tab==="flow"){
-      if(AN.data&&AN.data.stage_weekly){ box.innerHTML=comboFlow(AN.data.stage_weekly); }
+      if(AN.data&&AN.data.stage_weekly){ box.innerHTML=comboFlow(AN.data.stage_weekly); initFlowPlans(); }
       else{
         box.innerHTML='<div class="loading">Loading value flow…</div>';
-        call({action:"charts"}).then(function(d){ AN.data=d; if(COMBO.tab==="flow") box.innerHTML=comboFlow(d.stage_weekly||[]); })
+        call({action:"charts"}).then(function(d){ AN.data=d; if(COMBO.tab==="flow"){ box.innerHTML=comboFlow(d.stage_weekly||[]); initFlowPlans(); } })
           .catch(function(){ box.innerHTML='<div class="empty">Could not load value flow.</div>'; });
       }
       return;
