@@ -153,6 +153,7 @@
             '<button type="button" class="subtab" data-ct="deploy">Deployment</button>'+
             '<button type="button" class="subtab" data-ct="output">Output</button>'+
             '<button type="button" class="subtab" data-ct="money">Money</button>'+
+            '<button type="button" class="subtab" data-ct="flow">Value flow</button>'+
           '</div>'+
           '<div id="wm-combo" style="max-height:420px;overflow:auto"></div>'+
         '</div></div>'+
@@ -380,47 +381,61 @@
     var x=new Date(d+"T00:00:00"); if(isNaN(x)) return String(d);
     return x.getDate()+"/"+(x.getMonth()+1);
   }
-  function anBarsV(rows, key, color, valFn, capText){
+  function anBarsV(rows, key, color, valFn, capText, yTitle){
     if(!rows||!rows.length) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
     var max=0; rows.forEach(function(r){ var v=Number(r[key])||0; if(v>max) max=v; });
     if(max<=0) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
-    var peakIdx=-1; rows.forEach(function(r,i){ if((Number(r[key])||0)===max && peakIdx<0) peakIdx=i; });
-    var h='<div style="position:relative;padding-top:6px">'+
-      '<div style="position:absolute;left:0;right:0;top:6px;bottom:38px;pointer-events:none;background:repeating-linear-gradient(to top,transparent 0,transparent calc(25% - 1px),rgba(10,10,10,0.05) calc(25% - 1px),rgba(10,10,10,0.05) 25%)"></div>'+
-      '<div style="display:flex;align-items:flex-end;gap:8px;height:190px;position:relative">';
+    var n=rows.length;
+    var W=1200,H=380,L=84,R=22,T=30,B=58,iw=W-L-R,ih=H-T-B;
+    var ymax=max*1.12;
+    var slot=iw/n, bw=Math.min(72,slot*0.55);
+    function X(i){ return L+slot*(i+0.5); }
+    function Y(v){ return T+ih-(v/ymax)*ih; }
+    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
+    for(var gi=0;gi<=5;gi++){ var gv=ymax*gi/5, gy=Y(gv);
+      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
+         '<text x="'+(L-10)+'" y="'+(gy+4).toFixed(1)+'" text-anchor="end" font-size="11" fill="#5a5a52" font-family="Poppins,sans-serif">'+valFn(gv)+'</text>'; }
+    g+='<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    g+='<line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(W-R)+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    g+='<text transform="rotate(-90)" x="'+(-(T+ih/2))+'" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">'+esc(yTitle||"")+'</text>';
     rows.forEach(function(r,i){
       var v=Number(r[key])||0;
-      var hh=Math.max(3,Math.round(v/max*130));
-      var lastOrPeak=(i===rows.length-1)||(i===peakIdx);
-      h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:0" title="week of '+esc(r.wstart)+' · '+valFn(v)+'">'+
-        '<div style="font-size:9.5px;color:'+(lastOrPeak?"var(--ink)":"var(--mute)")+';font-weight:'+(lastOrPeak?"700":"500")+';font-variant-numeric:tabular-nums;white-space:nowrap;margin-bottom:3px">'+(lastOrPeak?valFn(v):"&nbsp;")+'</div>'+
-        '<div style="width:100%;max-width:42px;height:'+hh+'px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,'+color+' 0%,'+color+'cc 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)"></div>'+
-        '<div style="width:100%;max-width:42px;height:2px;background:rgba(10,10,10,.18);border-radius:1px;margin-top:2px"></div>'+
-        '<div style="font-size:9px;color:var(--mute);margin-top:5px;white-space:nowrap">'+wkLabel(r.wstart)+'</div>'+
-      '</div>';
+      var y=Y(v);
+      g+='<rect x="'+(X(i)-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(2,T+ih-y).toFixed(1)+'" rx="5" fill="'+color+'"><title>week of '+esc(r.wstart)+' · '+valFn(v)+'</title></rect>';
+      if(v>0) g+='<text x="'+X(i).toFixed(1)+'" y="'+(y-8).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+valFn(v)+'</text>';
+      g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+18)+'" text-anchor="middle" font-size="10.5" fill="#5a5a52" font-family="Poppins,sans-serif">'+wkLabel(r.wstart)+'</text>';
     });
-    h+='</div></div>';
-    h+='<div style="font-size:10.5px;color:var(--mute);margin-top:10px">'+capText+' Labels mark the peak and the latest week; hover any bar for its value. Weeks start Monday.</div>';
-    return h;
+    g+='<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Week starting</text>';
+    g+='</svg>';
+    return g+'<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+capText+' Hover any bar for its exact value.</div>';
   }
   function anBarsH(rows, labelKey, color, valFn, subFn, capText){
     if(!rows||!rows.length) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
     var max=0, total=0;
     rows.forEach(function(r){ var v=Number(r.pay)||0; if(v>max) max=v; total+=v; });
     if(max<=0) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
-    var h='';
-    rows.forEach(function(r){
+    var n=rows.length;
+    var W=1200,rowH=46,H=n*rowH+52,L=250,R=140,iw=W-L-R;
+    function XV(v){ return L+(v/(max*1.06||1))*iw; }
+    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
+    for(var gi=1;gi<=4;gi++){ var gx=L+iw*gi/4;
+      g+='<line x1="'+gx.toFixed(1)+'" y1="8" x2="'+gx.toFixed(1)+'" y2="'+(H-40)+'" stroke="rgba(10,10,10,.05)"/>'+
+         '<text x="'+gx.toFixed(1)+'" y="'+(H-26)+'" text-anchor="middle" font-size="11" fill="#5a5a52" font-family="Poppins,sans-serif">'+kesShort(max*1.06*gi/4)+'</text>'; }
+    g+='<line x1="'+L+'" y1="8" x2="'+L+'" y2="'+(H-40)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    g+='<line x1="'+L+'" y1="'+(H-40)+'" x2="'+(W-R)+'" y2="'+(H-40)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    rows.forEach(function(r,i){
       var v=Number(r.pay)||0;
-      var w=Math.max(2,Math.round(v/max*100));
       var pct=total>0?Math.round(v/total*100):0;
-      h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px" title="'+esc(r[labelKey]||"")+' · '+valFn(v,pct)+'">'+
-        '<div style="width:200px;min-width:120px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><b>'+esc(r[labelKey]||"—")+'</b></div>'+
-        '<div style="flex:1"><div style="background:rgba(10,10,10,.05);height:12px;border-radius:999px;overflow:hidden"><div style="background:linear-gradient(90deg,'+color+'b3,'+color+');height:12px;width:'+w+'%;border-radius:999px;box-shadow:inset 0 1px 0 rgba(255,255,255,.25)"></div></div></div>'+
-        '<div style="width:180px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums">'+valFn(v,pct)+'<br><span style="color:var(--mute);font-size:9.5px">'+subFn(r)+'</span></div>'+
-      '</div>';
+      var y0=12+i*rowH;
+      var w=Math.max(2,XV(v)-L);
+      var nm=String(r[labelKey]||"—"); if(nm.length>30) nm=nm.slice(0,29)+"…";
+      g+='<text x="'+(L-10)+'" y="'+(y0+17)+'" text-anchor="end" font-size="12" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(nm)+'</text>';
+      g+='<rect x="'+L+'" y="'+(y0+4)+'" width="'+w.toFixed(1)+'" height="18" rx="9" fill="'+color+'"><title>'+esc(String(r[labelKey]||""))+' · '+valFn(v,pct)+' · '+subFn(r)+'</title></rect>';
+      g+='<text x="'+(L+w+8).toFixed(1)+'" y="'+(y0+17)+'" font-size="11" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+valFn(v,pct)+'</text>';
     });
-    h+='<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+capText+'</div>';
-    return h;
+    g+='<text x="'+(L+iw/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Confirmed pay (KES)</text>';
+    g+='</svg>';
+    return g+'<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+capText+' Hover a bar for the full detail.</div>';
   }
   function anApprovers(rows, names, win){
     var GROUP_ORDER=["Work plans","Assignments","Work records","Payments"];
@@ -484,13 +499,13 @@
     var wk=AN.data.weekly||[];
     if(AN.tab==="out"){
       bd.innerHTML=anBarsV(wk,"qty","#0a7a43",function(v){return money(v);},
-        "How much confirmed work got done each week.");
+        "How much confirmed work got done each week.","Confirmed output (units)");
     } else if(AN.tab==="pay"){
       bd.innerHTML=anBarsV(wk,"pay","#7c3aed",function(v){return money(v);},
-        "What that work cost each week in KES.");
+        "What that work cost each week in KES.","Confirmed pay (KES)");
     } else if(AN.tab==="wrk"){
       bd.innerHTML=anBarsV(wk,"workers","#2563eb",function(v){return fmt(v);},
-        "How many different people did confirmed work each week.");
+        "How many different people did confirmed work each week.","Workers (count)");
     } else if(AN.tab==="task"){
       bd.innerHTML=anBarsH(AN.data.top_tasks||[],"label","#0a7a43",
         function(v,pct){ return "KES "+money(v)+" · "+pct+"%"; },
@@ -553,6 +568,44 @@
   }
 
   var COMBO={tab:"funnel"};
+  function comboFlow(wk){
+    if(!wk||!wk.length) return '<div class="empty">No approvals in this window yet.</div>';
+    var SERIES=[["planned_v","Plans approved","#a06000"],["assigned_v","Assignments staffed","#2563eb"],["confirmed_v","Actuals confirmed","#0a7a43"]];
+    var max=0;
+    wk.forEach(function(w){ SERIES.forEach(function(sr){ var v=Number(w[sr[0]])||0; if(v>max) max=v; }); });
+    if(max<=0) return '<div class="empty">No value has moved yet.</div>';
+    var n=wk.length;
+    var W=1200,H=400,L=84,R=22,T=30,B=58,iw=W-L-R,ih=H-T-B;
+    var ymax=max*1.12;
+    var slot=iw/n, gw=Math.min(28,slot*0.24);
+    function X(i){ return L+slot*(i+0.5); }
+    function Y(v){ return T+ih-(v/ymax)*ih; }
+    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
+    for(var gi=0;gi<=5;gi++){ var gv=ymax*gi/5, gy=Y(gv);
+      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
+         '<text x="'+(L-10)+'" y="'+(gy+4).toFixed(1)+'" text-anchor="end" font-size="11" fill="#5a5a52" font-family="Poppins,sans-serif">'+kesShort(gv)+'</text>'; }
+    g+='<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    g+='<line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(W-R)+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    g+='<text transform="rotate(-90)" x="'+(-(T+ih/2))+'" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Value approved (KES)</text>';
+    wk.forEach(function(w,i){
+      SERIES.forEach(function(sr,si){
+        var v=Number(w[sr[0]])||0;
+        var x=X(i)+(si-1)*(gw+3)-gw/2;
+        var y=Y(v);
+        var nfield=sr[0].replace("_v","_n");
+        g+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+gw.toFixed(1)+'" height="'+Math.max(1.5,T+ih-y).toFixed(1)+'" rx="4" fill="'+sr[2]+'"><title>week of '+esc(wkLabel(w.wstart))+'\n'+sr[1]+': KES '+kesShort(v)+' ('+fmt(w[nfield]||0)+' documents)</title></rect>';
+        if(v>0&&v>ymax*0.045) g+='<text x="'+(x+gw/2).toFixed(1)+'" y="'+(y-6).toFixed(1)+'" text-anchor="middle" font-size="9" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(v)+'</text>';
+      });
+      g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+18)+'" text-anchor="middle" font-size="10.5" fill="#5a5a52" font-family="Poppins,sans-serif">'+wkLabel(w.wstart)+'</text>';
+    });
+    g+='<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Week starting</text>';
+    g+='</svg>';
+    return '<div style="font-size:12px;color:var(--mute);margin:2px 0 8px">Value approved at each stage per week — plans should be matched by staffing, and staffing by confirmed work. A widening gap between bars is work leaking between stages.</div>'+g+
+      '<div class="clegend" style="font-size:11px;margin-top:6px">'+
+      SERIES.map(function(sr){ return '<span><i style="background:'+sr[2]+';width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px"></i>'+sr[1]+'</span>'; }).join("")+
+      '</div>';
+  }
+
   function comboInit(D){
     COMBO.D=D;
     var bar=el("wm-combo-tabs");
@@ -576,6 +629,15 @@
     var box=el("wm-combo"); if(!box) return;
     var D=COMBO.D||{}; var f=D.funnel||{}; var rows=D.farms||[];
     var h="";
+    if(COMBO.tab==="flow"){
+      if(AN.data&&AN.data.stage_weekly){ box.innerHTML=comboFlow(AN.data.stage_weekly); }
+      else{
+        box.innerHTML='<div class="loading">Loading value flow…</div>';
+        call({action:"charts"}).then(function(d){ AN.data=d; if(COMBO.tab==="flow") box.innerHTML=comboFlow(d.stage_weekly||[]); })
+          .catch(function(){ box.innerHTML='<div class="empty">Could not load value flow.</div>'; });
+      }
+      return;
+    }
     if(COMBO.tab==="funnel"){
       var stg=[["Approved plans",f.planned||0,"#0a0a0a","plans signed off and ready to staff"],
                ["Assigned",f.assigned||0,"#2563eb","plans with a crew on them"],
