@@ -2129,7 +2129,7 @@
     var list=(PERF.data.performers||[]);
     if(!list.length){ box.innerHTML='<div class="empty">No pipeline activity in this window.</div>'; return; }
     // ── comparison chart: top performers, 4 bars each ──
-    var top=list.slice(0,10);
+    var top=list;  // everyone who has ever acted in the pipeline
     var max=0;
     top.forEach(function(x){
       PERF_SERIES.forEach(function(sr){
@@ -2163,7 +2163,7 @@
     g+='</svg>';
     var legend='<div class="clegend" style="font-size:11px;margin:4px 0 14px">'+
       PERF_SERIES.map(function(sr){ return '<span><i style="background:'+sr[2]+';width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px"></i>'+sr[1]+'</span>'; }).join("")+
-      '<span style="margin-left:auto;color:var(--mute)">top '+top.length+' by total value handled · hover a bar for counts</span></div>';
+      '<span style="margin-left:auto;color:var(--mute)">all '+top.length+' people who have used the system · ranked by value handled · hover a bar for counts</span></div>';
     // ── the full table: everyone, every role ──
     var t='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:6px 0 8px">Every performer in detail</div>'+
       '<div style="max-height:440px;overflow:auto"><table style="margin-top:0"><thead><tr>'+
