@@ -289,7 +289,23 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
 </div>
 </div>
-<script src="/assets/upande_work_management/js/work-assigner.js"></script>
+<script>
+(function () {
+  // boot the page script only once the Frappe web bundle (window.frappe) exists —
+  // avoids the "Open inside Frappe (logged in)" guard firing on load-order races
+  function boot() {
+    var s = document.createElement("script");
+    s.src = "/assets/upande_work_management/js/work-assigner.js";
+    document.body.appendChild(s);
+  }
+  if (window.frappe) { boot(); return; }
+  var tries = 0;
+  var t = setInterval(function () {
+    tries += 1;
+    if (window.frappe || tries > 50) { clearInterval(t); boot(); }
+  }, 100);
+})();
+</script>
 <script>
 (function () {
   var who = document.getElementById("wa-who");
