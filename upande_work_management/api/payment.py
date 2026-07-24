@@ -999,14 +999,21 @@ def wm_payment(**kwargs):
                 sconds = sconds + " AND we.work_date <= %s"
                 sparams.append(dto)
             agg = frappe.db.sql("""
-                SELECT ac.name actuals, ac.farm farm, ac.task task, we.employee_name nm,
+                SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
+                       ac.rate doc_rate, ac.assignment assignment,
+                       ac.entered_by entered_by, ac.hr_approved_by hr_approved_by,
+                       ac.gm_approved_by gm_approved_by, we.employee_name nm,
+                       MIN(we.work_date) wfrom, MAX(we.work_date) wto,
                        COUNT(DISTINCT we.work_date) days,
                        COALESCE(SUM(we.actual_quantity),0) qty,
-                       COALESCE(SUM(we.amount),0) owed
+                       COALESCE(SUM(we.amount),0) owed,
+                       MAX(we.custom_reviewed_at) reviewed_at,
+                       MAX(we.custom_reviewed_by) reviewed_by
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 WHERE """ + sconds + """
-                GROUP BY ac.name, ac.farm, ac.task, we.employee_name
+                GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.rate, ac.assignment,
+                         ac.entered_by, ac.hr_approved_by, ac.gm_approved_by, we.employee_name
                 ORDER BY MIN(we.work_date)
             """, tuple(sparams), as_dict=True)
             total_owed = 0
@@ -1028,20 +1035,59 @@ def wm_payment(**kwargs):
                         d.period_to = dto
                 except Exception:
                     pass
-                # one traceable line per actuals doc this worker earned on
+                # one traceable line per actuals doc this worker earned on, carrying
+                # the full accountability chain from the review sheet: who assigned
+                # the job, who entered actuals, and every approver.
+                asg_cache = {}
+                total_days = 0
+                total_qty = 0
+                rv_by = None
+                rv_at = None
                 for g in agg:
                     if frappe.utils.flt(g.owed) <= 0:
                         continue
+                    ai = None
+                    if g.assignment:
+                        ai = asg_cache.get(g.assignment)
+                        if ai is None:
+                            ai = frappe.db.get_value("Work Management Assigner", g.assignment,
+                                ["assigned_by", "approved_by"], as_dict=True)
+                            asg_cache[g.assignment] = ai
+                    qty = frappe.utils.flt(g.qty)
+                    owed = frappe.utils.flt(g.owed)
                     row = d.append("lines", {})
                     row.actuals = g.actuals
                     row.employee = emp
                     row.employee_name = ename
                     row.farm = g.farm
                     row.task = g.task
+                    row.block = g.block
+                    row.work_from = g.wfrom
+                    row.work_to = g.wto
                     row.days = g.days
-                    row.qty = g.qty
+                    row.qty = qty
+                    row.rate = frappe.utils.flt(g.doc_rate) or ((owed / qty) if qty else 0)
+                    row.assignment = g.assignment
+                    row.assigned_by = ai.assigned_by if ai else None
+                    row.fm_approved_by = ai.approved_by if ai else None
+                    row.entered_by = g.entered_by
+                    row.hr_approved_by = g.hr_approved_by
+                    row.gm_approved_by = g.gm_approved_by
                     row.paid_workers = 1
-                    row.amount = frappe.utils.flt(g.owed)
+                    row.amount = owed
+                    total_days = total_days + frappe.utils.cint(g.days)
+                    total_qty = total_qty + qty
+                    if g.reviewed_at and (not rv_at or str(g.reviewed_at) > str(rv_at)):
+                        rv_at = g.reviewed_at
+                        rv_by = g.reviewed_by
+                # worker-centric header: one payment entry per employee
+                d.employee = emp
+                d.employee_name = ename
+                d.farm = agg[0].farm
+                d.total_days = total_days
+                d.total_qty = total_qty
+                d.reviewed_by = rv_by
+                d.reviewed_at = rv_at
                 d.grand_total = total_owed
                 d.total_workers = 1
                 d.total_actuals = len(d.lines)
@@ -1068,6 +1114,5 @@ def wm_payment(**kwargs):
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)
-
 
     return out

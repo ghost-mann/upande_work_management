@@ -8,6 +8,13 @@
  "engine": "InnoDB",
  "field_order": [
   "run_title",
+  "employee",
+  "employee_name",
+  "farm",
+  "total_days",
+  "total_qty",
+  "reviewed_by",
+  "reviewed_at",
   "workflow_state",
   "cb_top",
   "company",
@@ -37,6 +44,54 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Payment Run"
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Employee Name",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "farm",
+   "fieldtype": "Data",
+   "label": "Farm",
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_days",
+   "fieldtype": "Int",
+   "label": "Total Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_qty",
+   "fieldtype": "Float",
+   "label": "Total Quantity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_at",
+   "fieldtype": "Datetime",
+   "label": "Reviewed At",
+   "read_only": 1
   },
   {
    "fieldname": "workflow_state",
