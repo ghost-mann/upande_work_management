@@ -1898,9 +1898,14 @@
     if(max<=0){ bd.innerHTML='<div class="empty">Nothing to chart for this measure yet.</div>'; return; }
 
     var n=aps.length;
-    var W=1200,H=460,L=86,R=26,T=34,B=86,iw=W-L-R,ih=H-T-B;
+    var W=1200,L=86,R=26,T=34,iw=W-L-R;
+    var slotProbe=iw/n;
+    var tight=slotProbe<118;            // many approvers → angled labels, slimmer bars
+    var B=tight?118:86;
+    var H=460+(tight?32:0);
+    var ih=H-T-B;
     var ymax=max*1.12;
-    var slot=iw/n, bw=Math.min(110,slot*0.55);
+    var slot=iw/n, bw=Math.min(tight?64:110,slot*(tight?0.62:0.55));
     function X(i){ return L+slot*(i+0.5); }
     function Y(v){ return T+ih-(v/ymax)*ih; }
     var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="'+esc(st.stage)+' — '+esc(M.label)+' per approver">';
@@ -1921,15 +1926,24 @@
       var y=Y(v), hpx=T+ih-y;
       var tip=esc(a.name)+'\n'+fmt(a.n)+' sign-offs · KES '+kesShort(a.value)+' · avg time '+opsFmtH(a.avg_h);
       g+='<rect x="'+(X(i)-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(2,hpx).toFixed(1)+'" rx="5" fill="'+M.color+'"><title>'+tip+'</title></rect>';
-      g+='<text x="'+X(i).toFixed(1)+'" y="'+(y-9).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+M.fmtv(v)+'</text>';
-      // secondary figure under the primary label, inside the bar top when tall enough
-      var names=(a.name||"").split(" ");
-      var l1=names.slice(0,2).join(" "), l2=names.slice(2).join(" ");
-      if(l1.length>16){ l2=(names[1]?names.slice(1).join(" "):""); l1=names[0]; }
-      g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+20)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#2a2a26" font-family="Poppins,sans-serif">'+esc(l1.length>18?l1.slice(0,17)+"…":l1)+'</text>';
-      if(l2) g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+34)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#2a2a26" font-family="Poppins,sans-serif">'+esc(l2.length>18?l2.slice(0,17)+"…":l2)+'</text>';
-      var sub = m==="n" ? ('KES '+kesShort(a.value)) : m==="value" ? (fmt(a.n)+' sign-offs') : (fmt(a.n)+' sign-offs');
-      g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+(l2?48:34))+'" text-anchor="middle" font-size="10" fill="#8a8780" font-family="Poppins,sans-serif">'+sub+(m!=="time"&&a.avg_h!=null?' · '+opsFmtH(a.avg_h):'')+'</text>';
+      g+='<text x="'+X(i).toFixed(1)+'" y="'+(y-9).toFixed(1)+'" text-anchor="middle" font-size="'+(tight?11:13)+'" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+M.fmtv(v)+'</text>';
+      if(tight){
+        // angled single-line labels so everyone fits, details stay in the hover
+        var nm1=(a.name||"");
+        if(nm1.length>20) nm1=nm1.slice(0,19)+"…";
+        g+='<text transform="rotate(-32 '+X(i).toFixed(1)+' '+(T+ih+14)+')" x="'+X(i).toFixed(1)+'" y="'+(T+ih+14)+'" text-anchor="end" font-size="10.5" font-weight="600" fill="#2a2a26" font-family="Poppins,sans-serif">'+esc(nm1)+'</text>';
+        var sub1 = m==="time" ? (fmt(a.n)+' signed') : opsFmtH(a.avg_h);
+        if(m==="n") sub1='KES '+kesShort(a.value);
+        g+='<text transform="rotate(-32 '+X(i).toFixed(1)+' '+(T+ih+27)+')" x="'+X(i).toFixed(1)+'" y="'+(T+ih+27)+'" text-anchor="end" font-size="8.8" fill="#8a8780" font-family="Poppins,sans-serif">'+sub1+'</text>';
+      } else {
+        var names=(a.name||"").split(" ");
+        var l1=names.slice(0,2).join(" "), l2=names.slice(2).join(" ");
+        if(l1.length>16){ l2=(names[1]?names.slice(1).join(" "):""); l1=names[0]; }
+        g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+20)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#2a2a26" font-family="Poppins,sans-serif">'+esc(l1.length>18?l1.slice(0,17)+"…":l1)+'</text>';
+        if(l2) g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+34)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#2a2a26" font-family="Poppins,sans-serif">'+esc(l2.length>18?l2.slice(0,17)+"…":l2)+'</text>';
+        var sub = m==="n" ? ('KES '+kesShort(a.value)) : m==="value" ? (fmt(a.n)+' sign-offs') : (fmt(a.n)+' sign-offs');
+        g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+(l2?48:34))+'" text-anchor="middle" font-size="10" fill="#8a8780" font-family="Poppins,sans-serif">'+sub+(m!=="time"&&a.avg_h!=null?' · '+opsFmtH(a.avg_h):'')+'</text>';
+      }
     });
     // x axis title
     g+='<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="12" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Approver</text>';
