@@ -1834,212 +1834,110 @@
   }
   function renderOps(){
     var box=el("wm-apk-body"); if(!box||!OPS.data) return;
-    if(!OPS.tab) OPS.tab="money";
-    var tabs=[["money","Money by stage"],["desks","Approvers compared"],["rhythm","Week by week"],["speed","Speed to pay"],["signals","Signals"]];
-    var h='<div class="subtabs" id="wm-ops-tabs">'+
-      tabs.map(function(t){ return '<button type="button" class="subtab'+(OPS.tab===t[0]?" on":"")+'" data-ot="'+t[0]+'">'+t[1]+'</button>'; }).join("")+
-      '</div><div id="wm-ops-body" style="margin-top:14px"></div>';
+    var stages=(OPS.data.stages||[]);
+    if(!stages.length){ box.innerHTML='<div class="empty">No approval activity recorded yet.</div>'; return; }
+    if(OPS.si==null) OPS.si=0;
+    if(!OPS.measure) OPS.measure="n";
+    var h='<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:4px">'+
+      '<div class="subtabs" id="wm-ops-stages">'+
+        stages.map(function(st,i){
+          var TL={"Plan approval — Farm Manager":"Plans · FM","Assignment approval — GM":"Assignments · GM",
+                  "Actuals — FM sign-off":"Actuals · FM","Actuals — HR sign-off":"Actuals · HR",
+                  "Actuals — GM confirmation":"Actuals · GM","Payment — accounts release":"Payment · Accounts"};
+          return '<button type="button" class="subtab'+(OPS.si===i?" on":"")+'" data-os="'+i+'">'+esc(TL[st.stage]||st.stage)+
+            ' <span style="font-variant-numeric:tabular-nums;opacity:.7">· '+fmt(st.total_n)+'</span></button>';
+        }).join("")+
+      '</div>'+
+      '<span style="flex:1"></span>'+
+      '<div id="wm-ops-measure" style="display:inline-flex;gap:2px;background:var(--wash);border:1px solid var(--line);border-radius:999px;padding:3px">'+
+        [["n","Sign-offs"],["value","Value KES"],["time","Time taken"]].map(function(m){
+          return '<button type="button" data-om="'+m[0]+'" style="font-family:inherit;font-size:11px;font-weight:600;border:0;background:'+(OPS.measure===m[0]?"var(--ink)":"transparent")+';color:'+(OPS.measure===m[0]?"#fff":"var(--mute)")+';padding:6px 14px;border-radius:999px;cursor:pointer">'+m[1]+'</button>';
+        }).join("")+
+      '</div></div>'+
+      '<div id="wm-ops-body" style="margin-top:10px"></div>';
     box.innerHTML=h;
-    box.querySelectorAll("[data-ot]").forEach(function(b){
-      b.onclick=function(){
-        OPS.tab=b.getAttribute("data-ot");
-        box.querySelectorAll("[data-ot]").forEach(function(x){ x.classList.toggle("on", x===b); });
-        drawOpsTab();
-      };
+    box.querySelectorAll("[data-os]").forEach(function(b){
+      b.onclick=function(){ OPS.si=parseInt(b.getAttribute("data-os"),10);
+        box.querySelectorAll("[data-os]").forEach(function(x){ x.classList.toggle("on", x===b); });
+        drawOpsStage(); };
     });
-    drawOpsTab();
+    box.querySelectorAll("[data-om]").forEach(function(b){
+      b.onclick=function(){ OPS.measure=b.getAttribute("data-om");
+        box.querySelectorAll("[data-om]").forEach(function(x){
+          var on=x===b; x.style.background=on?"var(--ink)":"transparent"; x.style.color=on?"#fff":"var(--mute)"; });
+        drawOpsStage(); };
+    });
+    drawOpsStage();
   }
 
-  function drawOpsTab(){
+  function opsFmtH(hh){
+    if(hh==null) return "—";
+    if(hh<1) return Math.round(hh*60)+" min";
+    if(hh<48) return (Math.round(hh*10)/10)+" h";
+    return (Math.round(hh/24*10)/10)+" days";
+  }
+  function drawOpsStage(){
     var bd=el("wm-ops-body"); if(!bd||!OPS.data) return;
-    var d=OPS.data;
-    if(OPS.tab==="money") bd.innerHTML=opsChartMoney(d);
-    else if(OPS.tab==="desks") bd.innerHTML=opsChartDesks(d);
-    else if(OPS.tab==="rhythm") bd.innerHTML=opsChartRhythm(d);
-    else if(OPS.tab==="speed") bd.innerHTML=opsChartSpeed(d);
-    else bd.innerHTML=opsSignals(d);
-    bd.querySelectorAll("[data-go]").forEach(function(x){
-      x.style.cursor="pointer";
-      x.addEventListener("click",function(){ window.location.href=x.getAttribute("data-go"); });
-    });
-  }
-
-  function opsChartMoney(d){
-    var C=OPS_C;
-    var ledger=(d.ledger||[]);
-    var SHORT={plans_pending:"Awaiting\napproval",plans_unstaffed:"Approved,\nnot staffed",asg_pending:"Assignments\nin approval",
-               asg_noactuals:"Staffed,\nno actuals",act_pending:"Actuals\nin approval",confirmed_unpaid:"Confirmed,\nnot sent",sent_accounts:"At\naccounts"};
-    var max=0; ledger.forEach(function(l){ if(l.value>max) max=l.value; });
-    if(max<=0) return '<div class="empty">No money in the pipeline.</div>';
-    var W=1200,H=430,L=64,R=18,T=24,B=76,iw=W-L-R,ih=H-T-B;
-    var ymax=max*1.12, n=ledger.length, bw=Math.min(96,iw/n*0.58);
-    function X(i){ return L+iw*(i+0.5)/n; }
-    function Y(v){ return T+ih-(v/ymax)*ih; }
-    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
-    for(var gi=0;gi<=4;gi++){ var gv=ymax*gi/4, gy=Y(gv);
-      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
-         '<text x="'+(L-8)+'" y="'+(gy+3.5).toFixed(1)+'" text-anchor="end" font-size="11" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(gv)+'</text>'; }
-    ledger.forEach(function(l,i){
-      var x=X(i)-bw/2, y=Y(0);
-      [["v_fresh",C.good,"under 3 days"],["v_mid",C.mid,"3–7 days"],["v_old",C.bad,"over 7 days"]].forEach(function(seg){
-        var v=l[seg[0]]||0; if(v<=0) return;
-        var hpx=(v/ymax)*ih, ny=y-hpx;
-        g+='<rect data-go="'+esc(l.route)+'" x="'+x.toFixed(1)+'" y="'+ny.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(2,hpx-1.5).toFixed(1)+'" rx="4" fill="'+seg[1]+'"><title>'+esc(l.label)+'\n'+seg[2]+': KES '+kesShort(v)+'\nclick to open</title></rect>';
-        y=ny-2.5;
-      });
-      if(l.value>0) g+='<text x="'+X(i).toFixed(1)+'" y="'+(Y(l.value)-10)+'" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(l.value)+'</text>';
-      var lab=(SHORT[l.key]||l.label).split("\n");
-      lab.forEach(function(t,li){
-        g+='<text data-go="'+esc(l.route)+'" x="'+X(i).toFixed(1)+'" y="'+(T+ih+18+li*13)+'" text-anchor="middle" font-size="10.5" fill="#5a5a52" font-family="Poppins,sans-serif" text-decoration="underline">'+esc(t)+'</text>';
-      });
-      g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+18+lab.length*13)+'" text-anchor="middle" font-size="9.5" fill="#9a978e" font-family="Poppins,sans-serif">'+fmt(l.count)+(l.key==="confirmed_unpaid"?" workers":" docs")+(l.oldest_d>0?' · oldest '+Math.round(l.oldest_d)+'d':'')+'</text>';
-    });
-    g+='</svg>';
-    return '<div style="font-size:12px;color:var(--mute);margin-bottom:6px">Every shilling in the pipeline right now. <b style="color:var(--ink)">Click a bar</b> to open the page where that money gets moved.</div>'+g+
-      '<div class="clegend" style="font-size:11px;margin-top:6px">'+
-      '<span><i style="background:'+C.good+';width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px"></i>Sitting under 3 days</span>'+
-      '<span><i style="background:'+C.mid+';width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px"></i>3–7 days</span>'+
-      '<span><i style="background:'+C.bad+';width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px"></i>Over 7 days — stuck</span></div>';
-  }
-
-  function opsChartDesks(d){
-    var C=OPS_C;
-    var desks=(d.desks||[]).slice(0,10);
-    if(!desks.length) return '<div class="empty">No sign-offs in this window.</div>';
-    var max=0; desks.forEach(function(x){ if(x.value>max) max=x.value; });
-    var W=1200, rowH=56, H=desks.length*rowH+40, L=210, R=90, iw=W-L-R;
-    function XV(v){ return L+(v/(max*1.06||1))*iw; }
-    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
-    for(var gi=1;gi<=4;gi++){ var gx=L+iw*gi/4;
-      g+='<line x1="'+gx.toFixed(1)+'" y1="8" x2="'+gx.toFixed(1)+'" y2="'+(H-28)+'" stroke="rgba(10,10,10,.05)"/>'+
-         '<text x="'+gx.toFixed(1)+'" y="'+(H-12)+'" text-anchor="middle" font-size="11" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(max*1.06*gi/4)+'</text>'; }
-    desks.forEach(function(x,i){
-      var y0=12+i*rowH;
-      g+='<text x="'+(L-10)+'" y="'+(y0+16)+'" text-anchor="end" font-size="12.5" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(x.name.length>24?x.name.slice(0,23)+"…":x.name)+'</text>'+
-         '<text x="'+(L-10)+'" y="'+(y0+30)+'" text-anchor="end" font-size="9.5" fill="#8a8780" font-family="Poppins,sans-serif">'+fmt(x.n)+' sign-offs · '+fmt(x.week_n)+' this week</text>';
-      g+='<rect x="'+L+'" y="'+(y0+2)+'" width="'+Math.max(2,XV(x.value)-L).toFixed(1)+'" height="15" rx="7.5" fill="#2a2a26"><title>'+esc(x.name)+'\nvalue signed: KES '+kesShort(x.value)+' over 12 weeks</title></rect>';
-      g+='<text x="'+(XV(x.value)+6).toFixed(1)+'" y="'+(y0+14)+'" font-size="11" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(x.value)+'</text>';
-      if(x.unpaid_signed>0){
-        g+='<rect x="'+L+'" y="'+(y0+21)+'" width="'+Math.max(2,XV(x.unpaid_signed)-L).toFixed(1)+'" height="15" rx="7.5" fill="'+C.bad+'"><title>'+esc(x.name)+'\nsigned but workers still unpaid: KES '+kesShort(x.unpaid_signed)+'</title></rect>';
-        g+='<text x="'+(XV(x.unpaid_signed)+6).toFixed(1)+'" y="'+(y0+33)+'" font-size="11" font-weight="700" fill="'+C.bad+'" font-family="Poppins,sans-serif">'+kesShort(x.unpaid_signed)+'</text>';
-      }
-    });
-    g+='</svg>';
-    return '<div style="font-size:12px;color:var(--mute);margin-bottom:6px">Each approver’s desk: the dark bar is the value they signed; the red bar is the part whose workers have still not been paid. Hover for exact figures.</div>'+g+
-      '<div class="clegend" style="font-size:11px;margin-top:6px">'+
-      '<span><i style="background:#2a2a26;width:16px;height:7px;border-radius:4px;display:inline-block;margin-right:5px"></i>Value signed · 12 weeks</span>'+
-      '<span><i style="background:'+C.bad+';width:16px;height:7px;border-radius:4px;display:inline-block;margin-right:5px"></i>Of it, workers still unpaid</span></div>';
-  }
-
-  function opsChartRhythm(d){
-    var COLS=["#2563eb","#0a7a43","#d9a514","#7c3aed"];
-    var top=(d.desks||[]).filter(function(x){ return (x.weekly||[]).length>=2; }).slice(0,4);
-    if(top.length<2) return '<div class="empty">Not enough weekly history to compare yet.</div>';
-    var weeks={};
-    top.forEach(function(x){ (x.weekly||[]).forEach(function(w){ weeks[w.wstart]=1; }); });
-    var wk=Object.keys(weeks).sort();
-    var max=0;
-    var series=top.map(function(x,si){
-      var m={}; (x.weekly||[]).forEach(function(w){ m[w.wstart]=w.v; });
-      var pts=wk.map(function(k){ var v=m[k]||0; if(v>max) max=v; return v; });
-      return {name:x.name,color:COLS[si],pts:pts};
-    });
-    var W=1200,H=420,L=64,R=170,T=20,B=34,iw=W-L-R,ih=H-T-B;
-    var ymax=max*1.12||1;
-    function X(i){ return L+(wk.length===1?iw/2:(i/(wk.length-1))*iw); }
-    function Y(v){ return T+ih-(v/ymax)*ih; }
-    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
-    for(var gi=0;gi<=4;gi++){ var gy=Y(ymax*gi/4);
-      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
-         '<text x="'+(L-8)+'" y="'+(gy+3.5).toFixed(1)+'" text-anchor="end" font-size="11" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(ymax*gi/4)+'</text>'; }
-    wk.forEach(function(k,xi){
-      g+='<text x="'+X(xi).toFixed(1)+'" y="'+(H-10)+'" text-anchor="middle" font-size="10.5" fill="#8a8780" font-family="Poppins,sans-serif">'+esc(wkLabel(k))+'</text>';
-    });
-    series.forEach(function(sr){
-      var pth=""; sr.pts.forEach(function(v,i){ pth+=(i?"L":"M")+X(i).toFixed(1)+","+Y(v).toFixed(1); });
-      g+='<path d="'+pth+'" fill="none" stroke="'+sr.color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
-      sr.pts.forEach(function(v,i){
-        g+='<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="4.5" fill="'+sr.color+'" stroke="#fff" stroke-width="1.5"><title>'+esc(sr.name)+'\nweek of '+esc(wkLabel(wk[i]))+': KES '+kesShort(v)+'</title></circle>';
-      });
-      var lv=sr.pts[sr.pts.length-1];
-      g+='<text x="'+(W-R+10)+'" y="'+(Y(lv)+4).toFixed(1)+'" font-size="12" font-weight="700" fill="'+sr.color+'" font-family="Poppins,sans-serif">'+esc(sr.name.split(" ")[0])+' · '+kesShort(lv)+'</text>';
-    });
-    g+='</svg>';
-    return '<div style="font-size:12px;color:var(--mute);margin-bottom:6px">Value signed per week by the top approvers — the working rhythm. A falling line means that desk is slowing; hover any point.</div>'+g;
-  }
-
-  function opsChartSpeed(d){
-    var C=OPS_C;
-    var sp=d.speed||{}, ledger=(d.ledger||[]);
-    if(sp.days_to_pay!=null && (sp.weekly||[]).length>1){
-      var wk2=sp.weekly;
-      var W=1200,H=400,L=56,R=20,T=18,B=32,iw=W-L-R,ih=H-T-B;
-      var ymax=0; wk2.forEach(function(x){ if(x.days>ymax) ymax=x.days; }); ymax=ymax*1.15||1;
-      var X2=function(i){ return L+(i/(wk2.length-1))*iw; };
-      var Y2=function(v){ return T+ih-(v/ymax)*ih; };
-      var pth=""; wk2.forEach(function(x,i){ pth+=(i?"L":"M")+X2(i).toFixed(1)+","+Y2(x.days).toFixed(1); });
-      var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
-      for(var gi=0;gi<=4;gi++){ var gy=Y2(ymax*gi/4);
-        g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
-           '<text x="'+(L-8)+'" y="'+(gy+3.5).toFixed(1)+'" text-anchor="end" font-size="11" fill="#8a8780" font-family="Poppins,sans-serif">'+(Math.round(ymax*gi/4*10)/10)+'d</text>'; }
-      g+='<path d="'+pth+'" fill="none" stroke="'+C.good+'" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>';
-      wk2.forEach(function(x,i){
-        g+='<circle cx="'+X2(i).toFixed(1)+'" cy="'+Y2(x.days).toFixed(1)+'" r="4.5" fill="'+C.good+'" stroke="#fff" stroke-width="1.5"><title>week of '+esc(wkLabel(x.wstart))+'\n'+(Math.round(x.days*10)/10)+' days from work to pay</title></circle>'+
-           '<text x="'+X2(i).toFixed(1)+'" y="'+(H-10)+'" text-anchor="middle" font-size="10.5" fill="#8a8780" font-family="Poppins,sans-serif">'+esc(wkLabel(x.wstart))+'</text>';
-      });
-      g+='</svg>';
-      var farms=(sp.farms||[]).map(function(f){ return esc(f.farm)+' '+(Math.round(f.days*10)/10)+'d'; }).join(' · ');
-      return '<div style="font-size:12px;color:var(--mute);margin-bottom:6px">How many days a day of work takes to become money in a worker’s hands (value-weighted). Overall <b style="color:var(--ink)">'+(Math.round(sp.days_to_pay*10)/10)+' days</b>'+(farms?' · by farm: '+farms:'')+'.</div>'+g;
+    var st=(OPS.data.stages||[])[OPS.si||0];
+    if(!st){ bd.innerHTML='<div class="empty">No stage selected.</div>'; return; }
+    var m=OPS.measure||"n";
+    var MEAS={
+      n:    {label:"Approvals signed (count)", color:"#2a2a26", val:function(a){ return a.n; },      fmtv:function(v){ return fmt(v); }},
+      value:{label:"Value approved (KES)",     color:"#0a7a43", val:function(a){ return a.value; }, fmtv:function(v){ return kesShort(v); }},
+      time: {label:"Average time to approve",  color:"#a06000", val:function(a){ return a.avg_h==null?0:a.avg_h; }, fmtv:function(v){ return opsFmtH(v); }}
+    };
+    var M=MEAS[m];
+    var aps=(st.approvers||[]).slice();
+    if(m==="time") aps=aps.filter(function(a){ return a.avg_h!=null; });
+    if(!aps.length){
+      bd.innerHTML='<div class="empty">'+(st.total_n?'No timing data recorded at this stage yet.':'Nothing has been signed at this stage yet — this chart fills in as approvals happen.')+'</div>';
+      return;
     }
-    var cu=null; ledger.forEach(function(l){ if(l.key==="confirmed_unpaid") cu=l; });
-    if(!cu||cu.value<=0) return '<div class="empty">No confirmed unpaid earnings — and nothing paid yet to measure.</div>';
-    var rows=[["Work under 3 days old",cu.v_fresh,C.good],["3–7 days old",cu.v_mid,C.mid],["Over 7 days old",cu.v_old,C.bad]];
-    var mx=0; rows.forEach(function(r){ if(r[1]>mx) mx=r[1]; });
-    var W3=1200,rowH3=76,H3=rows.length*rowH3+42,L3=210,R3=110,iw3=W3-L3-R3;
-    var g='<svg viewBox="0 0 '+W3+' '+H3+'" style="width:100%;height:auto;display:block">';
-    for(var gi=1;gi<=4;gi++){ var gx=L3+iw3*gi/4;
-      g+='<line x1="'+gx.toFixed(1)+'" y1="8" x2="'+gx.toFixed(1)+'" y2="'+(H3-28)+'" stroke="rgba(10,10,10,.05)"/>'+
-         '<text x="'+gx.toFixed(1)+'" y="'+(H3-12)+'" text-anchor="middle" font-size="11" fill="#8a8780" font-family="Poppins,sans-serif">'+kesShort(mx*1.06*gi/4)+'</text>'; }
-    rows.forEach(function(r,i){
-      var y0=16+i*rowH3;
-      var w=Math.max(3,(r[1]/(mx*1.06||1))*iw3);
-      g+='<text x="'+(L3-10)+'" y="'+(y0+25)+'" text-anchor="end" font-size="12.5" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+r[0]+'</text>';
-      g+='<rect data-go="/work-payment" x="'+L3+'" y="'+(y0+8)+'" width="'+w.toFixed(1)+'" height="26" rx="13" fill="'+r[2]+'"><title>'+r[0]+': KES '+kesShort(r[1])+'\nclick to open Payment</title></rect>';
-      g+='<text x="'+(L3+w+8).toFixed(1)+'" y="'+(y0+26)+'" font-size="12" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(r[1])+'</text>';
-    });
-    g+='</svg>';
-    return '<div style="padding:11px 15px;border:1px solid '+C.bad+'33;background:'+C.bad+'0d;border-radius:12px;font-size:12.5px;margin-bottom:10px"><b>No wages have reached a worker yet.</b> KES '+kesShort(cu.value)+' is owed to '+fmt(cu.count)+' workers — the oldest work was done '+Math.round(cu.oldest_d)+' days ago. This chart becomes the weekly speed-to-pay line the moment accounts starts releasing. <a href="/work-payment" style="color:var(--blue);font-weight:600;text-decoration:none">go pay →</a></div>'+g;
-  }
+    aps.sort(function(a,b){ return M.val(b)-M.val(a); });
+    var max=0; aps.forEach(function(a){ var v=M.val(a); if(v>max) max=v; });
+    if(max<=0){ bd.innerHTML='<div class="empty">Nothing to chart for this measure yet.</div>'; return; }
 
-  function opsSignals(d){
-    var C=OPS_C, ledger=(d.ledger||[]);
-    var sig=[];
-    var worst=null;
-    ledger.forEach(function(l){ if(l.v_old>0&&(!worst||l.v_old>worst.v_old)) worst=l; });
-    if(worst) sig.push(['bad','<b>'+esc(worst.label)+'</b>: KES '+kesShort(worst.v_old)+' has been sitting over 7 days — start here.',worst.route]);
-    ledger.forEach(function(l){
-      if(l.key==="plans_unstaffed"&&l.count>0) sig.push(['bad',fmt(l.count)+' approved plans worth KES '+kesShort(l.value)+' have <b>no crew assigned</b>.',l.route]);
-      if(l.key==="asg_noactuals"&&l.count>0) sig.push(['bad',fmt(l.count)+' staffed assignments (KES '+kesShort(l.value)+') have <b>no output recorded</b>.',l.route]);
-    });
-    if((d.desks||[]).length){
-      var top1=d.desks[0];
-      sig.push(['good','<b>'+esc(top1.name)+'</b> moves the most value: KES '+kesShort(top1.value)+' across '+fmt(top1.n)+' sign-offs ('+fmt(top1.week_n)+' this week).',null]);
-      var upl=d.desks.slice().sort(function(a,b){ return b.unpaid_signed-a.unpaid_signed; })[0];
-      if(upl&&upl.unpaid_signed>0) sig.push(['bad','KES '+kesShort(upl.unpaid_signed)+' confirmed by <b>'+esc(upl.name)+'</b> has not reached workers yet.','/work-payment']);
+    var n=aps.length;
+    var W=1200,H=460,L=86,R=26,T=34,B=86,iw=W-L-R,ih=H-T-B;
+    var ymax=max*1.12;
+    var slot=iw/n, bw=Math.min(110,slot*0.55);
+    function X(i){ return L+slot*(i+0.5); }
+    function Y(v){ return T+ih-(v/ymax)*ih; }
+    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="'+esc(st.stage)+' — '+esc(M.label)+' per approver">';
+    // gridlines + y ticks
+    for(var gi=0;gi<=5;gi++){
+      var gv=ymax*gi/5, gy=Y(gv);
+      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
+         '<text x="'+(L-10)+'" y="'+(gy+4).toFixed(1)+'" text-anchor="end" font-size="11.5" fill="#5a5a52" font-family="Poppins,sans-serif">'+M.fmtv(gv)+'</text>';
     }
-    var rej=d.rejected||{};
-    sig.push(['good','Rejections so far: '+fmt(rej.plans||0)+' plans · '+fmt(rej.assignments||0)+' assignments · '+fmt(rej.actuals||0)+' actuals.',null]);
-    if(!sig.length) return '<div class="empty">Nothing needs attention.</div>';
-    var h='<div style="display:flex;flex-direction:column;gap:10px;max-width:900px">';
-    sig.forEach(function(x){
-      var c=x[0]==='bad'?C.bad:C.good;
-      h+='<div style="display:flex;gap:11px;align-items:baseline;font-size:13px;padding:11px 14px;border:1px solid '+c+'26;background:'+c+'0a;border-radius:12px">'+
-        '<i style="width:9px;height:9px;border-radius:50%;background:'+c+';flex-shrink:0"></i><span style="flex:1">'+x[1]+'</span>'+
-        (x[2]?'<a href="'+esc(x[2])+'" style="font-size:11px;font-weight:700;color:var(--blue);text-decoration:none;white-space:nowrap">open →</a>':'')+
-      '</div>';
+    // axes lines
+    g+='<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    g+='<line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(W-R)+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
+    // y axis title
+    g+='<text transform="rotate(-90)" x="'+(-(T+ih/2))+'" y="20" text-anchor="middle" font-size="12" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">'+esc(M.label)+'</text>';
+    // bars
+    aps.forEach(function(a,i){
+      var v=M.val(a);
+      var y=Y(v), hpx=T+ih-y;
+      var tip=esc(a.name)+'\n'+fmt(a.n)+' sign-offs · KES '+kesShort(a.value)+' · avg time '+opsFmtH(a.avg_h);
+      g+='<rect x="'+(X(i)-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(2,hpx).toFixed(1)+'" rx="5" fill="'+M.color+'"><title>'+tip+'</title></rect>';
+      g+='<text x="'+X(i).toFixed(1)+'" y="'+(y-9).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+M.fmtv(v)+'</text>';
+      // secondary figure under the primary label, inside the bar top when tall enough
+      var names=(a.name||"").split(" ");
+      var l1=names.slice(0,2).join(" "), l2=names.slice(2).join(" ");
+      if(l1.length>16){ l2=(names[1]?names.slice(1).join(" "):""); l1=names[0]; }
+      g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+20)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#2a2a26" font-family="Poppins,sans-serif">'+esc(l1.length>18?l1.slice(0,17)+"…":l1)+'</text>';
+      if(l2) g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+34)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#2a2a26" font-family="Poppins,sans-serif">'+esc(l2.length>18?l2.slice(0,17)+"…":l2)+'</text>';
+      var sub = m==="n" ? ('KES '+kesShort(a.value)) : m==="value" ? (fmt(a.n)+' sign-offs') : (fmt(a.n)+' sign-offs');
+      g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+(l2?48:34))+'" text-anchor="middle" font-size="10" fill="#8a8780" font-family="Poppins,sans-serif">'+sub+(m!=="time"&&a.avg_h!=null?' · '+opsFmtH(a.avg_h):'')+'</text>';
     });
-    h+='</div><div style="font-size:10px;color:var(--mute);margin-top:12px">Window '+esc((d.window||{}).from||"")+' → '+esc((d.window||{}).to||"")+'.</div>';
-    return h;
+    // x axis title
+    g+='<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="12" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Approver</text>';
+    g+='</svg>';
+    var head='<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12px;margin-bottom:4px">'+
+      '<span><b>'+esc(st.stage)+'</b> — '+fmt(st.total_n)+' approvals · KES '+kesShort(st.total_v)+' in the last 12 weeks</span>'+
+      '<span style="color:var(--mute)">hover a bar for all three figures</span></div>';
+    bd.innerHTML=head+g;
   }
 
   function load(){
