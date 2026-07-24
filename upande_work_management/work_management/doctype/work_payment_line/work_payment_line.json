@@ -13,6 +13,16 @@
   "qty",
   "farm",
   "task",
+  "block",
+  "work_from",
+  "work_to",
+  "rate",
+  "assignment",
+  "assigned_by",
+  "fm_approved_by",
+  "entered_by",
+  "hr_approved_by",
+  "gm_approved_by",
   "paid_workers",
   "amount"
  ],
@@ -68,6 +78,72 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Task",
+   "read_only": 1
+  },
+  {
+   "fieldname": "block",
+   "fieldtype": "Data",
+   "label": "Block / Section",
+   "read_only": 1
+  },
+  {
+   "fieldname": "work_from",
+   "fieldtype": "Date",
+   "label": "Worked From",
+   "read_only": 1
+  },
+  {
+   "fieldname": "work_to",
+   "fieldtype": "Date",
+   "label": "Worked To",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "label": "Rate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assignment",
+   "fieldtype": "Link",
+   "label": "Assignment",
+   "options": "Work Management Assigner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assigned_by",
+   "fieldtype": "Link",
+   "label": "Assigned By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fm_approved_by",
+   "fieldtype": "Link",
+   "label": "Assignment Approved By (FM/GM)",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "entered_by",
+   "fieldtype": "Link",
+   "label": "Actuals Entered By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "hr_approved_by",
+   "fieldtype": "Link",
+   "label": "HR Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gm_approved_by",
+   "fieldtype": "Link",
+   "label": "GM Confirmed By",
+   "options": "User",
    "read_only": 1
   },
   {
