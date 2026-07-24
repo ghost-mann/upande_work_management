@@ -1509,6 +1509,83 @@ def wm_dashboard(**kwargs):
         dlist = sorted(dlist, key=lambda x: x["value"], reverse=True)
         out["desks"] = dlist
         # rejections per stage (attribution to a person is not stored — stage level)
+        # ---- 4 · PER-STAGE APPROVER BARS: who signs what, at every stage ----
+        stages_out = []
+
+        def stage_bars(stage_label, dtype, who_field, val_field, when_fields, start_fields):
+            am = frappe.get_meta(dtype)
+            if not am.get_field(who_field):
+                return
+            fields = ["name", "creation", who_field, val_field]
+            for f in when_fields + start_fields:
+                if am.get_field(f):
+                    fields.append(f)
+            rows = frappe.db.get_all(dtype, filters={who_field: ["is", "set"]},
+                                     fields=list(set(fields)), limit=5000)
+            agg = {}
+            for r in rows:
+                who = r.get(who_field)
+                if not who:
+                    continue
+                when = None
+                for f in when_fields:
+                    if r.get(f):
+                        when = r.get(f)
+                        break
+                if not when:
+                    when = r.get("creation")
+                wd = str(frappe.utils.get_datetime(when).date())
+                if wd < str(kfrom) or wd > str(kto):
+                    continue
+                g = agg.get(who) or {"n": 0, "v": 0.0, "hsum": 0.0, "hn": 0}
+                g["n"] = g["n"] + 1
+                g["v"] = g["v"] + frappe.utils.flt(r.get(val_field))
+                start = None
+                for f in start_fields:
+                    if r.get(f):
+                        start = r.get(f)
+                        break
+                if not start:
+                    start = r.get("creation")
+                hh = None
+                try:
+                    hh = (frappe.utils.get_datetime(when) - frappe.utils.get_datetime(start)).total_seconds() / 3600.0
+                except Exception:
+                    hh = None
+                if hh is not None and hh >= 0:
+                    g["hsum"] = g["hsum"] + hh
+                    g["hn"] = g["hn"] + 1
+                agg[who] = g
+            aps = []
+            for who in agg:
+                nm = frappe.db.get_value("User", who, "full_name") or who
+                aps.append({"who": who, "name": nm, "n": agg[who]["n"], "value": agg[who]["v"],
+                            "avg_h": (agg[who]["hsum"] / agg[who]["hn"]) if agg[who]["hn"] else None})
+            aps = sorted(aps, key=lambda x: x["n"], reverse=True)
+            stages_out.append({"stage": stage_label, "approvers": aps,
+                               "total_n": sum(x["n"] for x in aps),
+                               "total_v": sum(x["value"] for x in aps)})
+
+        stage_bars("Plan approval — Farm Manager", "Work Management Planner",
+                   "approved_by", "total_cost", ["custom_approved_at", "approval_date"],
+                   ["custom_submitted_at"])
+        stage_bars("Assignment approval — GM", "Work Management Assigner",
+                   "approved_by", "planned_cost", ["custom_gm_approved_at", "approval_date"],
+                   ["custom_submitted_at"])
+        stage_bars("Actuals — FM sign-off", "Work Management Actuals",
+                   "fm_approved_by", "total_payment", ["custom_fm_approved_at", "fm_approval_date"],
+                   ["custom_submitted_at"])
+        stage_bars("Actuals — HR sign-off", "Work Management Actuals",
+                   "hr_approved_by", "total_payment", ["custom_hr_approved_at", "hr_approval_date"],
+                   ["custom_fm_approved_at", "custom_submitted_at"])
+        stage_bars("Actuals — GM confirmation", "Work Management Actuals",
+                   "gm_approved_by", "total_payment", ["custom_gm_approved_at", "gm_approval_date"],
+                   ["custom_hr_approved_at", "custom_fm_approved_at", "custom_submitted_at"])
+        stage_bars("Payment — accounts release", "Work Management Payment",
+                   "accounts_approved_by", "grand_total", ["custom_accounts_approved_at", "accounts_approval_date"],
+                   ["custom_submitted_at"])
+        out["stages"] = stages_out
+
         out["rejected"] = {
             "plans": frappe.db.count("Work Management Planner", {"workflow_state": "Rejected"}),
             "assignments": frappe.db.count("Work Management Assigner", {"workflow_state": "Rejected"}),
