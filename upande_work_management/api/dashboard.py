@@ -1267,6 +1267,42 @@ def wm_dashboard(**kwargs):
         add_appr("Work plans", "Approve", "approved_by", "approval_date", "creation", "Work Management Planner", {"workflow_state": "Approved"})
         # Payments: accounts
         add_appr("Payments", "Accounts", "accounts_approved_by", "accounts_approval_date", "creation", "Work Management Payment", {"workflow_state": "Paid"})
+        # ---- value flow per week: plans approved vs assignments staffed vs actuals confirmed ----
+        sw = {}
+
+        def sw_bucket(dstr):
+            d0 = frappe.utils.getdate(dstr)
+            monday = str(frappe.utils.add_days(d0, -d0.weekday()))
+            rec = sw.get(monday)
+            if not rec:
+                rec = {"wstart": monday, "planned_v": 0.0, "assigned_v": 0.0, "confirmed_v": 0.0,
+                       "planned_n": 0, "assigned_n": 0, "confirmed_n": 0}
+                sw[monday] = rec
+            return rec
+
+        for r in frappe.db.get_all("Work Management Planner",
+                filters={"approval_date": ["between", [cfrom, cto]]},
+                fields=["approval_date", "total_cost"], limit=5000):
+            if r.approval_date:
+                rec = sw_bucket(str(r.approval_date))
+                rec["planned_v"] = rec["planned_v"] + frappe.utils.flt(r.total_cost)
+                rec["planned_n"] = rec["planned_n"] + 1
+        for r in frappe.db.get_all("Work Management Assigner",
+                filters={"approval_date": ["between", [cfrom, cto]]},
+                fields=["approval_date", "planned_cost"], limit=5000):
+            if r.approval_date:
+                rec = sw_bucket(str(r.approval_date))
+                rec["assigned_v"] = rec["assigned_v"] + frappe.utils.flt(r.planned_cost)
+                rec["assigned_n"] = rec["assigned_n"] + 1
+        for r in frappe.db.get_all("Work Management Actuals",
+                filters={"gm_approval_date": ["between", [cfrom, cto]], "workflow_state": "CONFIRMED"},
+                fields=["gm_approval_date", "total_payment"], limit=5000):
+            if r.gm_approval_date:
+                rec = sw_bucket(str(r.gm_approval_date))
+                rec["confirmed_v"] = rec["confirmed_v"] + frappe.utils.flt(r.total_payment)
+                rec["confirmed_n"] = rec["confirmed_n"] + 1
+        out["stage_weekly"] = [sw[k] for k in sorted(sw.keys())]
+
         out["approvers"] = approvers
         out["apr_names"] = names
         out["apr_window"] = {"from": cfrom, "to": cto}
