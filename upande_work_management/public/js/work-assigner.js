@@ -417,7 +417,7 @@
     var aw=[];
     if(e.att_leave) aw.push("on "+e.att_leave);
     if(e.att_absent_days>0) aw.push("marked Absent "+e.att_absent_days+" day"+(e.att_absent_days>1?"s":"")+(e.att_absent_span?" ("+e.att_absent_span+")":"")+" in this window");
-    if(e.att_all_off) aw.push("off/holiday for the entire window");
+    if(e.att_all_off) aw.push(e.att_off_reason||"off-day conflict in this window");
     var si=ST.scanInfo||{};
     if(si.checked && si.gate_on && si.cutoff_passed && !e.present_today && !e.is_night){
       aw.push("not seen on site today (no scan or Present attendance yet)");

@@ -120,7 +120,19 @@ through to the worker's review sheet, with the actuals document named:
 - **Earning after leaving the job** — released/substituted workers still
   collecting days.
 
-The date range and farm chips of the Audit tab apply to the scan.
+The date range and farm chips of the Audit tab apply to the scan. Each check
+has its own **checkbox in Work Management Settings** — turned-off checks show
+as disabled in the view instead of silently vanishing. The assigner's off-day
+behaviour is also a setting (**Off-day rule when assigning**): flag only when
+offs cover the entire window (default), flag any off day, or ignore offs at
+assignment.
+
+**Per-worker discrepancies:** workers with conflict days carry a red ⚑ flag
+(with the day count) next to their name in the Pay workers table — clicking
+it opens their review sheet directly on its **Discrepancies tab**, which
+groups that worker's flagged day-rows (absent / no evidence / on leave / off
+day) with amounts and documents. In Work & days, flagged task cards carry the
+same ⚑ and the affected day-rows are tinted.
 
 ## 5. Dashboard (`/work-management`)
 

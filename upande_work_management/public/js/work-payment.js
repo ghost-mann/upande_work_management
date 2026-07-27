@@ -369,7 +369,9 @@
       var runRef=w.run_ref?('<div style="font-size:9px;color:var(--mute);margin-top:2px">'+esc(w.run_ref)+'</div>'):'';
       h+='<tr data-emp="'+esc(w.emp)+'" class="'+(w.pay_status==="Paid"?"notpay":"")+(ST.bulk[w.emp]?" picked":"")+'">'+
         '<td class="c">'+cb+'</td>'+
-        '<td><span class="rowlink" data-review="'+esc(w.emp)+'">'+esc(w.emp_name||w.emp)+'</span></td>'+
+        '<td><span class="rowlink" data-review="'+esc(w.emp)+'">'+esc(w.emp_name||w.emp)+'</span>'+
+        (w.disc_days?' <span class="rowlink" data-wrdisc="'+esc(w.emp)+'" title="'+w.disc_days+' day-row'+(w.disc_days>1?'s':'')+' recorded on marked-Absent days — open the Discrepancies tab" style="color:#b91c1c;font-weight:700;font-size:11px">&#9873;'+w.disc_days+'</span>':'')+
+        '</td>'+
         '<td class="m">'+esc(w.emp)+'</td>'+
         '<td>'+esc(w.farm||"—")+'</td>'+
         '<td class="m">'+esc(dshort(w.wfrom))+' &rarr; '+esc(dshort(w.wto))+'</td>'+
@@ -395,6 +397,9 @@
         approveWorker(b.getAttribute("data-send"), b.getAttribute("data-nm"),
           parseFloat(b.getAttribute("data-amt"))||0, payWindow());
       };
+    });
+    box.querySelectorAll("[data-wrdisc]").forEach(function(a){
+      a.onclick=function(ev){ ev.stopPropagation(); openWorkerReview(a.getAttribute("data-wrdisc"), payWindow(), "wr-disc"); };
     });
     wireBulk(box);
   }
@@ -889,10 +894,11 @@
     checks.forEach(function(c,ci){
       var open = AU.discOpen!=null ? (AU.discOpen===c.key) : (ci===0 && c.count>0);
       var sev = c.count ? (c.key==="off_paid" ? "var(--warn, #a06000)" : "var(--bad, #b91c1c)") : "var(--good, #0a7a43)";
+      if(c.disabled) sev="var(--mute, #8a8780)";
       h+='<div style="border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden">'+
         '<div class="disc-head" data-disc="'+esc(c.key)+'" style="padding:12px 16px;background:var(--wash);display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;cursor:pointer">'+
           '<b style="font-size:13px">'+esc(c.title)+'</b>'+
-          '<span class="m" style="font-weight:700;color:'+sev+'">'+fmt(c.count)+(c.count>=200?"+":"")+' row'+(c.count===1?"":"s")+'</span>'+
+          (c.disabled?'<span class="hint" style="color:var(--mute)">check turned off in Work Management Settings</span>':'<span class="m" style="font-weight:700;color:'+sev+'">'+fmt(c.count)+(c.count>=200?"+":"")+' row'+(c.count===1?"":"s")+'</span>')+
           (c.workers?'<span class="hint">'+fmt(c.workers)+' workers</span>':'')+
           (c.amount?'<span class="m" style="font-weight:600">'+money(c.amount)+'</span>':'')+
           '<span style="flex:1"></span><span class="hint">'+(open?"▾":"▸")+'</span>'+
@@ -1124,8 +1130,9 @@
              refresh:function(){ loadAudit(); refreshAccountsCount(); } };
   }
   function openWorkerAudit(emp){ openWorkerReview(emp, auditWindow()); }
-  function openWorkerReview(emp, win){
+  function openWorkerReview(emp, win, targetTab){
     WR=win||{from:"",to:"",refresh:null};
+    WR.targetTab=targetTab||null;
     var m=el("pay-detail-modal");
     var card=m.querySelector(".modal-card");
     if(card) card.classList.add("xl");
@@ -1149,6 +1156,15 @@
     el("pd-sub").textContent=(info.employee||"")+" · "+(info.designation||info.employment_type||"")+
       (info.farm?" · "+lbl(info.farm):"");
     var tasks=d.tasks||[], daily=d.daily||[], runs=d.runs||[];
+    // this worker's discrepancies, straight from the day-rows' evidence
+    var ISS={absent:[],ghost:[],leave:[],off:[]};
+    daily.forEach(function(r){
+      if((r.att_status||"")==="Absent") ISS.absent.push(r);
+      else if(!r.scan_in && !r.att_status) ISS.ghost.push(r);
+      if(r.day_leave) ISS.leave.push(r);
+      if(r.day_off) ISS.off.push(r);
+    });
+    var nIss=ISS.absent.length+ISS.ghost.length+ISS.leave.length+ISS.off.length;
     var byTask={};
     daily.forEach(function(r){
       var kk=(r.task||"")+"|"+(r.block||"")+"|"+(r.farm||"");
@@ -1170,6 +1186,7 @@
       '<div class="fchip on" data-wrtab="wr-overview">Overview</div>'+
       '<div class="fchip" data-wrtab="wr-work">Work &amp; days</div>'+
       '<div class="fchip" data-wrtab="wr-pay">Payments</div>'+
+      '<div class="fchip" data-wrtab="wr-disc">Discrepancies'+(nIss?'&nbsp;<b style="color:#b91c1c">&#9873; '+nIss+'</b>':'')+'</div>'+
       '<span style="flex:1"></span>'+
       '<div class="fchip" id="wr-excel" title="Download this review as an Excel workbook — one table per task with its day rows">&#8681; Download Excel</div>'+
     '</div>';
@@ -1232,10 +1249,12 @@
     tasks.forEach(function(t){
       var kk=(t.task||"")+"|"+(t.block||"")+"|"+(t.farm||"");
       var rows=(byTask[kk]||[]).slice().sort(function(a,b){ return (a.wdate||"")<(b.wdate||"")?-1:1; });
+      var cardFlagged=0;
+      rows.forEach(function(r){ if((r.att_status||"")==="Absent"||(!r.scan_in&&!r.att_status)||r.day_leave||r.day_off) cardFlagged++; });
       var who=peopleLine(t).map(function(w){ return w[0]+" "+shortUser(w[1]); });
       h+='<div style="border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden">'+
         '<div style="padding:12px 16px;background:var(--wash);display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline">'+
-          '<div style="font-weight:600;font-size:13px">'+esc(t.task||"—")+' <span style="color:var(--mute);font-weight:500">· '+esc(lbl(t.block)||"—")+' · '+esc(lbl(t.farm)||"")+'</span></div>'+
+          '<div style="font-weight:600;font-size:13px">'+esc(t.task||"—")+' <span style="color:var(--mute);font-weight:500">· '+esc(lbl(t.block)||"—")+' · '+esc(lbl(t.farm)||"")+'</span>'+(cardFlagged?' <span title="'+cardFlagged+' flagged day'+(cardFlagged>1?'s':'')+' — see the Discrepancies tab" style="color:#b91c1c;font-weight:700;font-size:11px">&#9873;'+cardFlagged+'</span>':'')+'</div>'+
           '<span style="flex:1"></span>'+
           '<span class="m" style="font-weight:600">'+money(t.amount)+'</span>'+payTag(t.pay_status)+
         '</div>'+
@@ -1250,7 +1269,8 @@
         '<div class="tablescroll" style="max-height:320px"><table style="margin-top:0"><thead><tr>'+
           '<th>Day worked</th><th class="c">Presence</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th><th class="c">Edit</th></tr></thead><tbody>';
       rows.forEach(function(r){
-        h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td>'+
+        var rowFlag=((r.att_status||"")==="Absent"||(!r.scan_in&&!r.att_status)||r.day_leave||r.day_off);
+        h+='<tr'+(rowFlag?' style="background:rgba(185,28,28,.045)"':'')+'><td class="m">'+esc(dshort(r.wdate))+(r.day_leave?' <span style="color:#7c3aed;font-size:9px;font-weight:700" title="approved leave this day">'+esc(r.day_leave)+'</span>':'')+(r.day_off?' <span style="color:#a06000;font-size:9px;font-weight:700" title="weekly off / holiday">off day</span>':'')+'</td>'+
           '<td class="c">'+presenceTag(r)+'</td>'+
           '<td class="n m" data-qcell>'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
           '<td class="c">'+(r.in_payroll? payTag(r.paid?"Paid":"Unpaid") : '<span class="tag">Not in payroll</span>')+'</td>'+
@@ -1289,6 +1309,42 @@
     }
     h+='</div>';
 
+    // ════ TAB 4 · DISCREPANCIES ════
+    h+='<div class="wr-sec" id="wr-disc" style="display:none">';
+    if(!nIss){
+      h+='<div class="empty"><b>Clean.</b> No attendance conflicts on any of this worker\'s day-rows in this window.</div>';
+    } else {
+      h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every send to accounts is logged.</div>';
+      var groups=[
+        {k:"absent", title:"Recorded on marked-Absent days", about:"Submitted attendance says Absent, yet work is recorded. A scan time means the attendance is probably wrong.", rows:ISS.absent},
+        {k:"ghost", title:"No presence evidence at all", about:"No scan and no attendance record of any kind on the day.", rows:ISS.ghost},
+        {k:"leave", title:"Earning while on approved leave", about:"The day falls inside an approved leave application — possible double payment.", rows:ISS.leave},
+        {k:"off", title:"Work on off days / holidays", about:"The day is on this worker\'s holiday list. Fine if deliberate overtime.", rows:ISS.off}
+      ];
+      groups.forEach(function(g){
+        if(!g.rows.length) return;
+        var gamt=0; g.rows.forEach(function(r){ gamt+=(r.amount||0); });
+        h+='<div style="border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden">'+
+          '<div style="padding:11px 16px;background:var(--wash);display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline">'+
+            '<b style="font-size:12.5px;color:#b91c1c">&#9873; '+esc(g.title)+'</b>'+
+            '<span class="m" style="font-weight:700">'+fmt(g.rows.length)+' day-row'+(g.rows.length>1?'s':'')+'</span>'+
+            '<span class="m" style="font-weight:600">'+money(gamt)+'</span></div>'+
+          '<div style="padding:6px 16px 0;font-size:11px;color:var(--mute)">'+esc(g.about)+'</div>'+
+          '<div class="tablescroll" style="max-height:260px;padding:8px 16px 12px"><table style="margin-top:0"><thead><tr>'+
+          '<th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Pay KES</th><th class="c">Scan</th>'+(g.k==="leave"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th></tr></thead><tbody>';
+        g.rows.forEach(function(r){
+          h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.task||"")+'</td>'+
+            '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+            '<td class="c m">'+(r.scan_in?('<span style="color:#0a7a43;font-weight:700">in '+esc(r.scan_in)+'</span>'):'<span style="color:#a06000">—</span>')+'</td>'+
+            (g.k==="leave"?('<td>'+esc(r.day_leave||"")+'</td>'):'')+
+            '<td class="c">'+payTag(r.paid?"Paid":"Unpaid")+'</td>'+
+            '<td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td></tr>';
+        });
+        h+='</tbody></table></div></div>';
+      });
+    }
+    h+='</div>';
+
     el("pd-body").innerHTML=h;
     // tab wiring
     var tabs=el("wr-tabs");
@@ -1307,6 +1363,11 @@
     });
     var xb=el("wr-excel");
     if(xb){ xb.onclick=function(){ exportWorkerExcel(xb); }; }
+    if(WR.targetTab){
+      var tt=tabs.querySelector('.fchip[data-wrtab="'+WR.targetTab+'"]');
+      if(tt) tt.onclick ? tt.onclick() : tt.click();
+      WR.targetTab=null;
+    }
     wireDayEdits(el("pd-body"), info);
     // footer: review first, then approve — one worker at a time
     var ap=el("pd-approve"), rv=el("pd-review");

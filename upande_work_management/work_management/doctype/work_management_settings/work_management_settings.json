@@ -14,7 +14,17 @@
   "att_block_off",
   "att_require_scan",
   "att_scan_cutoff",
-  "att_block_noscan_actuals"
+  "att_block_noscan_actuals",
+  "att_off_window_rule",
+  "sb_disc",
+  "disc_absent_paid",
+  "disc_ghost_days",
+  "disc_leave_paid",
+  "disc_off_paid",
+  "disc_rate_mismatch",
+  "disc_multi_farm",
+  "disc_self_approved",
+  "disc_left_earning"
  ],
  "fields": [
   {
@@ -88,6 +98,67 @@
    "label": "Check scans when recording actuals",
    "default": "1",
    "description": "Recording a quantity for a worker with zero biometric scans and no Present attendance on that work date needs an override."
+  },
+  {
+   "fieldname": "att_off_window_rule",
+   "fieldtype": "Select",
+   "label": "Off-day rule when assigning",
+   "options": "Entire window\nAny off day\nIgnore at assignment",
+   "default": "Entire window",
+   "description": "Entire window: only flag a worker whose off days cover the WHOLE assignment period. Any off day: flag any off day inside the period. Ignore: off days never flag at assignment (actuals still checks the exact day)."
+  },
+  {
+   "fieldname": "sb_disc",
+   "fieldtype": "Section Break",
+   "label": "Discrepancy checks (Audit \u2192 Discrepancies)"
+  },
+  {
+   "fieldname": "disc_absent_paid",
+   "fieldtype": "Check",
+   "label": "Paid on marked-Absent days",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_ghost_days",
+   "fieldtype": "Check",
+   "label": "No presence evidence at all (no scan, no attendance)",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_leave_paid",
+   "fieldtype": "Check",
+   "label": "Earning while on approved leave",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_off_paid",
+   "fieldtype": "Check",
+   "label": "Work recorded on off days / holidays",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_rate_mismatch",
+   "fieldtype": "Check",
+   "label": "Amount doesn't match qty \u00d7 rate",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_multi_farm",
+   "fieldtype": "Check",
+   "label": "Two farms, one day",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_self_approved",
+   "fieldtype": "Check",
+   "label": "Entered and approved by the same person",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_left_earning",
+   "fieldtype": "Check",
+   "label": "Earning after leaving the job",
+   "default": "1"
   }
  ],
  "idx": 0,
