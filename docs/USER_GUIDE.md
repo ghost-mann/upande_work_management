@@ -67,6 +67,25 @@ worker to open their **review sheet**:
 ### Pay workers tab
 Same in-depth view and editing as Audit workers, for the people doing payment.
 
+**Bulk actions:** tick the checkbox on any Unpaid/Reviewed rows (or use the
+select-all box in the header). A bar appears showing the selection count and
+value with:
+
+- **Review selected** — stamps every ticked Unpaid worker as Reviewed in one
+  go (same per-row stamp as reviewing one by one).
+- **Send selected to accounts** — sends every ticked *Reviewed* worker;
+  each still gets their own payment entry, exactly as when sent singly.
+  Workers with unreviewed earnings are skipped, never silently sent.
+
+The selection is kept across the review step, so the usual flow is: tick →
+Review selected → Send selected to accounts.
+
+**Download Excel** (inside the worker review sheet, top-right): exports the
+worker's review as a workbook — a *Summary* sheet (worker, KPIs, per-task
+totals) and a *Tasks & days* sheet laid out like the Work & days view: one
+table per task with its period, assignments and sign-off chain, then every
+day-row (date, qty, rate, pay, paid status, run) and the task totals.
+
 ### Awaiting accounts tab
 Workers whose payment entry is with accounts (*Pending Accounts*). From here:
 

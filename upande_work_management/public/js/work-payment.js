@@ -6,6 +6,7 @@
   var ST = {
     workers: [],        // current payable list (from pay_workers)
     picked: {},         // employee -> row, selected for the run
+    bulk: {},           // employee -> {status, amt, nm} ticked for bulk review/send
     farms: [],          // [{farm, workers, owed}] summary across window
     activeFarms: {},    // farm -> 1 (chip filter); empty = all
     isAccounts: false,
@@ -342,10 +343,15 @@
       if(oa!==ob) return oa-ob;
       return (b.unpaid_amt||b.owed||0)-(a.unpaid_amt||a.owed||0);
     });
-    var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px"><span class="hint" id="pw-count">'+
-      fmt(rows.length)+' of '+fmt((ST.workers||[]).length)+' workers</span><span style="flex:1"></span>'+
-      '<span class="hint">Review each person, then approve &amp; send their pay to accounts &mdash; one at a time.</span></div>';
+    var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px"><span class="hint" id="pw-count">'+
+      fmt(rows.length)+' of '+fmt((ST.workers||[]).length)+' workers</span>'+
+      '<span class="hint" id="bulk-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
+      '<button type="button" class="btn sm" id="bulk-review" style="display:none">Review selected</button>'+
+      '<button type="button" class="btn good sm" id="bulk-send" style="display:none">Send selected to accounts</button>'+
+      '<button type="button" class="btn sm" id="bulk-clear" style="display:none">Clear</button>'+
+      '<span class="hint" id="bulk-hint">Tick workers to review &amp; send in bulk, or open each one for the full check.</span></div>';
     h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
+      '<th class="c" style="width:34px"><input type="checkbox" id="bulk-all" title="Select every actionable worker shown"></th>'+
       '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
       '<th class="n">Earned KES</th><th class="n">Paid KES</th><th class="n">Unpaid KES</th><th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
     var tq=0, te=0, tp=0, tu=0;
@@ -358,8 +364,12 @@
       } else if(w.pay_status==="Unpaid"){
         acts+=' <button type="button" class="btn sm" disabled title="Review this worker first — approval unlocks after review" style="opacity:.45">Send to accounts</button>';
       }
+      var actionable=(w.pay_status==="Unpaid"||w.pay_status==="Reviewed") && (unpaid||0)>0.001;
+      var cb=actionable?
+        '<input type="checkbox" class="bpick" data-emp="'+esc(w.emp)+'" data-status="'+esc(w.pay_status)+'" data-amt="'+(unpaid||0)+'" data-nm="'+esc(w.emp_name||w.emp)+'"'+(ST.bulk[w.emp]?" checked":"")+'>':'';
       var runRef=w.run_ref?('<div style="font-size:9px;color:var(--mute);margin-top:2px">'+esc(w.run_ref)+'</div>'):'';
-      h+='<tr class="'+(w.pay_status==="Paid"?"notpay":"")+'">'+
+      h+='<tr data-emp="'+esc(w.emp)+'" class="'+(w.pay_status==="Paid"?"notpay":"")+(ST.bulk[w.emp]?" picked":"")+'">'+
+        '<td class="c">'+cb+'</td>'+
         '<td><span class="rowlink" data-review="'+esc(w.emp)+'">'+esc(w.emp_name||w.emp)+'</span></td>'+
         '<td class="m">'+esc(w.emp)+'</td>'+
         '<td>'+esc(w.farm||"—")+'</td>'+
@@ -373,10 +383,10 @@
         '<td class="c">'+payTag(w.pay_status)+runRef+'</td>'+
         '<td class="c" style="white-space:nowrap">'+acts+'</td></tr>';
     });
-    h+='</tbody><tfoot><tr><th colspan="6">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
+    h+='</tbody><tfoot><tr><th colspan="7">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
        '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te)+'</th><th class="n">'+fmt(tp)+'</th><th class="n">'+fmt(tu)+'</th>'+
        '<th colspan="2"></th></tr></tfoot></table></div></div>';
-    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review.</div>';
+    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers, <b>Review selected</b>, then <b>Send selected to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
     box.innerHTML=h;
     box.querySelectorAll("[data-review]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-review"), payWindow()); };
@@ -387,6 +397,145 @@
           parseFloat(b.getAttribute("data-amt"))||0, payWindow());
       };
     });
+    wireBulk(box);
+  }
+
+  // ── bulk review / send-to-accounts across ticked workers ──
+  function wireBulk(box){
+    // drop stale picks that no longer exist or stopped being actionable
+    var live={};
+    box.querySelectorAll("input.bpick").forEach(function(cb){
+      var emp=cb.getAttribute("data-emp");
+      live[emp]=1;
+      if(ST.bulk[emp]){
+        ST.bulk[emp]={status:cb.getAttribute("data-status"), amt:parseFloat(cb.getAttribute("data-amt"))||0, nm:cb.getAttribute("data-nm")};
+      }
+      cb.onchange=function(){
+        var tr=cb.closest("tr");
+        if(cb.checked){
+          ST.bulk[emp]={status:cb.getAttribute("data-status"), amt:parseFloat(cb.getAttribute("data-amt"))||0, nm:cb.getAttribute("data-nm")};
+          if(tr) tr.classList.add("picked");
+        } else {
+          delete ST.bulk[emp];
+          if(tr) tr.classList.remove("picked");
+        }
+        syncBulkBar();
+      };
+    });
+    Object.keys(ST.bulk).forEach(function(emp){ if(!live[emp]) delete ST.bulk[emp]; });
+    var all=el("bulk-all");
+    if(all){
+      all.onchange=function(){
+        box.querySelectorAll("input.bpick").forEach(function(cb){
+          cb.checked=all.checked;
+          cb.onchange();
+        });
+      };
+    }
+    var bc=el("bulk-clear");
+    if(bc){ bc.onclick=function(){ ST.bulk={}; renderPayable(); }; }
+    var br=el("bulk-review");
+    if(br){ br.onclick=bulkReview; }
+    var bs=el("bulk-send");
+    if(bs){ bs.onclick=bulkSend; }
+    syncBulkBar();
+  }
+
+  function bulkSets(){
+    var toReview=[], toSend=[], amtReview=0, amtSend=0;
+    Object.keys(ST.bulk).forEach(function(emp){
+      var p=ST.bulk[emp];
+      if(p.status==="Unpaid"){ toReview.push(emp); amtReview+=p.amt; }
+      else if(p.status==="Reviewed"){ toSend.push(emp); amtSend+=p.amt; }
+    });
+    return {toReview:toReview, toSend:toSend, amtReview:amtReview, amtSend:amtSend};
+  }
+
+  function syncBulkBar(){
+    var s=bulkSets(), n=Object.keys(ST.bulk).length;
+    var info=el("bulk-info"), br=el("bulk-review"), bs=el("bulk-send"), bc=el("bulk-clear"), hint=el("bulk-hint");
+    if(!info) return;
+    if(!n){
+      info.textContent="";
+      if(br) br.style.display="none";
+      if(bs) bs.style.display="none";
+      if(bc) bc.style.display="none";
+      if(hint) hint.style.display="";
+      return;
+    }
+    if(hint) hint.style.display="none";
+    info.textContent=fmt(n)+" selected · "+money(s.amtReview+s.amtSend);
+    if(br){ br.style.display=s.toReview.length?"":"none"; br.textContent="Review selected ("+fmt(s.toReview.length)+")"; }
+    if(bs){ bs.style.display=s.toSend.length?"":"none"; bs.textContent="Send "+fmt(s.toSend.length)+" to accounts · "+money(s.amtSend); }
+    if(bc) bc.style.display="";
+  }
+
+  function chunkCalls(action, emps, win, done){
+    // sequential batches so big selections never hit the request timeout
+    var SIZE=25, i=0, agg={results:[], sent:0, sent_total:0, errors:0, workers_reviewed:0, rows_reviewed:0};
+    function step(){
+      if(i>=emps.length){ done(null, agg); return; }
+      var batch=emps.slice(i, i+SIZE); i+=SIZE;
+      call({ action:action, employees:batch.join(","), from_date:(win.from||""), to_date:(win.to||"") }, true)
+        .then(function(d){
+          if(d.error){ done(new Error(d.error), agg); return; }
+          agg.results=agg.results.concat(d.results||[]);
+          agg.sent+=(d.sent||0); agg.sent_total+=(d.sent_total||0); agg.errors+=(d.errors||0);
+          agg.workers_reviewed+=(d.workers_reviewed||0); agg.rows_reviewed+=(d.rows_reviewed||0);
+          step();
+        })
+        .catch(function(e){ done(e, agg); });
+    }
+    step();
+  }
+
+  function bulkReview(){
+    var s=bulkSets();
+    if(!s.toReview.length){ toast("No unpaid workers in the selection to review","bad"); return; }
+    var win=payWindow();
+    confirmModal(
+      "Review "+fmt(s.toReview.length)+" workers",
+      '<p style="margin:0 0 10px">Mark <b>'+fmt(s.toReview.length)+' workers</b> ('+money(s.amtReview)+') as reviewed in this window?</p>'+
+      '<p class="note" style="margin:0">Same stamp as reviewing one by one — your user and the time are recorded on every day-row. They then unlock &ldquo;Send to accounts&rdquo;.</p>',
+      "Mark all reviewed",
+      function(){
+        var br=el("bulk-review"); if(br){ br.disabled=true; br.textContent="Reviewing…"; }
+        chunkCalls("pay_bulk_review", s.toReview, win, function(err, agg){
+          if(br) br.disabled=false;
+          if(err){ toast("Bulk review stopped: "+err.message,"bad"); }
+          else { toast(fmt(agg.workers_reviewed)+" workers reviewed ("+fmt(agg.rows_reviewed)+" day-rows) — selection kept, now send to accounts","good"); }
+          win.refresh();
+        });
+      }
+    );
+  }
+
+  function bulkSend(){
+    var s=bulkSets();
+    if(!s.toSend.length){ toast("No reviewed workers in the selection — review first","bad"); return; }
+    var win=payWindow();
+    confirmModal(
+      "Send "+fmt(s.toSend.length)+" workers to accounts",
+      '<p style="margin:0 0 10px">Send <b>'+fmt(s.toSend.length)+' reviewed workers</b> totalling <b>'+money(s.amtSend)+'</b> to accounts?</p>'+
+      '<p class="note" style="margin:0">Each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Pending Accounts. Workers with unreviewed earnings are skipped.</p>',
+      "Send all to accounts",
+      function(){
+        var bs=el("bulk-send"); if(bs){ bs.disabled=true; bs.textContent="Sending…"; }
+        chunkCalls("pay_bulk_submit", s.toSend, win, function(err, agg){
+          if(bs) bs.disabled=false;
+          var errs=(agg.results||[]).filter(function(r){ return r.error; });
+          if(err){ toast("Bulk send stopped: "+err.message,"bad"); }
+          else if(errs.length){
+            toast(fmt(agg.sent)+" sent ("+money(agg.sent_total)+") · "+fmt(errs.length)+" skipped: "+errs.slice(0,3).map(function(r){ return r.employee+" — "+r.error; }).join("; ")+(errs.length>3?"…":""),"bad");
+          } else {
+            toast(fmt(agg.sent)+" workers sent to accounts · "+money(agg.sent_total),"good");
+          }
+          s.toSend.forEach(function(emp){ delete ST.bulk[emp]; });
+          win.refresh();
+        });
+      },
+      "good"
+    );
   }
 
   function payWindow(){
@@ -908,6 +1057,7 @@
   }
 
   function renderWorkerHistory(d){
+    WR.data=d;
     var info=d.info||{}, k=d.kpi||{};
     el("pd-name").firstChild.textContent=info.employee_name||info.employee||"Worker";
     el("pd-sub").textContent=(info.employee||"")+" · "+(info.designation||info.employment_type||"")+
@@ -934,6 +1084,8 @@
       '<div class="fchip on" data-wrtab="wr-overview">Overview</div>'+
       '<div class="fchip" data-wrtab="wr-work">Work &amp; days</div>'+
       '<div class="fchip" data-wrtab="wr-pay">Payments</div>'+
+      '<span style="flex:1"></span>'+
+      '<div class="fchip" id="wr-excel" title="Download this review as an Excel workbook — one table per task with its day rows">&#8681; Download Excel</div>'+
     '</div>';
 
     // ════ TAB 1 · OVERVIEW ════
@@ -1064,6 +1216,8 @@
     el("pd-body").querySelectorAll("[data-run]").forEach(function(a){
       a.onclick=function(){ openRunDetail(a.getAttribute("data-run")); };
     });
+    var xb=el("wr-excel");
+    if(xb){ xb.onclick=function(){ exportWorkerExcel(xb); }; }
     wireDayEdits(el("pd-body"), info);
     // footer: review first, then approve — one worker at a time
     var ap=el("pd-approve"), rv=el("pd-review");
@@ -1200,6 +1354,108 @@
     win.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Kaitet Payroll Audit</title><style>'+css+'</style></head><body>'+head+body+
       '<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>');
     win.document.close();
+  }
+
+  // ── worker review sheet → Excel: one table per task with its day rows ──
+  function exportWorkerExcel(btn){
+    var d=WR.data;
+    if(!d){ toast("Nothing loaded to export","bad"); return; }
+    var old=btn.textContent; btn.textContent="Preparing…"; btn.style.pointerEvents="none";
+    ensureXLSX(function(ok){
+      btn.textContent=old; btn.style.pointerEvents="";
+      if(!(ok && window.XLSX)){ exportWorkerCSV(d); return; }
+      try{ buildWorkerXLSX(d); }
+      catch(e){ exportWorkerCSV(d); }
+    });
+  }
+
+  function workerPeople(t){
+    var who=[];
+    (t.assigned_by||[]).forEach(function(u){ who.push("Assigned by "+shortUser(u)); });
+    (t.fm_approved_by||[]).forEach(function(u){ who.push("FM approved "+shortUser(u)); });
+    (t.entered_by||[]).forEach(function(u){ who.push("Captured by "+shortUser(u)); });
+    (t.hr_approved_by||[]).forEach(function(u){ who.push("HR approved "+shortUser(u)); });
+    (t.gm_approved_by||[]).forEach(function(u){ who.push("GM approved "+shortUser(u)); });
+    return who.join(" · ");
+  }
+
+  function workerFileBase(d){
+    var info=(d&&d.info)||{};
+    var nm=(info.employee_name||"worker").replace(/[^A-Za-z0-9]+/g,"_");
+    return "Worker_review_"+(info.employee||"")+"_"+nm+"_"+(WR.from||"start")+"_to_"+(WR.to||"today");
+  }
+
+  function buildWorkerXLSX(d){
+    var info=d.info||{}, k=d.kpi||{}, tasks=d.tasks||[], daily=d.daily||[];
+    var byTask={};
+    daily.forEach(function(r){
+      var kk=(r.task||"")+"|"+(r.block||"")+"|"+(r.farm||"");
+      (byTask[kk]=byTask[kk]||[]).push(r);
+    });
+    // ── sheet 1: worker + window summary ──
+    var s1=[
+      ["Worker payment review"],
+      [],
+      ["Worker", info.employee_name||"", "ID", info.employee||""],
+      ["Designation", info.designation||"", "Type", info.employment_type||""],
+      ["Farm", info.farm||"", "Joined", info.date_of_joining||""],
+      ["Window", (WR.from||"start")+" → "+(WR.to||"today"), "Worked", (k.first_day||"")+" → "+(k.last_day||"")],
+      [],
+      ["Earned KES", k.earned||0, "Paid KES", k.paid_amt||0],
+      ["Unpaid KES", k.unpaid_amt||0, "Days worked", k.days||0],
+      ["Tasks", tasks.length, "Total qty", k.qty||0],
+      [],
+      ["Task","Block","Farm","Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
+    ];
+    tasks.forEach(function(t){
+      s1.push([t.task||"", t.block||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,
+               Math.round((t.rate||0)*100)/100, t.amount||0, t.unpaid_amt||0, t.pay_status||""]);
+    });
+    s1.push(["TOTAL","","","","", k.days||0, k.qty||0, "", k.earned||0, k.unpaid_amt||0, ""]);
+    // ── sheet 2: one table per task, day rows underneath — the Work & days view ──
+    var s2=[];
+    tasks.forEach(function(t){
+      var kk=(t.task||"")+"|"+(t.block||"")+"|"+(t.farm||"");
+      var rows=(byTask[kk]||[]).slice().sort(function(a,b){ return (a.wdate||"")<(b.wdate||"")?-1:1; });
+      s2.push([(t.task||"—")+" · "+(t.block||"—")+" · "+(t.farm||""), "", "", "KES "+fmt(t.amount), t.pay_status||""]);
+      s2.push(["Task period", (t.plan_from||t.work_from||"")+" → "+(t.plan_to||t.work_to||""),
+               "Worked", (t.work_from||"")+" → "+(t.work_to||"")+" ("+(t.days||0)+" days)"]);
+      if(t.assignments&&t.assignments.length) s2.push(["Assignments", t.assignments.join(", ")]);
+      var who=workerPeople(t);
+      if(who) s2.push(["Sign-offs", who]);
+      s2.push(["Day worked","Qty done","Rate","Pay KES","Paid","Run"]);
+      rows.forEach(function(r){
+        s2.push([r.wdate||"", r.qty||0, Math.round((r.rate||0)*100)/100, r.amount||0,
+                 r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll", r.run_ref||""]);
+      });
+      s2.push([(t.days||0)+" days", t.qty||0, Math.round((t.rate||0)*100)/100+" avg", t.amount||0,
+               (t.unpaid_amt>0.001? fmt(t.unpaid_amt)+" unpaid":"fully paid"), ""]);
+      s2.push([]);
+    });
+    if(!s2.length) s2.push(["No confirmed work in this window"]);
+    var wb=window.XLSX.utils.book_new();
+    var ws1=window.XLSX.utils.aoa_to_sheet(s1);
+    var ws2=window.XLSX.utils.aoa_to_sheet(s2);
+    ws1["!cols"]=[{wch:22},{wch:26},{wch:14},{wch:16},{wch:12},{wch:8},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12}];
+    ws2["!cols"]=[{wch:34},{wch:30},{wch:14},{wch:26},{wch:16},{wch:16}];
+    window.XLSX.utils.book_append_sheet(wb, ws1, "Summary");
+    window.XLSX.utils.book_append_sheet(wb, ws2, "Tasks & days");
+    window.XLSX.writeFile(wb, workerFileBase(d)+".xlsx");
+  }
+
+  function exportWorkerCSV(d){
+    var daily=(d.daily||[]).map(function(r){ return {
+      Date:r.wdate||"", Task:r.task||"", Block:r.block||"", Farm:r.farm||"",
+      Qty:r.qty||0, Rate:Math.round((r.rate||0)*100)/100, "Pay KES":r.amount||0,
+      Status:(r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll"), Run:r.run_ref||""
+    }; });
+    if(!daily.length){ toast("No day rows to export","bad"); return; }
+    var keys=Object.keys(daily[0]);
+    function cell(v){ v=(v==null?"":String(v)); if(/[",\r\n]/.test(v)){ v='"'+v.replace(/"/g,'""')+'"'; } return v; }
+    var lines=[keys.join(",")];
+    daily.forEach(function(r){ lines.push(keys.map(function(kk){ return cell(r[kk]); }).join(",")); });
+    dl(workerFileBase(d)+".csv", lines.join("\r\n"));
+    toast("Excel library couldn't load — exported the day log as CSV instead","bad");
   }
 
   // ── Excel export: real two-sheet .xlsx via SheetJS (lazy CDN load), CSV fallback ──

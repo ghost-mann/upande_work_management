@@ -86,6 +86,8 @@ input), `hr_approved_by`, `gm_approved_by`.
 | `pay_worker_review` | Stamp a worker's unpaid rows Reviewed |
 | `pay_worker_edit_day` | Edit one day's qty (recompute, audit comment, un-review) |
 | `pay_worker_submit` | Create the per-worker payment entry, stamp `payment_ref` |
+| `pay_bulk_review` | Review several workers at once (`employees` CSV) |
+| `pay_bulk_submit` | Send several reviewed workers (`employees` CSV) — one entry each; skips anyone with unreviewed rows (frontend chunks in batches of 25) |
 | `pay_pending` | Entries awaiting accounts |
 | `pay_mark_paid` | Release: mark entry Paid + stamp rows |
 | `pay_run_withdraw` | Return to unpaid: clear refs/review stamps, delete entry |
