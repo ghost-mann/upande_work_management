@@ -103,6 +103,25 @@ Sending a worker to accounts creates **one payment document per worker**
 
 So the full "who did what" trail from the review sheet travels with the money.
 
+### Discrepancies (Audit tab → Discrepancies view)
+
+A standing audit that scans every confirmed worker-day in the chosen window
+and lists everything suspicious, grouped by check — each row clickable
+through to the worker's review sheet, with the actuals document named:
+
+- **Paid on marked-Absent days** — with the scan time when one exists (scan
+  present = the attendance is probably wrong; none = scrutinise the entry).
+- **No presence evidence at all** — no scan, no attendance of any kind.
+- **Earning while on approved leave** — possible leave-pay + task-pay double dip.
+- **Work recorded on off days / holidays** — fine if deliberate overtime.
+- **Amount ≠ qty × rate** — edited or corrupted row values.
+- **Two farms, one day** — the same worker earning in two places at once.
+- **Entered and approved by the same person** — no independent check.
+- **Earning after leaving the job** — released/substituted workers still
+  collecting days.
+
+The date range and farm chips of the Audit tab apply to the scan.
+
 ## 5. Dashboard (`/work-management`)
 
 - **Delivery timeline** — planned vs assigned vs actual value per day.

@@ -352,7 +352,7 @@
     // ── MORNING PRESENCE BAR: live scans when the window includes today ──
     if(si.checked){
       h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line,#e5e5e5);border-radius:10px;background:rgba(10,122,67,.05);font-size:11.5px">'+
-        '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' scanned in / marked present today'+
+        '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' '+esc(ST.curFarm||"")+' workers scanned in / marked present today'+
         (si.gate_on && !si.cutoff_passed ? ' <span style="color:#a06000">· scan check starts at '+esc((si.cutoff||"09:00").slice(0,5))+'</span>' : '')+
         '<span style="flex:1"></span>'+
         '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-weight:600"><input type="checkbox" id="a-onlyin"'+(ST.onlyIn?" checked":"")+'> Only workers who are in</label>'+

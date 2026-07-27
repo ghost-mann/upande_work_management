@@ -181,6 +181,10 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 .wm-menu a:hover{background:rgba(10,10,10,.05);color:#0a0a0a;text-decoration:none}
 .wm-menu a.danger{color:#b91c1c}
 .wm-menu a.danger:hover{background:rgba(185,28,28,.08);color:#b91c1c}
+
+/* checkboxes: golden accent — default white boxes disappear on the glass surfaces */
+:is(#wmp,#wpp,#wap,#acp,#wpay) input[type=checkbox]{accent-color:#a06000;width:15px;height:15px;cursor:pointer}
+:is(#wmp,#wpp,#wap,#acp,#wpay) input[type=checkbox]:not(:checked){outline:1px solid rgba(160,96,0,.55);outline-offset:-1px;border-radius:3px;background:rgba(255,255,255,.9)}
 </style>
 <div class="wm-canvas">
 <div id="wpay">
@@ -289,6 +293,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
         <button class="btn" id="au-v-summary" data-view="summary" style="border:0;border-radius:0;box-shadow:none">Summary</button>
         <button class="btn" id="au-v-detail" data-view="detail" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Detail</button>
         <button class="btn" id="au-v-workers" data-view="workers" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Workers</button>
+        <button class="btn" id="au-v-disc" data-view="disc" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Discrepancies</button>
       </div>
       <button class="btn" id="au-print">Print / PDF</button>
       <button class="btn pay" id="au-xlsx">Export Excel</button>
