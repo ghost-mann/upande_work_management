@@ -17,7 +17,7 @@
   function el(id){ return document.getElementById(id); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
-  function money(n){ if(n==null||isNaN(n)) return "—"; return "KES "+fmt(n); }
+  function money(n){ if(n==null||isNaN(n)) return "—"; return "KES "+fmt(n,2); }
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function isTW(t){ return (t||"")==="Task Worker"; }
 
@@ -385,7 +385,7 @@
         '<td class="c" style="white-space:nowrap">'+acts+'</td></tr>';
     });
     h+='</tbody><tfoot><tr><th colspan="7">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
-       '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te)+'</th><th class="n">'+fmt(tp)+'</th><th class="n">'+fmt(tu)+'</th>'+
+       '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te,2)+'</th><th class="n">'+fmt(tp,2)+'</th><th class="n">'+fmt(tu,2)+'</th>'+
        '<th colspan="2"></th></tr></tfoot></table></div></div>';
     h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
     box.innerHTML=h;
@@ -962,34 +962,34 @@
       h+='<th>Worker</th><th>Day</th><th>Farms</th><th class="n">KES</th><th>Actuals docs</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farms||"")+'</td>'+
-          '<td class="n m">'+fmt(r.amount)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td></tr>';
+          '<td class="n m">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td></tr>';
       });
     } else if(c.key==="self_approved"){
       h+='<th>Actuals doc</th><th>Farm</th><th>Task</th><th>Entered by</th><th>HR appr.</th><th>GM appr.</th><th class="n">KES</th>';
       rows.forEach(function(r){
         body+='<tr><td class="m">'+esc(r.actuals)+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td>'+esc(shortUser(r.entered_by))+'</td><td>'+esc(shortUser(r.hr_approved_by)||"—")+'</td><td>'+esc(shortUser(r.gm_approved_by)||"—")+'</td>'+
-          '<td class="n m">'+fmt(r.amount)+'</td></tr>';
+          '<td class="n m">'+fmt(r.amount,2)+'</td></tr>';
       });
     } else if(c.key==="left_but_earning"){
       h+='<th>Worker</th><th>Day worked</th><th>Left on</th><th>Farm</th><th>Task</th><th class="n">KES</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td class="m" style="color:var(--bad)">'+esc(dshort(r.left_date))+'</td>'+
-          '<td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td><td class="n m">'+fmt(r.amount)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
+          '<td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td><td class="n m">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
     } else if(c.key==="rate_mismatch"){
       h+='<th>Worker</th><th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Expected</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
-          '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
+          '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
     } else if(c.key==="no_pay"){
       h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Should be KES</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td>'+
-          '<td class="n m" style="color:#0a7a43;font-weight:700">'+fmt(r.should_be)+'</td>'+
+          '<td class="n m" style="color:#0a7a43;font-weight:700">'+fmt(r.should_be,2)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">0</td>'+
           '<td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
@@ -998,7 +998,7 @@
       h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Presence</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
-          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
           '<td class="c m">'+discPres(r)+'</td>'+
           (c.key==="leave_paid"?('<td>'+esc(r.leave_type||"")+'</td>'):'')+
           '<td class="c">'+payTag(r.paid?"Paid":"Unpaid")+'</td>'+
@@ -1032,7 +1032,7 @@
         '<td>'+esc(s.assignment||"—")+'</td>'+
         '<td class="n m">'+fmt(s.planned_people)+'</td><td class="n m">'+fmt(s.assigned_count)+'</td>'+
         '<td class="n m">'+fmt(s.actual_qty)+'</td><td class="n m">'+fmt(s.workers)+'</td>'+
-        '<td class="n m">'+fmt(s.total_pay)+'</td><td class="n m">'+fmt(s.paid_pay)+'</td><td class="n m">'+fmt(s.unpaid_pay)+'</td>'+
+        '<td class="n m">'+fmt(s.total_pay,2)+'</td><td class="n m">'+fmt(s.paid_pay,2)+'</td><td class="n m">'+fmt(s.unpaid_pay,2)+'</td>'+
         '<td class="c">'+payTag(s.pay_status)+'</td><td>'+esc(s.run_refs||"—")+'</td><td>'+esc(s.entered_by||"—")+'</td>'+
         '</tr>';
     });
@@ -1055,7 +1055,7 @@
       h+='<tr>'+
         '<td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td>'+esc(r.assignment||"—")+'</td>'+
         '<td>'+esc(r.emp_name||r.emp)+'</td><td>'+esc(r.emp)+'</td><td>'+esc(r.emp_type||"—")+'</td>'+
-        '<td>'+esc(r.wdate||"")+'</td><td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+        '<td>'+esc(r.wdate||"")+'</td><td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
         '<td class="c">'+payTag(r.pay_status)+'</td><td>'+esc(r.run_ref||"—")+'</td>'+
         '</tr>';
     });
@@ -1154,7 +1154,7 @@
           '<td class="c">'+payTag(g.status)+'</td><td class="c" style="white-space:nowrap">'+acts+'</td></tr>';
       });
       t+='</tbody><tfoot><tr><th colspan="6">TOTAL &middot; '+fmt(flt.length)+' workers</th>'+
-         '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te)+'</th><th class="n">'+fmt(tp)+'</th><th class="n">'+fmt(tu)+'</th>'+
+         '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te,2)+'</th><th class="n">'+fmt(tp,2)+'</th><th class="n">'+fmt(tu,2)+'</th>'+
          '<th colspan="2"></th></tr></tfoot></table></div></div>';
       el("auw-body").innerHTML=t;
       el("auw-body").querySelectorAll("[data-review]").forEach(function(b){
@@ -1248,9 +1248,9 @@
       '<div><div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600">Worked this window</div><b>'+esc(dshort(k.first_day))+' &rarr; '+esc(dshort(k.last_day))+'</b><div style="color:var(--mute)">'+fmt(k.days)+' days</div></div>'+
     '</div>';
     h+='<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">'+
-      '<div class="kpi" style="--kc:var(--pay)"><div class="k">Earned</div><div class="v">'+fmt(k.earned)+'</div><div class="u">KES · window</div></div>'+
-      '<div class="kpi" style="--kc:var(--good)"><div class="k">Paid</div><div class="v">'+fmt(k.paid_amt)+'</div><div class="u">KES</div></div>'+
-      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Unpaid</div><div class="v">'+fmt(k.unpaid_amt)+'</div><div class="u">KES · payable</div></div>'+
+      '<div class="kpi" style="--kc:var(--pay)"><div class="k">Earned</div><div class="v">'+fmt(k.earned,2)+'</div><div class="u">KES · window</div></div>'+
+      '<div class="kpi" style="--kc:var(--good)"><div class="k">Paid</div><div class="v">'+fmt(k.paid_amt,2)+'</div><div class="u">KES</div></div>'+
+      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Unpaid</div><div class="v">'+fmt(k.unpaid_amt,2)+'</div><div class="u">KES · payable</div></div>'+
       '<div class="kpi" style="--kc:var(--blue)"><div class="k">Days</div><div class="v">'+fmt(k.days)+'</div><div class="u">worked</div></div>'+
       '<div class="kpi"><div class="k">Tasks</div><div class="v">'+fmt(tasks.length)+'</div><div class="u">'+fmt(k.qty)+' units total</div></div>'+
       '<div class="kpi"><div class="k">Avg / day</div><div class="v">'+fmt(k.avg_per_day)+'</div><div class="u">KES</div></div>'+
@@ -1266,11 +1266,11 @@
           '<td class="m">'+esc(t.standard||"—")+'</td>'+
           '<td class="m">'+esc(dshort(t.work_from))+' &rarr; '+esc(dshort(t.work_to))+'</td>'+
           '<td class="n m">'+fmt(t.days)+'</td><td class="n m">'+fmt(t.qty)+'</td><td class="n m">'+fmt(t.rate,2)+'</td>'+
-          '<td class="n m">'+fmt(t.amount)+'</td><td class="n m">'+fmt(t.unpaid_amt)+'</td>'+
+          '<td class="n m">'+fmt(t.amount,2)+'</td><td class="n m">'+fmt(t.unpaid_amt,2)+'</td>'+
           '<td class="c">'+payTag(t.pay_status)+'</td></tr>';
       });
       h+='</tbody><tfoot><tr><th colspan="4">TOTAL</th><th class="n">'+fmt(k.days)+'</th><th class="n">'+fmt(k.qty)+'</th><th></th>'+
-         '<th class="n">'+fmt(k.earned)+'</th><th class="n">'+fmt(k.unpaid_amt)+'</th><th></th></tr></tfoot></table></div>';
+         '<th class="n">'+fmt(k.earned,2)+'</th><th class="n">'+fmt(k.unpaid_amt,2)+'</th><th></th></tr></tfoot></table></div>';
     }
     // people involved (union)
     var seenWho={}, whoAll=[];
@@ -1319,14 +1319,14 @@
         var rowFlag=((r.att_status||"")==="Absent"||(!r.scan_in&&!r.att_status)||r.day_leave||r.day_off);
         h+='<tr'+(rowFlag?' style="background:rgba(185,28,28,.045)"':'')+'><td class="m">'+esc(dshort(r.wdate))+(r.day_leave?' <span style="color:#7c3aed;font-size:9px;font-weight:700" title="approved leave this day">'+esc(r.day_leave)+'</span>':'')+(r.day_off?' <span style="color:#a06000;font-size:9px;font-weight:700" title="weekly off / holiday">off day</span>':'')+'</td>'+
           '<td class="c">'+presenceTag(r)+'</td>'+
-          '<td class="n m" data-qcell>'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+          '<td class="n m" data-qcell>'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
           '<td class="c">'+(r.in_payroll? payTag(r.paid?"Paid":"Unpaid") : '<span class="tag">Not in payroll</span>')+'</td>'+
           '<td class="m">'+esc(r.run_ref||"—")+'</td>'+
           '<td class="c">'+(r.editable?'<span style="white-space:nowrap"><button type="button" class="btn sm" data-editday data-row="'+esc(r.rowname||"")+'" data-qty="'+(r.qty||0)+'">Edit</button></span>':"")+'</td></tr>';
       });
       h+='</tbody><tfoot><tr><th>'+fmt(t.days)+' days</th><th></th>'+
-         '<th class="n">'+fmt(t.qty)+'</th><th class="n">'+fmt(t.rate,2)+' avg</th><th class="n">'+fmt(t.amount)+'</th>'+
-         '<th class="c" colspan="3">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
+         '<th class="n">'+fmt(t.qty)+'</th><th class="n">'+fmt(t.rate,2)+' avg</th><th class="n">'+fmt(t.amount,2)+'</th>'+
+         '<th class="c" colspan="3">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
       '</div>';
     });
     h+='</div>';
@@ -1334,8 +1334,8 @@
     // ════ TAB 3 · PAYMENTS ════
     h+='<div class="wr-sec" id="wr-pay" style="display:none">';
     h+='<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">'+
-      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Payable now</div><div class="v">'+fmt(k.unpaid_amt)+'</div><div class="u">KES · confirmed, unpaid</div></div>'+
-      '<div class="kpi" style="--kc:var(--good)"><div class="k">Paid to date</div><div class="v">'+fmt(k.paid_amt)+'</div><div class="u">KES · this window</div></div>'+
+      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Payable now</div><div class="v">'+fmt(k.unpaid_amt,2)+'</div><div class="u">KES · confirmed, unpaid</div></div>'+
+      '<div class="kpi" style="--kc:var(--good)"><div class="k">Paid to date</div><div class="v">'+fmt(k.paid_amt,2)+'</div><div class="u">KES · this window</div></div>'+
       '<div class="kpi"><div class="k">Runs</div><div class="v">'+fmt(runs.length)+'</div><div class="u">payment runs</div></div>'+
     '</div>';
     if(k.unpaid_amt>0.001){
@@ -1349,7 +1349,7 @@
       runs.forEach(function(r){
         h+='<tr><td><span class="rowlink" data-run="'+esc(r.run)+'">'+esc(r.run)+'</span></td>'+
           '<td>'+esc(r.title||"—")+'</td><td class="m">'+esc(dshort(r.date))+'</td>'+
-          '<td class="n m">'+fmt(r.days)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+          '<td class="n m">'+fmt(r.days)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
           '<td class="c">'+stateTag(r.state)+'</td></tr>';
       });
       h+='</tbody></table></div>';
@@ -1382,7 +1382,7 @@
           '<th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Pay KES</th><th class="c">Presence</th>'+(g.k==="leave"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th></tr></thead><tbody>';
         g.rows.forEach(function(r){
           h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.task||"")+'</td>'+
-            '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+            '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
             '<td class="c m">'+discPres(r)+'</td>'+
             (g.k==="leave"?('<td>'+esc(r.day_leave||"")+'</td>'):'')+
             '<td class="c">'+payTag(r.paid?"Paid":"Unpaid")+'</td>'+
@@ -1533,11 +1533,11 @@
       return h+'</tbody></table>';
     }
     var sumRows=(AU.summary||[]).map(function(s){
-      var a=[esc(s.farm),esc(s.task),esc(s.block||""),esc(s.assignment||""),fmt(s.planned_people),fmt(s.assigned_count),fmt(s.actual_qty),fmt(s.workers),fmt(s.total_pay),fmt(s.paid_pay),fmt(s.unpaid_pay),esc(s.pay_status),esc(s.run_refs||""),esc(s.entered_by||"")];
+      var a=[esc(s.farm),esc(s.task),esc(s.block||""),esc(s.assignment||""),fmt(s.planned_people),fmt(s.assigned_count),fmt(s.actual_qty),fmt(s.workers),fmt(s.total_pay,2),fmt(s.paid_pay,2),fmt(s.unpaid_pay,2),esc(s.pay_status),esc(s.run_refs||""),esc(s.entered_by||"")];
       a._n=4; return a;
     });
     var detRows=(AU.detail||[]).map(function(d){
-      var a=[esc(d.farm),esc(d.task),esc(d.assignment||""),esc(d.emp_name||d.emp),esc(d.emp),esc(d.emp_type||""),esc(d.wdate||""),fmt(d.qty),fmt(d.amount),esc(d.pay_status),esc(d.run_ref||"")];
+      var a=[esc(d.farm),esc(d.task),esc(d.assignment||""),esc(d.emp_name||d.emp),esc(d.emp),esc(d.emp_type||""),esc(d.wdate||""),fmt(d.qty),fmt(d.amount,2),esc(d.pay_status),esc(d.run_ref||"")];
       a._n=7; return a;
     });
     var win=window.open("","_blank");
@@ -1624,7 +1624,7 @@
     tasks.forEach(function(t){
       var kk=(t.task||"")+"|"+(t.block||"")+"|"+(t.farm||"");
       var rows=(byTask[kk]||[]).slice().sort(function(a,b){ return (a.wdate||"")<(b.wdate||"")?-1:1; });
-      s2.push([(t.task||"—")+" · "+(t.block||"—")+" · "+(t.farm||""), "", "", "KES "+fmt(t.amount), t.pay_status||""]);
+      s2.push([(t.task||"—")+" · "+(t.block||"—")+" · "+(t.farm||""), "", "", "KES "+fmt(t.amount,2), t.pay_status||""]);
       s2.push(["Task period", (t.plan_from||t.work_from||"")+" → "+(t.plan_to||t.work_to||""),
                "Worked", (t.work_from||"")+" → "+(t.work_to||"")+" ("+(t.days||0)+" days)"+(t.standard?(" · standard "+t.standard):"")]);
       if(t.assignments&&t.assignments.length) s2.push(["Assignments", t.assignments.join(", ")]);
@@ -1637,7 +1637,7 @@
                  r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll", r.run_ref||""]);
       });
       s2.push([(t.days||0)+" days", t.qty||0, Math.round((t.rate||0)*100)/100+" avg", t.amount||0,
-               (t.unpaid_amt>0.001? fmt(t.unpaid_amt)+" unpaid":"fully paid"), ""]);
+               (t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+" unpaid":"fully paid"), ""]);
       s2.push([]);
     });
     if(!s2.length) s2.push(["No confirmed work in this window"]);

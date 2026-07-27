@@ -587,7 +587,7 @@ def wm_actuals(**kwargs):
                         continue
                     etype = frappe.db.get_value("Employee", emp, "employment_type")
                     in_pay = 1 if etype == "Task Worker" else 0
-                    amt = (qty * (unit_value or rate)) if in_pay else 0
+                    amt = round(qty * (unit_value or rate), 2) if in_pay else 0
                     row = d.append("employees", {})
                     row.employee = emp
                     row.work_date = wdate
