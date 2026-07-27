@@ -364,13 +364,15 @@ def wm_actuals(**kwargs):
             gate_absent = 1
             gate_leave = 1
             gate_off = 1
+            gate_noscan = 1
             try:
                 gate_absent = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_absent"))
                 gate_leave = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_leave"))
                 gate_off = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_off"))
+                gate_noscan = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_noscan_actuals"))
             except Exception:
                 pass
-            if (gate_absent or gate_leave or gate_off) and payload:
+            if (gate_absent or gate_leave or gate_off or gate_noscan) and payload:
                 pairs = []
                 pemps = {}
                 pdates = {}
@@ -415,16 +417,42 @@ def wm_actuals(**kwargs):
                                 WHERE parent IN %s AND holiday_date IN %s
                             """, (tuple(set(emp_hl.values())), date_t), as_dict=True):
                                 off_set[(r.parent, str(r.holiday_date))] = 1
+                    # positive-presence evidence per (employee, date): a biometric
+                    # scan or a submitted Present attendance. Used by the no-scan
+                    # check — future dates are skipped (nothing to scan yet).
+                    scan_set = {}
+                    present_set = {}
+                    if gate_noscan:
+                        for r in frappe.db.sql("""
+                            SELECT employee, DATE(`time`) d FROM `tabEmployee Checkin`
+                            WHERE employee IN %s AND DATE(`time`) IN %s
+                            GROUP BY employee, DATE(`time`)
+                        """, (emp_t, date_t), as_dict=True):
+                            scan_set[(r.employee, str(r.d))] = 1
+                        for r in frappe.db.sql("""
+                            SELECT employee, attendance_date FROM `tabAttendance`
+                            WHERE docstatus = 1 AND status IN ('Present','Half Day','Work From Home')
+                              AND employee IN %s AND attendance_date IN %s
+                        """, (emp_t, date_t), as_dict=True):
+                            present_set[(r.employee, str(r.attendance_date))] = 1
+                    ns_today = str(frappe.utils.today())
                     reasons_map = {}
                     for (pe, pd) in pairs:
+                        flagged = 0
                         if absent_set.get((pe, pd)):
                             reasons_map.setdefault(pe, []).append("marked Absent on " + pd)
+                            flagged = 1
                         for (lf, lt, ltype) in leave_ranges.get(pe, []):
                             if lf <= pd <= lt:
                                 reasons_map.setdefault(pe, []).append("on " + ltype + " on " + pd)
+                                flagged = 1
                                 break
                         if emp_hl.get(pe) and off_set.get((emp_hl[pe], pd)):
                             reasons_map.setdefault(pe, []).append("off day / holiday on " + pd)
+                            flagged = 1
+                        # no-scan check only when nothing else explains the day
+                        if gate_noscan and not flagged and pd <= ns_today and not scan_set.get((pe, pd)) and not present_set.get((pe, pd)):
+                            reasons_map.setdefault(pe, []).append("no scan or attendance on " + pd)
                     for ce in reasons_map:
                         cnm = frappe.db.get_value("Employee", ce, "employee_name") or ce
                         # de-duplicate + cap so the dialog stays readable

@@ -111,6 +111,18 @@ Attendance with status Absent; missing records never block.
   only when they cover the WHOLE window (weekly offs inside long windows are
   normal); actuals checks the exact work date for all three.
 
+**Morning presence (scans):** settings `att_require_scan`, `att_scan_cutoff`
+(Time — values come back unpadded, normalise before string-comparing!) and
+`att_block_noscan_actuals`. When the window includes today, `a_employees`
+returns `scan_info` {checked, gate_on, cutoff, cutoff_passed, present_count,
+total} and per-worker `scan_in` (HH:MM), `present_today`, `is_night` (night =
+Shift Type end < start via default_shift; exempt). Presence = today's
+`Employee Checkin` scan OR submitted Present/Half Day/WFH Attendance.
+`a_submit` adds a "no scan today" conflict only after the cutoff; `act_submit`
+flags (employee, work_date) pairs ≤ today with no scan and no attendance,
+suppressed when the day is already explained by absence/leave/off. Sandbox
+gotcha: variable names starting with `_` are rejected by RestrictedPython.
+
 ## Porting to the app
 
 `kaitet-work-management/port_app.py` regenerates all five `api/*.py` modules
