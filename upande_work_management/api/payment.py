@@ -1794,6 +1794,73 @@ def wm_payment(**kwargs):
             out["fixed_total"] = sum(x["amount"] for x in fixed)
             out["errors"] = errors
 
+    elif action == "pay_recalc_wages":
+        # WAGE-DRIFT REPAIR: many plan rates were rounded to 2dp (e.g. 340/150 =
+        # 2.2667 stored as 2.27), so a full day pays 340.50 / 339.96 / 342 instead
+        # of the intended 340. For every plan whose implied daily wage
+        # (rate x daily_target) is within 1% of 340 but not exactly 340, revalue
+        # UNPAID confirmed payroll rows to qty x (340 / daily_target).
+        # dry_run=1 reports what would change without touching anything.
+        # Chunked (max 800 rows per call) — repeat until remaining = 0.
+        recalc_dry = frappe.utils.cint(frappe.form_dict.get("dry_run"))
+        WAGE = 340.0
+        BAND = 3.4
+        bad_plans = {}
+        for r in frappe.db.sql("""
+            SELECT name, rate, daily_target FROM `tabWork Management Planner`
+            WHERE IFNULL(rate,0) > 0 AND IFNULL(daily_target,0) > 0
+        """, as_dict=True):
+            dw = frappe.utils.flt(r.rate) * frappe.utils.flt(r.daily_target)
+            if abs(dw - WAGE) <= BAND and abs(dw - WAGE) > 0.001:
+                bad_plans[r.name] = frappe.utils.flt(r.daily_target)
+        rows_bad = []
+        if bad_plans:
+            rows_bad = frappe.db.sql("""
+                SELECT we.name rowname, we.parent, we.employee, we.actual_quantity qty,
+                       we.amount, a2.planner_request plan
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                WHERE ac.workflow_state = 'CONFIRMED'
+                  AND IFNULL(we.paid,0) = 0 AND IFNULL(we.count_in_payroll,0) = 1
+                  AND we.actual_quantity > 0
+                  AND a2.planner_request IN %s
+            """, (tuple(bad_plans.keys()),), as_dict=True)
+        todo = []
+        old_total = 0
+        new_total = 0
+        for r in rows_bad:
+            tgt = bad_plans.get(r.plan)
+            if not tgt:
+                continue
+            new_amt = frappe.utils.flt(r.qty) * (WAGE / tgt)
+            if abs(new_amt - frappe.utils.flt(r.amount)) > 0.01:
+                todo.append((r.rowname, r.parent, new_amt, frappe.utils.flt(r.amount)))
+                old_total = old_total + frappe.utils.flt(r.amount)
+                new_total = new_total + new_amt
+        out["plans_affected"] = len(bad_plans)
+        out["rows_to_fix"] = len(todo)
+        out["old_total"] = old_total
+        out["new_total"] = new_total
+        out["delta"] = new_total - old_total
+        if not recalc_dry and todo:
+            batch = todo[:800]
+            parents_r = {}
+            for (rn, par, namt, oamt) in batch:
+                frappe.db.set_value("Work Actuals Employee", rn, "amount", namt, update_modified=False)
+                parents_r[par] = 1
+            for pname in parents_r:
+                tots = frappe.db.sql("""
+                    SELECT COALESCE(SUM(actual_quantity),0) q, COALESCE(SUM(amount),0) p
+                    FROM `tabWork Actuals Employee` WHERE parent=%s
+                """, (pname,), as_dict=True)
+                if tots:
+                    frappe.db.set_value("Work Management Actuals", pname, "total_payment", frappe.utils.flt(tots[0].p), update_modified=False)
+            frappe.db.commit()
+            out["fixed_now"] = len(batch)
+            out["parents_resummed"] = len(parents_r)
+            out["remaining"] = len(todo) - len(batch)
+
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)
