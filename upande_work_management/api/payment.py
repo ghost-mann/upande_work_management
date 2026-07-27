@@ -820,20 +820,39 @@ def wm_payment(**kwargs):
                 WHERE """ + hconds + """
                 ORDER BY we.work_date ASC
             """, tuple(hparams), as_dict=True)
+            # presence evidence per worked day: first scan time + attendance status
+            # (P = scan/Present, A = marked Absent yet work recorded, ? = no record)
+            ev_scan = {}
+            ev_att = {}
+            ddates = tuple(set([str(r.wdate) for r in dl if r.wdate]))
+            if ddates:
+                for r2 in frappe.db.sql("""
+                    SELECT DATE(`time`) d, MIN(`time`) t FROM `tabEmployee Checkin`
+                    WHERE employee = %s AND DATE(`time`) IN %s GROUP BY DATE(`time`)
+                """, (emp, ddates), as_dict=True):
+                    ev_scan[str(r2.d)] = str(r2.t)[11:16]
+                for r2 in frappe.db.sql("""
+                    SELECT attendance_date d, status FROM `tabAttendance`
+                    WHERE docstatus = 1 AND employee = %s AND attendance_date IN %s
+                """, (emp, ddates), as_dict=True):
+                    ev_att[str(r2.d)] = r2.status
             daily = []
             for r in dl:
                 qty = frappe.utils.flt(r.qty)
                 amt = frappe.utils.flt(r.amount)
+                wd = str(r.wdate) if r.wdate else None
                 daily.append({
                     "actuals": r.actuals,
                     "rowname": r.rowname,
                     "doc_rate": frappe.utils.flt(r.doc_rate),
                     "editable": 1 if (not frappe.utils.cint(r.paid)) and frappe.utils.cint(r.in_payroll) else 0,
-                    "wdate": str(r.wdate) if r.wdate else None,
+                    "wdate": wd,
                     "task": r.task, "block": r.block, "farm": r.farm,
                     "qty": qty, "amount": amt, "rate": (amt / qty) if qty else 0,
                     "paid": frappe.utils.cint(r.paid), "in_payroll": frappe.utils.cint(r.in_payroll),
                     "reviewed": frappe.utils.cint(r.reviewed), "run_ref": r.run_ref,
+                    "scan_in": ev_scan.get(wd) if wd else None,
+                    "att_status": ev_att.get(wd) if wd else None,
                 })
             out["daily"] = daily
             # payment runs that include this worker

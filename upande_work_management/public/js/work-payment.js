@@ -1145,15 +1145,16 @@
         '</div>'+
         (who.length?'<div style="padding:0 16px 8px;font-size:11px;color:var(--mute)">'+esc(who.join("  ·  "))+'</div>':'')+
         '<div class="tablescroll" style="max-height:320px"><table style="margin-top:0"><thead><tr>'+
-          '<th>Day worked</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th><th class="c">Edit</th></tr></thead><tbody>';
+          '<th>Day worked</th><th class="c">Presence</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th><th class="c">Edit</th></tr></thead><tbody>';
       rows.forEach(function(r){
         h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td>'+
+          '<td class="c">'+presenceTag(r)+'</td>'+
           '<td class="n m" data-qcell>'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
           '<td class="c">'+(r.in_payroll? payTag(r.paid?"Paid":"Unpaid") : '<span class="tag">Not in payroll</span>')+'</td>'+
           '<td class="m">'+esc(r.run_ref||"—")+'</td>'+
           '<td class="c">'+(r.editable?'<span style="white-space:nowrap"><button type="button" class="btn sm" data-editday data-row="'+esc(r.rowname||"")+'" data-qty="'+(r.qty||0)+'">Edit</button></span>':"")+'</td></tr>';
       });
-      h+='</tbody><tfoot><tr><th>'+fmt(t.days)+' days</th>'+
+      h+='</tbody><tfoot><tr><th>'+fmt(t.days)+' days</th><th></th>'+
          '<th class="n">'+fmt(t.qty)+'</th><th class="n">'+fmt(t.rate,2)+' avg</th><th class="n">'+fmt(t.amount)+'</th>'+
          '<th class="c" colspan="3">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
       '</div>';
@@ -1238,6 +1239,15 @@
         ap.style.display="none"; ap.onclick=null;
       }
     }
+  }
+
+  // presence evidence for one day-row: P (scan/manual), A (marked Absent —
+  // yet work is recorded, worth a second look), ? (no record either way)
+  function presenceTag(r){
+    if(r.scan_in) return '<span style="color:#0a7a43;font-weight:700" title="scanned in at '+esc(r.scan_in)+'">P · '+esc(r.scan_in)+'</span>';
+    if((r.att_status||"")==="Absent") return '<span style="color:#b91c1c;font-weight:700" title="marked Absent this day — yet work is recorded; review before paying">A · absent</span>';
+    if(r.att_status) return '<span style="color:#0a7a43;font-weight:700" title="attendance: '+esc(r.att_status)+'">P</span>';
+    return '<span style="color:#a06000;font-weight:700" title="no scan and no attendance record — presence unknown">?</span>';
   }
 
   function wireDayEdits(scope, info){
@@ -1408,9 +1418,10 @@
       if(t.assignments&&t.assignments.length) s2.push(["Assignments", t.assignments.join(", ")]);
       var who=workerPeople(t);
       if(who) s2.push(["Sign-offs", who]);
-      s2.push(["Day worked","Qty done","Rate","Pay KES","Paid","Run"]);
+      s2.push(["Day worked","Presence","Qty done","Rate","Pay KES","Paid","Run"]);
       rows.forEach(function(r){
-        s2.push([r.wdate||"", r.qty||0, Math.round((r.rate||0)*100)/100, r.amount||0,
+        var pres = r.scan_in ? ("P (in "+r.scan_in+")") : ((r.att_status||"")==="Absent" ? "A — marked Absent" : (r.att_status ? "P ("+r.att_status+")" : "? no record"));
+        s2.push([r.wdate||"", pres, r.qty||0, Math.round((r.rate||0)*100)/100, r.amount||0,
                  r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll", r.run_ref||""]);
       });
       s2.push([(t.days||0)+" days", t.qty||0, Math.round((t.rate||0)*100)/100+" avg", t.amount||0,

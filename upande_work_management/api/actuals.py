@@ -263,10 +263,13 @@ def wm_actuals(**kwargs):
                         guard = guard + 1
             w["leave_dates"] = leave_appr
             w["leave_pending_dates"] = leave_pend
-        # ── MORNING PRESENCE per worker-day: biometric scan (with first scan time)
-        # or submitted Present attendance, for the grid's presence chips ──
+        # ── MORNING PRESENCE per worker-day: biometric scan (with first scan time),
+        # submitted Present attendance, and submitted ABSENT attendance — the grid
+        # distinguishes P (evidence of presence), A (known absent) and ? (no record
+        # either way / presence unknown). ──
         scan_by = {}
         attp_by = {}
+        abs_by = {}
         if workers and fromd and tod:
             wemps = tuple([w.employee for w in workers])
             for r in frappe.db.sql("""
@@ -280,18 +283,27 @@ def wm_actuals(**kwargs):
                     scan_by[r.employee] = m
                 m[str(r.d)] = str(r.t)[11:16]
             for r in frappe.db.sql("""
-                SELECT employee, attendance_date d FROM `tabAttendance`
-                WHERE docstatus = 1 AND status IN ('Present','Half Day','Work From Home')
+                SELECT employee, attendance_date d, status FROM `tabAttendance`
+                WHERE docstatus = 1
+                  AND status IN ('Present','Half Day','Work From Home','Absent')
                   AND employee IN %s AND attendance_date BETWEEN %s AND %s
             """, (wemps, fromd, tod), as_dict=True):
-                m = attp_by.get(r.employee)
-                if m is None:
-                    m = {}
-                    attp_by[r.employee] = m
-                m[str(r.d)] = 1
+                if r.status == "Absent":
+                    m = abs_by.get(r.employee)
+                    if m is None:
+                        m = {}
+                        abs_by[r.employee] = m
+                    m[str(r.d)] = 1
+                else:
+                    m = attp_by.get(r.employee)
+                    if m is None:
+                        m = {}
+                        attp_by[r.employee] = m
+                    m[str(r.d)] = 1
         for w in workers:
             w["scan_dates"] = scan_by.get(w.employee, {})
             w["present_dates"] = attp_by.get(w.employee, {})
+            w["absent_dates"] = abs_by.get(w.employee, {})
         a["today"] = str(frappe.utils.today())
         a["workers"] = workers
         # calendar: confirmed daily rollup for this plan
