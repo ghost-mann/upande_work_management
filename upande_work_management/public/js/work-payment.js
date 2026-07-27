@@ -346,10 +346,9 @@
     var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px"><span class="hint" id="pw-count">'+
       fmt(rows.length)+' of '+fmt((ST.workers||[]).length)+' workers</span>'+
       '<span class="hint" id="bulk-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
-      '<button type="button" class="btn sm" id="bulk-review" style="display:none">Review selected</button>'+
-      '<button type="button" class="btn good sm" id="bulk-send" style="display:none">Send selected to accounts</button>'+
+      '<button type="button" class="btn good sm" id="bulk-send" style="display:none">Review &amp; send to accounts</button>'+
       '<button type="button" class="btn sm" id="bulk-clear" style="display:none">Clear</button>'+
-      '<span class="hint" id="bulk-hint">Tick workers to review &amp; send in bulk, or open each one for the full check.</span></div>';
+      '<span class="hint" id="bulk-hint">Tick workers to review &amp; send them to accounts in one go, or open each one for the full check.</span></div>';
     h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
       '<th class="c" style="width:34px"><input type="checkbox" id="bulk-all" title="Select every actionable worker shown"></th>'+
       '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
@@ -386,7 +385,7 @@
     h+='</tbody><tfoot><tr><th colspan="7">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
        '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te)+'</th><th class="n">'+fmt(tp)+'</th><th class="n">'+fmt(tu)+'</th>'+
        '<th colspan="2"></th></tr></tfoot></table></div></div>';
-    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers, <b>Review selected</b>, then <b>Send selected to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
+    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
     box.innerHTML=h;
     box.querySelectorAll("[data-review]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-review"), payWindow()); };
@@ -434,39 +433,35 @@
     }
     var bc=el("bulk-clear");
     if(bc){ bc.onclick=function(){ ST.bulk={}; renderPayable(); }; }
-    var br=el("bulk-review");
-    if(br){ br.onclick=bulkReview; }
     var bs=el("bulk-send");
-    if(bs){ bs.onclick=bulkSend; }
+    if(bs){ bs.onclick=bulkReviewSend; }
     syncBulkBar();
   }
 
   function bulkSets(){
-    var toReview=[], toSend=[], amtReview=0, amtSend=0;
+    var toReview=[], all=[], amt=0;
     Object.keys(ST.bulk).forEach(function(emp){
       var p=ST.bulk[emp];
-      if(p.status==="Unpaid"){ toReview.push(emp); amtReview+=p.amt; }
-      else if(p.status==="Reviewed"){ toSend.push(emp); amtSend+=p.amt; }
+      if(p.status==="Unpaid") toReview.push(emp);
+      all.push(emp); amt+=p.amt;
     });
-    return {toReview:toReview, toSend:toSend, amtReview:amtReview, amtSend:amtSend};
+    return {toReview:toReview, all:all, amt:amt};
   }
 
   function syncBulkBar(){
-    var s=bulkSets(), n=Object.keys(ST.bulk).length;
-    var info=el("bulk-info"), br=el("bulk-review"), bs=el("bulk-send"), bc=el("bulk-clear"), hint=el("bulk-hint");
+    var s=bulkSets(), n=s.all.length;
+    var info=el("bulk-info"), bs=el("bulk-send"), bc=el("bulk-clear"), hint=el("bulk-hint");
     if(!info) return;
     if(!n){
       info.textContent="";
-      if(br) br.style.display="none";
       if(bs) bs.style.display="none";
       if(bc) bc.style.display="none";
       if(hint) hint.style.display="";
       return;
     }
     if(hint) hint.style.display="none";
-    info.textContent=fmt(n)+" selected · "+money(s.amtReview+s.amtSend);
-    if(br){ br.style.display=s.toReview.length?"":"none"; br.textContent="Review selected ("+fmt(s.toReview.length)+")"; }
-    if(bs){ bs.style.display=s.toSend.length?"":"none"; bs.textContent="Send "+fmt(s.toSend.length)+" to accounts · "+money(s.amtSend); }
+    info.textContent=fmt(n)+" selected · "+money(s.amt);
+    if(bs){ bs.style.display=""; bs.textContent="Review & send "+fmt(n)+" to accounts · "+money(s.amt); }
     if(bc) bc.style.display="";
   }
 
@@ -489,50 +484,40 @@
     step();
   }
 
-  function bulkReview(){
+  function bulkReviewSend(){
     var s=bulkSets();
-    if(!s.toReview.length){ toast("No unpaid workers in the selection to review","bad"); return; }
+    if(!s.all.length){ toast("Tick at least one worker","bad"); return; }
     var win=payWindow();
     confirmModal(
-      "Review "+fmt(s.toReview.length)+" workers",
-      '<p style="margin:0 0 10px">Mark <b>'+fmt(s.toReview.length)+' workers</b> ('+money(s.amtReview)+') as reviewed in this window?</p>'+
-      '<p class="note" style="margin:0">Same stamp as reviewing one by one — your user and the time are recorded on every day-row. They then unlock &ldquo;Send to accounts&rdquo;.</p>',
-      "Mark all reviewed",
+      "Review & send "+fmt(s.all.length)+" workers to accounts",
+      '<p style="margin:0 0 10px">Mark <b>'+fmt(s.all.length)+' workers</b> totalling <b>'+money(s.amt)+'</b> as reviewed and send them to accounts?</p>'+
+      '<p class="note" style="margin:0">Your user and the time are stamped on every day-row as the reviewer, then each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Pending Accounts.</p>',
+      "Review & send all",
       function(){
-        var br=el("bulk-review"); if(br){ br.disabled=true; br.textContent="Reviewing…"; }
-        chunkCalls("pay_bulk_review", s.toReview, win, function(err, agg){
-          if(br) br.disabled=false;
-          if(err){ toast("Bulk review stopped: "+err.message,"bad"); }
-          else { toast(fmt(agg.workers_reviewed)+" workers reviewed ("+fmt(agg.rows_reviewed)+" day-rows) — selection kept, now send to accounts","good"); }
-          win.refresh();
-        });
-      }
-    );
-  }
-
-  function bulkSend(){
-    var s=bulkSets();
-    if(!s.toSend.length){ toast("No reviewed workers in the selection — review first","bad"); return; }
-    var win=payWindow();
-    confirmModal(
-      "Send "+fmt(s.toSend.length)+" workers to accounts",
-      '<p style="margin:0 0 10px">Send <b>'+fmt(s.toSend.length)+' reviewed workers</b> totalling <b>'+money(s.amtSend)+'</b> to accounts?</p>'+
-      '<p class="note" style="margin:0">Each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Pending Accounts. Workers with unreviewed earnings are skipped.</p>',
-      "Send all to accounts",
-      function(){
-        var bs=el("bulk-send"); if(bs){ bs.disabled=true; bs.textContent="Sending…"; }
-        chunkCalls("pay_bulk_submit", s.toSend, win, function(err, agg){
-          if(bs) bs.disabled=false;
-          var errs=(agg.results||[]).filter(function(r){ return r.error; });
-          if(err){ toast("Bulk send stopped: "+err.message,"bad"); }
-          else if(errs.length){
-            toast(fmt(agg.sent)+" sent ("+money(agg.sent_total)+") · "+fmt(errs.length)+" skipped: "+errs.slice(0,3).map(function(r){ return r.employee+" — "+r.error; }).join("; ")+(errs.length>3?"…":""),"bad");
-          } else {
-            toast(fmt(agg.sent)+" workers sent to accounts · "+money(agg.sent_total),"good");
-          }
-          s.toSend.forEach(function(emp){ delete ST.bulk[emp]; });
-          win.refresh();
-        });
+        var bs=el("bulk-send"); if(bs){ bs.disabled=true; bs.textContent="Reviewing…"; }
+        function submitAll(){
+          if(bs) bs.textContent="Sending…";
+          chunkCalls("pay_bulk_submit", s.all, win, function(err, agg){
+            if(bs) bs.disabled=false;
+            var errs=(agg.results||[]).filter(function(r){ return r.error; });
+            if(err){ toast("Bulk send stopped: "+err.message,"bad"); }
+            else if(errs.length){
+              toast(fmt(agg.sent)+" sent ("+money(agg.sent_total)+") · "+fmt(errs.length)+" skipped: "+errs.slice(0,3).map(function(r){ return r.employee+" — "+r.error; }).join("; ")+(errs.length>3?"…":""),"bad");
+            } else {
+              toast(fmt(agg.sent)+" workers reviewed & sent to accounts · "+money(agg.sent_total),"good");
+            }
+            ST.bulk={};
+            win.refresh();
+          });
+        }
+        if(s.toReview.length){
+          chunkCalls("pay_bulk_review", s.toReview, win, function(err, agg){
+            if(err){ if(bs) bs.disabled=false; toast("Bulk review stopped: "+err.message,"bad"); win.refresh(); return; }
+            submitAll();
+          });
+        } else {
+          submitAll();
+        }
       },
       "good"
     );
