@@ -115,6 +115,34 @@ So the full "who did what" trail from the review sheet travels with the money.
   enterer and approver by volume and value.
 - **Crew movements** — substitution history (who left, who joined, swaps).
 
+## 6. Time & Attendance integration
+
+The pipeline checks each worker against attendance before work is given to
+them. Three independent checks, each with its own toggle in
+**Work Management Settings**:
+
+| Check | Blocks when… | Known in advance? |
+|---|---|---|
+| Attendance | a submitted Attendance record says **Absent** on the date | No — today/past only |
+| Approved leaves | an approved Leave Application covers the date(s) | Yes |
+| Weekly offs / holidays | the date is on the employee's holiday list | Yes |
+
+Where it applies:
+
+- **Assigner** — flagged workers show a warning badge in the picker, and
+  selecting one asks *"…is on Annual Leave 06 Jul → 03 Aug. Select this worker
+  anyway?"*. Submitting is re-checked on the server: any worker on leave,
+  marked absent inside the window, or off for the *entire* window triggers one
+  confirmation listing every conflict. (Partial off days inside a long window
+  are normal — they're shown as the "N off" badge, not blocked.)
+- **Actuals** — recording a quantity for a worker who was Absent, on leave, or
+  on their off day **on that exact date** triggers the same confirmation.
+
+**Override:** anyone who can assign/enter may click through the confirmation,
+but every override is logged as a comment on the document — who overrode, for
+whom, and why they were flagged. Missing attendance records never block
+(only an explicit Absent does), so biometric sync gaps can't stop work.
+
 ## Tips
 
 - Money only ever flows from **CONFIRMED** actuals rows that are

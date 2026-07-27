@@ -92,6 +92,32 @@ input), `hr_approved_by`, `gm_approved_by`.
 | `pay_mark_paid` | Release: mark entry Paid + stamp rows |
 | `pay_run_withdraw` | Return to unpaid: clear refs/review stamps, delete entry |
 
+## Time & Attendance gate
+
+Toggles live on **Work Management Settings** (Single): `att_block_absent`,
+`att_block_leave`, `att_block_off` — read with `get_single_value` inside a
+try/except (missing doctype = checks default ON). Absent means a *submitted*
+Attendance with status Absent; missing records never block.
+
+- `a_employees` enriches each worker with `att_leave`, `att_absent_days`/
+  `att_absent_span`, `att_all_off` (+ `out["att_checks"]` = active toggles)
+  for badges and the pick-time confirm.
+- `a_submit` (assigner) and `act_submit` (actuals) enforce server-side: on
+  conflict they return `{needs_att_override: 1, att_conflicts: [{employee,
+  name, reasons[]}]}` **without writing**; the frontend confirms once and
+  retries with `att_override=1`. Overrides are logged via `add_comment` on the
+  document and reported back as `att_overridden`.
+- Semantics: assigner flags leave/absent anywhere in the plan window but offs
+  only when they cover the WHOLE window (weekly offs inside long windows are
+  normal); actuals checks the exact work date for all three.
+
+## Porting to the app
+
+`kaitet-work-management/port_app.py` regenerates all five `api/*.py` modules
+from the mirror server scripts (strips constants, swaps farm-role if-chains
+for the `FARM_APPROVER_ROLE` loop, wraps + indents, `return out`). Edit the
+mirror script, `python3 port_app.py`, never the app module directly.
+
 ## Web pages
 
 `www/*.html` render the shells (wrapped in `{% raw %}` — the inline CSS makes

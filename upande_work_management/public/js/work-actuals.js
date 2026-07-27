@@ -665,7 +665,17 @@
     if(submitNow) args.submit_now=1;
     if(ST._editingDoc){ args.edit_doc=ST._editingDoc; }  // approver updating a pending doc in place
     el("b-acdraft").disabled=true; el("b-acsubmit").disabled=true;
-    call(args).then(function(d){
+    function handleResp(d){
+      if(d.needs_att_override){
+        // TIME & ATTENDANCE gate: these worker-days clash with attendance/leave/offs
+        var lines=(d.att_conflicts||[]).map(function(c){ return "• "+(c.name||c.employee)+": "+(c.reasons||[]).join("; "); });
+        if(window.confirm("Attendance check — quantities entered for workers who were not supposed to be at work:\n\n"+lines.join("\n")+"\n\nRecord these actuals anyway? The override is recorded on the document.")){
+          args.att_override=1;
+          call(args).then(handleResp).catch(function(){ toast("Failed to save"); refresh(); });
+        } else { refresh(); onAsg(ST.asg); }
+        return;
+      }
+      if(d.att_overridden){ toast("Attendance override logged for "+d.att_overridden+" worker"+(d.att_overridden>1?"s":"")); }
       if(d.error){ toast("Error: "+d.error); refresh(); return; }
       if(d.submit_blocked){ toast(d.submit_blocked); }
       else if(ST._editingDoc){ toast("Updated "+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")); var bn=el("ac-editbanner"); if(bn){bn.style.display="none";} ST._editingDoc=null; ST._editingStage=null; }
@@ -680,7 +690,8 @@
         // stay on the draft; reload detail so remaining/calendar refresh
         onAsg(ST.asg);
       }
-    }).catch(function(e){ toast("Failed to save"); refresh(); });
+    }
+    call(args).then(handleResp).catch(function(e){ toast("Failed to save"); refresh(); });
   }
 
   function refresh(){
