@@ -1323,6 +1323,78 @@ def wm_payment(**kwargs):
             out["sent_total"] = sent_total
             out["errors"] = len([r for r in results if r.get("error")])
 
+    elif action == "pay_absent_conflicts":
+        # AUDIT: every confirmed worker-day with money recorded on a day that
+        # worker was marked ABSENT (submitted attendance). Scan time attached so
+        # reviewers can tell "attendance wrongly marked" (has a scan) from a
+        # possible ghost entry (no scan either). Optional farm + date filters.
+        cfarm = (frappe.form_dict.get("farm") or "").strip()
+        cfrom = frappe.form_dict.get("from_date")
+        cto = frappe.form_dict.get("to_date")
+        cconds = "ac.workflow_state='CONFIRMED' AND we.amount > 0"
+        cparams = []
+        if cfarm:
+            cconds = cconds + " AND TRIM(ac.farm) = TRIM(%s)"
+            cparams.append(cfarm)
+        if cfrom:
+            cconds = cconds + " AND we.work_date >= %s"
+            cparams.append(cfrom)
+        if cto:
+            cconds = cconds + " AND we.work_date <= %s"
+            cparams.append(cto)
+        crows = frappe.db.sql("""
+            SELECT we.employee, we.employee_name, ac.farm, ac.task, ac.name actuals,
+                   we.work_date wdate, we.actual_quantity qty, we.amount,
+                   IFNULL(we.paid,0) paid, we.payment_ref run_ref,
+                   ac.entered_by entered_by
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            INNER JOIN `tabAttendance` att ON att.employee = we.employee
+                  AND att.attendance_date = we.work_date
+                  AND att.docstatus = 1 AND att.status = 'Absent'
+            WHERE """ + cconds + """
+            ORDER BY we.work_date DESC, we.employee
+            LIMIT 2000
+        """, tuple(cparams), as_dict=True)
+        # scan evidence for those exact worker-days
+        scan_ev = {}
+        if crows:
+            cemps = tuple(set([r.employee for r in crows]))
+            cdates = tuple(set([str(r.wdate) for r in crows]))
+            for r2 in frappe.db.sql("""
+                SELECT employee, DATE(`time`) d, MIN(`time`) t FROM `tabEmployee Checkin`
+                WHERE employee IN %s AND DATE(`time`) IN %s
+                GROUP BY employee, DATE(`time`)
+            """, (cemps, cdates), as_dict=True):
+                scan_ev[(r2.employee, str(r2.d))] = str(r2.t)[11:16]
+        rows_out = []
+        tot_amt = 0
+        tot_paid = 0
+        wset = {}
+        for r in crows:
+            wd = str(r.wdate)
+            amt = frappe.utils.flt(r.amount)
+            tot_amt = tot_amt + amt
+            if frappe.utils.cint(r.paid):
+                tot_paid = tot_paid + amt
+            wset[r.employee] = 1
+            rows_out.append({
+                "employee": r.employee, "employee_name": r.employee_name,
+                "farm": r.farm, "task": r.task, "actuals": r.actuals,
+                "wdate": wd, "qty": frappe.utils.flt(r.qty), "amount": amt,
+                "paid": frappe.utils.cint(r.paid), "run_ref": r.run_ref,
+                "entered_by": r.entered_by,
+                "scan_in": scan_ev.get((r.employee, wd)),
+            })
+        out["rows"] = rows_out
+        out["summary"] = {
+            "rows": len(rows_out), "workers": len(wset),
+            "amount": tot_amt, "paid_amount": tot_paid,
+            "unpaid_amount": tot_amt - tot_paid,
+            "with_scan": len([x for x in rows_out if x["scan_in"]]),
+            "no_scan": len([x for x in rows_out if not x["scan_in"]]),
+        }
+
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)
