@@ -121,9 +121,12 @@ through to the worker's review sheet, with the actuals document named:
   collecting days.
 - **Paid twice for the same day** — the same worker, task and date recorded
   in more than one actuals document (overlapping assignments for one task).
-  Shows the copies, both documents, the enterer and the excess KES. Entering
-  actuals now warns at save time when a worker-day is already recorded for
-  that task in another document.
+  Shows the copies, both documents, the enterer and the excess KES, plus a
+  one-click **Zero the duplicates** repair: keeps the copy in the earliest
+  document, zeroes the re-entered ones, re-sums and logs audit comments
+  (already-paid groups are skipped for manual review). Entering actuals now
+  warns at save time when a worker-day is already recorded for that task in
+  another document.
 - **Recorded work with no pay** — quantities recorded but valued at ZERO
   (the worker-type lookup failed at entry). Shows what each row *should* be
   (qty × doc rate) and a one-click **Revalue** button that repairs the rows,
