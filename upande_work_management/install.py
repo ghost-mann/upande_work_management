@@ -46,7 +46,7 @@ CORE_CUSTOM_FIELDS = [
 	("Warehouse", "custom_cost_center", "Cost Center", "Link", "Cost Center", "custom_area_ha", {}),
 	("Task", "custom_uom", "UoM", "Link", "UOM", "subject", {}),
 	("Task", "custom_daily_target", "Daily Target", "Float", None, "custom_uom", {}),
-	("Task", "custom_rate", "Rate", "Float", None, "custom_daily_target", {}),
+	("Task", "custom_rate", "Rate", "Float", None, "custom_daily_target", {"precision": "4"}),
 ]
 
 

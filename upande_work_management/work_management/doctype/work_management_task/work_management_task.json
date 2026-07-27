@@ -57,7 +57,8 @@
    "fieldname": "rate",
    "fieldtype": "Float",
    "label": "Rate",
-   "read_only": 1
+   "read_only": 1,
+   "precision": "4"
   },
   {
    "columns": 1,

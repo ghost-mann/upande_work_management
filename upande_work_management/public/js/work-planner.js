@@ -22,6 +22,7 @@
       .then(function(j){ return j.message || {}; });
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
+  function fmtRate(n){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{maximumFractionDigits:4}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function el(id){ return document.getElementById(id); }
@@ -206,7 +207,7 @@
     ST.task=this.value; ST.taskInfo=null;
     for(var i=0;i<ST.tasks.length;i++){ if(ST.tasks[i].name===ST.task){ ST.taskInfo=ST.tasks[i]; break; } }
     if(ST.taskInfo){
-      el("f-kpi").innerHTML="Standard: <b>"+fmt(ST.taskInfo.daily_target)+" "+esc(ST.taskInfo.uom||"")+"/day</b> @ KES "+fmt(ST.taskInfo.rate,2)+" per "+esc(ST.taskInfo.uom||"unit");
+      el("f-kpi").innerHTML="Standard: <b>"+fmt(ST.taskInfo.daily_target)+" "+esc(ST.taskInfo.uom||"")+"/day</b> @ KES "+fmtRate(ST.taskInfo.rate)+" per "+esc(ST.taskInfo.uom||"unit");
     } else { el("f-kpi").textContent=""; }
     loadCompare();
     recalc();
@@ -332,7 +333,7 @@
         syncBlockGrid();
         ST.task=p.task; el("f-task").value=p.task;
         for(var i=0;i<ST.tasks.length;i++){ if(ST.tasks[i].name===p.task){ ST.taskInfo=ST.tasks[i]; break; } }
-        if(ST.taskInfo){ el("f-kpi").innerHTML="Standard: <b>"+fmt(ST.taskInfo.daily_target)+" "+esc(ST.taskInfo.uom||"")+"/day</b> @ KES "+fmt(ST.taskInfo.rate,2)+" per "+esc(ST.taskInfo.uom||"unit"); }
+        if(ST.taskInfo){ el("f-kpi").innerHTML="Standard: <b>"+fmt(ST.taskInfo.daily_target)+" "+esc(ST.taskInfo.uom||"")+"/day</b> @ KES "+fmtRate(ST.taskInfo.rate)+" per "+esc(ST.taskInfo.uom||"unit"); }
         el("f-qty").value=p.quantity;
         el("f-from").value=p.from_date; el("f-to").value=p.to_date;
         recalc();
@@ -447,7 +448,7 @@
         kpi("Mandays", fmt(r.person_days))+
         kpi("Total Hours", fmt(r.total_hours)+' h')+
         kpi("Working Days", fmt(r.working_days))+
-        kpi("Rate", 'KES '+fmt(r.rate,2)+' / '+esc(uom||"unit"))+
+        kpi("Rate", 'KES '+fmtRate(r.rate)+' / '+esc(uom||"unit"))+
         kpi("Daily Target", fmt(r.daily_target)+' '+esc(uom))+
         kpi("Total Cost", 'KES '+fmt(r.total_cost))+
       '</div>'+

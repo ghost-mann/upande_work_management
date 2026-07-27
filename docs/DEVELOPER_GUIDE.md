@@ -111,6 +111,11 @@ Attendance with status Absent; missing records never block.
   only when they cover the WHOLE window (weekly offs inside long windows are
   normal); actuals checks the exact work date for all three.
 
+**Rate precision:** `Task.custom_rate` (the task list that seeds plans) and
+the `rate` fields on Planner / Actuals / Work Payment Line carry
+`precision: "4"` — rates like 340/150 store as 2.2667, not 2.27. Stored task
+rates in the 340 wage band were re-derived as round(340/daily_target, 4).
+
 **Wage snap:** plan rates rounded to 2dp made full days pay 340.50/339.96
 instead of the intended 340. `act_submit` values rows at qty × (340 ÷
 daily_target) whenever the plan's implied daily wage (rate × daily_target) is
