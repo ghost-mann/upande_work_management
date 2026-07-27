@@ -143,6 +143,30 @@ but every override is logged as a comment on the document — who overrode, for
 whom, and why they were flagged. Missing attendance records never block
 (only an explicit Absent does), so biometric sync gaps can't stop work.
 
+### Morning presence — "is this person on the farm right now?"
+
+When an assignment window **includes today**, the Assigner's worker picker
+goes live:
+
+- Each worker gets a presence chip: green **P · 06:12** (scanned in, with the
+  scan time — or just **P** when marked Present manually), grey **not in
+  yet**, or blue **night shift** (exempt — their arrival is in the evening).
+- A header bar shows **"P 153 of 199 scanned in / marked present today"**,
+  with a **Refresh scans** link (readers sync every few minutes) and an
+  **"Only workers who are in"** filter so you assign from people actually
+  standing on the farm.
+- After the **morning cutoff** (default 09:00, configurable), selecting or
+  submitting a day worker with no scan and no Present attendance asks
+  *"not seen on site today — assign anyway?"* — the usual logged override.
+  Before the cutoff it's just the grey chip, so early assigning isn't blocked
+  while people are still queueing at the reader.
+
+Two extra toggles in Work Management Settings control this: **Require a
+morning scan for day-of assignment** (+ its cutoff time) and **Check scans
+when recording actuals** — the latter flags a quantity recorded for a worker
+with zero scans and no attendance on that work date ("ghost entry" guard;
+days already explained by leave/off/absence aren't double-flagged).
+
 ## Tips
 
 - Money only ever flows from **CONFIRMED** actuals rows that are

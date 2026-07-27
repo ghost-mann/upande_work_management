@@ -173,6 +173,53 @@ def wm_assigner(**kwargs):
                 for r in arows:
                     absent_map[r.employee] = {"days": frappe.utils.cint(r.n), "from": str(r.d1), "to": str(r.d2)}
         out["att_checks"] = {"absent": att_absent_on, "leave": att_leave_on, "off": att_off_on}
+        # ── MORNING PRESENCE (day-of assignment): when the window includes today,
+        # report who has scanned in / been marked Present today. Night-shift
+        # workers are exempt (their arrival is in the evening). ──
+        scan_on = 1
+        scan_cutoff = "09:00:00"
+        try:
+            scan_on = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_require_scan"))
+            scan_cutoff = str(frappe.db.get_single_value("Work Management Settings", "att_scan_cutoff") or "09:00:00")
+        except Exception:
+            pass
+        # Time fields come back unpadded ("9:00:00") — normalise before string compare
+        cparts = scan_cutoff.split(":")
+        scan_cutoff = cparts[0].zfill(2) + ":" + (cparts[1].zfill(2) if len(cparts) > 1 else "00") + ":" + (cparts[2][:2].zfill(2) if len(cparts) > 2 else "00")
+        today_str = str(frappe.utils.today())
+        includes_today = bool(pf and pt and pf <= today_str <= pt)
+        scan_map = {}
+        present_att = {}
+        night_set = {}
+        if includes_today and emps:
+            emp_names2 = tuple([e.name for e in emps])
+            for r in frappe.db.sql("""
+                SELECT employee, MIN(`time`) t FROM `tabEmployee Checkin`
+                WHERE DATE(`time`) = %s AND employee IN %s GROUP BY employee
+            """, (today_str, emp_names2), as_dict=True):
+                scan_map[r.employee] = str(r.t)[11:16]
+            for r in frappe.db.sql("""
+                SELECT employee FROM `tabAttendance`
+                WHERE docstatus = 1 AND attendance_date = %s
+                  AND status IN ('Present','Half Day','Work From Home') AND employee IN %s
+            """, (today_str, emp_names2), as_dict=True):
+                present_att[r.employee] = 1
+            night_shifts = frappe.db.sql("SELECT name FROM `tabShift Type` WHERE TIME(end_time) < TIME(start_time)", as_dict=True)
+            nset = set([r.name for r in night_shifts])
+            for r in frappe.db.sql("""
+                SELECT name, default_shift FROM `tabEmployee`
+                WHERE name IN %s AND IFNULL(default_shift,'') != ''
+            """, (emp_names2,), as_dict=True):
+                if r.default_shift in nset:
+                    night_set[r.name] = 1
+        out["scan_info"] = {
+            "checked": 1 if includes_today else 0,
+            "gate_on": scan_on,
+            "cutoff": scan_cutoff,
+            "cutoff_passed": 1 if str(frappe.utils.nowtime())[:8].zfill(8) >= scan_cutoff else 0,
+            "present_count": 0,
+            "total": len(emps),
+        }
         for e in emps:
             oc = 0
             if e.holiday_list and pf and pt:
@@ -183,6 +230,12 @@ def wm_assigner(**kwargs):
             e["att_absent_days"] = av["days"] if av else 0
             e["att_absent_span"] = (av["from"] + " → " + av["to"]) if av else None
             e["att_all_off"] = 1 if (att_off_on and window_days and oc >= window_days) else 0
+            if includes_today:
+                e["is_night"] = 1 if night_set.get(e.name) else 0
+                e["scan_in"] = scan_map.get(e.name)
+                e["present_today"] = 1 if (scan_map.get(e.name) or present_att.get(e.name) or night_set.get(e.name)) else 0
+                if e["present_today"] and not night_set.get(e.name):
+                    out["scan_info"]["present_count"] = out["scan_info"]["present_count"] + 1
             al = allocated.get(e.name)
             if al:
                 e["allocated_elsewhere"] = 1
@@ -307,6 +360,44 @@ def wm_assigner(**kwargs):
                         oc = frappe.db.count("Holiday", {"parent": hr.holiday_list, "holiday_date": ["between", [gpf, gpt]]})
                         if oc >= gdays:
                             reasons_map.setdefault(hr.name, []).append("off/holiday for the entire window")
+                # MORNING PRESENCE gate: window includes today + cutoff passed ->
+                # a day worker with no scan and no Present attendance today is
+                # flagged "not seen on site". Night-shift workers are exempt.
+                gate_scan = 1
+                scan_cut = "09:00:00"
+                try:
+                    gate_scan = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_require_scan"))
+                    scan_cut = str(frappe.db.get_single_value("Work Management Settings", "att_scan_cutoff") or "09:00:00")
+                except Exception:
+                    pass
+                cqarts = scan_cut.split(":")
+                scan_cut = cqarts[0].zfill(2) + ":" + (cqarts[1].zfill(2) if len(cqarts) > 1 else "00") + ":" + (cqarts[2][:2].zfill(2) if len(cqarts) > 2 else "00")
+                g_today = str(frappe.utils.today())
+                if gate_scan and gpf <= g_today <= gpt and str(frappe.utils.nowtime())[:8].zfill(8) >= scan_cut:
+                    seen_today = {}
+                    for r in frappe.db.sql("""
+                        SELECT employee, MIN(`time`) t FROM `tabEmployee Checkin`
+                        WHERE DATE(`time`) = %s AND employee IN %s GROUP BY employee
+                    """, (g_today, tuple(emp_list)), as_dict=True):
+                        seen_today[r.employee] = str(r.t)[11:16]
+                    for r in frappe.db.sql("""
+                        SELECT employee FROM `tabAttendance`
+                        WHERE docstatus = 1 AND attendance_date = %s
+                          AND status IN ('Present','Half Day','Work From Home') AND employee IN %s
+                    """, (g_today, tuple(emp_list)), as_dict=True):
+                        seen_today.setdefault(r.employee, "manual")
+                    night_shifts2 = frappe.db.sql("SELECT name FROM `tabShift Type` WHERE TIME(end_time) < TIME(start_time)", as_dict=True)
+                    nset2 = set([r.name for r in night_shifts2])
+                    night_emp2 = {}
+                    for r in frappe.db.sql("""
+                        SELECT name, default_shift FROM `tabEmployee`
+                        WHERE name IN %s AND IFNULL(default_shift,'') != ''
+                    """, (tuple(emp_list),), as_dict=True):
+                        if r.default_shift in nset2:
+                            night_emp2[r.name] = 1
+                    for ce in emp_list:
+                        if not seen_today.get(ce) and not night_emp2.get(ce):
+                            reasons_map.setdefault(ce, []).append("no scan or Present attendance today (not seen on site by " + str(frappe.utils.nowtime())[:5] + ")")
                 for ce in emp_list:
                     if reasons_map.get(ce):
                         cnm = frappe.db.get_value("Employee", ce, "employee_name") or ce

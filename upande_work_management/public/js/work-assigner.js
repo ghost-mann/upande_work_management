@@ -330,8 +330,10 @@
 
   function loadEmployees(farm){
     var pd=ST.planDetail||{};
+    ST.curFarm=farm;
     call({action:"a_employees",farm:farm,from_date:pd.from_date,to_date:pd.to_date,exclude_assignment:(ST.editingAsg||"")}).then(function(d){
       ST.employees=d.employees||[];
+      ST.scanInfo=d.scan_info||{};
       el("a-emfilter").disabled=false;
       renderEmployees();
     });
@@ -340,17 +342,38 @@
   function renderEmployees(){
     var q=(el("a-emfilter").value||"").toLowerCase();
     var box=el("a-empicker");
+    var si=ST.scanInfo||{};
     var list=ST.employees.filter(function(e){
+      if(si.checked && ST.onlyIn && !e.present_today) return false;
       if(!q) return true;
       return ((e.employee_name||"")+" "+(e.designation||"")+" "+(e.name||"")).toLowerCase().indexOf(q)>=0;
     });
-    if(!list.length){ box.innerHTML='<div class="empty">No matching workers.</div>'; return; }
     var h="";
+    // ── MORNING PRESENCE BAR: live scans when the window includes today ──
+    if(si.checked){
+      h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line,#e5e5e5);border-radius:10px;background:rgba(10,122,67,.05);font-size:11.5px">'+
+        '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' scanned in / marked present today'+
+        (si.gate_on && !si.cutoff_passed ? ' <span style="color:#a06000">· scan check starts at '+esc((si.cutoff||"09:00").slice(0,5))+'</span>' : '')+
+        '<span style="flex:1"></span>'+
+        '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-weight:600"><input type="checkbox" id="a-onlyin"'+(ST.onlyIn?" checked":"")+'> Only workers who are in</label>'+
+        '<a href="#" id="a-rescan" style="font-weight:600">Refresh scans</a></div>';
+    }
+    if(!list.length){ box.innerHTML=h+'<div class="empty">No matching workers'+(ST.onlyIn?' — nobody in this filter has scanned in yet':'')+'.</div>'; wireScanBar(box); return; }
     list.forEach(function(e){
       var on=ST.picked[e.name]?" on":"";
       var offbadge = (e.off_days>0) ? ' <span class="offb">'+e.off_days+' off</span>' : '';
       var aw=attReasons(e);
       var attbadge = aw.length? ' <span class="offb" style="background:rgba(185,28,28,.12);color:#b91c1c">⚠ '+esc(aw[0].split(" on 2")[0])+'</span>' : '';
+      // presence chip (window includes today): P = on site
+      if(si.checked){
+        if(e.is_night){
+          attbadge += ' <span class="offb" style="background:rgba(37,99,235,.1);color:#2563eb">night shift</span>';
+        } else if(e.present_today){
+          attbadge += ' <span class="offb" style="background:rgba(10,122,67,.14);color:#0a7a43;font-weight:700">P'+(e.scan_in?(' · '+esc(e.scan_in)):'')+'</span>';
+        } else {
+          attbadge += ' <span class="offb" style="background:rgba(10,10,10,.06);color:#8a8780">not in yet</span>';
+        }
+      }
       var busy = e.allocated_elsewhere?true:false;
       if(busy){
         var tag = ' <span class="allocb">assigned elsewhere'+(e.allocated_farm?(" · "+esc(e.allocated_farm)):"")+'</span>';
@@ -366,6 +389,7 @@
       }
     });
     box.innerHTML=h;
+    wireScanBar(box);
     box.querySelectorAll(".emrow").forEach(function(row){
       if(row.classList.contains("busy")) return;   // non-selectable: allocated elsewhere
       row.onclick=function(){
@@ -394,7 +418,18 @@
     if(e.att_leave) aw.push("on "+e.att_leave);
     if(e.att_absent_days>0) aw.push("marked Absent "+e.att_absent_days+" day"+(e.att_absent_days>1?"s":"")+(e.att_absent_span?" ("+e.att_absent_span+")":"")+" in this window");
     if(e.att_all_off) aw.push("off/holiday for the entire window");
+    var si=ST.scanInfo||{};
+    if(si.checked && si.gate_on && si.cutoff_passed && !e.present_today && !e.is_night){
+      aw.push("not seen on site today (no scan or Present attendance yet)");
+    }
     return aw;
+  }
+
+  function wireScanBar(box){
+    var oi=el("a-onlyin");
+    if(oi){ oi.onchange=function(){ ST.onlyIn=oi.checked; renderEmployees(); }; }
+    var rs=el("a-rescan");
+    if(rs){ rs.onclick=function(ev){ ev.preventDefault(); rs.textContent="Refreshing…"; loadEmployees(ST.curFarm); }; }
   }
 
   function refreshCounts(){

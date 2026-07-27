@@ -11,7 +11,10 @@
   "sb_att",
   "att_block_absent",
   "att_block_leave",
-  "att_block_off"
+  "att_block_off",
+  "att_require_scan",
+  "att_scan_cutoff",
+  "att_block_noscan_actuals"
  ],
  "fields": [
   {
@@ -64,6 +67,27 @@
    "label": "Check weekly offs / holidays",
    "default": "1",
    "description": "Actuals: blocks recording work on the employee's off day. Assigner: flags only when offs cover the whole assignment window."
+  },
+  {
+   "fieldname": "att_require_scan",
+   "fieldtype": "Check",
+   "label": "Require a morning scan for day-of assignment",
+   "default": "1",
+   "description": "When an assignment window includes today (and the cutoff has passed), workers with no biometric scan and no Present attendance today need an override. Night-shift workers are exempt."
+  },
+  {
+   "fieldname": "att_scan_cutoff",
+   "fieldtype": "Time",
+   "label": "Morning scan cutoff",
+   "default": "09:00:00",
+   "description": "Before this time, missing scans are shown as a grey chip only \u2014 no override dialog."
+  },
+  {
+   "fieldname": "att_block_noscan_actuals",
+   "fieldtype": "Check",
+   "label": "Check scans when recording actuals",
+   "default": "1",
+   "description": "Recording a quantity for a worker with zero biometric scans and no Present attendance on that work date needs an override."
   }
  ],
  "idx": 0,
