@@ -923,6 +923,28 @@
     box.querySelectorAll("[data-wraudit]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-wraudit"), auditWindow()); };
     });
+    var dd=el("disc-dedup");
+    if(dd){
+      dd.onclick=function(){
+        confirmModal("Zero duplicate day entries",
+          '<p style="margin:0 0 10px">For every worker-day recorded twice, keep the copy in the <b>earliest document</b> and zero the re-entered ones?</p>'+
+          '<p class="note" style="margin:0">Quantities and pay of the duplicates go to 0, documents are re-summed, an audit comment names every zeroed day and where the kept copy lives. Duplicate groups that are already paid are skipped for manual review.</p>',
+          "Zero duplicates",
+          function(){
+            dd.disabled=true; dd.textContent="Repairing…";
+            var r={action:"pay_fix_duplicates", from_date:el("au-from").value||"", to_date:el("au-to").value||"", farms:auFarmsCSV()};
+            function step(){
+              call(r, true).then(function(d){
+                if(d.error){ toast(d.error,"bad"); dd.disabled=false; return; }
+                if(d.remaining_groups>0){ dd.textContent="Repairing… "+d.remaining_groups+" left"; step(); return; }
+                toast("Duplicates zeroed · "+money(d.excess_total)+" excess removed"+(d.skipped_paid_groups?(" · "+d.skipped_paid_groups+" paid group(s) skipped"):""),"good");
+                AU.disc=null; AU.loaded=false; loadAudit();
+              }).catch(function(e){ toast("Repair failed: "+e.message,"bad"); dd.disabled=false; });
+            }
+            step();
+          }, "good");
+      };
+    }
     var rv=el("disc-revalue");
     if(rv){
       rv.onclick=function(){
@@ -1016,6 +1038,11 @@
       });
     }
     h+='</tr></thead><tbody>'+body+'</tbody></table></div>';
+    if(c.key==="dup_day" && rows.length){
+      var texc=0; rows.forEach(function(r){ texc+=(r.amount||0); });
+      h+='<div style="margin-top:10px"><button type="button" class="btn good sm" id="disc-dedup">Zero the duplicates · keep first copy · '+money(texc)+'</button>'+
+         '<span class="hint" style="margin-left:10px">Keeps the copy in the earliest document, zeroes the re-entered ones (qty and pay), re-sums the documents and leaves audit comments. Groups with a paid copy are skipped.</span></div>';
+    }
     if(c.key==="no_pay"){
       var rns=rows.map(function(r){ return r.rowname; }).filter(Boolean);
       if(rns.length){

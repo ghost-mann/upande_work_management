@@ -1920,6 +1920,102 @@ def wm_payment(**kwargs):
         out["parents_resummed"] = len(parents_rr)
         out["remaining"] = frappe.utils.cint(remaining_rr[0].n) if remaining_rr else 0
 
+    elif action == "pay_fix_duplicates":
+        # DUPLICATE-DAY REPAIR: for every (worker, task, date) recorded in more
+        # than one confirmed document, KEEP the copy in the earliest-created
+        # document and zero the rest (qty and amount, review stamps reset).
+        # Groups containing a paid row are skipped — those need manual handling.
+        # Chunked (max 150 groups per call); dry_run=1 only reports.
+        fd_dry = frappe.utils.cint(frappe.form_dict.get("dry_run"))
+        fd_from = frappe.form_dict.get("from_date") or "2000-01-01"
+        fd_to = frappe.form_dict.get("to_date") or str(frappe.utils.today())
+        fd_farm = (frappe.form_dict.get("farms") or "").strip()
+        fdconds = "ac.workflow_state='CONFIRMED' AND we.actual_quantity > 0 AND we.work_date BETWEEN %s AND %s"
+        fdparams = [fd_from, fd_to]
+        fd_flist = []
+        if fd_farm:
+            for f in fd_farm.split(","):
+                fv = f.strip()
+                if fv:
+                    fd_flist.append(fv)
+        if fd_flist:
+            fdconds = fdconds + " AND TRIM(ac.farm) IN %s"
+            fdparams.append(tuple(fd_flist))
+        fd_rows = frappe.db.sql("""
+            SELECT we.name rowname, we.parent, we.employee, we.employee_name,
+                   ac.task, we.work_date wdate, we.actual_quantity qty, we.amount,
+                   IFNULL(we.paid,0) paid, ac.creation doc_created
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE """ + fdconds + """
+            ORDER BY we.employee, ac.task, we.work_date, ac.creation
+        """, tuple(fdparams), as_dict=True)
+        groups = {}
+        for r in fd_rows:
+            k = (r.employee, r.task or "", str(r.wdate))
+            g = groups.get(k)
+            if g is None:
+                g = []
+                groups[k] = g
+            g.append(r)
+        dup_groups = []
+        skipped_paid = 0
+        for k in groups:
+            g = groups[k]
+            if len(g) < 2:
+                continue
+            if any(frappe.utils.cint(x.paid) for x in g):
+                skipped_paid = skipped_paid + 1
+                continue
+            dup_groups.append(g)
+        out["dup_groups"] = len(dup_groups)
+        out["skipped_paid_groups"] = skipped_paid
+        excess = 0
+        zero_rows = 0
+        for g in dup_groups:
+            for x in g[1:]:
+                excess = excess + frappe.utils.flt(x.amount)
+                zero_rows = zero_rows + 1
+        out["rows_to_zero"] = zero_rows
+        out["excess_total"] = excess
+        if not fd_dry and dup_groups:
+            batch = dup_groups[:150]
+            parents_fd = {}
+            for g in batch:
+                keep = g[0]
+                for x in g[1:]:
+                    frappe.db.set_value("Work Actuals Employee", x.rowname, "actual_quantity", 0, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", x.rowname, "amount", 0, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", x.rowname, "custom_reviewed", 0, update_modified=False)
+                    pl = parents_fd.get(x.parent)
+                    if pl is None:
+                        pl = []
+                        parents_fd[x.parent] = pl
+                    pl.append((x.employee_name or x.employee) + " " + str(x.wdate) + " (" + str(x.task) + ", kept in " + keep.parent + ")")
+            for pname in parents_fd:
+                tots = frappe.db.sql("""
+                    SELECT COALESCE(SUM(actual_quantity),0) q, COALESCE(SUM(amount),0) p,
+                           COALESCE(SUM(CASE WHEN IFNULL(count_in_payroll,0)=1 THEN actual_quantity ELSE 0 END),0) twq,
+                           COALESCE(SUM(CASE WHEN IFNULL(count_in_payroll,0)=0 THEN actual_quantity ELSE 0 END),0) slq,
+                           COUNT(DISTINCT CASE WHEN IFNULL(count_in_payroll,0)=1 AND actual_quantity > 0 THEN employee END) pp
+                    FROM `tabWork Actuals Employee` WHERE parent=%s
+                """, (pname,), as_dict=True)
+                if tots:
+                    frappe.db.set_value("Work Management Actuals", pname, "total_actual_qty", frappe.utils.flt(tots[0].q), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "total_payment", round(frappe.utils.flt(tots[0].p), 2), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "custom_tw_qty", frappe.utils.flt(tots[0].twq), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "custom_salaried_qty", frappe.utils.flt(tots[0].slq), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "payroll_people", frappe.utils.cint(tots[0].pp), update_modified=False)
+            frappe.db.commit()
+            for pname in parents_fd:
+                try:
+                    frappe.get_doc("Work Management Actuals", pname).add_comment("Edited",
+                        "Duplicate-day repair by " + frappe.session.user + ": zeroed re-entered day(s) — " + "; ".join(parents_fd[pname][:12]))
+                except Exception:
+                    pass
+            out["fixed_groups"] = len(batch)
+            out["remaining_groups"] = len(dup_groups) - len(batch)
+
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)
