@@ -102,7 +102,8 @@
    "fieldname": "rate",
    "fieldtype": "Currency",
    "label": "Rate",
-   "read_only": 1
+   "read_only": 1,
+   "precision": "4"
   },
   {
    "fieldname": "assignment",

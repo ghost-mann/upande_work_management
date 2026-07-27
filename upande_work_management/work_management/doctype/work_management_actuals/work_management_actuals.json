@@ -122,7 +122,8 @@
    "fieldname": "rate",
    "fieldtype": "Float",
    "label": "Rate (KES)",
-   "read_only": 1
+   "read_only": 1,
+   "precision": "4"
   },
   {
    "fieldname": "cb_work",
