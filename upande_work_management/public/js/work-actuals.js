@@ -689,6 +689,12 @@
       if(d.needs_att_override){
         // TIME & ATTENDANCE gate: these worker-days clash with attendance/leave/offs
         var lines=(d.att_conflicts||[]).map(function(c){ return "• "+(c.name||c.employee)+": "+(c.reasons||[]).join("; "); });
+        if(d.can_override===0){
+          // absent-day entries are a Farm Manager decision — no override for this user
+          window.alert("Attendance check — these entries include workers marked ABSENT:\n\n"+lines.join("\n")+"\n\n"+(d.override_blocked||"Only the Farm Manager (or GM) can approve recording actuals on an absent day."));
+          refresh(); onAsg(ST.asg);
+          return;
+        }
         if(window.confirm("Attendance check — quantities entered for workers who were not supposed to be at work:\n\n"+lines.join("\n")+"\n\nRecord these actuals anyway? The override is recorded on the document.")){
           args.att_override=1;
           call(args).then(handleResp).catch(function(){ toast("Failed to save"); refresh(); });

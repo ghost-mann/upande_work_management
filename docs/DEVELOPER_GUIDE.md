@@ -111,6 +111,14 @@ Attendance with status Absent; missing records never block.
   only when they cover the WHOLE window (weekly offs inside long windows are
   normal); actuals checks the exact work date for all three.
 
+**Wage snap:** plan rates rounded to 2dp made full days pay 340.50/339.96
+instead of the intended 340. `act_submit` values rows at qty × (340 ÷
+daily_target) whenever the plan's implied daily wage (rate × daily_target) is
+within 1% of 340; `pay_recalc_wages` (dry_run supported, 800-row chunks)
+repairs historical unpaid rows the same way. Absent-day overrides in
+`act_submit` require a farm-approver / GM / System Manager role — other
+conflicts keep the normal logged override.
+
 **Morning presence (scans):** settings `att_require_scan`, `att_scan_cutoff`
 (Time — values come back unpadded, normalise before string-comparing!) and
 `att_block_noscan_actuals`. When the window includes today, `a_employees`

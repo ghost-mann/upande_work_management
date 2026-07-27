@@ -383,8 +383,18 @@ def wm_actuals(**kwargs):
             # for farm managers / section heads / clerks who lack broad DocPerms)
             a_pr = frappe.db.get_value("Work Management Assigner", assignment, "planner_request")
             rate = 0
+            unit_value = 0
             if a_pr:
-                rate = frappe.utils.flt(frappe.db.get_value("Work Management Planner", a_pr, "rate"))
+                pinfo0 = frappe.db.get_value("Work Management Planner", a_pr, ["rate", "daily_target"], as_dict=True)
+                rate = frappe.utils.flt(pinfo0.rate) if pinfo0 else 0
+                unit_value = rate
+                # WAGE SNAP: rates rounded to 2dp make a full day pay 340.50/339.96
+                # instead of the intended 340. When the implied daily wage is within
+                # 1% of 340, value rows at qty x (340 / daily target) instead.
+                if pinfo0 and frappe.utils.flt(pinfo0.daily_target) > 0 and rate > 0:
+                    dw0 = rate * frappe.utils.flt(pinfo0.daily_target)
+                    if abs(dw0 - 340.0) <= 3.4 and abs(dw0 - 340.0) > 0.001:
+                        unit_value = 340.0 / frappe.utils.flt(pinfo0.daily_target)
             edit_doc = frappe.form_dict.get("edit_doc")  # approver editing a pending doc in place
             # ONE doc per assignment: resume existing Draft/Rejected, else create new.
             existing = frappe.db.get_all("Work Management Actuals",
@@ -505,9 +515,35 @@ def wm_actuals(**kwargs):
                                 seenr[rr] = 1
                                 rlist.append(rr)
                         att_conflicts.append({"employee": ce, "name": cnm, "reasons": rlist[:6]})
-            if att_conflicts and not att_override:
+            # ABSENT-day entries are a Farm Manager decision: only the farm's
+            # approver role (or GM / System Manager) may override those. Other
+            # conflicts (leave / off / no-scan) keep the normal logged override.
+            has_absent_conflict = 0
+            for cchk in att_conflicts:
+                for rchk in cchk.get("reasons", []):
+                    if "marked Absent" in rchk:
+                        has_absent_conflict = 1
+            can_override = 1
+            if has_absent_conflict:
+                ov_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+                ov_farm = frappe.db.get_value("Work Management Assigner", assignment, "farm") if assignment else None
+                farm_role_map = {"Saboti": "Farm Manager Saboti", "Lokitela": "Farm Manager Lokitela",
+                                 "Endebess": "Farm Manager Endebess", "Vale": "Farm Manager Valle"}
+                allowed = ("System Manager" in ov_roles) or ("General Manager" in ov_roles) or ("Farm Manager" in ov_roles)
+                if not allowed and ov_farm and farm_role_map.get(str(ov_farm).strip()) in ov_roles:
+                    allowed = True
+                if not allowed:
+                    can_override = 0
+            if att_conflicts and att_override and not can_override:
+                out["error"] = ("These entries include workers marked Absent — only the Farm Manager "
+                                "(or GM) can approve recording actuals on an absent day. Ask them to "
+                                "enter or approve this, or fix the attendance first.")
+            elif att_conflicts and not att_override:
                 out["needs_att_override"] = 1
                 out["att_conflicts"] = att_conflicts
+                out["can_override"] = can_override
+                if not can_override:
+                    out["override_blocked"] = "Entries for workers marked Absent need the Farm Manager (or GM) — you can save the other workers by removing the flagged ones, or ask the Farm Manager to approve."
             elif live and not existing and not editing_pending:
                 out["error"] = "This assignment already has an actuals record in progress (" + live[0] + ")."
             else:
@@ -551,7 +587,7 @@ def wm_actuals(**kwargs):
                         continue
                     etype = frappe.db.get_value("Employee", emp, "employment_type")
                     in_pay = 1 if etype == "Task Worker" else 0
-                    amt = (qty * rate) if in_pay else 0
+                    amt = (qty * (unit_value or rate)) if in_pay else 0
                     row = d.append("employees", {})
                     row.employee = emp
                     row.work_date = wdate
