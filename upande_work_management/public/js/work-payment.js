@@ -895,12 +895,17 @@
       var open = AU.discOpen!=null ? (AU.discOpen===c.key) : (ci===0 && c.count>0);
       var sev = c.count ? (c.key==="off_paid" ? "var(--warn, #a06000)" : "var(--bad, #b91c1c)") : "var(--good, #0a7a43)";
       if(c.disabled) sev="var(--mute, #8a8780)";
+      var sub="";
+      if(c.key==="absent_paid" && c.count){
+        var wsc=(c.rows||[]).filter(function(r){ return r.scan_in; }).length;
+        sub='<span class="hint"><b style="color:#0a7a43">'+fmt(wsc)+'</b> have a scan — attendance likely wrong · <b style="color:#b91c1c">'+fmt(c.count-wsc)+'</b> no scan — scrutinise the entry</span>';
+      }
       h+='<div style="border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden">'+
         '<div class="disc-head" data-disc="'+esc(c.key)+'" style="padding:12px 16px;background:var(--wash);display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;cursor:pointer">'+
           '<b style="font-size:13px">'+esc(c.title)+'</b>'+
           (c.disabled?'<span class="hint" style="color:var(--mute)">check turned off in Work Management Settings</span>':'<span class="m" style="font-weight:700;color:'+sev+'">'+fmt(c.count)+(c.count>=200?"+":"")+' row'+(c.count===1?"":"s")+'</span>')+
           (c.workers?'<span class="hint">'+fmt(c.workers)+' workers</span>':'')+
-          (c.amount?'<span class="m" style="font-weight:600">'+money(c.amount)+'</span>':'')+
+          (c.amount?'<span class="m" style="font-weight:600">'+money(c.amount)+(c.key==="no_pay"?" owed":"")+'</span>':'')+sub+
           '<span style="flex:1"></span><span class="hint">'+(open?"▾":"▸")+'</span>'+
         '</div>'+
         '<div style="padding:6px 16px 0;font-size:11px;color:var(--mute)">'+esc(c.about)+'</div>'+
@@ -918,6 +923,23 @@
     box.querySelectorAll("[data-wraudit]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-wraudit"), auditWindow()); };
     });
+    var rv=el("disc-revalue");
+    if(rv){
+      rv.onclick=function(){
+        confirmModal("Revalue zero-pay rows",
+          '<p style="margin:0 0 10px">Set each of these rows to <b>qty × the document rate</b> and restore payroll counting?</p>'+
+          '<p class="note" style="margin:0">Only unpaid rows on CONFIRMED documents are touched; every document gets an audit comment and the workers return to Unpaid for review.</p>',
+          "Revalue now",
+          function(){
+            rv.disabled=true; rv.textContent="Revaluing…";
+            call({action:"pay_fix_unvalued", rownames:rv.getAttribute("data-rows")}, true).then(function(d){
+              if(d.error){ toast(d.error,"bad"); rv.disabled=false; return; }
+              toast(fmt(d.fixed_count)+" rows revalued · "+money(d.fixed_total)+((d.errors&&d.errors.length)?(" · "+d.errors.length+" skipped"):""),"good");
+              AU.disc=null; AU.loaded=false; loadAudit();
+            }).catch(function(e){ toast("Could not revalue: "+e.message,"bad"); rv.disabled=false; });
+          }, "good");
+      };
+    }
   }
 
   // presence cell: check-in time / absent / ? — see the key at the top of the view
@@ -962,6 +984,15 @@
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
+    } else if(c.key==="no_pay"){
+      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Should be KES</th><th class="n">Stored</th><th>Doc</th>';
+      rows.forEach(function(r){
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td>'+
+          '<td class="n m" style="color:#0a7a43;font-weight:700">'+fmt(r.should_be)+'</td>'+
+          '<td class="n m" style="color:var(--bad);font-weight:700">0</td>'+
+          '<td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
+      });
     } else {
       // presence-based checks: absent_paid / ghost_days / leave_paid / off_paid
       h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Presence</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
@@ -975,6 +1006,14 @@
       });
     }
     h+='</tr></thead><tbody>'+body+'</tbody></table></div>';
+    if(c.key==="no_pay"){
+      var rns=rows.map(function(r){ return r.rowname; }).filter(Boolean);
+      if(rns.length){
+        var totS=0; rows.forEach(function(r){ totS+=(r.should_be||0); });
+        h+='<div style="margin-top:10px"><button type="button" class="btn good sm" id="disc-revalue" data-rows="'+esc(rns.join(","))+'">Revalue '+fmt(rns.length)+' row'+(rns.length>1?'s':'')+' at doc rate · '+money(totS)+'</button>'+
+           '<span class="hint" style="margin-left:10px">Sets pay to qty × rate, restores payroll counting, re-sums the documents and leaves an audit comment. Workers go back to Unpaid for review.</span></div>';
+      }
+    }
     if(c.count>=200) h+='<div class="note">Showing the first 200 rows — narrow the date range or farm filter to see the rest.</div>';
     return h;
   }
@@ -1323,8 +1362,9 @@
       h+='<div class="empty"><b>Clean.</b> No attendance conflicts on any of this worker\'s day-rows in this window.</div>';
     } else {
       h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Presence key: <b style="color:#0a7a43">in 06:42</b> check-in time · <b style="color:#0a7a43">P</b> marked present (no scan) · <b style="color:#b91c1c">absent</b> marked Absent · <b style="color:#a06000">?</b> no record either way. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every send to accounts is logged.</div>';
+      var wsc2=ISS.absent.filter(function(r){ return r.scan_in; }).length;
       var groups=[
-        {k:"absent", title:"Recorded on marked-Absent days", about:"Submitted attendance says Absent, yet work is recorded. A scan time means the attendance is probably wrong.", rows:ISS.absent},
+        {k:"absent", title:"Recorded on marked-Absent days", about:"Submitted attendance says Absent, yet work is recorded. "+(wsc2?wsc2+" of these days HAVE a scan — the attendance record itself is probably wrong; ask HR to correct it.":"No scans on these days — scrutinise the entries."), rows:ISS.absent},
         {k:"ghost", title:"No presence evidence at all", about:"No scan and no attendance record of any kind on the day.", rows:ISS.ghost},
         {k:"leave", title:"Earning while on approved leave", about:"The day falls inside an approved leave application — possible double payment.", rows:ISS.leave},
         {k:"off", title:"Work on off days / holidays", about:"The day is on this worker\'s holiday list. Fine if deliberate overtime.", rows:ISS.off}
