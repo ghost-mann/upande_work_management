@@ -984,6 +984,16 @@
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
+    } else if(c.key==="dup_day"){
+      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Copies</th><th class="n">Total KES</th><th class="n">Excess KES</th><th>Docs</th><th>Entered by</th>';
+      rows.forEach(function(r){
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+          '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.copies)+'×</td>'+
+          '<td class="n m">'+fmt(r.total_amt,2)+'</td>'+
+          '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td>'+
+          '<td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td>'+
+          '<td class="m" style="font-size:10px">'+esc(shortUser(r.entered_by||""))+'</td></tr>';
+      });
     } else if(c.key==="no_pay"){
       h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Should be KES</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){

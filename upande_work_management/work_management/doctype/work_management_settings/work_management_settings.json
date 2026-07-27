@@ -25,7 +25,8 @@
   "disc_multi_farm",
   "disc_self_approved",
   "disc_left_earning",
-  "disc_no_pay"
+  "disc_no_pay",
+  "disc_dup_day"
  ],
  "fields": [
   {
@@ -165,6 +166,12 @@
    "fieldname": "disc_no_pay",
    "fieldtype": "Check",
    "label": "Recorded work with no pay (zero-valued rows)",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_dup_day",
+   "fieldtype": "Check",
+   "label": "Paid twice for the same day (duplicate entries)",
    "default": "1"
   }
  ],

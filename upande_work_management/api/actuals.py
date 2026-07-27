@@ -515,6 +515,50 @@ def wm_actuals(**kwargs):
                                 seenr[rr] = 1
                                 rlist.append(rr)
                         att_conflicts.append({"employee": ce, "name": cnm, "reasons": rlist[:6]})
+            # DUPLICATE-DAY GUARD: the same worker + the same task + the same date
+            # already recorded in ANOTHER live actuals document means double pay
+            # (two overlapping assignments for one task). Needs an explicit,
+            # logged override.
+            if payload and assignment:
+                cur_task = frappe.db.get_value("Work Management Assigner", assignment, "task")
+                pairs2 = []
+                demps2 = {}
+                ddates2 = {}
+                for c2 in payload.split("|"):
+                    bits2 = c2.split("~")
+                    if len(bits2) >= 3 and bits2[0] and bits2[1] and frappe.utils.flt(bits2[2]) > 0:
+                        pairs2.append((bits2[0], bits2[1]))
+                        demps2[bits2[0]] = 1
+                        ddates2[bits2[1]] = 1
+                if pairs2 and cur_task:
+                    dup_hits = frappe.db.sql("""
+                        SELECT we.employee, we.work_date d, ac.name doc
+                        FROM `tabWork Actuals Employee` we
+                        INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                        WHERE ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+                          AND ac.task = %s AND ac.assignment != %s
+                          AND we.actual_quantity > 0
+                          AND we.employee IN %s AND we.work_date IN %s
+                    """, (cur_task, assignment, tuple(demps2.keys()), tuple(ddates2.keys())), as_dict=True)
+                    dupmap = {}
+                    for r2 in dup_hits:
+                        dupmap.setdefault((r2.employee, str(r2.d)), r2.doc)
+                    dup_reasons = {}
+                    for (pe2, pd2) in pairs2:
+                        hit = dupmap.get((pe2, pd2))
+                        if hit:
+                            dup_reasons.setdefault(pe2, []).append("already has " + str(cur_task) + " recorded on " + pd2 + " in " + hit + " — double pay")
+                    if dup_reasons:
+                        merged = {}
+                        for cx in att_conflicts:
+                            merged[cx["employee"]] = cx
+                        for pe2 in dup_reasons:
+                            cx = merged.get(pe2)
+                            if cx:
+                                cx["reasons"] = cx["reasons"] + dup_reasons[pe2]
+                            else:
+                                nm2 = frappe.db.get_value("Employee", pe2, "employee_name") or pe2
+                                att_conflicts.append({"employee": pe2, "name": nm2, "reasons": dup_reasons[pe2]})
             # ABSENT-day entries are a Farm Manager decision: only the farm's
             # approver role (or GM / System Manager) may override those. Other
             # conflicts (leave / off / no-scan) keep the normal logged override.
