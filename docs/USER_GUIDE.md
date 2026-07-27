@@ -161,6 +161,11 @@ goes live:
   Before the cutoff it's just the grey chip, so early assigning isn't blocked
   while people are still queueing at the reader.
 
+The **Actuals entry grid** shows the same evidence per worker-day: a green
+**P** in a cell means that worker scanned in (hover shows the time) or was
+marked present that day; a red **?** marks a past day with no scan and no
+attendance — enter quantities there with care (the override gate will ask).
+
 Two extra toggles in Work Management Settings control this: **Require a
 morning scan for day-of assignment** (+ its cutoff time) and **Check scans
 when recording actuals** — the latter flags a quantity recorded for a worker
