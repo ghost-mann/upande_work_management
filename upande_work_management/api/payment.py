@@ -1467,7 +1467,8 @@ def wm_payment(**kwargs):
         # per-check enable toggles (Work Management Settings; default ON)
         disc_on = {}
         for dk in ("disc_absent_paid", "disc_ghost_days", "disc_leave_paid", "disc_off_paid",
-                   "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning"):
+                   "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning",
+                   "disc_no_pay"):
             val = 1
             try:
                 val = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", dk))
@@ -1632,6 +1633,35 @@ def wm_payment(**kwargs):
                            "farm": r.farm, "task": r.task, "actuals": r.actuals,
                            "wdate": str(r.wdate), "left_date": str(r.left_date),
                            "amount": frappe.utils.flt(r.amount)})
+        # ---- recorded work valued at ZERO: qty entered but the row paid nothing,
+        # although the doc has a rate and the worker is (now) a Task Worker. Happens
+        # when the employment-type lookup failed at entry time. ----
+        b_nopay = []
+        npconds = "ac.workflow_state='CONFIRMED' AND we.actual_quantity > 0 AND IFNULL(we.amount,0) <= 0 AND IFNULL(ac.rate,0) > 0 AND IFNULL(we.paid,0) = 0 AND we.work_date BETWEEN %s AND %s"
+        npparams = [dfrom, dto]
+        if farm_list_d:
+            npconds = npconds + " AND TRIM(ac.farm) IN %s"
+            npparams.append(tuple(farm_list_d))
+        for r in frappe.db.sql("""
+            SELECT we.name rowname, we.employee, we.employee_name, ac.farm, ac.task,
+                   ac.name actuals, we.work_date wdate, we.actual_quantity qty,
+                   ac.rate doc_rate
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            INNER JOIN `tabEmployee` emp ON emp.name = we.employee
+            WHERE """ + npconds + """
+              AND emp.employment_type = 'Task Worker'
+            ORDER BY we.work_date DESC LIMIT 300
+        """, tuple(npparams), as_dict=True):
+            wd = str(r.wdate)
+            b_nopay.append({"employee": r.employee, "employee_name": r.employee_name,
+                            "farm": r.farm, "task": r.task, "actuals": r.actuals,
+                            "wdate": wd, "qty": frappe.utils.flt(r.qty), "amount": 0,
+                            "rate": frappe.utils.flt(r.doc_rate),
+                            "should_be": frappe.utils.flt(r.qty) * frappe.utils.flt(r.doc_rate),
+                            "rowname": r.rowname,
+                            "scan_in": scan_ev.get((r.employee, wd)),
+                            "att_status": att_ev.get((r.employee, wd))})
         checks = [
             {"key": "absent_paid", "title": "Paid on marked-Absent days",
              "about": "Money recorded on a day the worker's submitted attendance says Absent. A scan time means the attendance is probably wrong; no scan means the entry itself needs scrutiny.",
@@ -1657,8 +1687,12 @@ def wm_payment(**kwargs):
             {"key": "left_but_earning", "title": "Earning after leaving the job",
              "about": "Rows dated after the worker was marked Left on that assignment — a substituted/released worker still collecting days.",
              "rows": b_left},
+            {"key": "no_pay", "title": "Recorded work with no pay",
+             "about": "Quantities recorded but the row valued at ZERO although the document has a rate and the worker is a Task Worker — the worker-type lookup failed at entry, so these people will never be paid for the work. Revalue to qty × rate.",
+             "rows": b_nopay},
         ]
-        toggle_map = {"absent_paid": "disc_absent_paid", "ghost_days": "disc_ghost_days",
+        toggle_map = {"no_pay": "disc_no_pay",
+                      "absent_paid": "disc_absent_paid", "ghost_days": "disc_ghost_days",
                       "leave_paid": "disc_leave_paid", "off_paid": "disc_off_paid",
                       "rate_mismatch": "disc_rate_mismatch", "multi_farm_day": "disc_multi_farm",
                       "self_approved": "disc_self_approved", "left_but_earning": "disc_left_earning"}
@@ -1669,7 +1703,7 @@ def wm_payment(**kwargs):
             amts = 0
             wku = {}
             for x in c["rows"]:
-                amts = amts + frappe.utils.flt(x.get("amount"))
+                amts = amts + frappe.utils.flt(x.get("should_be") if c["key"] == "no_pay" else x.get("amount"))
                 if x.get("employee"):
                     wku[x["employee"]] = 1
             c["count"] = len(c["rows"])
@@ -1679,6 +1713,86 @@ def wm_payment(**kwargs):
         out["checks"] = checks
         out["window"] = {"from": dfrom, "to": dto}
         out["scanned_rows"] = len(base_rows)
+
+    elif action == "pay_fix_unvalued":
+        # Repair rows found by the "Recorded work with no pay" check: a Task
+        # Worker's row that valued at zero because the type lookup failed at entry.
+        # Revalues to qty x doc rate, restores payroll counting, re-sums the parent
+        # and leaves an audit comment. Only unpaid rows on CONFIRMED docs.
+        rn_raw = frappe.form_dict.get("rownames")
+        rn_list = []
+        if rn_raw:
+            for rn in rn_raw.split(","):
+                rv = rn.strip()
+                if rv and rv not in rn_list:
+                    rn_list.append(rv)
+        if not rn_list:
+            out["error"] = "rownames is required (CSV)"
+        else:
+            fixed = []
+            errors = []
+            parents = {}
+            for rn in rn_list[:300]:
+                row = frappe.db.get_value("Work Actuals Employee", rn,
+                    ["name", "parent", "employee", "employee_name", "work_date",
+                     "actual_quantity", "amount", "paid"], as_dict=True)
+                if not row:
+                    errors.append({"rowname": rn, "error": "not found"})
+                    continue
+                if frappe.utils.cint(row.paid):
+                    errors.append({"rowname": rn, "error": "already paid"})
+                    continue
+                if frappe.utils.flt(row.amount) > 0.001:
+                    errors.append({"rowname": rn, "error": "already valued"})
+                    continue
+                pinfo = frappe.db.get_value("Work Management Actuals", row.parent,
+                    ["workflow_state", "rate"], as_dict=True)
+                if not pinfo or pinfo.workflow_state != "CONFIRMED" or frappe.utils.flt(pinfo.rate) <= 0:
+                    errors.append({"rowname": rn, "error": "doc not CONFIRMED or has no rate"})
+                    continue
+                etype = frappe.db.get_value("Employee", row.employee, "employment_type")
+                if etype != "Task Worker":
+                    errors.append({"rowname": rn, "error": "worker is not a Task Worker (" + str(etype) + ")"})
+                    continue
+                new_amt = frappe.utils.flt(row.actual_quantity) * frappe.utils.flt(pinfo.rate)
+                frappe.db.set_value("Work Actuals Employee", rn, "employment_type", "Task Worker", update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", rn, "count_in_payroll", 1, update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", rn, "amount", new_amt, update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed", 0, update_modified=False)
+                fixed.append({"rowname": rn, "employee": row.employee,
+                              "employee_name": row.employee_name,
+                              "wdate": str(row.work_date), "amount": new_amt})
+                pl = parents.get(row.parent)
+                if pl is None:
+                    pl = []
+                    parents[row.parent] = pl
+                pl.append((row.employee_name or row.employee) + " " + str(row.work_date) + " → " + str(round(new_amt, 2)))
+            # re-sum every touched parent
+            for pname in parents:
+                tots = frappe.db.sql("""
+                    SELECT COALESCE(SUM(actual_quantity),0) q, COALESCE(SUM(amount),0) p,
+                           COALESCE(SUM(CASE WHEN IFNULL(count_in_payroll,0)=1 THEN actual_quantity ELSE 0 END),0) twq,
+                           COALESCE(SUM(CASE WHEN IFNULL(count_in_payroll,0)=0 THEN actual_quantity ELSE 0 END),0) slq,
+                           COUNT(DISTINCT CASE WHEN IFNULL(count_in_payroll,0)=1 THEN employee END) pp
+                    FROM `tabWork Actuals Employee` WHERE parent=%s
+                """, (pname,), as_dict=True)
+                if tots:
+                    frappe.db.set_value("Work Management Actuals", pname, "total_actual_qty", frappe.utils.flt(tots[0].q), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "total_payment", frappe.utils.flt(tots[0].p), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "custom_tw_qty", frappe.utils.flt(tots[0].twq), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "custom_salaried_qty", frappe.utils.flt(tots[0].slq), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "payroll_people", frappe.utils.cint(tots[0].pp), update_modified=False)
+            frappe.db.commit()
+            for pname in parents:
+                try:
+                    frappe.get_doc("Work Management Actuals", pname).add_comment("Edited",
+                        "Zero-pay repair by " + frappe.session.user + ": revalued at doc rate — " + "; ".join(parents[pname]))
+                except Exception:
+                    pass
+            out["fixed"] = fixed
+            out["fixed_count"] = len(fixed)
+            out["fixed_total"] = sum(x["amount"] for x in fixed)
+            out["errors"] = errors
 
     # ===== DASHBOARD (fast: grouped queries) =====
     else:

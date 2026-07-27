@@ -24,7 +24,8 @@
   "disc_rate_mismatch",
   "disc_multi_farm",
   "disc_self_approved",
-  "disc_left_earning"
+  "disc_left_earning",
+  "disc_no_pay"
  ],
  "fields": [
   {
@@ -158,6 +159,12 @@
    "fieldname": "disc_left_earning",
    "fieldtype": "Check",
    "label": "Earning after leaving the job",
+   "default": "1"
+  },
+  {
+   "fieldname": "disc_no_pay",
+   "fieldtype": "Check",
+   "label": "Recorded work with no pay (zero-valued rows)",
    "default": "1"
   }
  ],

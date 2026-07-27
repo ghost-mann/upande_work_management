@@ -119,6 +119,10 @@ through to the worker's review sheet, with the actuals document named:
 - **Entered and approved by the same person** — no independent check.
 - **Earning after leaving the job** — released/substituted workers still
   collecting days.
+- **Recorded work with no pay** — quantities recorded but valued at ZERO
+  (the worker-type lookup failed at entry). Shows what each row *should* be
+  (qty × doc rate) and a one-click **Revalue** button that repairs the rows,
+  re-sums the documents and logs an audit comment.
 
 The date range and farm chips of the Audit tab apply to the scan. Each check
 has its own **checkbox in Work Management Settings** — turned-off checks show
