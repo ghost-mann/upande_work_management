@@ -349,6 +349,8 @@
     list.forEach(function(e){
       var on=ST.picked[e.name]?" on":"";
       var offbadge = (e.off_days>0) ? ' <span class="offb">'+e.off_days+' off</span>' : '';
+      var aw=attReasons(e);
+      var attbadge = aw.length? ' <span class="offb" style="background:rgba(185,28,28,.12);color:#b91c1c">⚠ '+esc(aw[0].split(" on 2")[0])+'</span>' : '';
       var busy = e.allocated_elsewhere?true:false;
       if(busy){
         var tag = ' <span class="allocb">assigned elsewhere'+(e.allocated_farm?(" · "+esc(e.allocated_farm)):"")+'</span>';
@@ -357,9 +359,9 @@
            '<span class="en">'+esc(e.employee_name||e.name)+tag+'</span>'+
            '<span class="ed">'+esc(e.designation||"")+' · '+esc(e.employment_type||"")+'</span></div>';
       } else {
-        h+='<div class="emrow'+on+'" data-emp="'+esc(e.name)+'">'+
+        h+='<div class="emrow'+on+'" data-emp="'+esc(e.name)+'"'+(aw.length?' title="'+esc(aw.join(" · "))+'"':'')+'>'+
            '<input type="checkbox" '+(ST.picked[e.name]?"checked":"")+'>'+
-           '<span class="en">'+esc(e.employee_name||e.name)+offbadge+'</span>'+
+           '<span class="en">'+esc(e.employee_name||e.name)+offbadge+attbadge+'</span>'+
            '<span class="ed">'+esc(e.designation||"")+' · '+esc(e.employment_type||"")+'</span></div>';
       }
     });
@@ -368,12 +370,31 @@
       if(row.classList.contains("busy")) return;   // non-selectable: allocated elsewhere
       row.onclick=function(){
         var id=row.getAttribute("data-emp");
+        if(!ST.picked[id]){
+          // TIME & ATTENDANCE: explicit consent before selecting a flagged worker
+          var emp=null;
+          (ST.employees||[]).forEach(function(x){ if(x.name===id) emp=x; });
+          var aw2=emp?attReasons(emp):[];
+          if(aw2.length){
+            var nm=(emp.employee_name||id);
+            if(!window.confirm("Attendance check — "+nm+" is "+aw2.join(", and ")+".\n\nSelect this worker anyway?")) return;
+          }
+        }
         ST.picked[id]=!ST.picked[id];
         row.classList.toggle("on", ST.picked[id]);
         var cb=row.querySelector("input"); if(cb) cb.checked=ST.picked[id];
         refreshCounts();
       };
     });
+  }
+
+  // TIME & ATTENDANCE reasons for one worker in the plan window (from a_employees)
+  function attReasons(e){
+    var aw=[];
+    if(e.att_leave) aw.push("on "+e.att_leave);
+    if(e.att_absent_days>0) aw.push("marked Absent "+e.att_absent_days+" day"+(e.att_absent_days>1?"s":"")+(e.att_absent_span?" ("+e.att_absent_span+")":"")+" in this window");
+    if(e.att_all_off) aw.push("off/holiday for the entire window");
+    return aw;
   }
 
   function refreshCounts(){
@@ -411,17 +432,33 @@
     if(ST.editingAsg) args.assignment=ST.editingAsg;   // update the existing draft
     el("b-adraft").disabled=true; el("b-asubmit").disabled=true;
     call(args).then(function(d){
+      if(d.needs_att_override){
+        // server-side attendance gate: show every conflict, ask once, resend
+        var lines=(d.att_conflicts||[]).map(function(c){ return "• "+(c.name||c.employee)+": "+(c.reasons||[]).join("; "); });
+        if(window.confirm("Attendance check — these workers have conflicts:\n\n"+lines.join("\n")+"\n\nAssign anyway? The override is recorded on the assignment.")){
+          args.att_override=1;
+          call(args).then(function(d2){
+            if(d2.error){ toast("Error: "+d2.error); refreshCounts(); return; }
+            afterSubmit(d2, submitNow);
+          }).catch(function(){ toast("Failed to save"); refreshCounts(); });
+        } else { refreshCounts(); }
+        return;
+      }
       if(d.error){ toast("Error: "+d.error); refreshCounts(); return; }
-      var verb = d.editing ? (submitNow?"Updated & submitted ":"Draft updated ") : (submitNow?"Submitted ":"Draft saved ");
-      toast(verb+d.name+" · "+d.workflow_state);
-      clearEdit();
-      ST.plan=null; ST.picked={}; ST.planDetail=null; ST.employees=[];
-      el("a-plan").value=""; el("a-detail").style.display="none";
-      el("a-empicker").innerHTML='<div class="empty">Pick a plan to load that farm’s workers.</div>';
-      el("a-emfilter").value=""; el("a-emfilter").disabled=true; el("a-farmlabel").textContent="";
-      el("o-plan").textContent="—";
-      refreshCounts(); loadPlans();
+      afterSubmit(d, submitNow);
     }).catch(function(e){ toast("Failed to save"); refreshCounts(); });
+  }
+
+  function afterSubmit(d, submitNow){
+    var verb = d.editing ? (submitNow?"Updated & submitted ":"Draft updated ") : (submitNow?"Submitted ":"Draft saved ");
+    toast(verb+d.name+" · "+d.workflow_state+(d.att_overridden?(" · attendance override logged for "+d.att_overridden):""));
+    clearEdit();
+    ST.plan=null; ST.picked={}; ST.planDetail=null; ST.employees=[];
+    el("a-plan").value=""; el("a-detail").style.display="none";
+    el("a-empicker").innerHTML='<div class="empty">Pick a plan to load that farm’s workers.</div>';
+    el("a-emfilter").value=""; el("a-emfilter").disabled=true; el("a-farmlabel").textContent="";
+    el("o-plan").textContent="—";
+    refreshCounts(); loadPlans();
   }
 
   function clearEdit(){

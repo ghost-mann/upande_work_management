@@ -7,7 +7,11 @@
   "default_company",
   "block_exclude",
   "farms_section",
-  "farms"
+  "farms",
+  "sb_att",
+  "att_block_absent",
+  "att_block_leave",
+  "att_block_off"
  ],
  "fields": [
   {
@@ -33,6 +37,33 @@
    "fieldtype": "Table",
    "label": "Farms",
    "options": "WM Farm"
+  },
+  {
+   "fieldname": "sb_att",
+   "fieldtype": "Section Break",
+   "label": "Time & Attendance integration",
+   "description": "Each check blocks assigning work / recording actuals for a conflicting employee, with an explicit logged override. Toggle each independently."
+  },
+  {
+   "fieldname": "att_block_absent",
+   "fieldtype": "Check",
+   "label": "Check attendance (block employees marked Absent)",
+   "default": "1",
+   "description": "Blocks when a submitted Attendance record says Absent on the date. Missing attendance never blocks."
+  },
+  {
+   "fieldname": "att_block_leave",
+   "fieldtype": "Check",
+   "label": "Check approved leaves",
+   "default": "1",
+   "description": "Blocks when an approved Leave Application covers the date(s)."
+  },
+  {
+   "fieldname": "att_block_off",
+   "fieldtype": "Check",
+   "label": "Check weekly offs / holidays",
+   "default": "1",
+   "description": "Actuals: blocks recording work on the employee's off day. Assigner: flags only when offs cover the whole assignment window."
   }
  ],
  "idx": 0,
