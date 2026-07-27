@@ -1468,7 +1468,7 @@ def wm_payment(**kwargs):
         disc_on = {}
         for dk in ("disc_absent_paid", "disc_ghost_days", "disc_leave_paid", "disc_off_paid",
                    "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning",
-                   "disc_no_pay"):
+                   "disc_no_pay", "disc_dup_day"):
             val = 1
             try:
                 val = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", dk))
@@ -1662,7 +1662,34 @@ def wm_payment(**kwargs):
                             "rowname": r.rowname,
                             "scan_in": scan_ev.get((r.employee, wd)),
                             "att_status": att_ev.get((r.employee, wd))})
+        # ---- duplicate day entries: same worker + task + date recorded in more
+        # than one document — double pay from overlapping assignments. ----
+        b_dup = []
+        for r in frappe.db.sql("""
+            SELECT we.employee, we.employee_name, ac.farm, ac.task, we.work_date wdate,
+                   COUNT(*) copies, COALESCE(SUM(we.amount),0) total_amt,
+                   COALESCE(MAX(we.amount),0) keep_amt,
+                   GROUP_CONCAT(DISTINCT ac.name) docs,
+                   GROUP_CONCAT(DISTINCT ac.entered_by) enterers,
+                   MIN(IFNULL(we.paid,0)) min_paid
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE """ + dconds + """ AND we.actual_quantity > 0
+            GROUP BY we.employee, we.employee_name, ac.farm, ac.task, we.work_date
+            HAVING COUNT(*) > 1
+            ORDER BY we.work_date DESC LIMIT 300
+        """, tuple(dparams), as_dict=True):
+            b_dup.append({"employee": r.employee, "employee_name": r.employee_name,
+                          "farm": r.farm, "task": r.task, "wdate": str(r.wdate),
+                          "copies": frappe.utils.cint(r.copies),
+                          "amount": frappe.utils.flt(r.total_amt) - frappe.utils.flt(r.keep_amt),
+                          "total_amt": frappe.utils.flt(r.total_amt),
+                          "actuals": r.docs, "entered_by": r.enterers,
+                          "paid": frappe.utils.cint(r.min_paid)})
         checks = [
+            {"key": "dup_day", "title": "Paid twice for the same day",
+             "about": "The same worker, task and date recorded in more than one actuals document — usually two overlapping assignments for one task. The KES figure is the EXCESS beyond one copy. Zero the duplicate day with Edit in the worker's review sheet.",
+             "rows": b_dup},
             {"key": "absent_paid", "title": "Paid on marked-Absent days",
              "about": "Money recorded on a day the worker's submitted attendance says Absent. A scan time means the attendance is probably wrong; no scan means the entry itself needs scrutiny.",
              "rows": b_absent},
@@ -1691,7 +1718,7 @@ def wm_payment(**kwargs):
              "about": "Quantities recorded but the row valued at ZERO although the document has a rate and the worker is a Task Worker — the worker-type lookup failed at entry, so these people will never be paid for the work. Revalue to qty × rate.",
              "rows": b_nopay},
         ]
-        toggle_map = {"no_pay": "disc_no_pay",
+        toggle_map = {"dup_day": "disc_dup_day", "no_pay": "disc_no_pay",
                       "absent_paid": "disc_absent_paid", "ghost_days": "disc_ghost_days",
                       "leave_paid": "disc_leave_paid", "off_paid": "disc_off_paid",
                       "rate_mismatch": "disc_rate_mismatch", "multi_farm_day": "disc_multi_farm",

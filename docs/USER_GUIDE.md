@@ -119,6 +119,11 @@ through to the worker's review sheet, with the actuals document named:
 - **Entered and approved by the same person** — no independent check.
 - **Earning after leaving the job** — released/substituted workers still
   collecting days.
+- **Paid twice for the same day** — the same worker, task and date recorded
+  in more than one actuals document (overlapping assignments for one task).
+  Shows the copies, both documents, the enterer and the excess KES. Entering
+  actuals now warns at save time when a worker-day is already recorded for
+  that task in another document.
 - **Recorded work with no pay** — quantities recorded but valued at ZERO
   (the worker-type lookup failed at entry). Shows what each row *should* be
   (qty × doc rate) and a one-click **Revalue** button that repairs the rows,
