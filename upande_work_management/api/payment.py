@@ -725,6 +725,7 @@ def wm_payment(**kwargs):
                 ORDER BY MIN(we.work_date) DESC
             """, tuple(hparams), as_dict=True)
             asg_cache = {}
+            std_cache = {}
             tmap = {}
             torder = []
             for g in grp:
@@ -743,9 +744,26 @@ def wm_payment(**kwargs):
                          "days": 0, "qty": 0, "amount": 0, "paid_amt": 0, "unpaid_amt": 0,
                          "docs": [], "assignments": {}, "runs": {}, "planners": {},
                          "assigned_by": {}, "fm_approved_by": {}, "entered_by": {},
-                         "hr_approved_by": {}, "gm_approved_by": {}, "rate_num": 0}
+                         "hr_approved_by": {}, "gm_approved_by": {}, "rate_num": 0,
+                         "standard": None}
                     tmap[key] = t
                     torder.append(key)
+                # the plan's work standard, e.g. "5 Ha/day" (task_kpi verbatim, else
+                # daily_target + uom). Shown as the Standard column in review sheets.
+                if ai and ai.planner_request and not t["standard"]:
+                    std = std_cache.get(ai.planner_request)
+                    if std is None:
+                        pstd = frappe.db.get_value("Work Management Planner", ai.planner_request,
+                            ["task_kpi", "daily_target", "uom"], as_dict=True)
+                        std = ""
+                        if pstd:
+                            if pstd.task_kpi:
+                                std = str(pstd.task_kpi)
+                            elif frappe.utils.flt(pstd.daily_target) > 0:
+                                std = str(frappe.utils.flt(pstd.daily_target)).rstrip("0").rstrip(".") + " " + (pstd.uom or "") + "/day"
+                        std_cache[ai.planner_request] = std
+                    if std:
+                        t["standard"] = std
                 t["docs"].append(g.actuals)
                 if g.assignment:
                     t["assignments"][g.assignment] = 1
@@ -797,6 +815,7 @@ def wm_payment(**kwargs):
                     "rate": (amt / t["qty"]) if t["qty"] else 0,
                     "amount": amt, "paid_amt": t["paid_amt"], "unpaid_amt": t["unpaid_amt"],
                     "pay_status": pstat,
+                    "standard": t["standard"],
                     "doc_count": len(t["docs"]),
                     "assignments": sorted(t["assignments"].keys()),
                     "planners": sorted(t["planners"].keys()),
@@ -1394,6 +1413,215 @@ def wm_payment(**kwargs):
             "with_scan": len([x for x in rows_out if x["scan_in"]]),
             "no_scan": len([x for x in rows_out if not x["scan_in"]]),
         }
+
+    elif action == "pay_discrepancies":
+        # AUDIT / DISCREPANCY ENGINE — every check is a way money can leak or a
+        # record can lie. Each returns auditable rows (worker, day, doc) so the
+        # reviewer can open the worker's sheet or the actuals doc directly.
+        dfarm = (frappe.form_dict.get("farms") or "").strip()
+        dfrom = frappe.form_dict.get("from_date")
+        dto = frappe.form_dict.get("to_date")
+        if not dfrom:
+            dfrom = str(frappe.utils.add_days(frappe.utils.today(), -31))
+        if not dto:
+            dto = str(frappe.utils.today())
+        dconds = "ac.workflow_state='CONFIRMED' AND we.amount > 0 AND we.work_date BETWEEN %s AND %s"
+        dparams = [dfrom, dto]
+        farm_list_d = []
+        if dfarm:
+            for f in dfarm.split(","):
+                fv = f.strip()
+                if fv:
+                    farm_list_d.append(fv)
+        if farm_list_d:
+            dconds = dconds + " AND TRIM(ac.farm) IN %s"
+            dparams.append(tuple(farm_list_d))
+        base_rows = frappe.db.sql("""
+            SELECT we.name rowname, we.employee, we.employee_name, ac.farm, ac.task,
+                   ac.name actuals, we.work_date wdate, we.actual_quantity qty,
+                   we.amount, IFNULL(we.paid,0) paid, we.payment_ref run_ref,
+                   ac.rate doc_rate, IFNULL(we.count_in_payroll,0) in_pay,
+                   ac.entered_by entered_by
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE """ + dconds + """
+            ORDER BY we.work_date DESC
+            LIMIT 30000
+        """, tuple(dparams), as_dict=True)
+        # ---- evidence maps for the window ----
+        demps = tuple(set([r.employee for r in base_rows])) or ("__none__",)
+        scan_ev = {}
+        att_ev = {}
+        for r2 in frappe.db.sql("""
+            SELECT employee, DATE(`time`) d, MIN(`time`) t FROM `tabEmployee Checkin`
+            WHERE employee IN %s AND DATE(`time`) BETWEEN %s AND %s
+            GROUP BY employee, DATE(`time`)
+        """, (demps, dfrom, dto), as_dict=True):
+            scan_ev[(r2.employee, str(r2.d))] = str(r2.t)[11:16]
+        for r2 in frappe.db.sql("""
+            SELECT employee, attendance_date d, status FROM `tabAttendance`
+            WHERE docstatus = 1 AND employee IN %s AND attendance_date BETWEEN %s AND %s
+        """, (demps, dfrom, dto), as_dict=True):
+            att_ev[(r2.employee, str(r2.d))] = r2.status
+        leave_ev = {}
+        for r2 in frappe.db.sql("""
+            SELECT employee, leave_type, from_date, to_date FROM `tabLeave Application`
+            WHERE docstatus < 2 AND (status='Approved' OR docstatus=1)
+              AND from_date <= %s AND to_date >= %s AND employee IN %s
+        """, (dto, dfrom, demps), as_dict=True):
+            lst = leave_ev.get(r2.employee)
+            if lst is None:
+                lst = []
+                leave_ev[r2.employee] = lst
+            lst.append((str(r2.from_date), str(r2.to_date), r2.leave_type or "leave"))
+        hl_ev = {}
+        for r2 in frappe.db.sql("""
+            SELECT name, holiday_list FROM `tabEmployee`
+            WHERE name IN %s AND IFNULL(holiday_list,'') != ''
+        """, (demps,), as_dict=True):
+            hl_ev[r2.name] = r2.holiday_list
+        off_ev = {}
+        if hl_ev:
+            for r2 in frappe.db.sql("""
+                SELECT parent, holiday_date FROM `tabHoliday`
+                WHERE parent IN %s AND holiday_date BETWEEN %s AND %s
+            """, (tuple(set(hl_ev.values())), dfrom, dto), as_dict=True):
+                off_ev[(r2.parent, str(r2.holiday_date))] = 1
+        # ---- single pass: bucket rows into the presence-based checks ----
+        today_d = str(frappe.utils.today())
+        b_absent = []
+        b_ghost = []
+        b_leave = []
+        b_off = []
+        b_rate = []
+        for r in base_rows:
+            wd = str(r.wdate)
+            rr = {"employee": r.employee, "employee_name": r.employee_name,
+                  "farm": r.farm, "task": r.task, "actuals": r.actuals, "wdate": wd,
+                  "qty": frappe.utils.flt(r.qty), "amount": frappe.utils.flt(r.amount),
+                  "paid": frappe.utils.cint(r.paid), "run_ref": r.run_ref,
+                  "entered_by": r.entered_by,
+                  "scan_in": scan_ev.get((r.employee, wd))}
+            astat = att_ev.get((r.employee, wd))
+            if astat == "Absent":
+                b_absent.append(rr)
+            elif wd <= today_d and not rr["scan_in"] and not astat:
+                b_ghost.append(rr)
+            onlv = 0
+            for lv in leave_ev.get(r.employee, []):
+                if lv[0] <= wd <= lv[1]:
+                    rr2 = dict(rr)
+                    rr2["leave_type"] = lv[2]
+                    b_leave.append(rr2)
+                    onlv = 1
+                    break
+            if not onlv and hl_ev.get(r.employee) and off_ev.get((hl_ev[r.employee], wd)):
+                b_off.append(rr)
+            # amount should equal qty x doc rate for payroll rows
+            if frappe.utils.cint(r.in_pay) and frappe.utils.flt(r.doc_rate) > 0:
+                expect = frappe.utils.flt(r.qty) * frappe.utils.flt(r.doc_rate)
+                if abs(expect - frappe.utils.flt(r.amount)) > 0.5:
+                    rr3 = dict(rr)
+                    rr3["expected"] = expect
+                    rr3["rate"] = frappe.utils.flt(r.doc_rate)
+                    b_rate.append(rr3)
+        # ---- same worker earning on 2+ farms the same day ----
+        b_multi = []
+        mf = frappe.db.sql("""
+            SELECT we.employee, we.employee_name, we.work_date wdate,
+                   COUNT(DISTINCT ac.farm) farms,
+                   GROUP_CONCAT(DISTINCT ac.farm) farm_list,
+                   GROUP_CONCAT(DISTINCT ac.name) docs,
+                   COALESCE(SUM(we.amount),0) amount
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE """ + dconds + """
+            GROUP BY we.employee, we.employee_name, we.work_date
+            HAVING COUNT(DISTINCT ac.farm) > 1
+            ORDER BY we.work_date DESC LIMIT 300
+        """, tuple(dparams), as_dict=True)
+        for r in mf:
+            b_multi.append({"employee": r.employee, "employee_name": r.employee_name,
+                            "wdate": str(r.wdate), "farms": r.farm_list, "actuals": r.docs,
+                            "amount": frappe.utils.flt(r.amount)})
+        # ---- self-approval: the person who entered the actuals also approved them ----
+        sconds2 = "ac.workflow_state='CONFIRMED' AND ac.entry_date BETWEEN %s AND %s"
+        sparams2 = [dfrom, dto]
+        if farm_list_d:
+            sconds2 = sconds2 + " AND TRIM(ac.farm) IN %s"
+            sparams2.append(tuple(farm_list_d))
+        b_self = []
+        for r in frappe.db.sql("""
+            SELECT ac.name actuals, ac.farm, ac.task, ac.entered_by,
+                   ac.hr_approved_by, ac.gm_approved_by, ac.entry_date,
+                   ac.total_payment amount
+            FROM `tabWork Management Actuals` ac
+            WHERE """ + sconds2 + """
+              AND (ac.entered_by = ac.hr_approved_by OR ac.entered_by = ac.gm_approved_by)
+            ORDER BY ac.entry_date DESC LIMIT 300
+        """, tuple(sparams2), as_dict=True):
+            b_self.append({"actuals": r.actuals, "farm": r.farm, "task": r.task,
+                           "entered_by": r.entered_by,
+                           "hr_approved_by": r.hr_approved_by, "gm_approved_by": r.gm_approved_by,
+                           "wdate": str(r.entry_date), "amount": frappe.utils.flt(r.amount)})
+        # ---- worker marked Left but still earning after their left date ----
+        b_left = []
+        for r in frappe.db.sql("""
+            SELECT we.employee, we.employee_name, ac.farm, ac.task, ac.name actuals,
+                   we.work_date wdate, we.amount, wae.left_date
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            INNER JOIN `tabWork Assignment Employee` wae ON wae.parent = a2.name
+                  AND wae.employee = we.employee AND wae.status = 'Left'
+                  AND wae.left_date IS NOT NULL AND we.work_date > wae.left_date
+            WHERE """ + dconds + """
+            ORDER BY we.work_date DESC LIMIT 300
+        """, tuple(dparams), as_dict=True):
+            b_left.append({"employee": r.employee, "employee_name": r.employee_name,
+                           "farm": r.farm, "task": r.task, "actuals": r.actuals,
+                           "wdate": str(r.wdate), "left_date": str(r.left_date),
+                           "amount": frappe.utils.flt(r.amount)})
+        checks = [
+            {"key": "absent_paid", "title": "Paid on marked-Absent days",
+             "about": "Money recorded on a day the worker's submitted attendance says Absent. A scan time means the attendance is probably wrong; no scan means the entry itself needs scrutiny.",
+             "rows": b_absent},
+            {"key": "ghost_days", "title": "No presence evidence at all",
+             "about": "Work recorded on a day with no biometric scan and no attendance record of any kind — presence unknown. Could be a reader gap or a ghost entry.",
+             "rows": b_ghost},
+            {"key": "leave_paid", "title": "Earning while on approved leave",
+             "about": "Task pay recorded on days covered by an approved Leave Application — possible double payment (leave pay + task pay).",
+             "rows": b_leave},
+            {"key": "off_paid", "title": "Work recorded on off days / holidays",
+             "about": "Pay on the worker's weekly off or a public holiday. May be legitimate overtime — but should be deliberate, not accidental.",
+             "rows": b_off},
+            {"key": "rate_mismatch", "title": "Amount doesn't match qty × rate",
+             "about": "Payroll rows where the stored amount differs from quantity × the document rate — edited or corrupted values.",
+             "rows": b_rate},
+            {"key": "multi_farm_day", "title": "Two farms, one day",
+             "about": "The same worker earning on more than one farm on the same date — physically doubtful; usually a wrong worker picked.",
+             "rows": b_multi},
+            {"key": "self_approved", "title": "Entered and approved by the same person",
+             "about": "Actuals documents where the person who entered the quantities also gave the HR or GM approval — no independent check.",
+             "rows": b_self},
+            {"key": "left_but_earning", "title": "Earning after leaving the job",
+             "about": "Rows dated after the worker was marked Left on that assignment — a substituted/released worker still collecting days.",
+             "rows": b_left},
+        ]
+        for c in checks:
+            amts = 0
+            wku = {}
+            for x in c["rows"]:
+                amts = amts + frappe.utils.flt(x.get("amount"))
+                if x.get("employee"):
+                    wku[x["employee"]] = 1
+            c["count"] = len(c["rows"])
+            c["workers"] = len(wku)
+            c["amount"] = amts
+            c["rows"] = c["rows"][:200]
+        out["checks"] = checks
+        out["window"] = {"from": dfrom, "to": dto}
+        out["scanned_rows"] = len(base_rows)
 
     # ===== DASHBOARD (fast: grouped queries) =====
     else:

@@ -789,6 +789,7 @@
       el("au-v-summary").onclick = function(){ setAuditView("summary"); };
       el("au-v-detail").onclick = function(){ setAuditView("detail"); };
       if(el("au-v-workers")) el("au-v-workers").onclick = function(){ setAuditView("workers"); };
+      if(el("au-v-disc")) el("au-v-disc").onclick = function(){ setAuditView("disc"); };
       AU.wired = true;
     }
     setAuditViewButtons();
@@ -797,10 +798,11 @@
 
   function setAuditView(v){ AU.view=v; setAuditViewButtons(); renderAudit(); }
   function setAuditViewButtons(){
-    var s=el("au-v-summary"), d=el("au-v-detail"), w=el("au-v-workers");
+    var s=el("au-v-summary"), d=el("au-v-detail"), w=el("au-v-workers"), x=el("au-v-disc");
     if(s) s.classList.toggle("pay", AU.view==="summary");
     if(d) d.classList.toggle("pay", AU.view==="detail");
     if(w) w.classList.toggle("pay", AU.view==="workers");
+    if(x) x.classList.toggle("pay", AU.view==="disc");
   }
 
   function auFarmsCSV(){ var k=Object.keys(AU.farms); return k.length?k.join(","):""; }
@@ -811,6 +813,7 @@
     var r={from:el("au-from").value||"", to:el("au-to").value||""};
     call({action:"pay_audit", from_date:r.from, to_date:r.to, farms:auFarmsCSV()}).then(function(d){
       AU.summary=d.summary||[]; AU.detail=d.detail||[]; AU.totals=d.totals||null; AU.loaded=true;
+      AU.disc=null;   // discrepancies reload with the new filters when that view opens
       // farm chip set from summary rows
       var fs={}; AU.summary.forEach(function(s){ if(s.farm) fs[s.farm]=1; });
       AU.allFarms=Object.keys(fs).sort();
@@ -861,7 +864,105 @@
     if(!AU.loaded){ box.innerHTML='<div class="loading">Pick a date range and press Apply&hellip;</div>'; return; }
     if(AU.view==="summary") renderAuditSummary(box);
     else if(AU.view==="workers") renderAuditWorkers(box);
+    else if(AU.view==="disc") renderAuditDisc(box);
     else renderAuditDetail(box);
+  }
+
+  // ════ AUDIT · DISCREPANCIES — every way money can leak, each row auditable ════
+  function renderAuditDisc(box){
+    if(!AU.disc){
+      box.innerHTML='<div class="loading">Scanning for discrepancies&hellip;</div>';
+      var r={from:el("au-from").value||"", to:el("au-to").value||""};
+      call({action:"pay_discrepancies", from_date:r.from, to_date:r.to, farms:auFarmsCSV()}).then(function(d){
+        if(d.error){ box.innerHTML='<div class="err">'+esc(d.error)+'</div>'; return; }
+        AU.disc=d;
+        renderAuditDisc(box);
+      }).catch(function(e){ box.innerHTML='<div class="err">Could not scan: '+esc(e.message)+'</div>'; });
+      return;
+    }
+    var d=AU.disc, checks=d.checks||[], win=d.window||{};
+    var totalIssues=0; checks.forEach(function(c){ totalIssues+=c.count||0; });
+    var h='<div class="filters" style="margin-bottom:12px;padding:8px 14px"><span class="hint">'+
+      'Window <b>'+esc(win.from||"")+' &rarr; '+esc(win.to||"")+'</b> · '+fmt(d.scanned_rows)+' confirmed worker-day rows checked · '+
+      '<b style="color:'+(totalIssues?'var(--bad)':'var(--good)')+'">'+fmt(totalIssues)+' findings</b>'+
+      '</span><span style="flex:1"></span><span class="hint">Click a worker to open their review sheet — every record here is auditable.</span></div>';
+    checks.forEach(function(c,ci){
+      var open = AU.discOpen!=null ? (AU.discOpen===c.key) : (ci===0 && c.count>0);
+      var sev = c.count ? (c.key==="off_paid" ? "var(--warn, #a06000)" : "var(--bad, #b91c1c)") : "var(--good, #0a7a43)";
+      h+='<div style="border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden">'+
+        '<div class="disc-head" data-disc="'+esc(c.key)+'" style="padding:12px 16px;background:var(--wash);display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;cursor:pointer">'+
+          '<b style="font-size:13px">'+esc(c.title)+'</b>'+
+          '<span class="m" style="font-weight:700;color:'+sev+'">'+fmt(c.count)+(c.count>=200?"+":"")+' row'+(c.count===1?"":"s")+'</span>'+
+          (c.workers?'<span class="hint">'+fmt(c.workers)+' workers</span>':'')+
+          (c.amount?'<span class="m" style="font-weight:600">'+money(c.amount)+'</span>':'')+
+          '<span style="flex:1"></span><span class="hint">'+(open?"▾":"▸")+'</span>'+
+        '</div>'+
+        '<div style="padding:6px 16px 0;font-size:11px;color:var(--mute)">'+esc(c.about)+'</div>'+
+        '<div class="disc-body" id="disc-'+esc(c.key)+'" style="display:'+(open?"block":"none")+';padding:10px 16px 14px">'+
+        discTable(c)+'</div></div>';
+    });
+    box.innerHTML=h;
+    box.querySelectorAll(".disc-head").forEach(function(hd){
+      hd.onclick=function(){
+        var k=hd.getAttribute("data-disc");
+        AU.discOpen=(AU.discOpen===k)?"__none__":k;
+        renderAuditDisc(box);
+      };
+    });
+    box.querySelectorAll("[data-wraudit]").forEach(function(a){
+      a.onclick=function(){ openWorkerReview(a.getAttribute("data-wraudit"), auditWindow()); };
+    });
+  }
+
+  function discTable(c){
+    var rows=c.rows||[];
+    if(!rows.length) return '<div class="empty" style="padding:16px">Nothing found — clean.</div>';
+    function wlink(r){
+      return r.employee ? '<span class="rowlink" data-wraudit="'+esc(r.employee)+'">'+esc(r.employee_name||r.employee)+'</span>' : '—';
+    }
+    var h='<div class="tablescroll" style="max-height:380px"><table style="margin-top:0"><thead><tr>';
+    var body='';
+    if(c.key==="multi_farm_day"){
+      h+='<th>Worker</th><th>Day</th><th>Farms</th><th class="n">KES</th><th>Actuals docs</th>';
+      rows.forEach(function(r){
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farms||"")+'</td>'+
+          '<td class="n m">'+fmt(r.amount)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td></tr>';
+      });
+    } else if(c.key==="self_approved"){
+      h+='<th>Actuals doc</th><th>Farm</th><th>Task</th><th>Entered by</th><th>HR appr.</th><th>GM appr.</th><th class="n">KES</th>';
+      rows.forEach(function(r){
+        body+='<tr><td class="m">'+esc(r.actuals)+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+          '<td>'+esc(shortUser(r.entered_by))+'</td><td>'+esc(shortUser(r.hr_approved_by)||"—")+'</td><td>'+esc(shortUser(r.gm_approved_by)||"—")+'</td>'+
+          '<td class="n m">'+fmt(r.amount)+'</td></tr>';
+      });
+    } else if(c.key==="left_but_earning"){
+      h+='<th>Worker</th><th>Day worked</th><th>Left on</th><th>Farm</th><th>Task</th><th class="n">KES</th><th>Doc</th>';
+      rows.forEach(function(r){
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td class="m" style="color:var(--bad)">'+esc(dshort(r.left_date))+'</td>'+
+          '<td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td><td class="n m">'+fmt(r.amount)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
+      });
+    } else if(c.key==="rate_mismatch"){
+      h+='<th>Worker</th><th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Expected</th><th class="n">Stored</th><th>Doc</th>';
+      rows.forEach(function(r){
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.task||"")+'</td>'+
+          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
+          '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
+      });
+    } else {
+      // presence-based checks: absent_paid / ghost_days / leave_paid / off_paid
+      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Scan</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
+      rows.forEach(function(r){
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
+          '<td class="c m">'+(r.scan_in?('<span style="color:#0a7a43;font-weight:700">in '+esc(r.scan_in)+'</span>'):'<span style="color:#a06000">—</span>')+'</td>'+
+          (c.key==="leave_paid"?('<td>'+esc(r.leave_type||"")+'</td>'):'')+
+          '<td class="c">'+payTag(r.paid?"Paid":"Unpaid")+'</td>'+
+          '<td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
+      });
+    }
+    h+='</tr></thead><tbody>'+body+'</tbody></table></div>';
+    if(c.count>=200) h+='<div class="note">Showing the first 200 rows — narrow the date range or farm filter to see the rest.</div>';
+    return h;
   }
 
   function renderAuditSummary(box){
@@ -1094,16 +1195,17 @@
     if(!tasks.length){ h+='<div class="empty">No confirmed work in this window.</div>'; }
     else{
       h+='<div class="tablewrap"><table><thead><tr>'+
-        '<th>Task</th><th>Block</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
+        '<th>Task</th><th>Block</th><th>Standard</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
         '<th class="n">Rate</th><th class="n">Amount KES</th><th class="n">Unpaid</th><th class="c">Status</th></tr></thead><tbody>';
       tasks.forEach(function(t){
         h+='<tr><td><b>'+esc(t.task||"—")+'</b></td><td>'+esc(lbl(t.block)||"—")+'</td>'+
+          '<td class="m">'+esc(t.standard||"—")+'</td>'+
           '<td class="m">'+esc(dshort(t.work_from))+' &rarr; '+esc(dshort(t.work_to))+'</td>'+
           '<td class="n m">'+fmt(t.days)+'</td><td class="n m">'+fmt(t.qty)+'</td><td class="n m">'+fmt(t.rate,2)+'</td>'+
           '<td class="n m">'+fmt(t.amount)+'</td><td class="n m">'+fmt(t.unpaid_amt)+'</td>'+
           '<td class="c">'+payTag(t.pay_status)+'</td></tr>';
       });
-      h+='</tbody><tfoot><tr><th colspan="3">TOTAL</th><th class="n">'+fmt(k.days)+'</th><th class="n">'+fmt(k.qty)+'</th><th></th>'+
+      h+='</tbody><tfoot><tr><th colspan="4">TOTAL</th><th class="n">'+fmt(k.days)+'</th><th class="n">'+fmt(k.qty)+'</th><th></th>'+
          '<th class="n">'+fmt(k.earned)+'</th><th class="n">'+fmt(k.unpaid_amt)+'</th><th></th></tr></tfoot></table></div>';
     }
     // people involved (union)
@@ -1140,6 +1242,7 @@
         '<div style="padding:8px 16px;border-top:1px solid var(--faint);font-size:11px;color:var(--mute);display:flex;flex-wrap:wrap;gap:4px 18px">'+
           '<span><b style="color:var(--ink)">Task period:</b> '+esc(dshort(t.plan_from)||dshort(t.work_from))+' &rarr; '+esc(dshort(t.plan_to)||dshort(t.work_to))+'</span>'+
           '<span><b style="color:var(--ink)">Worked:</b> '+esc(dshort(t.work_from))+' &rarr; '+esc(dshort(t.work_to))+' ('+fmt(t.days)+' day'+(t.days===1?'':'s')+')</span>'+
+          (t.standard?'<span><b style="color:var(--ink)">Standard:</b> '+esc(t.standard)+'</span>':'')+
           ((t.assignments&&t.assignments.length)?'<span><b style="color:var(--ink)">Assignment'+(t.assignments.length>1?'s':'')+':</b> '+esc(t.assignments.join(", "))+'</span>':'')+
           ((t.runs&&t.runs.length)?'<span><b style="color:var(--ink)">Run'+(t.runs.length>1?'s':'')+':</b> '+esc(t.runs.join(", "))+'</span>':'')+
         '</div>'+
@@ -1400,10 +1503,10 @@
       ["Unpaid KES", k.unpaid_amt||0, "Days worked", k.days||0],
       ["Tasks", tasks.length, "Total qty", k.qty||0],
       [],
-      ["Task","Block","Farm","Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
+      ["Task","Block","Standard","Farm","Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
     ];
     tasks.forEach(function(t){
-      s1.push([t.task||"", t.block||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,
+      s1.push([t.task||"", t.block||"", t.standard||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,
                Math.round((t.rate||0)*100)/100, t.amount||0, t.unpaid_amt||0, t.pay_status||""]);
     });
     s1.push(["TOTAL","","","","", k.days||0, k.qty||0, "", k.earned||0, k.unpaid_amt||0, ""]);
@@ -1414,7 +1517,7 @@
       var rows=(byTask[kk]||[]).slice().sort(function(a,b){ return (a.wdate||"")<(b.wdate||"")?-1:1; });
       s2.push([(t.task||"—")+" · "+(t.block||"—")+" · "+(t.farm||""), "", "", "KES "+fmt(t.amount), t.pay_status||""]);
       s2.push(["Task period", (t.plan_from||t.work_from||"")+" → "+(t.plan_to||t.work_to||""),
-               "Worked", (t.work_from||"")+" → "+(t.work_to||"")+" ("+(t.days||0)+" days)"]);
+               "Worked", (t.work_from||"")+" → "+(t.work_to||"")+" ("+(t.days||0)+" days)"+(t.standard?(" · standard "+t.standard):"")]);
       if(t.assignments&&t.assignments.length) s2.push(["Assignments", t.assignments.join(", ")]);
       var who=workerPeople(t);
       if(who) s2.push(["Sign-offs", who]);

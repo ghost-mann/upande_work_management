@@ -90,6 +90,10 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 .wm-menu a:hover{background:rgba(10,10,10,.05);color:#0a0a0a;text-decoration:none}
 .wm-menu a.danger{color:#b91c1c}
 .wm-menu a.danger:hover{background:rgba(185,28,28,.08);color:#b91c1c}
+
+/* checkboxes: golden accent — default white boxes disappear on the glass surfaces */
+:is(#wmp,#wpp,#wap,#acp,#wpay) input[type=checkbox]{accent-color:#a06000;width:15px;height:15px;cursor:pointer}
+:is(#wmp,#wpp,#wap,#acp,#wpay) input[type=checkbox]:not(:checked){outline:1px solid rgba(160,96,0,.55);outline-offset:-1px;border-radius:3px;background:rgba(255,255,255,.9)}
 </style>
 <div class="wm-canvas">
 <div id="wpp">
