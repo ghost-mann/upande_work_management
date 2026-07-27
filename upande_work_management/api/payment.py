@@ -996,7 +996,7 @@ def wm_payment(**kwargs):
                     old_amt = frappe.utils.flt(row.amount)
                     rate = (old_amt / old_qty) if old_qty else frappe.utils.flt(
                         frappe.db.get_value("Work Management Actuals", row.parent, "rate"))
-                    new_amt = new_qty * rate
+                    new_amt = round(new_qty * rate, 2)
                     frappe.db.set_value("Work Actuals Employee", rowname, "actual_quantity", new_qty, update_modified=False)
                     frappe.db.set_value("Work Actuals Employee", rowname, "amount", new_amt, update_modified=False)
                     frappe.db.set_value("Work Actuals Employee", rowname, "custom_reviewed", 0, update_modified=False)
@@ -1754,7 +1754,7 @@ def wm_payment(**kwargs):
                 if etype != "Task Worker":
                     errors.append({"rowname": rn, "error": "worker is not a Task Worker (" + str(etype) + ")"})
                     continue
-                new_amt = frappe.utils.flt(row.actual_quantity) * frappe.utils.flt(pinfo.rate)
+                new_amt = round(frappe.utils.flt(row.actual_quantity) * frappe.utils.flt(pinfo.rate), 2)
                 frappe.db.set_value("Work Actuals Employee", rn, "employment_type", "Task Worker", update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "count_in_payroll", 1, update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "amount", new_amt, update_modified=False)
@@ -1833,7 +1833,7 @@ def wm_payment(**kwargs):
             tgt = bad_plans.get(r.plan)
             if not tgt:
                 continue
-            new_amt = frappe.utils.flt(r.qty) * (WAGE / tgt)
+            new_amt = round(frappe.utils.flt(r.qty) * (WAGE / tgt), 2)
             if abs(new_amt - frappe.utils.flt(r.amount)) > 0.01:
                 todo.append((r.rowname, r.parent, new_amt, frappe.utils.flt(r.amount)))
                 old_total = old_total + frappe.utils.flt(r.amount)
@@ -1860,6 +1860,38 @@ def wm_payment(**kwargs):
             out["fixed_now"] = len(batch)
             out["parents_resummed"] = len(parents_r)
             out["remaining"] = len(todo) - len(batch)
+
+    elif action == "pay_round_amounts":
+        # HYGIENE: round unpaid confirmed row amounts to the cent (removes float
+        # artifacts like 338.99999999999994) and re-sum the parents. Chunked.
+        rr_rows = frappe.db.sql("""
+            SELECT we.name rowname, we.parent, we.amount
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(we.paid,0) = 0
+              AND we.amount != ROUND(we.amount, 2)
+            LIMIT 900
+        """, as_dict=True)
+        parents_rr = {}
+        for r in rr_rows:
+            frappe.db.set_value("Work Actuals Employee", r.rowname, "amount", round(frappe.utils.flt(r.amount), 2), update_modified=False)
+            parents_rr[r.parent] = 1
+        for pname in parents_rr:
+            tots = frappe.db.sql("""
+                SELECT COALESCE(SUM(amount),0) p FROM `tabWork Actuals Employee` WHERE parent=%s
+            """, (pname,), as_dict=True)
+            if tots:
+                frappe.db.set_value("Work Management Actuals", pname, "total_payment", round(frappe.utils.flt(tots[0].p), 2), update_modified=False)
+        frappe.db.commit()
+        remaining_rr = frappe.db.sql("""
+            SELECT COUNT(*) n FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(we.paid,0) = 0
+              AND we.amount != ROUND(we.amount, 2)
+        """, as_dict=True)
+        out["rounded"] = len(rr_rows)
+        out["parents_resummed"] = len(parents_rr)
+        out["remaining"] = frappe.utils.cint(remaining_rr[0].n) if remaining_rr else 0
 
     # ===== DASHBOARD (fast: grouped queries) =====
     else:

@@ -631,7 +631,7 @@
     // KPIs
     el("o-people").textContent=Object.keys(people).length;
     el("o-paid").textContent=Object.keys(payPeople).length;
-    el("o-pay").textContent = grandPay>0?fmt(grandPay):"—";
+    el("o-pay").textContent = grandPay>0?fmt(grandPay,2):"—";
     // remaining preview: target - (already-confirmed-elsewhere + this draft)
     var target=a.target_qty||0;
     var alreadyDone=(a.done!=null?a.done:(a.fulfilled_qty||0));  // qty confirmed on OTHER docs for this plan
@@ -645,7 +645,7 @@
       balanceLine = ' · <span style="color:#555">task-worker <b>'+fmt(twNow)+'</b> + salaried <b>'+fmt(salNow)+'</b>'+
         ' · balance vs target <b>'+(projRemain<0?"0":fmt(projRemain))+' '+esc(a.uom||"")+'</b></span>';
     }
-    el("ac-varnote").innerHTML="This entry adds <b>"+fmt(grand)+"</b> "+esc(a.uom||"")+" · projected remaining <b>"+(projRemain<0?"0":fmt(projRemain))+"</b>"+(over?' <span style="color:#a00;font-weight:700">⚠ exceeds target — reduce by '+fmt(projected-target)+' to submit</span>':'')+(noTarget?' <span style="color:#a00;font-weight:700">⚠ plan has no target set — cannot submit</span>':'')+" · payment <b>KES "+fmt(grandPay)+"</b>"+balanceLine+(salariedOnly&&projRemain>0?' <span style="color:#0a7a43;font-weight:600">✓ salaried — balance documented, no need to finish target</span>':'');
+    el("ac-varnote").innerHTML="This entry adds <b>"+fmt(grand)+"</b> "+esc(a.uom||"")+" · projected remaining <b>"+(projRemain<0?"0":fmt(projRemain))+"</b>"+(over?' <span style="color:#a00;font-weight:700">⚠ exceeds target — reduce by '+fmt(projected-target)+' to submit</span>':'')+(noTarget?' <span style="color:#a00;font-weight:700">⚠ plan has no target set — cannot submit</span>':'')+" · payment <b>KES "+fmt(grandPay,2)+"</b>"+balanceLine+(salariedOnly&&projRemain>0?' <span style="color:#0a7a43;font-weight:600">✓ salaried — balance documented, no need to finish target</span>':'');
     // LIVE picker row: reflect the qty being typed (not yet saved) on the selected assignment's bar + "left"
     updatePickerRowLive(ST.asg, target, projected);
     var locked=a.live_name?true:false;
@@ -705,7 +705,7 @@
       if(d.error){ toast("Error: "+d.error); refresh(); return; }
       if(d.submit_blocked){ toast(d.submit_blocked); }
       else if(ST._editingDoc){ toast("Updated "+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")); var bn=el("ac-editbanner"); if(bn){bn.style.display="none";} ST._editingDoc=null; ST._editingStage=null; }
-      else toast((submitNow?"Submitted ":"Draft saved ")+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")+" · KES "+fmt(d.total_payment));
+      else toast((submitNow?"Submitted ":"Draft saved ")+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")+" · KES "+fmt(d.total_payment,2));
       if(submitNow && !d.submit_blocked){
         ST.asg=null; ST.cells={}; ST.detail=null;
         el("ac-asg").value=""; el("ac-detail").style.display="none";
