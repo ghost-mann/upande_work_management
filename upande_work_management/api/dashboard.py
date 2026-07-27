@@ -2279,6 +2279,94 @@ def wm_dashboard(**kwargs):
         out["gl_accounts"] = gl_accounts
         out["gl_total"] = gl_total
 
+    elif action == "labour_series":
+        # LABOUR: daily Present (attendance) vs Assigned (on live assignments) vs
+        # Worked (actuals recorded) per farm — the gaps between the lines are idle
+        # hands, jobs given to absent people, and assignments with no output.
+        lfrom = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -27))
+        lto = frappe.form_dict.get("to_date") or str(frappe.utils.today())
+        if frappe.utils.date_diff(lto, lfrom) > 92:
+            lfrom = str(frappe.utils.add_days(lto, -92))
+        ldays = []
+        cur_d = lfrom
+        guard_d = 0
+        while cur_d <= lto and guard_d < 100:
+            ldays.append(cur_d)
+            cur_d = str(frappe.utils.add_days(cur_d, 1))
+            guard_d = guard_d + 1
+        series = {}
+        for fm in FARMS:
+            series[fm] = {"present": {}, "assigned": {}, "worked": {}}
+        # present: submitted attendance joined to the employee's farm
+        for r in frappe.db.sql("""
+            SELECT emp.custom_farm farm, att.attendance_date d, COUNT(DISTINCT att.employee) n
+            FROM `tabAttendance` att
+            INNER JOIN `tabEmployee` emp ON emp.name = att.employee
+            WHERE att.docstatus = 1 AND att.status IN ('Present','Half Day','Work From Home')
+              AND att.attendance_date BETWEEN %s AND %s
+              AND TRIM(emp.custom_farm) IN %s
+            GROUP BY emp.custom_farm, att.attendance_date
+        """, (lfrom, lto, tuple(FARMS)), as_dict=True):
+            fm = (r.farm or "").strip()
+            if fm in series:
+                series[fm]["present"][str(r.d)] = frappe.utils.cint(r.n)
+        # worked: distinct employees with actuals day-rows (any live doc state)
+        for r in frappe.db.sql("""
+            SELECT ac.farm farm, we.work_date d, COUNT(DISTINCT we.employee) n
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+              AND we.work_date BETWEEN %s AND %s
+            GROUP BY ac.farm, we.work_date
+        """, (lfrom, lto), as_dict=True):
+            fm = (r.farm or "").strip()
+            if fm in series:
+                series[fm]["worked"][str(r.d)] = frappe.utils.cint(r.n)
+        # assigned: expand each assignment worker's active span across the window
+        aseen = {}
+        for r in frappe.db.sql("""
+            SELECT a.farm farm, a.from_date afrom, a.to_date ato,
+                   we.employee emp, we.status wstatus, we.start_date wstart, we.left_date wleft
+            FROM `tabWork Assignment Employee` we
+            INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
+            WHERE a.workflow_state IN ('Pending HR Head','Pending GM','Assigned')
+              AND a.from_date <= %s AND a.to_date >= %s
+            LIMIT 60000
+        """, (lto, lfrom), as_dict=True):
+            fm = (r.farm or "").strip()
+            if fm not in series:
+                continue
+            s0 = str(r.afrom)
+            s1 = str(r.ato)
+            if r.wstart and str(r.wstart) > s0:
+                s0 = str(r.wstart)
+            if r.wleft and str(r.wleft) < s1:
+                s1 = str(r.wleft)
+            if s0 < lfrom:
+                s0 = lfrom
+            if s1 > lto:
+                s1 = lto
+            dcur = s0
+            guard2 = 0
+            while dcur <= s1 and guard2 < 100:
+                aseen[(fm, dcur, r.emp)] = 1
+                dcur = str(frappe.utils.add_days(dcur, 1))
+                guard2 = guard2 + 1
+        for k in aseen:
+            m = series[k[0]]["assigned"]
+            m[k[1]] = m.get(k[1], 0) + 1
+        # flatten to arrays aligned with ldays
+        flat = {}
+        for fm in FARMS:
+            flat[fm] = {
+                "present": [series[fm]["present"].get(dd, 0) for dd in ldays],
+                "assigned": [series[fm]["assigned"].get(dd, 0) for dd in ldays],
+                "worked": [series[fm]["worked"].get(dd, 0) for dd in ldays],
+            }
+        out["days"] = ldays
+        out["farms"] = FARMS
+        out["series"] = flat
+
     else:
         out["error"] = "unknown action: " + str(action)
 
