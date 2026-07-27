@@ -512,6 +512,8 @@
           '<span><b style="color:#bbb">·</b> rest day / holiday</span>'+
           '<span><b style="color:#c2760c">L</b> approved leave (blocked)</span>'+
           '<span><b style="color:#d97706">○</b> pending leave (can still enter)</span>'+
+          '<span><b style="color:#0a7a43">P</b> scanned in / marked present that day</span>'+
+          '<span><b style="color:#b91c1c">?</b> no scan or attendance (past day)</span>'+
           '</div>'+
           '<div style="overflow-x:auto"><table class="grid"><thead><tr>'+
           '<th class="wname">Worker</th>';
@@ -546,7 +548,18 @@
         } else {
           var pendCls = isLeavePend ? " leavepend" : "";
           var pendTitle = isLeavePend ? ' title="pending leave request — not yet approved"' : '';
-          h+='<td class="dcell'+pendCls+'"'+pendTitle+'><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+'</td>';
+          // presence chip: green P = scanned/marked present that day; red ? = past day with no evidence
+          var pmark="";
+          if(a.today && iso<=a.today){
+            var scanT=(w.scan_dates||{})[iso];
+            var attP=(w.present_dates||{})[iso];
+            if(scanT||attP){
+              pmark='<span title="'+(scanT?('scanned in '+esc(scanT)):'marked present')+'" style="position:absolute;top:1px;left:3px;font-size:8px;font-weight:700;color:#0a7a43;pointer-events:auto">P</span>';
+            } else {
+              pmark='<span title="no scan or attendance recorded this day" style="position:absolute;top:1px;left:3px;font-size:8px;font-weight:700;color:#b91c1c;pointer-events:auto">?</span>';
+            }
+          }
+          h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+pmark+'</td>';
         }
       });
       h+='<td class="trow" data-wtot="'+esc(w.employee)+'">0</td></tr>';

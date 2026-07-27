@@ -263,6 +263,36 @@ def wm_actuals(**kwargs):
                         guard = guard + 1
             w["leave_dates"] = leave_appr
             w["leave_pending_dates"] = leave_pend
+        # ── MORNING PRESENCE per worker-day: biometric scan (with first scan time)
+        # or submitted Present attendance, for the grid's presence chips ──
+        scan_by = {}
+        attp_by = {}
+        if workers and fromd and tod:
+            wemps = tuple([w.employee for w in workers])
+            for r in frappe.db.sql("""
+                SELECT employee, DATE(`time`) d, MIN(`time`) t FROM `tabEmployee Checkin`
+                WHERE employee IN %s AND DATE(`time`) BETWEEN %s AND %s
+                GROUP BY employee, DATE(`time`)
+            """, (wemps, fromd, tod), as_dict=True):
+                m = scan_by.get(r.employee)
+                if m is None:
+                    m = {}
+                    scan_by[r.employee] = m
+                m[str(r.d)] = str(r.t)[11:16]
+            for r in frappe.db.sql("""
+                SELECT employee, attendance_date d FROM `tabAttendance`
+                WHERE docstatus = 1 AND status IN ('Present','Half Day','Work From Home')
+                  AND employee IN %s AND attendance_date BETWEEN %s AND %s
+            """, (wemps, fromd, tod), as_dict=True):
+                m = attp_by.get(r.employee)
+                if m is None:
+                    m = {}
+                    attp_by[r.employee] = m
+                m[str(r.d)] = 1
+        for w in workers:
+            w["scan_dates"] = scan_by.get(w.employee, {})
+            w["present_dates"] = attp_by.get(w.employee, {})
+        a["today"] = str(frappe.utils.today())
         a["workers"] = workers
         # calendar: confirmed daily rollup for this plan
         daymap = {}
