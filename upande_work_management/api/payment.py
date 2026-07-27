@@ -1111,6 +1111,198 @@ def wm_payment(**kwargs):
                 out["amount"] = total_owed
                 out["days"] = sum(frappe.utils.cint(x.days) for x in agg)
 
+    elif action == "pay_bulk_review":
+        # Stamp SEVERAL workers' unpaid confirmed rows as reviewed in one call.
+        # Same stamps as pay_worker_review, looped; employees is a CSV list.
+        emps_raw = frappe.form_dict.get("employees")
+        dfrom = frappe.form_dict.get("from_date")
+        dto = frappe.form_dict.get("to_date")
+        emp_list = []
+        if emps_raw:
+            for e in emps_raw.split(","):
+                ev = e.strip()
+                if ev and ev not in emp_list:
+                    emp_list.append(ev)
+        if not emp_list:
+            out["error"] = "employees is required (CSV)"
+        else:
+            now = frappe.utils.now()
+            results = []
+            total_rows = 0
+            for emp in emp_list:
+                rconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                rparams = [emp]
+                if dfrom:
+                    rconds = rconds + " AND we.work_date >= %s"
+                    rparams.append(dfrom)
+                if dto:
+                    rconds = rconds + " AND we.work_date <= %s"
+                    rparams.append(dto)
+                rows = frappe.db.sql("""
+                    SELECT we.name rowname FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE """ + rconds + """
+                """, tuple(rparams), as_dict=True)
+                if not rows:
+                    results.append({"employee": emp, "rows": 0, "error": "no unpaid confirmed rows"})
+                    continue
+                for r in rows:
+                    frappe.db.set_value("Work Actuals Employee", r.rowname, "custom_reviewed", 1, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", r.rowname, "custom_reviewed_by", frappe.session.user, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", r.rowname, "custom_reviewed_at", now, update_modified=False)
+                total_rows = total_rows + len(rows)
+                results.append({"employee": emp, "rows": len(rows)})
+            frappe.db.commit()
+            out["results"] = results
+            out["workers_reviewed"] = len([r for r in results if not r.get("error")])
+            out["rows_reviewed"] = total_rows
+            out["reviewed_by"] = frappe.session.user
+
+    elif action == "pay_bulk_submit":
+        # Send SEVERAL reviewed workers to accounts in one call: one Work
+        # Management Payment per employee (same shape as pay_worker_submit).
+        # A worker with any unreviewed unpaid rows is skipped — review first.
+        emps_raw = frappe.form_dict.get("employees")
+        dfrom = frappe.form_dict.get("from_date")
+        dto = frappe.form_dict.get("to_date")
+        emp_list = []
+        if emps_raw:
+            for e in emps_raw.split(","):
+                ev = e.strip()
+                if ev and ev not in emp_list:
+                    emp_list.append(ev)
+        if not emp_list:
+            out["error"] = "employees is required (CSV)"
+        else:
+            results = []
+            sent = 0
+            sent_total = 0
+            for emp in emp_list:
+                sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                sparams = [emp]
+                if dfrom:
+                    sconds = sconds + " AND we.work_date >= %s"
+                    sparams.append(dfrom)
+                if dto:
+                    sconds = sconds + " AND we.work_date <= %s"
+                    sparams.append(dto)
+                unrev = frappe.db.sql("""
+                    SELECT COALESCE(SUM(CASE WHEN IFNULL(we.custom_reviewed,0)=0 THEN we.amount ELSE 0 END),0) unreviewed
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE """ + sconds + """
+                """, tuple(sparams), as_dict=True)
+                if unrev and frappe.utils.flt(unrev[0].unreviewed) > 0.001:
+                    results.append({"employee": emp, "error": "has unreviewed earnings — review first"})
+                    continue
+                agg = frappe.db.sql("""
+                    SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
+                           ac.rate doc_rate, ac.assignment assignment,
+                           ac.entered_by entered_by, ac.hr_approved_by hr_approved_by,
+                           ac.gm_approved_by gm_approved_by, we.employee_name nm,
+                           MIN(we.work_date) wfrom, MAX(we.work_date) wto,
+                           COUNT(DISTINCT we.work_date) days,
+                           COALESCE(SUM(we.actual_quantity),0) qty,
+                           COALESCE(SUM(we.amount),0) owed,
+                           MAX(we.custom_reviewed_at) reviewed_at,
+                           MAX(we.custom_reviewed_by) reviewed_by
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE """ + sconds + """
+                    GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.rate, ac.assignment,
+                             ac.entered_by, ac.hr_approved_by, ac.gm_approved_by, we.employee_name
+                    ORDER BY MIN(we.work_date)
+                """, tuple(sparams), as_dict=True)
+                total_owed = 0
+                for g in agg:
+                    total_owed = total_owed + frappe.utils.flt(g.owed)
+                if not agg or total_owed <= 0:
+                    results.append({"employee": emp, "error": "no unpaid confirmed earnings in window"})
+                    continue
+                ename = agg[0].nm or frappe.db.get_value("Employee", emp, "employee_name") or emp
+                d = frappe.new_doc("Work Management Payment")
+                d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
+                d.company = DEFAULT_COMPANY
+                d.run_date = frappe.utils.today()
+                d.prepared_by = frappe.session.user
+                try:
+                    if dfrom:
+                        d.period_from = dfrom
+                    if dto:
+                        d.period_to = dto
+                except Exception:
+                    pass
+                asg_cache = {}
+                total_days = 0
+                total_qty = 0
+                rv_by = None
+                rv_at = None
+                for g in agg:
+                    if frappe.utils.flt(g.owed) <= 0:
+                        continue
+                    ai = None
+                    if g.assignment:
+                        ai = asg_cache.get(g.assignment)
+                        if ai is None:
+                            ai = frappe.db.get_value("Work Management Assigner", g.assignment,
+                                ["assigned_by", "approved_by"], as_dict=True)
+                            asg_cache[g.assignment] = ai
+                    qty = frappe.utils.flt(g.qty)
+                    owed = frappe.utils.flt(g.owed)
+                    row = d.append("lines", {})
+                    row.actuals = g.actuals
+                    row.employee = emp
+                    row.employee_name = ename
+                    row.farm = g.farm
+                    row.task = g.task
+                    row.block = g.block
+                    row.work_from = g.wfrom
+                    row.work_to = g.wto
+                    row.days = g.days
+                    row.qty = qty
+                    row.rate = frappe.utils.flt(g.doc_rate) or ((owed / qty) if qty else 0)
+                    row.assignment = g.assignment
+                    row.assigned_by = ai.assigned_by if ai else None
+                    row.fm_approved_by = ai.approved_by if ai else None
+                    row.entered_by = g.entered_by
+                    row.hr_approved_by = g.hr_approved_by
+                    row.gm_approved_by = g.gm_approved_by
+                    row.paid_workers = 1
+                    row.amount = owed
+                    total_days = total_days + frappe.utils.cint(g.days)
+                    total_qty = total_qty + qty
+                    if g.reviewed_at and (not rv_at or str(g.reviewed_at) > str(rv_at)):
+                        rv_at = g.reviewed_at
+                        rv_by = g.reviewed_by
+                d.employee = emp
+                d.employee_name = ename
+                d.farm = agg[0].farm
+                d.total_days = total_days
+                d.total_qty = total_qty
+                d.reviewed_by = rv_by
+                d.reviewed_at = rv_at
+                d.grand_total = total_owed
+                d.total_workers = 1
+                d.total_actuals = len(d.lines)
+                d.flags.ignore_permissions = True
+                d.insert(ignore_permissions=True)
+                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Pending Accounts", update_modified=False)
+                refrows = frappe.db.sql("""
+                    SELECT we.name rowname FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE """ + sconds + """
+                """, tuple(sparams), as_dict=True)
+                for rr in refrows:
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "payment_ref", d.name, update_modified=False)
+                sent = sent + 1
+                sent_total = sent_total + total_owed
+                results.append({"employee": emp, "employee_name": ename, "name": d.name, "amount": total_owed})
+            frappe.db.commit()
+            out["results"] = results
+            out["sent"] = sent
+            out["sent_total"] = sent_total
+            out["errors"] = len([r for r in results if r.get("error")])
+
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)
