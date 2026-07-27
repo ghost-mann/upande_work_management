@@ -1550,7 +1550,8 @@ def wm_payment(**kwargs):
                   "qty": frappe.utils.flt(r.qty), "amount": frappe.utils.flt(r.amount),
                   "paid": frappe.utils.cint(r.paid), "run_ref": r.run_ref,
                   "entered_by": r.entered_by,
-                  "scan_in": scan_ev.get((r.employee, wd))}
+                  "scan_in": scan_ev.get((r.employee, wd)),
+                  "att_status": att_ev.get((r.employee, wd))}
             astat = att_ev.get((r.employee, wd))
             if astat == "Absent":
                 b_absent.append(rr)

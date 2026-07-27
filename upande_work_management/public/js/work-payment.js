@@ -890,7 +890,7 @@
     var h='<div class="filters" style="margin-bottom:12px;padding:8px 14px"><span class="hint">'+
       'Window <b>'+esc(win.from||"")+' &rarr; '+esc(win.to||"")+'</b> · '+fmt(d.scanned_rows)+' confirmed worker-day rows checked · '+
       '<b style="color:'+(totalIssues?'var(--bad)':'var(--good)')+'">'+fmt(totalIssues)+' findings</b>'+
-      '</span><span style="flex:1"></span><span class="hint">Click a worker to open their review sheet — every record here is auditable.</span></div>';
+      '</span><span style="flex:1"></span><span class="hint">Presence key: <b style="color:#0a7a43">in 06:42</b> check-in time · <b style="color:#0a7a43">P</b> marked present (no scan) · <b style="color:#b91c1c">absent</b> marked Absent · <b style="color:#a06000">?</b> no record either way. Click a worker to open their review sheet.</span></div>';
     checks.forEach(function(c,ci){
       var open = AU.discOpen!=null ? (AU.discOpen===c.key) : (ci===0 && c.count>0);
       var sev = c.count ? (c.key==="off_paid" ? "var(--warn, #a06000)" : "var(--bad, #b91c1c)") : "var(--good, #0a7a43)";
@@ -918,6 +918,14 @@
     box.querySelectorAll("[data-wraudit]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-wraudit"), auditWindow()); };
     });
+  }
+
+  // presence cell: check-in time / absent / ? — see the key at the top of the view
+  function discPres(r){
+    if(r.scan_in) return '<span style="color:#0a7a43;font-weight:700" title="biometric check-in time">in '+esc(r.scan_in)+'</span>';
+    if((r.att_status||"")==="Absent") return '<span style="color:#b91c1c;font-weight:700" title="attendance marked Absent, no scan">absent</span>';
+    if(r.att_status) return '<span style="color:#0a7a43;font-weight:700" title="attendance: '+esc(r.att_status)+', no scan time">P</span>';
+    return '<span style="color:#a06000;font-weight:700" title="no scan and no attendance record — presence unknown">?</span>';
   }
 
   function discTable(c){
@@ -956,11 +964,11 @@
       });
     } else {
       // presence-based checks: absent_paid / ghost_days / leave_paid / off_paid
-      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Scan</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
+      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Presence</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
-          '<td class="c m">'+(r.scan_in?('<span style="color:#0a7a43;font-weight:700">in '+esc(r.scan_in)+'</span>'):'<span style="color:#a06000">—</span>')+'</td>'+
+          '<td class="c m">'+discPres(r)+'</td>'+
           (c.key==="leave_paid"?('<td>'+esc(r.leave_type||"")+'</td>'):'')+
           '<td class="c">'+payTag(r.paid?"Paid":"Unpaid")+'</td>'+
           '<td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
@@ -1314,7 +1322,7 @@
     if(!nIss){
       h+='<div class="empty"><b>Clean.</b> No attendance conflicts on any of this worker\'s day-rows in this window.</div>';
     } else {
-      h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every send to accounts is logged.</div>';
+      h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Presence key: <b style="color:#0a7a43">in 06:42</b> check-in time · <b style="color:#0a7a43">P</b> marked present (no scan) · <b style="color:#b91c1c">absent</b> marked Absent · <b style="color:#a06000">?</b> no record either way. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every send to accounts is logged.</div>';
       var groups=[
         {k:"absent", title:"Recorded on marked-Absent days", about:"Submitted attendance says Absent, yet work is recorded. A scan time means the attendance is probably wrong.", rows:ISS.absent},
         {k:"ghost", title:"No presence evidence at all", about:"No scan and no attendance record of any kind on the day.", rows:ISS.ghost},
@@ -1331,11 +1339,11 @@
             '<span class="m" style="font-weight:600">'+money(gamt)+'</span></div>'+
           '<div style="padding:6px 16px 0;font-size:11px;color:var(--mute)">'+esc(g.about)+'</div>'+
           '<div class="tablescroll" style="max-height:260px;padding:8px 16px 12px"><table style="margin-top:0"><thead><tr>'+
-          '<th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Pay KES</th><th class="c">Scan</th>'+(g.k==="leave"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th></tr></thead><tbody>';
+          '<th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Pay KES</th><th class="c">Presence</th>'+(g.k==="leave"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th></tr></thead><tbody>';
         g.rows.forEach(function(r){
           h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.task||"")+'</td>'+
             '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount)+'</td>'+
-            '<td class="c m">'+(r.scan_in?('<span style="color:#0a7a43;font-weight:700">in '+esc(r.scan_in)+'</span>'):'<span style="color:#a06000">—</span>')+'</td>'+
+            '<td class="c m">'+discPres(r)+'</td>'+
             (g.k==="leave"?('<td>'+esc(r.day_leave||"")+'</td>'):'')+
             '<td class="c">'+payTag(r.paid?"Paid":"Unpaid")+'</td>'+
             '<td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td></tr>';
