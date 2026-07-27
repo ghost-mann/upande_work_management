@@ -140,10 +140,12 @@ def wm_assigner(**kwargs):
         att_absent_on = 1
         att_leave_on = 1
         att_off_on = 1
+        off_rule = "Entire window"
         try:
             att_absent_on = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_absent"))
             att_leave_on = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_leave"))
             att_off_on = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_off"))
+            off_rule = str(frappe.db.get_single_value("Work Management Settings", "att_off_window_rule") or "Entire window")
         except Exception:
             pass
         leave_map = {}
@@ -229,7 +231,16 @@ def wm_assigner(**kwargs):
             av = absent_map.get(e.name)
             e["att_absent_days"] = av["days"] if av else 0
             e["att_absent_span"] = (av["from"] + " → " + av["to"]) if av else None
-            e["att_all_off"] = 1 if (att_off_on and window_days and oc >= window_days) else 0
+            # off-day flag per the settings rule (Entire window / Any off day / Ignore)
+            e["att_all_off"] = 0
+            e["att_off_reason"] = None
+            if att_off_on and window_days and oc > 0 and off_rule != "Ignore at assignment":
+                if off_rule == "Any off day":
+                    e["att_all_off"] = 1
+                    e["att_off_reason"] = ("has " + str(oc) + " off day" + ("" if oc == 1 else "s") + " in this " + str(window_days) + "-day window")
+                elif oc >= window_days:
+                    e["att_all_off"] = 1
+                    e["att_off_reason"] = ("off/holiday for the entire window (" + str(oc) + " of " + str(window_days) + " days)")
             if includes_today:
                 e["is_night"] = 1 if night_set.get(e.name) else 0
                 e["scan_in"] = scan_map.get(e.name)
@@ -318,12 +329,16 @@ def wm_assigner(**kwargs):
             gate_absent = 1
             gate_leave = 1
             gate_off = 1
+            gate_off_rule = "Entire window"
             try:
                 gate_absent = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_absent"))
                 gate_leave = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_leave"))
                 gate_off = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_off"))
+                gate_off_rule = str(frappe.db.get_single_value("Work Management Settings", "att_off_window_rule") or "Entire window")
             except Exception:
                 pass
+            if gate_off_rule == "Ignore at assignment":
+                gate_off = 0
             g_dates = frappe.db.get_value("Work Management Planner", planner, ["from_date", "to_date"], as_dict=True)
             if (gate_absent or gate_leave or gate_off) and g_dates and g_dates.from_date and g_dates.to_date:
                 gpf = str(g_dates.from_date)

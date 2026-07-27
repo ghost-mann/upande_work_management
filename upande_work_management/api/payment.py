@@ -168,8 +168,25 @@ def wm_payment(**kwargs):
             GROUP BY we.employee, we.employee_name, ac.farm
             ORDER BY ac.farm, owed DESC
         """, tuple(params), as_dict=True)
+        # attendance-conflict flag per worker: day-rows in this window that fall on
+        # a marked-Absent day (the headline discrepancy — full detail lives in the
+        # review sheet's Discrepancies tab)
+        disc_map = {}
+        drows = frappe.db.sql("""
+            SELECT we.employee emp, COUNT(*) n
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            INNER JOIN `tabAttendance` att ON att.employee = we.employee
+                  AND att.attendance_date = we.work_date
+                  AND att.docstatus = 1 AND att.status = 'Absent'
+            WHERE """ + conds + """
+            GROUP BY we.employee
+        """, tuple(params), as_dict=True)
+        for r in drows:
+            disc_map[r.emp] = frappe.utils.cint(r.n)
         # derive status per worker
         for r in rows:
+            r["disc_days"] = disc_map.get(r.emp, 0)
             rref = r.get("run_ref")
             runstate = None
             if rref:
@@ -855,6 +872,26 @@ def wm_payment(**kwargs):
                     WHERE docstatus = 1 AND employee = %s AND attendance_date IN %s
                 """, (emp, ddates), as_dict=True):
                     ev_att[str(r2.d)] = r2.status
+            ev_leave = {}
+            ev_off = {}
+            if ddates:
+                dmin2 = min(ddates)
+                dmax2 = max(ddates)
+                for r2 in frappe.db.sql("""
+                    SELECT leave_type, from_date, to_date FROM `tabLeave Application`
+                    WHERE docstatus < 2 AND (status='Approved' OR docstatus=1)
+                      AND employee = %s AND from_date <= %s AND to_date >= %s
+                """, (emp, dmax2, dmin2), as_dict=True):
+                    for dd in ddates:
+                        if str(r2.from_date) <= dd <= str(r2.to_date):
+                            ev_leave[dd] = r2.leave_type or "leave"
+                hl2 = frappe.db.get_value("Employee", emp, "holiday_list")
+                if hl2:
+                    for r2 in frappe.db.sql("""
+                        SELECT holiday_date FROM `tabHoliday`
+                        WHERE parent = %s AND holiday_date IN %s
+                    """, (hl2, ddates), as_dict=True):
+                        ev_off[str(r2.holiday_date)] = 1
             daily = []
             for r in dl:
                 qty = frappe.utils.flt(r.qty)
@@ -872,6 +909,8 @@ def wm_payment(**kwargs):
                     "reviewed": frappe.utils.cint(r.reviewed), "run_ref": r.run_ref,
                     "scan_in": ev_scan.get(wd) if wd else None,
                     "att_status": ev_att.get(wd) if wd else None,
+                    "day_leave": ev_leave.get(wd) if wd else None,
+                    "day_off": ev_off.get(wd, 0) if wd else 0,
                 })
             out["daily"] = daily
             # payment runs that include this worker
@@ -1425,6 +1464,16 @@ def wm_payment(**kwargs):
             dfrom = str(frappe.utils.add_days(frappe.utils.today(), -31))
         if not dto:
             dto = str(frappe.utils.today())
+        # per-check enable toggles (Work Management Settings; default ON)
+        disc_on = {}
+        for dk in ("disc_absent_paid", "disc_ghost_days", "disc_leave_paid", "disc_off_paid",
+                   "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning"):
+            val = 1
+            try:
+                val = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", dk))
+            except Exception:
+                val = 1
+            disc_on[dk] = val
         dconds = "ac.workflow_state='CONFIRMED' AND we.amount > 0 AND we.work_date BETWEEN %s AND %s"
         dparams = [dfrom, dto]
         farm_list_d = []
@@ -1608,7 +1657,14 @@ def wm_payment(**kwargs):
              "about": "Rows dated after the worker was marked Left on that assignment — a substituted/released worker still collecting days.",
              "rows": b_left},
         ]
+        toggle_map = {"absent_paid": "disc_absent_paid", "ghost_days": "disc_ghost_days",
+                      "leave_paid": "disc_leave_paid", "off_paid": "disc_off_paid",
+                      "rate_mismatch": "disc_rate_mismatch", "multi_farm_day": "disc_multi_farm",
+                      "self_approved": "disc_self_approved", "left_but_earning": "disc_left_earning"}
         for c in checks:
+            if not disc_on.get(toggle_map.get(c["key"]), 1):
+                c["rows"] = []
+                c["disabled"] = 1
             amts = 0
             wku = {}
             for x in c["rows"]:
