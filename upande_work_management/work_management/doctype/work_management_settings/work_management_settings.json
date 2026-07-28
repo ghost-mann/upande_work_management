@@ -26,7 +26,9 @@
   "disc_self_approved",
   "disc_left_earning",
   "disc_no_pay",
-  "disc_dup_day"
+  "disc_dup_day",
+  "disc_inactive_assigned",
+  "att_auto_release_inactive"
  ],
  "fields": [
   {
@@ -173,6 +175,19 @@
    "fieldtype": "Check",
    "label": "Paid twice for the same day (duplicate entries)",
    "default": "1"
+  },
+  {
+   "fieldname": "disc_inactive_assigned",
+   "fieldtype": "Check",
+   "label": "Left the company but still on live assignments",
+   "default": "1"
+  },
+  {
+   "fieldname": "att_auto_release_inactive",
+   "fieldtype": "Check",
+   "label": "Auto-release inactive employees from assignments",
+   "default": "0",
+   "description": "When ON: deactivating an employee in HR marks their Active rows on live assignments as Left (dated today) with a comment on each assignment."
   }
  ],
  "idx": 0,

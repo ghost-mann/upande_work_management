@@ -11,6 +11,12 @@ app_license = "mit"
 # The five pages call these bare endpoints (/api/method/wm_planner etc.).
 # Mapping them here keeps the frontend identical to the original Web Pages
 # and lets the app transparently replace the old Server Scripts.
+doc_events = {
+	"Employee": {
+		"on_update": "upande_work_management.api.hr.release_inactive",
+	},
+}
+
 override_whitelisted_methods = {
 	"wm_dashboard": "upande_work_management.api.dashboard.wm_dashboard",
 	"wm_planner": "upande_work_management.api.planner.wm_planner",
