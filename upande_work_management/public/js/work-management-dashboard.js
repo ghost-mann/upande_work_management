@@ -282,6 +282,7 @@
           '<div id="wm-fi-avail" style="display:none">'+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
               '<div><div class="tl-lab">Date</div><input type="date" id="wm-fi-date" class="tl-in"></div>'+
+              '<div><div class="tl-lab">Farm</div><select id="wm-fi-farm" class="tl-in"><option value="">All farms</option></select></div>'+
               '<button type="button" class="refresh" id="wm-fi-avapply" style="margin-bottom:1px">Apply</button>'+
               '<input type="text" id="wm-fi-search" class="tl-in" placeholder="Search name…" style="flex:1;min-width:120px">'+
             '</div>'+
@@ -2011,6 +2012,7 @@
     el("wm-fi-apply").onclick=loadFieldIntel;
     el("wm-fi-avapply").onclick=loadFieldIntel;
     el("wm-fi-search").oninput=function(){ renderFiAvail(); };
+    el("wm-fi-farm").onchange=function(){ renderFiAvail(); };
     loadFieldIntel();
   }
   function loadFieldIntel(){
@@ -2018,6 +2020,12 @@
       .then(function(d){
         if(d.error){ el("wm-fi-eff-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
         FI.data=d;
+        var fs=el("wm-fi-farm");
+        if(fs && fs.options.length<=1){
+          Object.keys((d.available||{}).farms||{}).forEach(function(f){
+            var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o);
+          });
+        }
         renderFiEff();
         renderFiAvail();
       })
@@ -2051,10 +2059,14 @@
   }
   function renderFiAvail(){
     var box=el("wm-fi-avail-body"); if(!box||!FI.data) return;
-    var av=FI.data.available||{}, farms=av.farms||{};
+    var av=FI.data.available||{}, allFarms=av.farms||{};
+    var fsel=el("wm-fi-farm")?(el("wm-fi-farm").value||""):"";
+    var farms={};
+    Object.keys(allFarms).forEach(function(f){ if(!fsel||f===fsel) farms[f]=allFarms[f]; });
     var q=(el("wm-fi-search").value||"").toLowerCase();
+    var selTotal=0; Object.keys(farms).forEach(function(f){ selTotal+=farms[f].count; });
     var h='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
-      '<div style="border:1px solid var(--line);border-radius:12px;padding:6px 12px;background:var(--wash)"><b style="font-size:15px">'+fmt(av.total)+'</b> <span style="font-size:10px;color:var(--mute)">available on '+esc(av.date||"")+'</span></div>';
+      '<div style="border:1px solid var(--line);border-radius:12px;padding:6px 12px;background:var(--wash)"><b style="font-size:15px">'+fmt(selTotal)+'</b> <span style="font-size:10px;color:var(--mute)">available on '+esc(av.date||"")+(fsel?' at '+esc(fsel):'')+'</span></div>';
     Object.keys(farms).forEach(function(f){
       h+='<div style="border:1px solid var(--line);border-radius:12px;padding:6px 12px"><b>'+esc(f)+'</b> <span style="font-size:11px">'+fmt(farms[f].count)+'</span> <span style="font-size:9.5px;color:#0a7a43">('+fmt(farms[f].present)+' scanned in)</span></div>';
     });
