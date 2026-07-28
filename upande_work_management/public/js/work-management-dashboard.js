@@ -110,6 +110,9 @@
         stageCard("ASSIGNED","#2563eb",[
           ["Assignments",fmt(t.assignments)],
           ["Assigned workers",fmt(t.assigned_workers)],
+          ["Active employees",fmt(t.active_employees)],
+          ["· Task workers",fmt(t.active_task_workers)],
+          ["· Permanent / salaried",fmt(t.active_permanent)],
           ["Awaiting actuals",fmt(t.awaiting_workers)],
           ["Confirmed",fmt(t.confirmed_workers)]])+
         stageCard("ACTUAL","#0a7a43",[
@@ -130,6 +133,7 @@
         '<span><b>Sum of daily crews</b> — every plan’s people-per-day added up. It counts slots across plans, so it is normally far larger than the number of people you employ (that is why it can exceed your workforce).</span>'+
         '<span><b>Planned value</b> — target output × rate across approved plans: what the planned work is worth when fully delivered.</span>'+
         '<span><b>Assigned workers</b> — distinct people actually put on jobs (each counted once).</span>'+
+        '<span><b>Active employees</b> — everyone active on the four farms right now, split into task workers (paid per output) and permanent/salaried staff.</span>'+
         '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
         '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
       '</div>'+
