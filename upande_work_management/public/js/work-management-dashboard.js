@@ -248,8 +248,9 @@
         '</div></div>'+
       '<div class="sech">Crew movements &mdash; who left, who joined, who swapped</div>'+
       '<div class="card"><div class="hd"><h3>Substitution history</h3><div class="cap">every mid-period movement &middot; a leaver keeps pay for days worked; Days/Qty/Pay are what that row&rsquo;s worker did on the plan</div></div><div class="bd"><div class="pex-filters" id="subs-filters"><select id="subs-farm"><option value="">All farms</option></select></div><div id="wm-subs" style="max-height:360px;overflow:auto">Loading&hellip;</div></div></div>'+
-      '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered</div>'+
-      '<div class="card"><div class="hd"><h3>Plans, assignments &amp; actuals over time</h3><div class="cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
+      '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered &middot; field intelligence</div>'+
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch">'+
+      '<div class="card" style="flex:3;min-width:480px;margin-bottom:0"><div class="hd"><h3>Plans, assignments &amp; actuals over time</h3><div class="cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
         '<div class="bd">'+
           '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">'+
             '<div><div class="tl-lab">Farm</div><select id="wm-tl-farm" class="tl-in"><option value="">All farms</option></select></div>'+
@@ -264,6 +265,30 @@
           '</div>'+
           '<div id="wm-tl-chart" style="min-height:240px"><div class="empty">Loading timeline&hellip;</div></div>'+
         '</div></div>'+
+      '<div class="card" style="flex:2;min-width:380px;margin-bottom:0"><div class="hd"><h3>Field intelligence</h3><div class="cap">efficiency per farm &middot; who is free to work, any day</div></div>'+
+        '<div class="bd">'+
+          '<div class="subtabs" id="wm-fi-tabs" style="margin-bottom:10px">'+
+            '<button type="button" class="subtab on" data-fi="eff">Efficiency</button>'+
+            '<button type="button" class="subtab" data-fi="avail">Available workers</button>'+
+          '</div>'+
+          '<div id="wm-fi-eff">'+
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
+              '<div><div class="tl-lab">From</div><input type="date" id="wm-fi-from" class="tl-in"></div>'+
+              '<div><div class="tl-lab">To</div><input type="date" id="wm-fi-to" class="tl-in"></div>'+
+              '<button type="button" class="refresh" id="wm-fi-apply" style="margin-bottom:1px">Apply</button>'+
+            '</div>'+
+            '<div id="wm-fi-eff-body"><div class="empty">Loading&hellip;</div></div>'+
+          '</div>'+
+          '<div id="wm-fi-avail" style="display:none">'+
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
+              '<div><div class="tl-lab">Date</div><input type="date" id="wm-fi-date" class="tl-in"></div>'+
+              '<button type="button" class="refresh" id="wm-fi-avapply" style="margin-bottom:1px">Apply</button>'+
+              '<input type="text" id="wm-fi-search" class="tl-in" placeholder="Search name…" style="flex:1;min-width:120px">'+
+            '</div>'+
+            '<div id="wm-fi-avail-body"><div class="empty">Loading&hellip;</div></div>'+
+          '</div>'+
+        '</div></div>'+
+      '</div>'+
       '<div class="sech">Action queues</div>'+
       '<div class="card"><div class="hd"><h3>Everything waiting on someone</h3><div class="cap">one queue at a time &middot; full-width</div></div>'+
         '<div class="bd">'+
@@ -274,6 +299,7 @@
     initCharts();
     initQueues(D);
     initTimeline();
+    initFieldIntel();
     initApproverKpis();
     initPerformers();
   }
@@ -1964,6 +1990,92 @@
       cross.style.display="none"; tip.style.display="none";
       S.forEach(function(sr,si){ box.querySelector("#wm-tl-dot"+si).style.display="none"; });
     });
+  }
+
+  // ============ FIELD INTELLIGENCE: efficiency + availability ============
+  var FI={data:null};
+  function initFieldIntel(){
+    var tabs=el("wm-fi-tabs"); if(!tabs) return;
+    tabs.querySelectorAll(".subtab").forEach(function(b){
+      b.onclick=function(){
+        tabs.querySelectorAll(".subtab").forEach(function(x){ x.classList.toggle("on", x===b); });
+        var k=b.getAttribute("data-fi");
+        el("wm-fi-eff").style.display=(k==="eff")?"":"none";
+        el("wm-fi-avail").style.display=(k==="avail")?"":"none";
+      };
+    });
+    var d=new Date(); d.setDate(d.getDate()-30);
+    el("wm-fi-from").value=d.toISOString().slice(0,10);
+    el("wm-fi-to").value=new Date().toISOString().slice(0,10);
+    el("wm-fi-date").value=new Date().toISOString().slice(0,10);
+    el("wm-fi-apply").onclick=loadFieldIntel;
+    el("wm-fi-avapply").onclick=loadFieldIntel;
+    el("wm-fi-search").oninput=function(){ renderFiAvail(); };
+    loadFieldIntel();
+  }
+  function loadFieldIntel(){
+    call({action:"field_intel", from_date:el("wm-fi-from").value||"", to_date:el("wm-fi-to").value||"", date:el("wm-fi-date").value||""})
+      .then(function(d){
+        if(d.error){ el("wm-fi-eff-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+        FI.data=d;
+        renderFiEff();
+        renderFiAvail();
+      })
+      .catch(function(e){ el("wm-fi-eff-body").innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+  function renderFiEff(){
+    var box=el("wm-fi-eff-body"); if(!box||!FI.data) return;
+    var farms=FI.data.farms||[], tasks=FI.data.tasks||[];
+    if(!farms.length){ box.innerHTML='<div class="empty">No confirmed work in this window.</div>'; return; }
+    function hpm(v){ return v>0? fmt(v,3) : "—"; }
+    function cph(v){ return v>0? fmt(v,0) : "—"; }
+    var h='<div class="tablewrap"><table><thead><tr><th>Farm</th><th class="n">Area Ha</th><th class="n">Man-days</th><th class="n">Ha / man-day</th><th class="n">Cost KES</th><th class="n">Cost / Ha</th></tr></thead><tbody>';
+    var ta=0,tm=0,tc=0;
+    farms.forEach(function(f){
+      ta+=f.area; tm+=f.mandays; tc+=f.cost;
+      h+='<tr><td><b>'+esc(f.farm)+'</b></td><td class="n m">'+(f.area>0?fmt(f.area,1):"—")+'</td><td class="n m">'+fmt(f.mandays)+'</td>'+
+         '<td class="n m">'+hpm(f.ha_per_manday)+'</td><td class="n m">'+fmt(f.cost,0)+'</td><td class="n m">'+cph(f.cost_per_ha)+'</td></tr>';
+    });
+    h+='</tbody><tfoot><tr><th>TOTAL</th><th class="n">'+(ta>0?fmt(ta,1):"—")+'</th><th class="n">'+fmt(tm)+'</th>'+
+       '<th class="n">'+(ta>0&&tm>0?fmt(ta/tm,3):"—")+'</th><th class="n">'+fmt(tc,0)+'</th><th class="n">'+(ta>0?fmt(tc/ta,0):"—")+'</th></tr></tfoot></table></div>';
+    if(tasks.length){
+      h+='<div class="sech" style="margin-top:12px;font-size:10px">By task &middot; top by man-days</div>'+
+        '<div class="tablewrap" style="max-height:220px;overflow-y:auto"><table><thead><tr><th>Task</th><th class="n">Man-days</th><th class="n">Ha/md</th><th class="n">Cost/Ha</th></tr></thead><tbody>';
+      tasks.forEach(function(x){
+        h+='<tr><td>'+esc(x.task)+'</td><td class="n m">'+fmt(x.mandays)+'</td><td class="n m">'+hpm(x.ha_per_manday)+'</td><td class="n m">'+cph(x.cost_per_ha)+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }
+    h+='<div class="explain" style="margin-top:8px;font-size:10px"><span>&mdash; means the blocks have no area (Ha) captured in the system yet; ask admin to fill <b>Area (Ha)</b> on the block records.</span></div>';
+    box.innerHTML=h;
+  }
+  function renderFiAvail(){
+    var box=el("wm-fi-avail-body"); if(!box||!FI.data) return;
+    var av=FI.data.available||{}, farms=av.farms||{};
+    var q=(el("wm-fi-search").value||"").toLowerCase();
+    var h='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+      '<div style="border:1px solid var(--line);border-radius:12px;padding:6px 12px;background:var(--wash)"><b style="font-size:15px">'+fmt(av.total)+'</b> <span style="font-size:10px;color:var(--mute)">available on '+esc(av.date||"")+'</span></div>';
+    Object.keys(farms).forEach(function(f){
+      h+='<div style="border:1px solid var(--line);border-radius:12px;padding:6px 12px"><b>'+esc(f)+'</b> <span style="font-size:11px">'+fmt(farms[f].count)+'</span> <span style="font-size:9.5px;color:#0a7a43">('+fmt(farms[f].present)+' scanned in)</span></div>';
+    });
+    h+='</div><div style="max-height:300px;overflow-y:auto">';
+    var shown=0;
+    Object.keys(farms).forEach(function(f){
+      var list=(farms[f].list||[]).filter(function(w){ return !q || ((w.name||"")+" "+(w.emp||"")).toLowerCase().indexOf(q)>=0; });
+      if(!list.length) return;
+      h+='<div class="sech" style="font-size:10px;margin:8px 0 4px">'+esc(f)+' &middot; '+fmt(list.length)+'</div><table><tbody>';
+      list.forEach(function(w){
+        shown++;
+        h+='<tr><td>'+esc(w.name||w.emp)+'</td><td class="m" style="font-size:10px">'+esc(w.emp)+'</td>'+
+           '<td style="font-size:10px;color:var(--mute)">'+esc(w.designation||w.etype||"")+'</td>'+
+           '<td class="c">'+(w.present?'<span style="color:#0a7a43;font-weight:700;font-size:10px">P</span>':'<span style="color:#a8a59b;font-size:10px">—</span>')+'</td></tr>';
+      });
+      h+='</tbody></table>';
+    });
+    h+='</div>';
+    if(!shown) h+='<div class="empty">Nobody matches.</div>';
+    h+='<div class="explain" style="margin-top:8px;font-size:10px"><span><b>Available</b> = active employee with no live assignment covering the chosen date. <b>P</b> = scanned in that day.</span></div>';
+    box.innerHTML=h;
   }
 
   // ============ OPERATIONS CONTROL (money · bottlenecks · desks) ============

@@ -2396,6 +2396,139 @@ def wm_dashboard(**kwargs):
         out["farms"] = FARMS
         out["series"] = flat
 
+    elif action == "field_intel":
+        # FIELD INTELLIGENCE: efficiency (Ha per man-day, cost per Ha) computed
+        # from confirmed work, and date-wise worker availability.
+        fifrom = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -30))
+        fito = frappe.form_dict.get("to_date") or str(frappe.utils.today())
+        # confirmed man-days + pay per plan in the window
+        plan_rows = frappe.db.sql("""
+            SELECT a2.planner_request pr, ac.farm farm,
+                   COUNT(DISTINCT CONCAT(we.employee, '|', we.work_date)) mandays,
+                   COALESCE(SUM(we.amount), 0) pay
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            WHERE ac.workflow_state = 'CONFIRMED'
+              AND we.work_date BETWEEN %s AND %s AND we.actual_quantity > 0
+            GROUP BY a2.planner_request, ac.farm
+        """, (fifrom, fito), as_dict=True)
+        prs = [r.pr for r in plan_rows if r.pr]
+        plan_info = {}
+        plan_blocks = {}
+        if prs:
+            for r in frappe.db.sql("""
+                SELECT name, task, block_section FROM `tabWork Management Planner`
+                WHERE name IN %s
+            """, (tuple(prs),), as_dict=True):
+                plan_info[r.name] = r
+                bl = plan_blocks.get(r.name)
+                if bl is None:
+                    bl = {}
+                    plan_blocks[r.name] = bl
+                if r.block_section:
+                    bl[r.block_section] = 1
+            for r in frappe.db.sql("""
+                SELECT parent, block FROM `tabWork Planner Block` WHERE parent IN %s
+            """, (tuple(prs),), as_dict=True):
+                if r.block:
+                    bl = plan_blocks.get(r.parent)
+                    if bl is None:
+                        bl = {}
+                        plan_blocks[r.parent] = bl
+                    bl[r.block] = 1
+        all_blocks = {}
+        for pn in plan_blocks:
+            for b in plan_blocks[pn]:
+                all_blocks[b] = 0
+        if all_blocks:
+            for r in frappe.db.sql("""
+                SELECT name, IFNULL(custom_area_ha, 0) ha FROM `tabWarehouse` WHERE name IN %s
+            """, (tuple(all_blocks.keys()),), as_dict=True):
+                all_blocks[r.name] = frappe.utils.flt(r.ha)
+        farm_eff = {}
+        task_eff = {}
+        for r in plan_rows:
+            parea = 0
+            for b in plan_blocks.get(r.pr, {}):
+                parea = parea + all_blocks.get(b, 0)
+            fe = farm_eff.get(r.farm)
+            if fe is None:
+                fe = {"farm": r.farm, "area": 0, "mandays": 0, "cost": 0, "plans": 0}
+                farm_eff[r.farm] = fe
+            fe["area"] = fe["area"] + parea
+            fe["mandays"] = fe["mandays"] + frappe.utils.cint(r.mandays)
+            fe["cost"] = fe["cost"] + frappe.utils.flt(r.pay)
+            fe["plans"] = fe["plans"] + 1
+            tname = (plan_info.get(r.pr) or {}).get("task") or "—"
+            te = task_eff.get(tname)
+            if te is None:
+                te = {"task": tname, "area": 0, "mandays": 0, "cost": 0}
+                task_eff[tname] = te
+            te["area"] = te["area"] + parea
+            te["mandays"] = te["mandays"] + frappe.utils.cint(r.mandays)
+            te["cost"] = te["cost"] + frappe.utils.flt(r.pay)
+        farms_out = []
+        for f in FARMS:
+            fe = farm_eff.get(f)
+            if not fe:
+                continue
+            fe["ha_per_manday"] = (fe["area"] / fe["mandays"]) if fe["mandays"] else 0
+            fe["cost_per_ha"] = (fe["cost"] / fe["area"]) if fe["area"] else 0
+            farms_out.append(fe)
+        tasks_out = sorted(task_eff.values(), key=lambda x: -x["mandays"])[:12]
+        for te in tasks_out:
+            te["ha_per_manday"] = (te["area"] / te["mandays"]) if te["mandays"] else 0
+            te["cost_per_ha"] = (te["cost"] / te["area"]) if te["area"] else 0
+        out["window"] = {"from": fifrom, "to": fito}
+        out["farms"] = farms_out
+        out["tasks"] = tasks_out
+        # ── availability on a chosen date: active employees NOT on a live
+        # assignment covering that day (start/left dates respected) ──
+        avdate = frappe.form_dict.get("date") or str(frappe.utils.today())
+        busy = {}
+        for r in frappe.db.sql("""
+            SELECT DISTINCT we.employee emp
+            FROM `tabWork Assignment Employee` we
+            INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
+            WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+              AND a.from_date <= %s AND a.to_date >= %s
+              AND IFNULL(we.status,'Active') = 'Active'
+              AND (we.start_date IS NULL OR we.start_date <= %s)
+              AND (we.left_date IS NULL OR we.left_date > %s)
+        """, (avdate, avdate, avdate, avdate), as_dict=True):
+            busy[r.emp] = 1
+        scans_av = {}
+        if avdate <= str(frappe.utils.today()):
+            for r in frappe.db.sql("""
+                SELECT DISTINCT employee FROM `tabEmployee Checkin`
+                WHERE DATE(`time`) = %s
+            """, (avdate,), as_dict=True):
+                scans_av[r.employee] = 1
+        av_farms = {}
+        av_total = 0
+        for r in frappe.db.sql("""
+            SELECT name, employee_name, designation, employment_type, TRIM(custom_farm) farm
+            FROM `tabEmployee`
+            WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) IN %s
+            ORDER BY employee_name
+        """, (tuple(FARMS),), as_dict=True):
+            if busy.get(r.name):
+                continue
+            fa = av_farms.get(r.farm)
+            if fa is None:
+                fa = {"count": 0, "present": 0, "list": []}
+                av_farms[r.farm] = fa
+            fa["count"] = fa["count"] + 1
+            pres = 1 if scans_av.get(r.name) else 0
+            fa["present"] = fa["present"] + pres
+            av_total = av_total + 1
+            if len(fa["list"]) < 400:
+                fa["list"].append({"emp": r.name, "name": r.employee_name,
+                                   "designation": r.designation, "etype": r.employment_type,
+                                   "present": pres})
+        out["available"] = {"date": avdate, "total": av_total, "farms": av_farms}
+
     else:
         out["error"] = "unknown action: " + str(action)
 
