@@ -996,6 +996,22 @@ def wm_dashboard(**kwargs):
                 "left_pay": frappe.utils.flt(cr.pay) if cr else 0,
                 "event_date": str(rr.start_date) if rr.start_date else None,
             })
+        # plans closed early release their whole crew at once — label those rows
+        # "Released" so mass closures don't read as individual walk-offs
+        plan_names_s = {}
+        for srow in subs:
+            if srow.get("plan"):
+                plan_names_s[srow["plan"]] = 1
+        closed_plans = {}
+        if plan_names_s:
+            for r in frappe.db.sql("""
+                SELECT name FROM `tabWork Management Planner`
+                WHERE name IN %s AND IFNULL(custom_close_state,'') = 'Closed'
+            """, (tuple(plan_names_s.keys()),), as_dict=True):
+                closed_plans[r.name] = 1
+        for srow in subs:
+            if srow.get("kind") == "Left" and closed_plans.get(srow.get("plan")):
+                srow["kind"] = "Released"
         subs = sorted(subs, key=lambda x: x.get("event_date") or "", reverse=True)
         out["subs"] = subs
 

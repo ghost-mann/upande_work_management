@@ -1703,6 +1703,7 @@
       var kind=r.kind||(r.rep_name?"Swap":"Left");
       var kindTag=kind==="Joined"?'<span class="tag" style="background:rgba(10,122,67,.12);color:#0a7a43;border-color:transparent">Joined</span>'
         :kind==="Swap"?'<span class="tag" style="background:rgba(37,99,235,.10);color:#2563eb;border-color:transparent">Swap</span>'
+        :kind==="Released"?'<span class="tag" style="background:rgba(160,96,0,.12);color:#a06000;border-color:transparent" title="The plan was closed early — the whole remaining crew was released on the close date; days worked stay paid">Released &middot; plan closed</span>'
         :'<span class="tag hot">Left</span>';
       var leftCell = r.left_emp
         ? '<a href="#" class="subs-emplink" data-emp="'+esc(r.left_emp)+'" style="text-decoration:line-through;color:#999">'+esc(r.left_name||r.left_emp)+'</a>'
