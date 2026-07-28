@@ -746,6 +746,21 @@ def wm_dashboard(**kwargs):
         out["act_states"] = act_states
         out["pay_states"] = pay_states
         out["farms"] = farm_rows
+        # workforce: active employees on the WM farms, split by type
+        wf_active = 0
+        wf_task = 0
+        wf_perm = 0
+        for r in frappe.db.sql("""
+            SELECT CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END k, COUNT(*) n
+            FROM `tabEmployee`
+            WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) IN %s
+            GROUP BY CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END
+        """, (tuple(FARMS),), as_dict=True):
+            if r.k == 'tw':
+                wf_task = frappe.utils.cint(r.n)
+            else:
+                wf_perm = frappe.utils.cint(r.n)
+        wf_active = wf_task + wf_perm
         out["totals"] = {
             "approved_cost": tot_cost, "planned_people": tot_ppl, "workers_deployed": tot_deployed,
             "approved_plans": plan_states.get("Approved", 0), "assignments": asg_states.get("Assigned", 0),
@@ -754,6 +769,7 @@ def wm_dashboard(**kwargs):
             "planned_qty": tot_planqty, "actual_qty": tot_actqty, "planned_value": tot_cost,
             "paid_amount": tot_paid, "workers_paid": tot_wkrs_paid,
             "assigned_workers": tot_assigned_w, "confirmed_workers": tot_conf_w, "awaiting_workers": tot_await_w,
+            "active_employees": wf_active, "active_task_workers": wf_task, "active_permanent": wf_perm,
             "crew_days": tot_crewdays,
             "unpaid": unpaid, "paid_total": paid_total,
             "act_pending": act_states.get("Pending Farm Manager", 0) + act_states.get("Pending HR Head", 0) + act_states.get("Pending GM", 0),
