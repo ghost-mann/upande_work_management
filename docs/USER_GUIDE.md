@@ -135,6 +135,9 @@ through to the worker's review sheet, with the actuals document named:
   be recorded against them. Release them with a swap, or turn on
   **Auto-release inactive employees from assignments** in Work Management
   Settings (off by default) to have HR deactivation release them instantly.
+  The check card also offers a one-click **Clean slate** button that releases
+  the existing backlog in one confirmed action (work and pay untouched) —
+  the auto-release checkbox only covers future deactivations.
 - **Recorded work with no pay** — quantities recorded but valued at ZERO
   (the worker-type lookup failed at entry). Shows what each row *should* be
   (qty × doc rate) and a one-click **Revalue** button that repairs the rows,

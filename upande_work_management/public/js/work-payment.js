@@ -990,6 +990,28 @@
     box.querySelectorAll("[data-wraudit]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-wraudit"), auditWindow()); };
     });
+    var ri=el("disc-release");
+    if(ri){
+      ri.onclick=function(){
+        confirmModal("Release inactive employees from assignments",
+          '<p style="margin:0 0 10px">Mark every ex-employee\'s Active assignment rows as <b>Left</b> (dated today)?</p>'+
+          '<p class="note" style="margin:0">Assignments are recounted and each gets a comment naming who was released and why. Recorded work and unpaid earnings are NOT touched — this only stops new quantities being entered against people who have left.</p>',
+          "Release all",
+          function(){
+            ri.disabled=true; ri.textContent="Releasing…";
+            var r={action:"pay_release_inactive", farms:auFarmsCSV()};
+            function step(){
+              call(r, true).then(function(d){
+                if(d.error){ toast(d.error,"bad"); ri.disabled=false; return; }
+                if(d.remaining>0){ ri.textContent="Releasing… "+d.remaining+" left"; step(); return; }
+                toast("Released "+fmt(d.workers_found)+" ex-employees from "+fmt(d.assignments_touched||0)+"+ assignments","good");
+                AU.disc=null; AU.loaded=false; loadAudit();
+              }).catch(function(e){ toast("Release failed: "+e.message,"bad"); ri.disabled=false; });
+            }
+            step();
+          }, "good");
+      };
+    }
     var dd=el("disc-dedup");
     if(dd){
       dd.onclick=function(){
@@ -1114,6 +1136,10 @@
       });
     }
     h+='</tr></thead><tbody>'+body+'</tbody></table></div>';
+    if(c.key==="inactive_assigned" && rows.length){
+      h+='<div style="margin-top:10px"><button type="button" class="btn good sm" id="disc-release">Clean slate · release all '+fmt(c.count)+(c.count>=300?"+":"")+' from assignments</button>'+
+         '<span class="hint" style="margin-left:10px">Marks every row Left (dated today), recounts the assignments and leaves a comment naming who was released. Their recorded work and pay are untouched. Future deactivations are covered by the auto-release checkbox in Settings.</span></div>';
+    }
     if(c.key==="dup_day" && rows.length){
       var texc=0; rows.forEach(function(r){ texc+=(r.amount||0); });
       h+='<div style="margin-top:10px"><button type="button" class="btn good sm" id="disc-dedup">Zero the duplicates · keep first copy · '+money(texc)+'</button>'+
