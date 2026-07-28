@@ -2088,6 +2088,70 @@ def wm_payment(**kwargs):
             out["rows_reset"] = rows_n
             out["errors"] = len([r for r in results if r.get("error")])
 
+    elif action == "pay_release_inactive":
+        # CLEAN SLATE for the "left the company but still assigned" backlog:
+        # mark every Active assignment row of a non-Active employee as Left
+        # (dated today), recount the assignments and leave comments. The
+        # auto-release checkbox only covers FUTURE deactivations — this handles
+        # the existing rows. Chunked (150 rows/call); dry_run=1 reports only.
+        ri_dry = frappe.utils.cint(frappe.form_dict.get("dry_run"))
+        ri_farm = (frappe.form_dict.get("farms") or "").strip()
+        riconds = ""
+        riparams = []
+        ri_flist = []
+        if ri_farm:
+            for f in ri_farm.split(","):
+                fv = f.strip()
+                if fv:
+                    ri_flist.append(fv)
+        if ri_flist:
+            riconds = " AND TRIM(a.farm) IN %s"
+            riparams.append(tuple(ri_flist))
+        ri_rows = frappe.db.sql("""
+            SELECT we.name rowname, we.employee, we.employee_name, a.name asg, a.farm
+            FROM `tabWork Assignment Employee` we
+            INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
+            INNER JOIN `tabEmployee` emp ON emp.name = we.employee
+            WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+              AND IFNULL(we.status,'Active') = 'Active'
+              AND emp.status != 'Active'
+              """ + riconds + """
+            ORDER BY a.name LIMIT 2000
+        """, tuple(riparams), as_dict=True)
+        wset_ri = {}
+        for r in ri_rows:
+            wset_ri[r.employee] = 1
+        out["rows_found"] = len(ri_rows)
+        out["workers_found"] = len(wset_ri)
+        if not ri_dry and ri_rows:
+            batch = ri_rows[:150]
+            touched = {}
+            for r in batch:
+                frappe.db.set_value("Work Assignment Employee", r.rowname, "status", "Left", update_modified=False)
+                frappe.db.set_value("Work Assignment Employee", r.rowname, "left_date", frappe.utils.today(), update_modified=False)
+                pl = touched.get(r.asg)
+                if pl is None:
+                    pl = []
+                    touched[r.asg] = pl
+                pl.append(r.employee_name or r.employee)
+            for asg in touched:
+                cnt = frappe.db.sql("""
+                    SELECT COUNT(*) n FROM `tabWork Assignment Employee`
+                    WHERE parent = %s AND IFNULL(status,'Active') = 'Active'
+                """, (asg,), as_dict=True)
+                if cnt:
+                    frappe.db.set_value("Work Management Assigner", asg, "assigned_count", frappe.utils.cint(cnt[0].n), update_modified=False)
+            frappe.db.commit()
+            for asg in touched:
+                try:
+                    frappe.get_doc("Work Management Assigner", asg).add_comment("Comment",
+                        "Released (clean slate) by " + frappe.session.user + " — deactivated in HR: " + ", ".join(touched[asg][:15]))
+                except Exception:
+                    pass
+            out["released_now"] = len(batch)
+            out["assignments_touched"] = len(touched)
+            out["remaining"] = len(ri_rows) - len(batch)
+
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)
