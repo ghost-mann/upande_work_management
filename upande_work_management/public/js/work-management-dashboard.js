@@ -74,6 +74,9 @@
       h+='<div class="fs-card">'+
          '<div class="fs-name">'+esc(r.farm)+'</div>'+
          '<div class="fs-big">'+fmt(r.assigned_workers)+'</div><div class="fs-lbl">assigned workers</div>'+
+         '<div class="fs-line"><span>Active employees</span><b>'+fmt(r.active_employees)+'</b></div>'+
+         '<div class="fs-line"><span>&middot; Task workers</span><b>'+fmt(r.active_task_workers)+'</b></div>'+
+         '<div class="fs-line"><span>&middot; Permanent / salaried</span><b>'+fmt(r.active_permanent)+'</b></div>'+
          '<div class="fs-line"><span>Awaiting actuals</span><b>'+fmt(r.awaiting_workers)+'</b></div>'+
          '<div class="fs-line"><span>Confirmed</span><b>'+fmt(r.confirmed_workers)+'</b></div>'+
          '<div class="fs-line"><span>Crew-days of work</span><b>'+fmt(r.crew_days)+'</b></div>'+
@@ -261,29 +264,6 @@
           '</div>'+
           '<div id="wm-tl-chart" style="min-height:240px"><div class="empty">Loading timeline&hellip;</div></div>'+
         '</div></div>'+
-      '<div class="sech">Labour &mdash; on the farm vs given work vs producing</div>'+
-      '<div class="card"><div class="hd"><h3>Present &middot; assigned &middot; worked, per day</h3><div class="cap">attendance vs live assignments vs actuals &middot; the gaps are idle hands, jobs given to absent people, and assignments with no output</div></div>'+
-        '<div class="bd">'+
-          '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">'+
-            '<div><div class="tl-lab">Farm</div><select id="wm-lab-farm" class="tl-in"><option value="">All farms</option></select></div>'+
-            '<div><div class="tl-lab">From</div><input type="date" id="wm-lab-from" class="tl-in"></div>'+
-            '<div><div class="tl-lab">To</div><input type="date" id="wm-lab-to" class="tl-in"></div>'+
-            '<button type="button" class="refresh" id="wm-lab-apply" style="margin-bottom:1px">Apply</button>'+
-            '<span style="flex:1"></span>'+
-            '<div id="wm-lab-mode" style="display:inline-flex;gap:2px;background:var(--wash);border:1px solid var(--line);border-radius:999px;padding:3px">'+
-              '<button type="button" data-m="tot" class="on">Totals</button>'+
-              '<button type="button" data-m="farm">Compare farms</button>'+
-            '</div>'+
-            '<div id="wm-lab-measure" style="display:none;gap:2px;background:var(--wash);border:1px solid var(--line);border-radius:999px;padding:3px">'+
-              '<button type="button" data-m="present" class="on">Present</button>'+
-              '<button type="button" data-m="assigned">Assigned</button>'+
-              '<button type="button" data-m="worked">Worked</button>'+
-              '<button type="button" data-m="util">Utilisation %</button>'+
-            '</div>'+
-          '</div>'+
-          '<div id="wm-lab-kpis" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px"></div>'+
-          '<div id="wm-lab-chart" style="min-height:250px"><div class="empty">Loading labour&hellip;</div></div>'+
-        '</div></div>'+
       '<div class="sech">Action queues</div>'+
       '<div class="card"><div class="hd"><h3>Everything waiting on someone</h3><div class="cap">one queue at a time &middot; full-width</div></div>'+
         '<div class="bd">'+
@@ -294,7 +274,6 @@
     initCharts();
     initQueues(D);
     initTimeline();
-    initLabour();
     initApproverKpis();
     initPerformers();
   }
@@ -1984,179 +1963,6 @@
     hov.addEventListener("mouseleave",function(){
       cross.style.display="none"; tip.style.display="none";
       S.forEach(function(sr,si){ box.querySelector("#wm-tl-dot"+si).style.display="none"; });
-    });
-  }
-
-  // ============ LABOUR: present vs assigned vs worked ============
-  var LAB={data:null, mode:"tot", measure:"present"};
-  var LAB_FCOLORS={"Saboti":"#a06000","Lokitela":"#2563eb","Vale":"#0a7a43","Endebess":"#7c3aed"};
-  function initLabour(){
-    var ap=el("wm-lab-apply"); if(!ap) return;
-    if(!el("wm-lab-from").value){
-      var d=new Date(); d.setDate(d.getDate()-27);
-      el("wm-lab-from").value=d.toISOString().slice(0,10);
-    }
-    if(!el("wm-lab-to").value) el("wm-lab-to").value=new Date().toISOString().slice(0,10);
-    ap.onclick=loadLabour;
-    el("wm-lab-farm").onchange=function(){ renderLabour(); };
-    el("wm-lab-mode").querySelectorAll("button").forEach(function(b){
-      b.onclick=function(){
-        LAB.mode=b.getAttribute("data-m");
-        el("wm-lab-mode").querySelectorAll("button").forEach(function(x){ x.classList.toggle("on", x===b); });
-        el("wm-lab-measure").style.display=LAB.mode==="farm"?"inline-flex":"none";
-        renderLabour();
-      };
-    });
-    el("wm-lab-measure").querySelectorAll("button").forEach(function(b){
-      b.onclick=function(){
-        LAB.measure=b.getAttribute("data-m");
-        el("wm-lab-measure").querySelectorAll("button").forEach(function(x){ x.classList.toggle("on", x===b); });
-        renderLabour();
-      };
-    });
-    loadLabour();
-  }
-  function loadLabour(){
-    var box=el("wm-lab-chart"); if(!box) return;
-    box.innerHTML='<div class="empty">Loading labour…</div>';
-    call({action:"labour_series", from_date:el("wm-lab-from").value||"", to_date:el("wm-lab-to").value||""})
-      .then(function(d){
-        if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
-        LAB.data=d;
-        var fs=el("wm-lab-farm");
-        if(fs && fs.options.length<=1){
-          (d.farms||[]).forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
-        }
-        renderLabour();
-      })
-      .catch(function(e){ box.innerHTML='<div class="empty">Could not load labour: '+esc(e.message)+'</div>'; });
-  }
-  function labIncludedFarms(){
-    var f=el("wm-lab-farm").value||"";
-    return f ? [f] : (LAB.data.farms||[]);
-  }
-  function labSum(metric){
-    // per-day totals of one metric across the included farms
-    var days=LAB.data.days||[], inc=labIncludedFarms(), outv=[];
-    for(var i=0;i<days.length;i++){
-      var v=0;
-      inc.forEach(function(fm){ v+=((LAB.data.series[fm]||{})[metric]||[])[i]||0; });
-      outv.push(v);
-    }
-    return outv;
-  }
-  function renderLabour(){
-    var box=el("wm-lab-chart"); if(!box||!LAB.data) return;
-    var days=LAB.data.days||[];
-    if(!days.length){ box.innerHTML='<div class="empty">No days in this window.</div>'; return; }
-    var pres=labSum("present"), asg=labSum("assigned"), wrk=labSum("worked");
-    // ── KPI chips: the gaps in words ──
-    var tp=0,ta=0,tw=0, idle=0, over=0;
-    for(var i=0;i<days.length;i++){
-      tp+=pres[i]; ta+=asg[i]; tw+=wrk[i];
-      if(pres[i]>asg[i]) idle+=pres[i]-asg[i];
-      if(asg[i]>pres[i]) over+=asg[i]-pres[i];
-    }
-    var util=tp?Math.round(tw/tp*100):0;
-    function chip(lbl,val,sub,color){
-      return '<div style="border:1px solid var(--line);border-radius:12px;padding:8px 14px;background:var(--wash)">'+
-        '<div style="font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--mute);font-weight:600">'+lbl+'</div>'+
-        '<div style="font-size:17px;font-weight:700;color:'+(color||"var(--ink)")+'">'+val+'</div>'+
-        '<div style="font-size:9.5px;color:var(--mute)">'+sub+'</div></div>';
-    }
-    el("wm-lab-kpis").innerHTML=
-      chip("Utilisation", util+"%", "worked ÷ present, whole window", util>=80?"#0a7a43":(util>=60?"#a06000":"#b91c1c"))+
-      chip("Present", fmt(tp), "worker-days on the farm", "#0a7a43")+
-      chip("Assigned", fmt(ta), "worker-days given jobs", "#2563eb")+
-      chip("Worked", fmt(tw), "worker-days with output", "#7c3aed")+
-      chip("Idle hands", fmt(idle), "present beyond assigned (net/day)", idle>0?"#a06000":"#0a7a43")+
-      chip("Assigned over present", fmt(over), "jobs beyond attendance (net/day)", over>0?"#b91c1c":"#0a7a43");
-    // ── series for the chart ──
-    var S;
-    if(LAB.mode==="farm"){
-      var inc=labIncludedFarms();
-      S=inc.map(function(fm){
-        var vals;
-        if(LAB.measure==="util"){
-          var pp=LAB.data.series[fm].present, ww=LAB.data.series[fm].worked;
-          vals=pp.map(function(p,i){ return p?Math.min(150,Math.round((ww[i]||0)/p*100)):0; });
-        } else {
-          vals=LAB.data.series[fm][LAB.measure]||[];
-        }
-        return {name:fm, color:LAB_FCOLORS[fm]||"#0a0a0a", vals:vals};
-      });
-    } else {
-      S=[
-        {name:"Present", color:"#0a7a43", vals:pres, area:1},
-        {name:"Assigned",color:"#2563eb", vals:asg},
-        {name:"Worked",  color:"#7c3aed", vals:wrk}
-      ];
-    }
-    var unit=(LAB.mode==="farm"&&LAB.measure==="util")?"%":" workers";
-    var max=0; S.forEach(function(sr){ sr.vals.forEach(function(v){ if(v>max) max=v; }); });
-    if(max<=0){ box.innerHTML='<div class="empty">Nothing recorded in this window for this filter.</div>'; return; }
-    var W=Math.max(560, box.clientWidth||860), H=290, L=52,R=16,T=14,B=30;
-    var iw=W-L-R, ih=H-T-B, ymax=max*1.1;
-    function X(i){ return L + (days.length===1?iw/2:(i/(days.length-1))*iw); }
-    function Y(v){ return T + ih - (v/ymax)*ih; }
-    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="Daily labour: present, assigned, worked">';
-    for(var gi=0;gi<=4;gi++){
-      var gv=ymax*gi/4, gy=Y(gv);
-      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,0.06)" stroke-width="1"/>';
-      g+='<text x="'+(L-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780">'+tlNum(gv)+'</text>';
-    }
-    var step=Math.max(1,Math.round(days.length/6));
-    for(var xi=0;xi<days.length;xi+=step){
-      g+='<text x="'+X(xi).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780">'+tlShort(days[xi])+'</text>';
-    }
-    S.forEach(function(sr){
-      if(!sr.area) return;
-      var area="M"+X(0).toFixed(1)+","+Y(0).toFixed(1);
-      sr.vals.forEach(function(v,i){ area+="L"+X(i).toFixed(1)+","+Y(v).toFixed(1); });
-      area+="L"+X(days.length-1).toFixed(1)+","+Y(0).toFixed(1)+"Z";
-      g+='<path d="'+area+'" fill="rgba(10,122,67,0.08)"/>';
-    });
-    S.forEach(function(sr){
-      var pth="";
-      sr.vals.forEach(function(v,i){ pth+=(i?"L":"M")+X(i).toFixed(1)+","+Y(v).toFixed(1); });
-      g+='<path d="'+pth+'" fill="none" stroke="'+sr.color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
-    });
-    S.forEach(function(sr,si){
-      var lv=sr.vals[sr.vals.length-1]||0;
-      g+='<text x="'+(W-R)+'" y="'+(Y(lv)+(si%2?12:-6)).toFixed(1)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="9.5" font-weight="600" fill="'+sr.color+'">'+esc(sr.name)+'</text>';
-    });
-    g+='<line id="wm-lab-cross" x1="0" y1="'+T+'" x2="0" y2="'+(T+ih)+'" stroke="rgba(10,10,10,0.35)" stroke-width="1" style="display:none"/>';
-    S.forEach(function(sr,si){
-      g+='<circle id="wm-lab-dot'+si+'" r="4" fill="'+sr.color+'" stroke="#fff" stroke-width="1.5" style="display:none"/>';
-    });
-    g+='<rect id="wm-lab-hover" x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="transparent"/></svg>';
-    var legend='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--ink);margin:2px 0 8px">'+
-      S.map(function(sr){ return '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:16px;height:0;border-top:2px solid '+sr.color+'"></i>'+esc(sr.name)+'</span>'; }).join("")+'</div>';
-    box.innerHTML=legend+'<div style="position:relative">'+g+'<div id="wm-lab-tip" style="position:absolute;pointer-events:none;display:none;background:rgba(10,10,10,0.92);color:#fafaf6;border-radius:10px;padding:8px 11px;font-size:11px;line-height:1.5;white-space:nowrap;z-index:5"></div></div>';
-    var svg=box.querySelector("svg"), hov=box.querySelector("#wm-lab-hover"),
-        cross=box.querySelector("#wm-lab-cross"), tip=box.querySelector("#wm-lab-tip");
-    hov.addEventListener("mousemove",function(evt){
-      var r=svg.getBoundingClientRect();
-      var mx=(evt.clientX-r.left)*(W/r.width);
-      var idx=Math.round((mx-L)/(iw)*(days.length-1));
-      idx=Math.max(0,Math.min(days.length-1,idx));
-      var cx=X(idx);
-      cross.setAttribute("x1",cx); cross.setAttribute("x2",cx); cross.style.display="";
-      S.forEach(function(sr,si){
-        var dot=box.querySelector("#wm-lab-dot"+si);
-        dot.setAttribute("cx",cx); dot.setAttribute("cy",Y(sr.vals[idx]||0)); dot.style.display="";
-      });
-      tip.innerHTML='<b>'+tlShort(days[idx])+'</b><br>'+
-        S.map(function(sr){ return '<span style="color:'+sr.color+'">●</span> '+esc(sr.name)+': <b>'+fmt(sr.vals[idx]||0)+'</b>'; }).join("<br>")+
-        '<span style="opacity:.6">'+unit+'</span>';
-      tip.style.display="";
-      var rct=svg.getBoundingClientRect();
-      tip.style.left=Math.min((cx/W)*rct.width+14, rct.width-180)+"px";
-      tip.style.top="18px";
-    });
-    hov.addEventListener("mouseleave",function(){
-      cross.style.display="none"; tip.style.display="none";
-      S.forEach(function(sr,si){ box.querySelector("#wm-lab-dot"+si).style.display="none"; });
     });
   }
 
