@@ -89,6 +89,9 @@ Workers whose payment entry is with accounts (*Pending Accounts*). From here:
 - **Return to unpaid** — withdraws the entry: the payment document is deleted,
   the rows go back to Unpaid and lose their review stamp, and the worker
   restarts at review. Use this when something needs to be corrected.
+- **Bulk return** — tick several entries (or Select all) and hit
+  **Return N to unpaid**: every ticked entry is withdrawn in one confirmed
+  action, same effect per entry as returning them one by one.
 
 ### The payment entry (Work Management Payment)
 Sending a worker to accounts creates **one payment document per worker**

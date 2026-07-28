@@ -2016,6 +2016,49 @@ def wm_payment(**kwargs):
             out["fixed_groups"] = len(batch)
             out["remaining_groups"] = len(dup_groups) - len(batch)
 
+    elif action == "pay_bulk_withdraw":
+        # Return SEVERAL pending payments to Unpaid in one go — same as
+        # pay_run_withdraw per entry: clear refs + review stamps, delete the doc.
+        nm_raw = frappe.form_dict.get("names")
+        nm_list = []
+        if nm_raw:
+            for nm in nm_raw.split(","):
+                nv = nm.strip()
+                if nv and nv not in nm_list:
+                    nm_list.append(nv)
+        if not nm_list:
+            out["error"] = "names is required (CSV)"
+        else:
+            results = []
+            done_n = 0
+            rows_n = 0
+            for nm in nm_list[:200]:
+                cur = frappe.db.get_value("Work Management Payment", nm, "workflow_state")
+                if not cur:
+                    results.append({"name": nm, "error": "not found"})
+                    continue
+                if cur != "Pending Accounts":
+                    results.append({"name": nm, "error": "state is " + str(cur)})
+                    continue
+                rws = frappe.db.get_all("Work Actuals Employee",
+                    filters={"payment_ref": nm, "paid": 0}, pluck="name")
+                for rn in rws:
+                    frappe.db.set_value("Work Actuals Employee", rn, "payment_ref", None, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed", 0, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_by", None, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_at", None, update_modified=False)
+                wt = frappe.db.get_value("Work Management Payment", nm, "run_title")
+                frappe.db.set_value("Work Management Payment", nm, "workflow_state", "Draft", update_modified=False)
+                frappe.delete_doc("Work Management Payment", nm, ignore_permissions=True, force=True)
+                done_n = done_n + 1
+                rows_n = rows_n + len(rws)
+                results.append({"name": nm, "run_title": wt, "rows_reset": len(rws)})
+            frappe.db.commit()
+            out["results"] = results
+            out["withdrawn"] = done_n
+            out["rows_reset"] = rows_n
+            out["errors"] = len([r for r in results if r.get("error")])
+
     # ===== DASHBOARD (fast: grouped queries) =====
     else:
         out["error"] = "unknown action: " + str(action)

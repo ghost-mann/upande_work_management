@@ -7,6 +7,7 @@
     workers: [],        // current payable list (from pay_workers)
     picked: {},         // employee -> row, selected for the run
     bulk: {},           // employee -> {status, amt, nm} ticked for bulk review/send
+    accBulk: {},        // WMPAY name -> {nm, amt} ticked for bulk return-to-unpaid
     farms: [],          // [{farm, workers, owed}] summary across window
     activeFarms: {},    // farm -> 1 (chip filter); empty = all
     isAccounts: false,
@@ -650,13 +651,19 @@
         box.innerHTML='<div class="empty"><b>Nothing awaiting accounts</b>Runs you submit from the Build tab will appear here for release.</div>';
         return;
       }
-      var h='<div class="runlist">';
+      var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px">'+
+        '<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;cursor:pointer"><input type="checkbox" id="aw-all"> Select all</label>'+
+        '<span class="hint" id="aw-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
+        '<button type="button" class="btn sm" id="aw-return" style="display:none;color:var(--warn);border-color:#fde68a">Return selected to unpaid</button>'+
+        '<span class="hint" id="aw-hint">Tick entries to return several to unpaid at once.</span></div>';
+      h+='<div class="runlist">';
       rows.forEach(function(r){
         h+=runCard(r, ST.isAccounts);
       });
       h+='</div>';
       box.innerHTML=h;
       wireRunCards(box);
+      wireAccBulk(box);
     }).catch(function(e){
       box.innerHTML='<div class="err">Could not load pending runs: '+esc(e.message)+'</div>';
     });
@@ -674,7 +681,8 @@
     }
     return '<div class="runcard">'+
       '<div class="rc-head">'+
-        '<div><div class="rc-title">'+esc(r.run_title||r.name)+'</div>'+
+        '<input type="checkbox" class="awpick" data-name="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" data-amt="'+(r.grand_total||0)+'" title="Select for bulk return to unpaid" style="margin:4px 10px 0 0;flex-shrink:0"'+(ST.accBulk[r.name]?" checked":"")+'>'+
+        '<div style="flex:1"><div class="rc-title">'+esc(r.run_title||r.name)+'</div>'+
         '<div class="rc-sub">'+esc(r.name)+' · prepared by '+esc(r.prepared_by||"—")+' · '+esc(r.run_date||"")+
         (r.period_from?' · work '+esc(dshort(r.period_from))+' → '+esc(dshort(r.period_to)):'')+'</div></div>'+
         '<span class="tag pending">Pending accounts</span>'+
@@ -706,6 +714,65 @@
     box.querySelectorAll("[data-withdraw]").forEach(function(b){
       b.onclick=function(){ withdrawRun(b.getAttribute("data-withdraw"), b.getAttribute("data-nm")); };
     });
+  }
+
+  function wireAccBulk(box){
+    var live={};
+    box.querySelectorAll("input.awpick").forEach(function(cb){
+      var nm=cb.getAttribute("data-name");
+      live[nm]=1;
+      cb.onchange=function(){
+        if(cb.checked) ST.accBulk[nm]={nm:cb.getAttribute("data-nm"), amt:parseFloat(cb.getAttribute("data-amt"))||0};
+        else delete ST.accBulk[nm];
+        syncAccBulk();
+      };
+    });
+    Object.keys(ST.accBulk).forEach(function(k){ if(!live[k]) delete ST.accBulk[k]; });
+    var all=el("aw-all");
+    if(all){ all.onchange=function(){ box.querySelectorAll("input.awpick").forEach(function(cb){ cb.checked=all.checked; cb.onchange(); }); }; }
+    var rb=el("aw-return");
+    if(rb){ rb.onclick=bulkWithdraw; }
+    syncAccBulk();
+  }
+  function syncAccBulk(){
+    var keys=Object.keys(ST.accBulk);
+    var info=el("aw-info"), rb=el("aw-return"), hint=el("aw-hint");
+    if(!info) return;
+    if(!keys.length){ info.textContent=""; if(rb) rb.style.display="none"; if(hint) hint.style.display=""; return; }
+    var amt=0; keys.forEach(function(k){ amt+=ST.accBulk[k].amt; });
+    info.textContent=fmt(keys.length)+" selected · "+money(amt);
+    if(hint) hint.style.display="none";
+    if(rb){ rb.style.display=""; rb.textContent="Return "+fmt(keys.length)+" to unpaid"; }
+  }
+  function bulkWithdraw(){
+    var keys=Object.keys(ST.accBulk);
+    if(!keys.length){ toast("Tick at least one entry","bad"); return; }
+    var amt=0; keys.forEach(function(k){ amt+=ST.accBulk[k].amt; });
+    confirmModal(
+      "Return "+fmt(keys.length)+" entries to unpaid",
+      '<p style="margin:0 0 10px">Take <b>'+fmt(keys.length)+' payment entr'+(keys.length===1?'y':'ies')+'</b> totalling <b>'+money(amt)+'</b> out of the accounts queue?</p>'+
+      '<p class="note" style="margin:0">Each payment reference is removed, the workers go back to <b>Unpaid</b> and their reviews are cleared — correct the days if needed, then review and send again.</p>',
+      "Return all to unpaid",
+      function(){
+        var rb=el("aw-return"); if(rb){ rb.disabled=true; rb.textContent="Returning…"; }
+        var SIZE=40, i=0, done=0, rowsReset=0, errs=0;
+        function step(){
+          if(i>=keys.length){
+            toast(fmt(done)+" returned to unpaid ("+fmt(rowsReset)+" day-rows reset)"+(errs?(" · "+errs+" skipped"):""), errs?"bad":"good");
+            ST.accBulk={};
+            loadAccounts(); refreshAccountsCount(); loadPayable();
+            return;
+          }
+          var batch=keys.slice(i, i+SIZE); i+=SIZE;
+          call({action:"pay_bulk_withdraw", names:batch.join(",")}, true).then(function(d){
+            if(d.error){ toast(d.error,"bad"); if(rb) rb.disabled=false; return; }
+            done+=(d.withdrawn||0); rowsReset+=(d.rows_reset||0); errs+=(d.errors||0);
+            step();
+          }).catch(function(e){ toast("Bulk return stopped: "+e.message,"bad"); if(rb) rb.disabled=false; });
+        }
+        step();
+      }
+    );
   }
 
   function withdrawRun(name, nm){
