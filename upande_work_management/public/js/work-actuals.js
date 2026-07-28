@@ -1002,7 +1002,7 @@
       list.forEach(function(r, i){
         h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td>'+
            '<td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td>'+
-           '<td class="n m">'+fmt(r.fulfilled_qty)+'</td>'+
+           '<td class="n m">'+fmt(r.fulfilled_qty)+((r.confirmed_qty!=null&&r.confirmed_qty<r.fulfilled_qty)?'<div style="font-size:9px;color:#a06000">'+fmt(r.confirmed_qty)+' confirmed</div>':'')+'</td>'+
            '<td class="n m">'+fmt(r.remaining_qty)+'</td>'+
            '<td>'+esc(r.custom_close_requested_by||"—")+'<div style="font-size:9px;color:#94a3b8">'+esc(r.custom_close_request_date||"")+'</div></td>'+
            '<td style="max-width:220px;white-space:normal">'+esc(r.custom_close_reason||"—")+'</td>'+
@@ -1012,7 +1012,7 @@
       wireExpand(body, 10, function(i){
         var r=list[i];
         return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(r.task||"")+' · '+esc(lbl(r.block_section))+'</span></div>'+
-          rowFigs([["Target",fmt(r.quantity)+' '+esc(r.uom||"")],["Done",fmt(r.fulfilled_qty)],["Remaining",fmt(r.remaining_qty)],["Requested by",esc(r.custom_close_requested_by||"—")],["Requested on",esc(r.custom_close_request_date||"—")]])+
+          rowFigs([["Target",fmt(r.quantity)+' '+esc(r.uom||"")],["Done",fmt(r.fulfilled_qty)+((r.confirmed_qty!=null&&r.confirmed_qty<r.fulfilled_qty)?' ('+fmt(r.confirmed_qty)+' confirmed)':'')],["Remaining",fmt(r.remaining_qty)],["Requested by",esc(r.custom_close_requested_by||"—")],["Requested on",esc(r.custom_close_request_date||"—")]])+
           (r.custom_close_reason?('<div class="dv-note">Reason: '+esc(r.custom_close_reason)+'</div>'):'')+
           '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">'+deskA("Open plan","work-management-planner",r.name)+'</div>';
       });
