@@ -995,6 +995,28 @@ def wm_actuals(**kwargs):
                         "remaining_qty", "uom", "custom_close_requested_by", "custom_close_request_date",
                         "custom_close_reason"],
                 order_by="custom_close_request_date desc", limit=200)
+            # fulfilled/remaining stored on the plan are stale — compute LIVE from
+            # every recorded actuals doc (drafts and pending included, since a
+            # close finalises them). done = recorded so far; remaining = target - done.
+            if rows:
+                done_map = {}
+                for r2 in frappe.db.sql("""
+                    SELECT a2.planner_request pr, COALESCE(SUM(ac.total_actual_qty),0) q,
+                           COALESCE(SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN ac.total_actual_qty ELSE 0 END),0) qc
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                    WHERE a2.planner_request IN %s
+                      AND ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+                    GROUP BY a2.planner_request
+                """, (tuple([r.name for r in rows]),), as_dict=True):
+                    done_map[r2.pr] = (frappe.utils.flt(r2.q), frappe.utils.flt(r2.qc))
+                for r in rows:
+                    dq = done_map.get(r.name, (0, 0))
+                    r["fulfilled_qty"] = dq[0]
+                    r["confirmed_qty"] = dq[1]
+                    tgt = frappe.utils.flt(r.get("quantity"))
+                    rem = tgt - dq[0]
+                    r["remaining_qty"] = rem if rem > 0 else 0
             out["pending"] = rows
 
 
