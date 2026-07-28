@@ -160,6 +160,12 @@ same ⚑ and the affected day-rows are tinted.
 ## 5. Dashboard (`/work-management`)
 
 - **Delivery timeline** — planned vs assigned vs actual value per day.
+- **Field intelligence** (beside the timeline) — *Efficiency* tab: area (Ha),
+  man-days, **Ha per man-day** and **Cost per Ha**, per farm and per task
+  (blocks need Area (Ha) captured on the block records to compute).
+  *Available workers* tab: pick any date to see the **number and list** of
+  active employees with no live assignment that day, per farm, with a P
+  marker for those already scanned in.
 - **Action queues** — one tabbed card of everything waiting for someone.
 - **Approver KPIs** — per approval stage, bar charts of each approver's
   sign-offs, value handled and time taken.
