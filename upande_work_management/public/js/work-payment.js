@@ -1073,6 +1073,15 @@
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
+    } else if(c.key==="inactive_assigned"){
+      h+='<th>Worker</th><th>HR status</th><th>Farm</th><th>Task</th><th>Assignment</th><th>Period</th>';
+      rows.forEach(function(r){
+        body+='<tr><td>'+wlink(r)+'</td>'+
+          '<td><span class="tag" style="color:var(--bad)">'+esc(r.emp_status||"Inactive")+'</span></td>'+
+          '<td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+          '<td class="m" style="font-size:10px">'+esc(r.assignment||"")+'</td>'+
+          '<td class="m">'+esc(r.wdate||"")+'</td></tr>';
+      });
     } else if(c.key==="dup_day"){
       h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Copies</th><th class="n">Total KES</th><th class="n">Excess KES</th><th>Docs</th><th>Entered by</th>';
       rows.forEach(function(r){

@@ -1468,7 +1468,7 @@ def wm_payment(**kwargs):
         disc_on = {}
         for dk in ("disc_absent_paid", "disc_ghost_days", "disc_leave_paid", "disc_off_paid",
                    "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning",
-                   "disc_no_pay", "disc_dup_day"):
+                   "disc_no_pay", "disc_dup_day", "disc_inactive_assigned"):
             val = 1
             try:
                 val = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", dk))
@@ -1686,7 +1686,35 @@ def wm_payment(**kwargs):
                           "total_amt": frappe.utils.flt(r.total_amt),
                           "actuals": r.docs, "entered_by": r.enterers,
                           "paid": frappe.utils.cint(r.min_paid)})
+        # ---- employees deactivated in HR but still Active on live assignments:
+        # current-state check (ignores the date window) — these people can still
+        # have quantities entered against them. ----
+        b_inactive = []
+        iconds = ""
+        iparams = []
+        if farm_list_d:
+            iconds = " AND TRIM(a.farm) IN %s"
+            iparams.append(tuple(farm_list_d))
+        for r in frappe.db.sql("""
+            SELECT we.name rowname, we.employee, we.employee_name, a.name assignment,
+                   a.farm, a.task, a.from_date afrom, a.to_date ato, emp.status emp_status
+            FROM `tabWork Assignment Employee` we
+            INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
+            INNER JOIN `tabEmployee` emp ON emp.name = we.employee
+            WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+              AND IFNULL(we.status,'Active') = 'Active'
+              AND emp.status != 'Active'
+              """ + iconds + """
+            ORDER BY a.farm, we.employee_name LIMIT 300
+        """, tuple(iparams), as_dict=True):
+            b_inactive.append({"employee": r.employee, "employee_name": r.employee_name,
+                               "emp_status": r.emp_status, "farm": r.farm, "task": r.task,
+                               "assignment": r.assignment, "wdate": str(r.afrom) + " → " + str(r.ato),
+                               "amount": 0})
         checks = [
+            {"key": "inactive_assigned", "title": "Left the company but still on live assignments",
+             "about": "The employee is Inactive/Left in HR, yet still marked Active on a live assignment — quantities can still be recorded against them. Release them via a substitution/swap, or turn on 'Auto-release inactive employees from assignments' in Work Management Settings to handle this automatically.",
+             "rows": b_inactive},
             {"key": "dup_day", "title": "Paid twice for the same day",
              "about": "The same worker, task and date recorded in more than one actuals document — usually two overlapping assignments for one task. The KES figure is the EXCESS beyond one copy. Zero the duplicate day with Edit in the worker's review sheet.",
              "rows": b_dup},
@@ -1718,7 +1746,8 @@ def wm_payment(**kwargs):
              "about": "Quantities recorded but the row valued at ZERO although the document has a rate and the worker is a Task Worker — the worker-type lookup failed at entry, so these people will never be paid for the work. Revalue to qty × rate.",
              "rows": b_nopay},
         ]
-        toggle_map = {"dup_day": "disc_dup_day", "no_pay": "disc_no_pay",
+        toggle_map = {"inactive_assigned": "disc_inactive_assigned",
+                      "dup_day": "disc_dup_day", "no_pay": "disc_no_pay",
                       "absent_paid": "disc_absent_paid", "ghost_days": "disc_ghost_days",
                       "leave_paid": "disc_leave_paid", "off_paid": "disc_off_paid",
                       "rate_mismatch": "disc_rate_mismatch", "multi_farm_day": "disc_multi_farm",
