@@ -746,21 +746,34 @@ def wm_dashboard(**kwargs):
         out["act_states"] = act_states
         out["pay_states"] = pay_states
         out["farms"] = farm_rows
-        # workforce: active employees on the WM farms, split by type
+        # workforce: active employees PER FARM, split by type (task vs permanent)
         wf_active = 0
         wf_task = 0
         wf_perm = 0
+        wf_farm = {}
         for r in frappe.db.sql("""
-            SELECT CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END k, COUNT(*) n
+            SELECT TRIM(custom_farm) farm,
+                   CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END k,
+                   COUNT(*) n
             FROM `tabEmployee`
             WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) IN %s
-            GROUP BY CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END
+            GROUP BY TRIM(custom_farm), CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END
         """, (tuple(FARMS),), as_dict=True):
+            fmw = wf_farm.get(r.farm)
+            if fmw is None:
+                fmw = {"tw": 0, "perm": 0}
+                wf_farm[r.farm] = fmw
+            fmw[r.k] = frappe.utils.cint(r.n)
             if r.k == 'tw':
-                wf_task = frappe.utils.cint(r.n)
+                wf_task = wf_task + frappe.utils.cint(r.n)
             else:
-                wf_perm = frappe.utils.cint(r.n)
+                wf_perm = wf_perm + frappe.utils.cint(r.n)
         wf_active = wf_task + wf_perm
+        for fr2 in farm_rows:
+            fw = wf_farm.get(fr2.get("farm"), {"tw": 0, "perm": 0})
+            fr2["active_task_workers"] = fw["tw"]
+            fr2["active_permanent"] = fw["perm"]
+            fr2["active_employees"] = fw["tw"] + fw["perm"]
         out["totals"] = {
             "approved_cost": tot_cost, "planned_people": tot_ppl, "workers_deployed": tot_deployed,
             "approved_plans": plan_states.get("Approved", 0), "assignments": asg_states.get("Assigned", 0),

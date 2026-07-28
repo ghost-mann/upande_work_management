@@ -160,12 +160,9 @@ same ⚑ and the affected day-rows are tinted.
 - **Pipeline performers** — ranking of every plan creator, assigner, actuals
   enterer and approver by volume and value.
 - **Crew movements** — substitution history (who left, who joined, swaps).
-- **Labour** — line graphs of **Present vs Assigned vs Worked** workers per
-  day, with date range and farm filters. Totals mode overlays the three lines;
-  *Compare farms* mode draws one line per farm for a chosen measure (Present /
-  Assigned / Worked / Utilisation %). KPI chips read the gaps out loud:
-  utilisation (worked ÷ present), idle hands (present beyond assigned) and
-  assigned-over-present (jobs given beyond attendance).
+- **Workers & value per farm** — each farm card shows assigned workers plus
+  the active workforce split: total active employees, task workers and
+  permanent/salaried staff.
 
 ## 6. Time & Attendance integration
 
