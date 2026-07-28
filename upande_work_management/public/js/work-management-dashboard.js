@@ -1708,10 +1708,11 @@
       var leftCell = r.left_emp
         ? '<a href="#" class="subs-emplink" data-emp="'+esc(r.left_emp)+'" style="text-decoration:line-through;color:#999">'+esc(r.left_name||r.left_emp)+'</a>'
         : '<span style="color:var(--mute)">— added to crew</span>';
+      var repShared = r.rep_shared ? ' <span style="font-size:8.5px;color:var(--mute)" title="This person joined the crew after the leaver — they may follow several leavers, not a one-for-one swap">(joined crew)</span>' : '';
       var repCell = r.rep_name
         ? (r.rep_emp
-            ? '<a href="#" class="subs-emplink" data-emp="'+esc(r.rep_emp)+'" style="color:#0a7a43;font-weight:600">'+esc(r.rep_name)+'</a>'
-            : '<span style="color:#0a7a43;font-weight:600">'+esc(r.rep_name)+'</span>')
+            ? '<a href="#" class="subs-emplink" data-emp="'+esc(r.rep_emp)+'" style="color:#0a7a43;font-weight:600'+(r.rep_shared?';opacity:.75':'')+'">'+esc(r.rep_name)+'</a>'+repShared
+            : '<span style="color:#0a7a43;font-weight:600">'+esc(r.rep_name)+'</span>'+repShared)
         : '—';
       h+='<tr>'+
          '<td>'+kindTag+'</td>'+
