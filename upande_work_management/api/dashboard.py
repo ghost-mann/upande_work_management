@@ -971,6 +971,15 @@ def wm_dashboard(**kwargs):
             if rep:
                 matched[(srow.assignment, rep.employee)] = 1
             srow["kind"] = "Swap" if rep else "Left"
+            srow["rep_shared"] = 0
+            if not rep:
+                # context for plain Left rows: whoever joined this assignment after
+                # they left (may follow several leavers, so display-only)
+                for rr in reps_map.get(srow.assignment, []):
+                    if not srow.left_date or (rr.start_date and str(rr.start_date) >= str(srow.left_date)):
+                        rep = rr
+                        srow["rep_shared"] = 1
+                        break
             srow["rep_emp"] = rep.employee if rep else None
             srow["rep_name"] = rep.employee_name if rep else None
             srow["rep_start"] = str(rep.start_date) if rep and rep.start_date else None
