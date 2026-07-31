@@ -147,9 +147,15 @@
       '<div class="sech">Operations control &mdash; money, bottlenecks &amp; desks</div>'+
       '<div class="card"><div class="hd"><h3>Where the money is &mdash; and who moves it</h3><div class="cap">every shilling in the pipeline right now, how long work takes to become pay, and what each approver cleared &middot; last 12 weeks</div></div>'+
         '<div class="bd" id="wm-apk-body"><div class="loading">Measuring sign-offs&hellip;</div></div></div>'+
-      '<div class="sech">Pipeline performers &mdash; creators, assigners, enterers &amp; approvers</div>'+
-      '<div class="card"><div class="hd"><h3>Who runs the pipeline</h3><div class="cap">every staff member ranked by the value they push through &mdash; planning, assigning, entering actuals and approving &middot; last 12 weeks</div></div>'+
-        '<div class="bd" id="wm-perf-body"><div class="loading">Ranking performers&hellip;</div></div></div>'+
+      '<div class="sech">Pipeline performers &mdash; planners &amp; assigners</div>'+
+      '<div class="card"><div class="hd"><h3>Who plans the work, and what it costs</h3><div class="cap">per person &middot; plans created, targets vs actuals, budget vs money spent, cost per unit &middot; last 12 weeks</div></div>'+
+        '<div class="bd">'+
+          '<div class="subtabs" id="wm-perf-tabs" style="margin-bottom:10px">'+
+            '<button type="button" class="subtab on" data-pp="creators">Plan creators</button>'+
+            '<button type="button" class="subtab" data-pp="assigners">Assigners</button>'+
+          '</div>'+
+          '<div id="wm-perf-body"><div class="loading">Measuring planners&hellip;</div></div>'+
+        '</div></div>'+
       // ===== trends & analytics tabs =====
       '<div class="sech">Trends &amp; analytics</div>'+
       '<div class="card"><div class="hd"><h3>What the numbers are doing</h3><div class="cap">confirmed work only &middot; last 12 weeks</div></div>'+
@@ -2236,87 +2242,84 @@
     bd.innerHTML=head+g;
   }
 
-  // ============ PIPELINE PERFORMERS (staff ranking) ============
-  var PERF={data:null};
-  var PERF_SERIES=[["plan_created","Plans created","#a06000"],["assigned","Assignments made","#2563eb"],
-                   ["actuals_entered","Actuals entered","#0a7a43"],["approvals","Approvals given","#7c3aed"]];
-  var PERF_COLS=[["plan_created","Plans created"],["plan_approved","Plans approved"],["assigned","Assignments made"],
-                 ["asg_approved","Assignments approved"],["actuals_entered","Actuals entered"],
-                 ["hr_approved","HR approved"],["gm_confirmed","GM confirmed"],["pay_released","Payments released"]];
+  // ============ PIPELINE PERFORMERS (planners & assigners) ============
+  var PP={data:null, tab:"creators"};
   function initPerformers(){
     var box=el("wm-perf-body"); if(!box) return;
-    call({action:"performers"}).then(function(d){
+    var tabs=el("wm-perf-tabs");
+    if(tabs){
+      tabs.querySelectorAll(".subtab").forEach(function(b){
+        b.onclick=function(){
+          tabs.querySelectorAll(".subtab").forEach(function(x){ x.classList.toggle("on", x===b); });
+          PP.tab=b.getAttribute("data-pp");
+          renderPerformers();
+        };
+      });
+    }
+    call({action:"planner_performance"}).then(function(d){
       if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
-      PERF.data=d; renderPerformers();
-    }).catch(function(e){ box.innerHTML='<div class="empty">Could not rank performers: '+esc(e.message)+'</div>'; });
+      PP.data=d; renderPerformers();
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not measure planners: '+esc(e.message)+'</div>'; });
   }
-  function perfApprovalV(x){
-    var v=0, n=0;
-    ["plan_approved","asg_approved","hr_approved","gm_confirmed","pay_released"].forEach(function(k){
-      var g=(x.roles||{})[k]; if(g){ v+=g.v; n+=g.n; }
-    });
-    return {v:v,n:n};
+  function ppPct(v){
+    var c=v>=90?"#0a7a43":(v>=60?"#a06000":"#b91c1c");
+    return '<b style="color:'+c+'">'+fmt(v,0)+'%</b>';
   }
   function renderPerformers(){
-    var box=el("wm-perf-body"); if(!box||!PERF.data) return;
-    var list=(PERF.data.performers||[]);
-    if(!list.length){ box.innerHTML='<div class="empty">No pipeline activity in this window.</div>'; return; }
-    // ── comparison chart: top performers, 4 bars each ──
-    var top=list;  // everyone who has ever acted in the pipeline
-    var max=0;
-    top.forEach(function(x){
-      PERF_SERIES.forEach(function(sr){
-        var v = sr[0]==="approvals" ? perfApprovalV(x).v : (((x.roles||{})[sr[0]]||{}).v||0);
-        if(v>max) max=v;
-      });
+    var box=el("wm-perf-body"); if(!box||!PP.data) return;
+    var rows=(PP.tab==="assigners"?PP.data.assigners:PP.data.creators)||[];
+    if(!rows.length){ box.innerHTML='<div class="empty">No activity in this window.</div>'; return; }
+    // most / least expensive by cost per unit (only people with real volume)
+    var judged=rows.filter(function(r){ return (r.actual_qty||0)>500 && r.cost_per_unit>0; });
+    var maxC=null,minC=null;
+    judged.forEach(function(r){
+      if(!maxC||r.cost_per_unit>maxC.cost_per_unit) maxC=r;
+      if(!minC||r.cost_per_unit<minC.cost_per_unit) minC=r;
     });
-    max=max||1;
-    var W=1200, rowH=86, H=top.length*rowH+46, L=200, R=90, iw=W-L-R;
-    function XV(v){ return L+(v/(max*1.06))*iw; }
-    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
-    for(var gi=1;gi<=4;gi++){ var gx=L+iw*gi/4;
-      g+='<line x1="'+gx.toFixed(1)+'" y1="8" x2="'+gx.toFixed(1)+'" y2="'+(H-32)+'" stroke="rgba(10,10,10,.05)"/>'+
-         '<text x="'+gx.toFixed(1)+'" y="'+(H-16)+'" text-anchor="middle" font-size="11" fill="#5a5a52" font-family="Poppins,sans-serif">'+kesShort(max*1.06*gi/4)+'</text>'; }
-    g+='<line x1="'+L+'" y1="8" x2="'+L+'" y2="'+(H-32)+'" stroke="#8a8780" stroke-width="1.4"/>';
-    top.forEach(function(x,i){
-      var y0=12+i*rowH;
-      g+='<text x="'+(L-10)+'" y="'+(y0+18)+'" text-anchor="end" font-size="12" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(x.name.length>22?x.name.slice(0,21)+"…":x.name)+'</text>'+
-         '<text x="'+(L-10)+'" y="'+(y0+32)+'" text-anchor="end" font-size="9.5" fill="#8a8780" font-family="Poppins,sans-serif">KES '+kesShort(x.total_v)+' total · '+fmt(x.total_n)+' actions</text>';
-      PERF_SERIES.forEach(function(sr,si){
-        var vv, nn;
-        if(sr[0]==="approvals"){ var ap=perfApprovalV(x); vv=ap.v; nn=ap.n; }
-        else { var gg=(x.roles||{})[sr[0]]||{}; vv=gg.v||0; nn=gg.n||0; }
-        var y=y0+si*16;
-        if(vv>0){
-          g+='<rect x="'+L+'" y="'+(y+2)+'" width="'+Math.max(2,XV(vv)-L).toFixed(1)+'" height="11" rx="5.5" fill="'+sr[2]+'"><title>'+esc(x.name)+'\n'+sr[1]+': KES '+kesShort(vv)+' ('+fmt(nn)+' documents)</title></rect>';
-          g+='<text x="'+(XV(vv)+5).toFixed(1)+'" y="'+(y+11)+'" font-size="9" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+kesShort(vv)+'</text>';
-        }
+    var chips='';
+    if(rows.length){
+      var most=rows[0];
+      chips+='<div style="border:1px solid var(--line);border-radius:12px;padding:7px 13px;background:var(--wash)"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:600">Most '+(PP.tab==="assigners"?"assignments":"plans")+'</div><b>'+esc(shortUser(most.person))+'</b> <span class="hint">'+fmt(PP.tab==="assigners"?most.assignments:most.plans)+'</span></div>';
+    }
+    if(minC) chips+='<div style="border:1px solid var(--line);border-radius:12px;padding:7px 13px"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#0a7a43;font-weight:600">Least expensive</div><b>'+esc(shortUser(minC.person))+'</b> <span class="hint">KES '+fmt(minC.cost_per_unit,2)+'/unit</span></div>';
+    if(maxC) chips+='<div style="border:1px solid var(--line);border-radius:12px;padding:7px 13px"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#b91c1c;font-weight:600">Most expensive</div><b>'+esc(shortUser(maxC.person))+'</b> <span class="hint">KES '+fmt(maxC.cost_per_unit,2)+'/unit</span></div>';
+    var h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'+chips+'</div>';
+    var sth=' style="position:sticky;top:0;background:#fff;z-index:1"';
+    if(PP.tab==="creators"){
+      h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
+        '<th'+sth+'>Planner</th><th class="n"'+sth+'>Plans</th><th class="n"'+sth+'>Target qty</th>'+
+        '<th class="n"'+sth+'>Actual qty</th><th class="n"'+sth+'>Achieved</th>'+
+        '<th class="n"'+sth+'>Budget KES</th><th class="n"'+sth+'>Spent KES</th>'+
+        '<th class="n"'+sth+'>Of budget</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
+        h+='<tr'+hot+'><td><b>'+esc(shortUser(r.person))+'</b></td>'+
+          '<td class="n m">'+fmt(r.plans)+'</td><td class="n m">'+fmt(r.target_qty)+'</td>'+
+          '<td class="n m">'+fmt(r.actual_qty)+'</td><td class="n">'+ppPct(r.achieved_pct)+'</td>'+
+          '<td class="n m">'+fmt(r.budget,0)+'</td><td class="n m">'+fmt(r.spent,0)+'</td>'+
+          '<td class="n">'+ppPct(r.spend_pct)+'</td>'+
+          '<td class="n m">'+(r.cost_per_unit>0?fmt(r.cost_per_unit,2):"—")+'</td></tr>';
       });
-    });
-    g+='</svg>';
-    var legend='<div class="clegend" style="font-size:11px;margin:4px 0 14px">'+
-      PERF_SERIES.map(function(sr){ return '<span><i style="background:'+sr[2]+';width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px"></i>'+sr[1]+'</span>'; }).join("")+
-      '<span style="margin-left:auto;color:var(--mute)">all '+top.length+' people who have used the system · ranked by value handled · hover a bar for counts</span></div>';
-    // ── the full table: everyone, every role ──
-    var t='<div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:700;margin:6px 0 8px">Every performer in detail</div>'+
-      '<div style="max-height:440px;overflow:auto"><table style="margin-top:0"><thead><tr>'+
-      '<th style="position:sticky;top:0;background:#fff;z-index:1">#</th>'+
-      '<th style="position:sticky;top:0;background:#fff;z-index:1">Person</th>'+
-      PERF_COLS.map(function(c){ return '<th class="n" style="position:sticky;top:0;background:#fff;z-index:1">'+c[1]+'</th>'; }).join("")+
-      '<th class="n" style="position:sticky;top:0;background:#fff;z-index:1">Total value</th></tr></thead><tbody>';
-    list.forEach(function(x,i){
-      t+='<tr><td class="m">'+(i+1)+'</td><td><b>'+esc(x.name)+'</b></td>';
-      PERF_COLS.forEach(function(c){
-        var gg=(x.roles||{})[c[0]];
-        t+= gg && gg.n
-          ? '<td class="n"><b class="m">'+fmt(gg.n)+'</b><div style="font-size:9px;color:var(--mute)" class="m">KES '+kesShort(gg.v)+'</div></td>'
-          : '<td class="n" style="color:var(--faint)">—</td>';
+      h+='</tbody></table></div>';
+      h+='<div class="explain" style="margin-top:8px;font-size:10px"><span><b>Achieved</b> — confirmed output ÷ target across their plans.</span><span><b>Of budget</b> — money spent ÷ planned budget (low can mean under-delivery, not savings — read with Achieved).</span><span><b>KES/unit</b> — spent ÷ actual output; the expense chips only judge people with real volume (&gt;500 units).</span></div>';
+    } else {
+      h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
+        '<th'+sth+'>Assigner</th><th class="n"'+sth+'>Assignments</th><th class="n"'+sth+'>Workers put on jobs</th>'+
+        '<th class="n"'+sth+'>Target qty</th><th class="n"'+sth+'>Actual qty</th><th class="n"'+sth+'>Achieved</th>'+
+        '<th class="n"'+sth+'>Spent KES</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
+        h+='<tr'+hot+'><td><b>'+esc(shortUser(r.person))+'</b></td>'+
+          '<td class="n m">'+fmt(r.assignments)+'</td><td class="n m">'+fmt(r.workers_put)+'</td>'+
+          '<td class="n m">'+fmt(r.target_qty)+'</td><td class="n m">'+fmt(r.actual_qty)+'</td>'+
+          '<td class="n">'+ppPct(r.achieved_pct)+'</td>'+
+          '<td class="n m">'+fmt(r.spent,0)+'</td>'+
+          '<td class="n m">'+(r.cost_per_unit>0?fmt(r.cost_per_unit,2):"—")+'</td></tr>';
       });
-      t+='<td class="n m" style="font-weight:700">KES '+kesShort(x.total_v)+'</td></tr>';
-    });
-    t+='</tbody></table></div>'+
-      '<div style="font-size:10px;color:var(--mute);margin-top:8px">Counts are documents handled in that role; KES is the value on them. Window '+esc((PERF.data.window||{}).from||"")+' → '+esc((PERF.data.window||{}).to||"")+'.</div>';
-    box.innerHTML=legend+'<div style="max-height:520px;overflow-y:auto;border:1px solid var(--faint);border-radius:12px;padding:4px 8px">'+g+'</div>'+t;
+      h+='</tbody></table></div>';
+      h+='<div class="explain" style="margin-top:8px;font-size:10px"><span><b>Workers put on jobs</b> — assignment rows they created (a worker on two assignments counts twice).</span><span><b>KES/unit</b> — confirmed pay ÷ confirmed output on their assignments.</span></div>';
+    }
+    box.innerHTML=h;
   }
 
   function load(){

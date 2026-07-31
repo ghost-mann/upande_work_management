@@ -349,7 +349,7 @@
       '<span class="hint" id="bulk-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
       '<button type="button" class="btn good sm" id="bulk-send" style="display:none">Review &amp; send to accounts</button>'+
       '<button type="button" class="btn sm" id="bulk-clear" style="display:none">Clear</button>'+
-      '<span class="hint" id="bulk-hint">Tick workers to review &amp; send them to accounts in one go, or open each one for the full check.</span></div>';
+      '<span class="hint" id="bulk-hint">Tick workers to send them to accounts in one go, or open each one for the full check first.</span></div>';
     h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
       '<th class="c" style="width:34px"><input type="checkbox" id="bulk-all" title="Select every actionable worker shown"></th>'+
       '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
@@ -359,10 +359,8 @@
       var unpaid=w.unpaid_amt!=null?w.unpaid_amt:w.owed;
       tq+=(w.qty||0); te+=(w.owed||0); tp+=(w.paid_amt||0); tu+=(unpaid||0);
       var acts='<button type="button" class="btn sm" data-review="'+esc(w.emp)+'">Review</button>';
-      if(w.pay_status==="Reviewed"){
+      if(w.pay_status==="Unpaid"||w.pay_status==="Reviewed"){
         acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
-      } else if(w.pay_status==="Unpaid"){
-        acts+=' <button type="button" class="btn sm" disabled title="Review this worker first — approval unlocks after review" style="opacity:.45">Send to accounts</button>';
       }
       var actionable=(w.pay_status==="Unpaid"||w.pay_status==="Reviewed") && (unpaid||0)>0.001;
       var cb=actionable?
@@ -467,7 +465,7 @@
     }
     if(hint) hint.style.display="none";
     info.textContent=fmt(n)+" selected · "+money(s.amt);
-    if(bs){ bs.style.display=""; bs.textContent="Review & send "+fmt(n)+" to accounts · "+money(s.amt); }
+    if(bs){ bs.style.display=""; bs.textContent="Send "+fmt(n)+" to accounts · "+money(s.amt); }
     if(bc) bc.style.display="";
   }
 
@@ -495,35 +493,24 @@
     if(!s.all.length){ toast("Tick at least one worker","bad"); return; }
     var win=payWindow();
     confirmModal(
-      "Review & send "+fmt(s.all.length)+" workers to accounts",
-      '<p style="margin:0 0 10px">Mark <b>'+fmt(s.all.length)+' workers</b> totalling <b>'+money(s.amt)+'</b> as reviewed and send them to accounts?</p>'+
-      '<p class="note" style="margin:0">Your user and the time are stamped on every day-row as the reviewer, then each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Pending Accounts.</p>',
-      "Review & send all",
+      "Send "+fmt(s.all.length)+" workers to accounts",
+      '<p style="margin:0 0 10px">Send <b>'+fmt(s.all.length)+' workers</b> totalling <b>'+money(s.amt)+'</b> to accounts?</p>'+
+      '<p class="note" style="margin:0">Each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Pending Accounts. Your user and the time are stamped on every included day-row.</p>',
+      "Send all to accounts",
       function(){
-        var bs=el("bulk-send"); if(bs){ bs.disabled=true; bs.textContent="Reviewing…"; }
-        function submitAll(){
-          if(bs) bs.textContent="Sending…";
-          chunkCalls("pay_bulk_submit", s.all, win, function(err, agg){
-            if(bs) bs.disabled=false;
-            var errs=(agg.results||[]).filter(function(r){ return r.error; });
-            if(err){ toast("Bulk send stopped: "+err.message,"bad"); }
-            else if(errs.length){
-              toast(fmt(agg.sent)+" sent ("+money(agg.sent_total)+") · "+fmt(errs.length)+" skipped: "+errs.slice(0,3).map(function(r){ return r.employee+" — "+r.error; }).join("; ")+(errs.length>3?"…":""),"bad");
-            } else {
-              toast(fmt(agg.sent)+" workers reviewed & sent to accounts · "+money(agg.sent_total),"good");
-            }
-            ST.bulk={};
-            win.refresh();
-          });
-        }
-        if(s.toReview.length){
-          chunkCalls("pay_bulk_review", s.toReview, win, function(err, agg){
-            if(err){ if(bs) bs.disabled=false; toast("Bulk review stopped: "+err.message,"bad"); win.refresh(); return; }
-            submitAll();
-          });
-        } else {
-          submitAll();
-        }
+        var bs=el("bulk-send"); if(bs){ bs.disabled=true; bs.textContent="Sending…"; }
+        chunkCalls("pay_bulk_submit", s.all, win, function(err, agg){
+          if(bs) bs.disabled=false;
+          var errs=(agg.results||[]).filter(function(r){ return r.error; });
+          if(err){ toast("Bulk send stopped: "+err.message,"bad"); }
+          else if(errs.length){
+            toast(fmt(agg.sent)+" sent ("+money(agg.sent_total)+") · "+fmt(errs.length)+" skipped: "+errs.slice(0,3).map(function(r){ return r.employee+" — "+r.error; }).join("; ")+(errs.length>3?"…":""),"bad");
+          } else {
+            toast(fmt(agg.sent)+" workers sent to accounts · "+money(agg.sent_total),"good");
+          }
+          ST.bulk={};
+          win.refresh();
+        });
       },
       "good"
     );
@@ -1453,21 +1440,29 @@
         '</div>'+
         (who.length?'<div style="padding:0 16px 8px;font-size:11px;color:var(--mute)">'+esc(who.join("  ·  "))+'</div>':'')+
         '<div class="tablescroll" style="max-height:320px"><table style="margin-top:0"><thead><tr>'+
-          '<th>Day worked</th><th class="c">Presence</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th><th class="c">Edit</th></tr></thead><tbody>';
+          '<th>Day worked</th><th class="c">Presence</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th></tr></thead><tbody>';
       rows.forEach(function(r){
         var rowFlag=((r.att_status||"")==="Absent"||(!r.scan_in&&!r.att_status)||r.day_leave||r.day_off);
+        var qtyCell = r.editable
+          ? '<input type="number" min="0" step="any" class="wrq" data-row="'+esc(r.rowname||"")+'" data-orig="'+(r.qty||0)+'" data-rate="'+(r.rate||0)+'" value="'+(r.qty||0)+'" style="width:86px;font-family:inherit;font-size:12px;border:1px solid var(--line);border-radius:8px;padding:4px 8px;text-align:right;background:rgba(255,255,255,.7)">'
+          : fmt(r.qty);
         h+='<tr'+(rowFlag?' style="background:rgba(185,28,28,.045)"':'')+'><td class="m">'+esc(dshort(r.wdate))+(r.day_leave?' <span style="color:#7c3aed;font-size:9px;font-weight:700" title="approved leave this day">'+esc(r.day_leave)+'</span>':'')+(r.day_off?' <span style="color:#a06000;font-size:9px;font-weight:700" title="weekly off / holiday">off day</span>':'')+'</td>'+
           '<td class="c">'+presenceTag(r)+'</td>'+
-          '<td class="n m" data-qcell>'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
+          '<td class="n m" data-qcell>'+qtyCell+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m" data-amt-for="'+esc(r.rowname||"")+'">'+fmt(r.amount,2)+'</td>'+
           '<td class="c">'+(r.in_payroll? payTag(r.paid?"Paid":"Unpaid") : '<span class="tag">Not in payroll</span>')+'</td>'+
-          '<td class="m">'+esc(r.run_ref||"—")+'</td>'+
-          '<td class="c">'+(r.editable?'<span style="white-space:nowrap"><button type="button" class="btn sm" data-editday data-row="'+esc(r.rowname||"")+'" data-qty="'+(r.qty||0)+'">Edit</button></span>':"")+'</td></tr>';
+          '<td class="m">'+esc(r.run_ref||"—")+'</td></tr>';
       });
       h+='</tbody><tfoot><tr><th>'+fmt(t.days)+' days</th><th></th>'+
          '<th class="n">'+fmt(t.qty)+'</th><th class="n">'+fmt(t.rate,2)+' avg</th><th class="n">'+fmt(t.amount,2)+'</th>'+
-         '<th class="c" colspan="3">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
+         '<th class="c" colspan="2">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
       '</div>';
     });
+    if(tasks.length){
+      h+='<div id="wr-bulkbar" style="position:sticky;bottom:0;display:none;align-items:center;gap:12px;padding:10px 14px;background:rgba(250,250,246,.95);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:12px;margin-top:6px">'+
+        '<span class="hint" id="wr-chg" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
+        '<button type="button" class="btn sm" id="wr-undoall">Undo</button>'+
+        '<button type="button" class="btn good sm" id="wr-saveall">Save changes</button></div>';
+    }
     h+='</div>';
 
     // ════ TAB 3 · PAYMENTS ════
@@ -1550,6 +1545,51 @@
     });
     var xb=el("wr-excel");
     if(xb){ xb.onclick=function(){ exportWorkerExcel(xb); }; }
+    // ── bulk day editing: type into any Qty box, one Save at the bottom ──
+    function wrChanged(){
+      var out=[];
+      el("pd-body").querySelectorAll("input.wrq").forEach(function(inp){
+        var v=parseFloat(inp.value);
+        var o=parseFloat(inp.getAttribute("data-orig"));
+        if(!isNaN(v) && v>=0 && Math.abs(v-o)>0.0001) out.push({row:inp.getAttribute("data-row"), qty:v});
+      });
+      return out;
+    }
+    function wrSync(){
+      var ch=wrChanged();
+      var bar=el("wr-bulkbar"); if(!bar) return;
+      bar.style.display=ch.length?"flex":"none";
+      var amt=0;
+      el("pd-body").querySelectorAll("input.wrq").forEach(function(inp){
+        var v=parseFloat(inp.value), o=parseFloat(inp.getAttribute("data-orig")), rt=parseFloat(inp.getAttribute("data-rate"))||0;
+        var cell=el("pd-body").querySelector('[data-amt-for="'+inp.getAttribute("data-row")+'"]');
+        if(cell && !isNaN(v) && Math.abs(v-o)>0.0001){ cell.innerHTML='<b style="color:#a06000">'+fmt(v*rt,2)+'</b>'; amt+=v*rt; }
+        else if(cell && !isNaN(v)){ cell.textContent=fmt(v*rt,2); }
+      });
+      if(ch.length) el("wr-chg").textContent=fmt(ch.length)+" day"+(ch.length>1?"s":"")+" changed — pay recomputes at each row's rate";
+    }
+    el("pd-body").querySelectorAll("input.wrq").forEach(function(inp){ inp.oninput=wrSync; });
+    var ua=el("wr-undoall");
+    if(ua){ ua.onclick=function(){ el("pd-body").querySelectorAll("input.wrq").forEach(function(inp){ inp.value=inp.getAttribute("data-orig"); }); wrSync(); }; }
+    var sa=el("wr-saveall");
+    if(sa){
+      sa.onclick=function(){
+        var ch=wrChanged();
+        if(!ch.length){ toast("Nothing changed","bad"); return; }
+        sa.disabled=true; sa.textContent="Saving…";
+        call({action:"pay_worker_edit_days", employee:info.employee,
+              rows:ch.map(function(c){ return c.row+"~"+c.qty; }).join("|")}, true)
+          .then(function(d){
+            sa.disabled=false; sa.textContent="Save changes";
+            if(d.error){ toast(d.error,"bad"); return; }
+            var errs=(d.errors||[]);
+            toast(fmt(d.updated)+" day"+(d.updated===1?"":"s")+" corrected"+(errs.length?(" · "+errs.length+" skipped: "+errs.slice(0,2).map(function(e){ return e.error; }).join("; ")):""), errs.length?"bad":"good");
+            openWorkerReview(info.employee, WR);
+            if(WR.refresh) WR.refresh();
+          })
+          .catch(function(e){ sa.disabled=false; sa.textContent="Save changes"; toast("Could not save: "+e.message,"bad"); });
+      };
+    }
     if(WR.targetTab){
       var tt=tabs.querySelector('.fchip[data-wrtab="'+WR.targetTab+'"]');
       if(tt) tt.onclick ? tt.onclick() : tt.click();
@@ -1558,31 +1598,12 @@
     wireDayEdits(el("pd-body"), info);
     // footer: review first, then approve — one worker at a time
     var ap=el("pd-approve"), rv=el("pd-review");
-    var unpaid=k.unpaid_amt||0, unreviewed=k.unreviewed_amt||0;
-    if(rv){
-      if(unpaid>0.001 && unreviewed>0.001){
-        rv.style.display="";
-        rv.textContent="Mark reviewed · "+money(unpaid);
-        rv.onclick=function(){
-          rv.disabled=true;
-          call({ action:"pay_worker_review", employee:info.employee, from_date:WR.from, to_date:WR.to }, true)
-            .then(function(d){
-              rv.disabled=false;
-              if(d.error){ toast(d.error,"bad"); return; }
-              toast((info.employee_name||info.employee)+" marked reviewed — now approve & send to accounts","good");
-              openWorkerReview(info.employee, WR);
-              if(WR.refresh) WR.refresh();
-            })
-            .catch(function(e){ rv.disabled=false; toast("Could not mark reviewed: "+e.message,"bad"); });
-        };
-      } else {
-        rv.style.display="none"; rv.onclick=null;
-      }
-    }
+    var unpaid=k.unpaid_amt||0;
+    if(rv){ rv.style.display="none"; rv.onclick=null; }   // review step removed — send directly
     if(ap){
-      if(unpaid>0.001 && unreviewed<=0.001){
+      if(unpaid>0.001){
         ap.style.display="";
-        ap.textContent="Approve & send "+money(unpaid)+" to accounts";
+        ap.textContent="Submit & send "+money(unpaid)+" to accounts";
         ap.onclick=function(){
           approveWorker(info.employee, info.employee_name||info.employee, unpaid, WR);
         };

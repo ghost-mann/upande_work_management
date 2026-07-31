@@ -300,6 +300,12 @@ def wm_actuals(**kwargs):
                         m = {}
                         attp_by[r.employee] = m
                     m[str(r.d)] = 1
+        # a Present-class record corrects an Absent one on the same day
+        for pe in attp_by:
+            if pe in abs_by:
+                for dd in attp_by[pe]:
+                    if dd in abs_by[pe]:
+                        del abs_by[pe][dd]
         for w in workers:
             w["scan_dates"] = scan_by.get(w.employee, {})
             w["present_dates"] = attp_by.get(w.employee, {})
@@ -442,9 +448,14 @@ def wm_actuals(**kwargs):
                     absent_set = {}
                     if gate_absent:
                         for r in frappe.db.sql("""
-                            SELECT employee, attendance_date FROM `tabAttendance`
-                            WHERE docstatus = 1 AND status = 'Absent'
-                              AND employee IN %s AND attendance_date IN %s
+                            SELECT att.employee, att.attendance_date FROM `tabAttendance` att
+                            WHERE att.docstatus = 1 AND att.status = 'Absent'
+                              AND att.employee IN %s AND att.attendance_date IN %s
+                              AND NOT EXISTS (
+                                SELECT 1 FROM `tabAttendance` pp
+                                WHERE pp.employee = att.employee AND pp.attendance_date = att.attendance_date
+                                  AND pp.docstatus = 1 AND pp.status IN ('Present','Half Day','Work From Home')
+                              )
                         """, (emp_t, date_t), as_dict=True):
                             absent_set[(r.employee, str(r.attendance_date))] = 1
                     leave_ranges = {}

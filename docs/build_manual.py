@@ -73,9 +73,12 @@ SECTIONS = [
           "the close queue shows live done/remaining figures."),
 
     ("h2", "5. Payment (/work-payment) — workers are paid one at a time"),
-    ("p", "The payment section is worker-centric. Each worker's confirmed earnings are "
-          "reviewed, sent to accounts as their own payment entry, and released. The status "
-          "ladder per worker is: Unpaid → Reviewed → Sent to accounts → Paid."),
+    ("p", "The payment section is worker-centric. Each worker's confirmed earnings are sent "
+          "to accounts as their own payment entry and released. The status ladder per worker "
+          "is: Unpaid → Sent to accounts → Paid. There is no separate review step — sending "
+          "IS the sign-off: the sender's name and time are stamped on every included day-row "
+          "and on the payment entry. The review sheet stays available for checking anyone "
+          "before sending."),
     ("h3", "5.1 Reviewing a worker"),
     ("b", "Click any worker to open the review sheet: identity, window KPIs (earned, paid, "
           "unpaid, days), one card per task with the daily log underneath, a Payments tab, and "
@@ -83,19 +86,20 @@ SECTIONS = [
     ("b", "Each task card names the full accountability chain: who created the plan, assigned "
           "the job, captured the actuals, and each approver (FM, HR, GM), plus the task's "
           "standard (e.g. 300 Tree/day @ KES 1.1333)."),
-    ("b", "Every day row shows presence evidence next to the pay. Unpaid days can be corrected "
-          "with Edit — pay recomputes at the row's rate, the parent re-sums, an audit comment "
-          "records the change, and the worker returns to Unpaid for re-review."),
+    ("b", "Every day row shows presence evidence next to the pay. In Work & days, every "
+          "unpaid day's quantity is directly editable — change as many as needed and press "
+          "the single Save changes button at the bottom (Undo restores the originals). Pay "
+          "recomputes at each row's rate, documents re-sum, and one audit comment per "
+          "document lists every change."),
     ("b", "Download Excel exports the review as a workbook: a Summary sheet and a Tasks & days "
           "sheet laid out like the review (one table per task with its day rows and presence)."),
     ("h3", "5.2 Sending to accounts"),
-    ("b", "Review & approve stamps the worker's unpaid rows as Reviewed (who + when — the stamps "
-          "live on the day rows and travel onto the payment entry)."),
-    ("b", "Send to accounts creates one payment document for that worker (WMPAY-…) holding the "
-          "period, totals, reviewer, and one line per actuals document with the task, block, "
-          "worked period, days, qty, rate, amount and the whole sign-off chain."),
+    ("b", "Submit & send to accounts creates one payment document for that worker (WMPAY-…) "
+          "holding the period, totals, who sent it and when, and one line per actuals document "
+          "with the task, block, worked period, days, qty, rate, amount and the whole sign-off "
+          "chain. The sender is stamped as reviewer on every included day-row."),
     ("b", "Bulk: tick several workers (workers with attendance conflicts carry a red flag with "
-          "the day count) and use Review & send to accounts — each still gets their own entry."),
+          "the day count) and use Send to accounts — each still gets their own entry."),
     ("h3", "5.3 Awaiting accounts"),
     ("b", "Accounts releases an entry with Mark paid — every included day row is stamped paid."),
     ("b", "Return to unpaid withdraws an entry (deletes the reference, clears review stamps) so "
@@ -119,7 +123,9 @@ SECTIONS = [
           "window and groups everything suspicious. Each check has its own settings checkbox; "
           "rows link to the worker's review sheet and name the documents."),
     ("b", "Paid on marked-Absent days — a scan time means the attendance record is probably "
-          "wrong; no scan means the entry needs scrutiny."),
+          "wrong; no scan means the entry needs scrutiny. Days whose attendance was corrected "
+          "(a Present record exists alongside an old Absent one) are validated out and never "
+          "flagged."),
     ("b", "No presence evidence at all — no scan and no attendance record of any kind."),
     ("b", "Earning while on approved leave — possible double payment."),
     ("b", "Work on off days / holidays — fine if deliberate overtime."),
@@ -151,8 +157,11 @@ SECTIONS = [
     ("b", "Approver KPIs — per approval stage: each approver's sign-offs, value and time taken."),
     ("b", "Value flow — weekly planned/assigned/confirmed value and a per-plan table with each "
           "plan's accountability chain."),
-    ("b", "Pipeline performers — every plan creator, assigner, actuals enterer and approver "
-          "ranked by volume and value."),
+    ("b", "Pipeline performers — planner and assigner economics, per person: plans created, "
+          "target vs actual quantity (achievement %), planned budget vs money spent, and cost "
+          "per unit, with most/least-expensive callouts (judged only on people with real "
+          "volume). The Assigners tab shows assignments made, workers put on jobs, output and "
+          "spend on their assignments."),
     ("b", "Crew movements — substitution history: who left, who joined, swaps."),
 
     ("h2", "9. Field intelligence, explained"),

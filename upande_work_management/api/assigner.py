@@ -167,10 +167,15 @@ def wm_assigner(**kwargs):
             if att_absent_on:
                 arows = frappe.db.sql("""
                     SELECT employee, COUNT(*) n, MIN(attendance_date) d1, MAX(attendance_date) d2
-                    FROM `tabAttendance`
-                    WHERE docstatus = 1 AND status = 'Absent'
-                      AND attendance_date BETWEEN %s AND %s AND employee IN %s
-                    GROUP BY employee
+                    FROM `tabAttendance` att
+                    WHERE att.docstatus = 1 AND att.status = 'Absent'
+                      AND att.attendance_date BETWEEN %s AND %s AND att.employee IN %s
+                      AND NOT EXISTS (
+                        SELECT 1 FROM `tabAttendance` pp
+                        WHERE pp.employee = att.employee AND pp.attendance_date = att.attendance_date
+                          AND pp.docstatus = 1 AND pp.status IN ('Present','Half Day','Work From Home')
+                      )
+                    GROUP BY att.employee
                 """, (pf, pt, emp_names), as_dict=True)
                 for r in arows:
                     absent_map[r.employee] = {"days": frappe.utils.cint(r.n), "from": str(r.d1), "to": str(r.d2)}
@@ -360,6 +365,12 @@ def wm_assigner(**kwargs):
                         FROM `tabAttendance`
                         WHERE docstatus = 1 AND status = 'Absent'
                           AND attendance_date BETWEEN %s AND %s AND employee IN %s
+                          AND NOT EXISTS (
+                            SELECT 1 FROM `tabAttendance` pp
+                            WHERE pp.employee = `tabAttendance`.employee
+                              AND pp.attendance_date = `tabAttendance`.attendance_date
+                              AND pp.docstatus = 1 AND pp.status IN ('Present','Half Day','Work From Home')
+                          )
                         GROUP BY employee
                     """, (gpf, gpt, tuple(emp_list)), as_dict=True)
                     for r in arows:

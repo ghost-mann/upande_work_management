@@ -179,7 +179,7 @@ def wm_payment(**kwargs):
             INNER JOIN `tabAttendance` att ON att.employee = we.employee
                   AND att.attendance_date = we.work_date
                   AND att.docstatus = 1 AND att.status = 'Absent'
-            WHERE """ + conds + """
+            WHERE """ + conds + " AND NOT EXISTS (\n                SELECT 1 FROM `tabAttendance` pp\n                WHERE pp.employee = att.employee AND pp.attendance_date = att.attendance_date\n                  AND pp.docstatus = 1 AND pp.status IN ('Present','Half Day','Work From Home')\n              )" + """
             GROUP BY we.employee
         """, tuple(params), as_dict=True)
         for r in drows:
@@ -871,7 +871,11 @@ def wm_payment(**kwargs):
                     SELECT attendance_date d, status FROM `tabAttendance`
                     WHERE docstatus = 1 AND employee = %s AND attendance_date IN %s
                 """, (emp, ddates), as_dict=True):
-                    ev_att[str(r2.d)] = r2.status
+                    dk2 = str(r2.d)
+                    if r2.status in ('Present', 'Half Day', 'Work From Home'):
+                        ev_att[dk2] = r2.status
+                    elif ev_att.get(dk2) not in ('Present', 'Half Day', 'Work From Home'):
+                        ev_att[dk2] = r2.status
             ev_leave = {}
             ev_off = {}
             if ddates:
@@ -1179,8 +1183,15 @@ def wm_payment(**kwargs):
                     INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                     WHERE """ + sconds + """
                 """, tuple(sparams), as_dict=True)
+                subnow = frappe.utils.now()
                 for rr in refrows:
                     frappe.db.set_value("Work Actuals Employee", rr.rowname, "payment_ref", d.name, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed", 1, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_by", frappe.session.user, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_at", subnow, update_modified=False)
+                if not d.reviewed_by:
+                    frappe.db.set_value("Work Management Payment", d.name, "reviewed_by", frappe.session.user, update_modified=False)
+                    frappe.db.set_value("Work Management Payment", d.name, "reviewed_at", subnow, update_modified=False)
                 frappe.db.commit()
                 out["name"] = d.name
                 out["workflow_state"] = "Pending Accounts"
@@ -1264,15 +1275,6 @@ def wm_payment(**kwargs):
                 if dto:
                     sconds = sconds + " AND we.work_date <= %s"
                     sparams.append(dto)
-                unrev = frappe.db.sql("""
-                    SELECT COALESCE(SUM(CASE WHEN IFNULL(we.custom_reviewed,0)=0 THEN we.amount ELSE 0 END),0) unreviewed
-                    FROM `tabWork Actuals Employee` we
-                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-                    WHERE """ + sconds + """
-                """, tuple(sparams), as_dict=True)
-                if unrev and frappe.utils.flt(unrev[0].unreviewed) > 0.001:
-                    results.append({"employee": emp, "error": "has unreviewed earnings — review first"})
-                    continue
                 agg = frappe.db.sql("""
                     SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
                            ac.rate doc_rate, ac.assignment assignment,
@@ -1370,8 +1372,15 @@ def wm_payment(**kwargs):
                     INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                     WHERE """ + sconds + """
                 """, tuple(sparams), as_dict=True)
+                bulknow = frappe.utils.now()
                 for rr in refrows:
                     frappe.db.set_value("Work Actuals Employee", rr.rowname, "payment_ref", d.name, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed", 1, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_by", frappe.session.user, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_at", bulknow, update_modified=False)
+                if not rv_by:
+                    frappe.db.set_value("Work Management Payment", d.name, "reviewed_by", frappe.session.user, update_modified=False)
+                    frappe.db.set_value("Work Management Payment", d.name, "reviewed_at", bulknow, update_modified=False)
                 sent = sent + 1
                 sent_total = sent_total + total_owed
                 results.append({"employee": emp, "employee_name": ename, "name": d.name, "amount": total_owed})
@@ -1512,7 +1521,12 @@ def wm_payment(**kwargs):
             SELECT employee, attendance_date d, status FROM `tabAttendance`
             WHERE docstatus = 1 AND employee IN %s AND attendance_date BETWEEN %s AND %s
         """, (demps, dfrom, dto), as_dict=True):
-            att_ev[(r2.employee, str(r2.d))] = r2.status
+            kk2 = (r2.employee, str(r2.d))
+            # corrected attendance: a Present-class record beats an Absent one
+            if r2.status in ('Present', 'Half Day', 'Work From Home'):
+                att_ev[kk2] = r2.status
+            elif att_ev.get(kk2) not in ('Present', 'Half Day', 'Work From Home'):
+                att_ev[kk2] = r2.status
         leave_ev = {}
         for r2 in frappe.db.sql("""
             SELECT employee, leave_type, from_date, to_date FROM `tabLeave Application`
@@ -2151,6 +2165,81 @@ def wm_payment(**kwargs):
             out["released_now"] = len(batch)
             out["assignments_touched"] = len(touched)
             out["remaining"] = len(ri_rows) - len(batch)
+
+    elif action == "pay_worker_edit_days":
+        # BULK audit correction: change several worker-day quantities in one save.
+        # Same rules per row as pay_worker_edit_day; parents re-sum once, one
+        # audit comment per document lists every change.
+        emp = frappe.form_dict.get("employee")
+        rows_raw = frappe.form_dict.get("rows")
+        if not emp or not rows_raw:
+            out["error"] = "employee and rows are required"
+        else:
+            changes = []
+            for c in rows_raw.split("|"):
+                bits = c.split("~")
+                if len(bits) >= 2 and bits[0]:
+                    changes.append((bits[0], frappe.utils.flt(bits[1])))
+            updated = []
+            errors = []
+            parents_e = {}
+            for (rowname, new_qty) in changes[:300]:
+                if new_qty < 0:
+                    errors.append({"rowname": rowname, "error": "negative qty"})
+                    continue
+                row = frappe.db.get_value("Work Actuals Employee", rowname,
+                    ["name", "parent", "employee", "employee_name", "work_date",
+                     "actual_quantity", "amount", "paid", "count_in_payroll", "payment_ref"], as_dict=True)
+                if not row or row.employee != emp:
+                    errors.append({"rowname": rowname, "error": "not this worker's row"})
+                    continue
+                if frappe.utils.cint(row.paid):
+                    errors.append({"rowname": rowname, "error": "already paid"})
+                    continue
+                if not frappe.utils.cint(row.count_in_payroll):
+                    errors.append({"rowname": rowname, "error": "not payroll-counted"})
+                    continue
+                if row.payment_ref and frappe.db.get_value("Work Management Payment", row.payment_ref, "workflow_state") == "Pending Accounts":
+                    errors.append({"rowname": rowname, "error": "inside " + row.payment_ref + " — return it to unpaid first"})
+                    continue
+                pstate = frappe.db.get_value("Work Management Actuals", row.parent, "workflow_state")
+                if pstate != "CONFIRMED":
+                    errors.append({"rowname": rowname, "error": "doc not CONFIRMED"})
+                    continue
+                old_qty = frappe.utils.flt(row.actual_quantity)
+                old_amt = frappe.utils.flt(row.amount)
+                if abs(old_qty - new_qty) < 0.0001:
+                    continue
+                rate = (old_amt / old_qty) if old_qty else frappe.utils.flt(
+                    frappe.db.get_value("Work Management Actuals", row.parent, "rate"))
+                new_amt = round(new_qty * rate, 2)
+                frappe.db.set_value("Work Actuals Employee", rowname, "actual_quantity", new_qty, update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", rowname, "amount", new_amt, update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", rowname, "custom_reviewed", 0, update_modified=False)
+                pl = parents_e.get(row.parent)
+                if pl is None:
+                    pl = []
+                    parents_e[row.parent] = pl
+                pl.append((row.employee_name or emp) + " " + str(row.work_date) + ": qty " + str(old_qty) + " → " + str(new_qty) + ", pay " + str(round(old_amt, 2)) + " → " + str(new_amt))
+                updated.append({"rowname": rowname, "qty": new_qty, "amount": new_amt})
+            for pname in parents_e:
+                tots = frappe.db.sql("""
+                    SELECT COALESCE(SUM(actual_quantity),0) q, COALESCE(SUM(amount),0) p
+                    FROM `tabWork Actuals Employee` WHERE parent=%s
+                """, (pname,), as_dict=True)
+                if tots:
+                    frappe.db.set_value("Work Management Actuals", pname, "total_actual_qty", frappe.utils.flt(tots[0].q), update_modified=False)
+                    frappe.db.set_value("Work Management Actuals", pname, "total_payment", round(frappe.utils.flt(tots[0].p), 2), update_modified=False)
+            frappe.db.commit()
+            for pname in parents_e:
+                try:
+                    frappe.get_doc("Work Management Actuals", pname).add_comment("Edited",
+                        "Bulk audit correction by " + frappe.session.user + ": " + "; ".join(parents_e[pname][:12]))
+                except Exception:
+                    pass
+            out["updated"] = len(updated)
+            out["errors"] = errors
+            out["parents"] = len(parents_e)
 
     # ===== DASHBOARD (fast: grouped queries) =====
     else:

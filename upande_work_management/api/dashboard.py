@@ -2554,6 +2554,104 @@ def wm_dashboard(**kwargs):
                                    "present": pres})
         out["available"] = {"date": avdate, "total": av_total, "farms": av_farms}
 
+    elif action == "planner_performance":
+        # PLANNER & ASSIGNER PERFORMANCE: per person — plans created, targets,
+        # actuals vs target, budget vs money spent, cost per unit. Confirmed
+        # work only; window filters on plan/assignment creation.
+        ppfrom = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -84))
+        ppto = frappe.form_dict.get("to_date") or str(frappe.utils.today())
+        creators = {}
+        for r in frappe.db.sql("""
+            SELECT requested_by person, COUNT(*) plans,
+                   COALESCE(SUM(quantity), 0) target_qty,
+                   COALESCE(SUM(total_cost), 0) budget
+            FROM `tabWork Management Planner`
+            WHERE workflow_state = 'Approved'
+              AND DATE(creation) BETWEEN %s AND %s
+              AND IFNULL(requested_by, '') != ''
+            GROUP BY requested_by
+        """, (ppfrom, ppto), as_dict=True):
+            creators[r.person] = {"person": r.person, "plans": frappe.utils.cint(r.plans),
+                                  "target_qty": frappe.utils.flt(r.target_qty),
+                                  "budget": frappe.utils.flt(r.budget),
+                                  "actual_qty": 0, "spent": 0}
+        for r in frappe.db.sql("""
+            SELECT p.requested_by person,
+                   COALESCE(SUM(ac.total_actual_qty), 0) aq,
+                   COALESCE(SUM(ac.total_payment), 0) spent
+            FROM `tabWork Management Actuals` ac
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            INNER JOIN `tabWork Management Planner` p ON a2.planner_request = p.name
+            WHERE ac.workflow_state = 'CONFIRMED'
+              AND DATE(p.creation) BETWEEN %s AND %s
+              AND IFNULL(p.requested_by, '') != ''
+            GROUP BY p.requested_by
+        """, (ppfrom, ppto), as_dict=True):
+            cr = creators.get(r.person)
+            if cr is None:
+                cr = {"person": r.person, "plans": 0, "target_qty": 0, "budget": 0,
+                      "actual_qty": 0, "spent": 0}
+                creators[r.person] = cr
+            cr["actual_qty"] = frappe.utils.flt(r.aq)
+            cr["spent"] = frappe.utils.flt(r.spent)
+        creator_rows = []
+        for cr in creators.values():
+            cr["achieved_pct"] = (cr["actual_qty"] / cr["target_qty"] * 100) if cr["target_qty"] else 0
+            cr["spend_pct"] = (cr["spent"] / cr["budget"] * 100) if cr["budget"] else 0
+            cr["cost_per_unit"] = (cr["spent"] / cr["actual_qty"]) if cr["actual_qty"] else 0
+            creator_rows.append(cr)
+        creator_rows = sorted(creator_rows, key=lambda x: -x["plans"])
+        assigners = {}
+        for r in frappe.db.sql("""
+            SELECT a.assigned_by person, COUNT(DISTINCT a.name) assignments,
+                   COUNT(we.name) workers_put
+            FROM `tabWork Management Assigner` a
+            LEFT JOIN `tabWork Assignment Employee` we ON we.parent = a.name
+            WHERE DATE(a.creation) BETWEEN %s AND %s
+              AND IFNULL(a.assigned_by, '') != ''
+            GROUP BY a.assigned_by
+        """, (ppfrom, ppto), as_dict=True):
+            assigners[r.person] = {"person": r.person, "assignments": frappe.utils.cint(r.assignments),
+                                   "workers_put": frappe.utils.cint(r.workers_put),
+                                   "actual_qty": 0, "spent": 0, "target_qty": 0}
+        for r in frappe.db.sql("""
+            SELECT a2.assigned_by person,
+                   COALESCE(SUM(ac.total_actual_qty), 0) aq,
+                   COALESCE(SUM(ac.total_payment), 0) spent
+            FROM `tabWork Management Actuals` ac
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            WHERE ac.workflow_state = 'CONFIRMED'
+              AND DATE(a2.creation) BETWEEN %s AND %s
+              AND IFNULL(a2.assigned_by, '') != ''
+            GROUP BY a2.assigned_by
+        """, (ppfrom, ppto), as_dict=True):
+            ar = assigners.get(r.person)
+            if ar is None:
+                ar = {"person": r.person, "assignments": 0, "workers_put": 0,
+                      "actual_qty": 0, "spent": 0, "target_qty": 0}
+                assigners[r.person] = ar
+            ar["actual_qty"] = frappe.utils.flt(r.aq)
+            ar["spent"] = frappe.utils.flt(r.spent)
+        for r in frappe.db.sql("""
+            SELECT a.assigned_by person, COALESCE(SUM(p.quantity), 0) tq
+            FROM `tabWork Management Assigner` a
+            INNER JOIN `tabWork Management Planner` p ON a.planner_request = p.name
+            WHERE DATE(a.creation) BETWEEN %s AND %s
+              AND IFNULL(a.assigned_by, '') != ''
+            GROUP BY a.assigned_by
+        """, (ppfrom, ppto), as_dict=True):
+            if r.person in assigners:
+                assigners[r.person]["target_qty"] = frappe.utils.flt(r.tq)
+        assigner_rows = []
+        for ar in assigners.values():
+            ar["achieved_pct"] = (ar["actual_qty"] / ar["target_qty"] * 100) if ar["target_qty"] else 0
+            ar["cost_per_unit"] = (ar["spent"] / ar["actual_qty"]) if ar["actual_qty"] else 0
+            assigner_rows.append(ar)
+        assigner_rows = sorted(assigner_rows, key=lambda x: -x["assignments"])
+        out["window"] = {"from": ppfrom, "to": ppto}
+        out["creators"] = creator_rows
+        out["assigners"] = assigner_rows
+
     else:
         out["error"] = "unknown action: " + str(action)
 
