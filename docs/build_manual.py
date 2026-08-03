@@ -154,7 +154,6 @@ SECTIONS = [
           "of employees free to work on any chosen date, filterable by farm). Explained in "
           "full in the next section."),
     ("b", "Action queues — everything waiting on someone, one queue at a time."),
-    ("b", "Approver KPIs — per approval stage: each approver's sign-offs, value and time taken."),
     ("b", "Value flow — weekly planned/assigned/confirmed value and a per-plan table with each "
           "plan's accountability chain."),
     ("b", "Pipeline performers — planner and assigner economics, per person, with "

@@ -144,9 +144,6 @@
       '<div class="sech">Workers &amp; value per farm</div>'+
       '<div class="card"><div class="bd" id="wm-farmstrip">'+farmStrip(farms)+'</div></div>'+
       // ===== approval speed: how long each sign-off step takes =====
-      '<div class="sech">Operations control &mdash; money, bottlenecks &amp; desks</div>'+
-      '<div class="card"><div class="hd"><h3>Where the money is &mdash; and who moves it</h3><div class="cap">every shilling in the pipeline right now, how long work takes to become pay, and what each approver cleared &middot; last 12 weeks</div></div>'+
-        '<div class="bd" id="wm-apk-body"><div class="loading">Measuring sign-offs&hellip;</div></div></div>'+
       '<div class="sech">Pipeline performers &mdash; planners &amp; assigners</div>'+
       '<div class="card"><div class="hd"><h3>Who plans the work, and what it costs</h3><div class="cap">per person &middot; plans created, targets vs actuals, budget vs money spent, cost per unit &middot; last 12 weeks</div></div>'+
         '<div class="bd">'+
@@ -308,7 +305,6 @@
     initQueues(D);
     initTimeline();
     initFieldIntel();
-    initApproverKpis();
     initPerformers();
   }
 
