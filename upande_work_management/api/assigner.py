@@ -198,7 +198,10 @@ def wm_assigner(**kwargs):
         scan_map = {}
         present_att = {}
         night_set = {}
-        if includes_today and emps:
+        absent_today = {}
+        # today's presence is shown on every worker regardless of the work window —
+        # the assigner always sees who is on site / marked absent right now
+        if emps:
             emp_names2 = tuple([e.name for e in emps])
             for r in frappe.db.sql("""
                 SELECT employee, MIN(`time`) t FROM `tabEmployee Checkin`
@@ -211,6 +214,17 @@ def wm_assigner(**kwargs):
                   AND status IN ('Present','Half Day','Work From Home') AND employee IN %s
             """, (today_str, emp_names2), as_dict=True):
                 present_att[r.employee] = 1
+            for r in frappe.db.sql("""
+                SELECT employee FROM `tabAttendance` att
+                WHERE att.docstatus = 1 AND att.attendance_date = %s AND att.status = 'Absent'
+                  AND att.employee IN %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM `tabAttendance` pp
+                    WHERE pp.employee = att.employee AND pp.attendance_date = att.attendance_date
+                      AND pp.docstatus = 1 AND pp.status IN ('Present','Half Day','Work From Home')
+                  )
+            """, (today_str, emp_names2), as_dict=True):
+                absent_today[r.employee] = 1
             night_shifts = frappe.db.sql("SELECT name FROM `tabShift Type` WHERE TIME(end_time) < TIME(start_time)", as_dict=True)
             nset = set([r.name for r in night_shifts])
             for r in frappe.db.sql("""
@@ -246,12 +260,12 @@ def wm_assigner(**kwargs):
                 elif oc >= window_days:
                     e["att_all_off"] = 1
                     e["att_off_reason"] = ("off/holiday for the entire window (" + str(oc) + " of " + str(window_days) + " days)")
-            if includes_today:
-                e["is_night"] = 1 if night_set.get(e.name) else 0
-                e["scan_in"] = scan_map.get(e.name)
-                e["present_today"] = 1 if (scan_map.get(e.name) or present_att.get(e.name) or night_set.get(e.name)) else 0
-                if e["present_today"] and not night_set.get(e.name):
-                    out["scan_info"]["present_count"] = out["scan_info"]["present_count"] + 1
+            e["is_night"] = 1 if night_set.get(e.name) else 0
+            e["scan_in"] = scan_map.get(e.name)
+            e["present_today"] = 1 if (scan_map.get(e.name) or present_att.get(e.name) or night_set.get(e.name)) else 0
+            e["absent_today"] = 1 if absent_today.get(e.name) else 0
+            if e["present_today"] and not night_set.get(e.name):
+                out["scan_info"]["present_count"] = out["scan_info"]["present_count"] + 1
             al = allocated.get(e.name)
             if al:
                 e["allocated_elsewhere"] = 1

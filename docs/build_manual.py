@@ -66,12 +66,15 @@ SECTIONS = [
 
     ("h2", "3. Assigner (/work-assigner)"),
     ("n", "Pick an approved plan; the farm's workers load in the picker."),
-    ("n", "Every worker carries live badges: presence (P · 06:12 scanned in, 'not in yet', or "
-          "'night shift'), off days in the window, leave, absences, and 'assigned elsewhere' "
-          "(a worker on another live assignment for an overlapping period cannot be picked — "
-          "this prevents double allocation and double pay)."),
-    ("n", "When the window includes today, a presence bar shows how many of the farm's workers "
-          "have scanned in, with a 'only workers who are in' filter and a Refresh scans link."),
+    ("n", "Every worker carries today's presence chip, whatever the work window: P · 06:12 "
+          "(scanned in or marked Present), A today (submitted Absent record — a Present record "
+          "always beats a stale Absent one), ? today (no scan or attendance record yet), or "
+          "'night shift'. Alongside it: off days in the window, leave, absences, and 'assigned "
+          "elsewhere' (a worker on another live assignment for an overlapping period cannot be "
+          "picked — this prevents double allocation and double pay)."),
+    ("n", "A presence bar above the picker shows how many of the farm's workers are in today, "
+          "a key for the chips, an 'only workers who are in' filter and a Refresh scans link. "
+          "The morning-scan block itself still applies only to day-of assignment."),
     ("n", "Selecting a flagged worker asks for explicit confirmation; submitting re-checks on "
           "the server and logs every override on the assignment."),
     ("n", "The General Manager signs off assignments. Mid-job changes use the swap button — "

@@ -344,35 +344,34 @@
     var box=el("a-empicker");
     var si=ST.scanInfo||{};
     var list=ST.employees.filter(function(e){
-      if(si.checked && ST.onlyIn && !e.present_today) return false;
+      if(ST.onlyIn && !e.present_today) return false;
       if(!q) return true;
       return ((e.employee_name||"")+" "+(e.designation||"")+" "+(e.name||"")).toLowerCase().indexOf(q)>=0;
     });
     var h="";
-    // ── MORNING PRESENCE BAR: live scans when the window includes today ──
-    if(si.checked){
-      h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line,#e5e5e5);border-radius:10px;background:rgba(10,122,67,.05);font-size:11.5px">'+
-        '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' '+esc(ST.curFarm||"")+' workers scanned in / marked present today'+
-        (si.gate_on && !si.cutoff_passed ? ' <span style="color:#a06000">· scan check starts at '+esc((si.cutoff||"09:00").slice(0,5))+'</span>' : '')+
-        '<span style="flex:1"></span>'+
-        '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-weight:600"><input type="checkbox" id="a-onlyin"'+(ST.onlyIn?" checked":"")+'> Only workers who are in</label>'+
-        '<a href="#" id="a-rescan" style="font-weight:600">Refresh scans</a></div>';
-    }
+    // ── PRESENCE BAR: today's live scans, shown whatever the work window ──
+    h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line,#e5e5e5);border-radius:10px;background:rgba(10,122,67,.05);font-size:11.5px">'+
+      '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' '+esc(ST.curFarm||"")+' workers scanned in / marked present today'+
+      (si.checked && si.gate_on && !si.cutoff_passed ? ' <span style="color:#a06000">· scan check starts at '+esc((si.cutoff||"09:00").slice(0,5))+'</span>' : '')+
+      ' <span style="color:#8a8780">· key: <b style="color:#0a7a43">P · time</b> in &nbsp;<b style="color:#b91c1c">A</b> absent &nbsp;<b>?</b> no record yet</span>'+
+      '<span style="flex:1"></span>'+
+      '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-weight:600"><input type="checkbox" id="a-onlyin"'+(ST.onlyIn?" checked":"")+'> Only workers who are in</label>'+
+      '<a href="#" id="a-rescan" style="font-weight:600">Refresh scans</a></div>';
     if(!list.length){ box.innerHTML=h+'<div class="empty">No matching workers'+(ST.onlyIn?' — nobody in this filter has scanned in yet':'')+'.</div>'; wireScanBar(box); return; }
     list.forEach(function(e){
       var on=ST.picked[e.name]?" on":"";
       var offbadge = (e.off_days>0) ? ' <span class="offb">'+e.off_days+' off</span>' : '';
       var aw=attReasons(e);
       var attbadge = aw.length? ' <span class="offb" style="background:rgba(185,28,28,.12);color:#b91c1c">⚠ '+esc(aw[0].split(" on 2")[0])+'</span>' : '';
-      // presence chip (window includes today): P = on site
-      if(si.checked){
-        if(e.is_night){
-          attbadge += ' <span class="offb" style="background:rgba(37,99,235,.1);color:#2563eb">night shift</span>';
-        } else if(e.present_today){
-          attbadge += ' <span class="offb" style="background:rgba(10,122,67,.14);color:#0a7a43;font-weight:700">P'+(e.scan_in?(' · '+esc(e.scan_in)):'')+'</span>';
-        } else {
-          attbadge += ' <span class="offb" style="background:rgba(10,10,10,.06);color:#8a8780">not in yet</span>';
-        }
+      // today's presence chip, always shown: P · time = on site, A = marked absent, ? = no record yet
+      if(e.is_night){
+        attbadge += ' <span class="offb" style="background:rgba(37,99,235,.1);color:#2563eb">night shift</span>';
+      } else if(e.present_today){
+        attbadge += ' <span class="offb" style="background:rgba(10,122,67,.14);color:#0a7a43;font-weight:700" title="On site today'+(e.scan_in?(' — scanned in '+esc(e.scan_in)):'')+'">P'+(e.scan_in?(' · '+esc(e.scan_in)):'')+'</span>';
+      } else if(e.absent_today){
+        attbadge += ' <span class="offb" style="background:rgba(185,28,28,.14);color:#b91c1c;font-weight:700" title="Marked Absent today (submitted attendance)">A today</span>';
+      } else {
+        attbadge += ' <span class="offb" style="background:rgba(10,10,10,.06);color:#8a8780" title="No scan or attendance record for today yet">? today</span>';
       }
       var busy = e.allocated_elsewhere?true:false;
       if(busy){
