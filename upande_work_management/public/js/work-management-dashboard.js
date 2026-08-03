@@ -2302,7 +2302,15 @@
           '<td class="n m">'+(r.cost_per_unit>0?fmt(r.cost_per_unit,2):"—")+'</td></tr>';
       });
       h+='</tbody></table></div>';
-      h+='<div class="explain" style="margin-top:8px;font-size:10px"><span><b>Achieved</b> — confirmed output ÷ target across their plans.</span><span><b>Of budget</b> — money spent ÷ planned budget (low can mean under-delivery, not savings — read with Achieved).</span><span><b>KES/unit</b> — spent ÷ actual output; the expense chips only judge people with real volume (&gt;500 units).</span></div>';
+      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
+        '<span><b>Plans</b> — approved plans this person created in the window.</span>'+
+        '<span><b>Target qty</b> — the output their plans promised (sum of plan targets, in each task\'s units).</span>'+
+        '<span><b>Actual qty</b> — confirmed output actually delivered on those plans.</span>'+
+        '<span><b>Achieved</b> — Actual ÷ Target: how much of what they planned got done (green ≥90%, amber ≥60%, red below).</span>'+
+        '<span><b>Budget KES</b> — what their plans were worth if fully delivered (rate × target).</span>'+
+        '<span><b>Spent KES</b> — confirmed pay actually earned on their plans.</span>'+
+        '<span><b>Of budget</b> — Spent ÷ Budget. Low is NOT automatically savings — read it with Achieved (50% spent at 50% achieved just means half the work happened).</span>'+
+        '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this planner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
     } else {
       h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
         '<th'+sth+'>Assigner</th><th class="n"'+sth+'>Assignments</th><th class="n"'+sth+'>Workers put on jobs</th>'+
@@ -2318,7 +2326,14 @@
           '<td class="n m">'+(r.cost_per_unit>0?fmt(r.cost_per_unit,2):"—")+'</td></tr>';
       });
       h+='</tbody></table></div>';
-      h+='<div class="explain" style="margin-top:8px;font-size:10px"><span><b>Workers put on jobs</b> — assignment rows they created (a worker on two assignments counts twice).</span><span><b>KES/unit</b> — confirmed pay ÷ confirmed output on their assignments.</span></div>';
+      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
+        '<span><b>Assignments</b> — assignments this person created in the window.</span>'+
+        '<span><b>Workers put on jobs</b> — assignment rows they created (a worker on two assignments counts twice).</span>'+
+        '<span><b>Target qty</b> — the targets of the plans their assignments serve.</span>'+
+        '<span><b>Actual qty</b> — confirmed output delivered on their assignments.</span>'+
+        '<span><b>Achieved</b> — Actual ÷ Target (green ≥90%, amber ≥60%, red below).</span>'+
+        '<span><b>Spent KES</b> — confirmed pay earned on their assignments.</span>'+
+        '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this assigner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
     }
     box.innerHTML=h;
   }
