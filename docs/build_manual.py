@@ -168,7 +168,13 @@ SECTIONS = [
           "happened); KES/unit = Spent ÷ Actual, what one unit of output cost under this "
           "person. The Assigners tab uses the same definitions over their assignments, plus "
           "Workers put on jobs (assignment rows they created — a worker on two assignments "
-          "counts twice)."),
+          "counts twice). A third tab evaluates Actuals enterers: documents, worker-days, "
+          "value entered, average entry lag and rejections. CLICK ANY NAME for that person's "
+          "full evaluation popup: volume, delivery (achieved %, closed-early rate), money "
+          "(budget vs spent, KES/unit, and a task-adjusted 'vs peers on the same tasks' "
+          "benchmark that removes task-mix unfairness), speed (approval wait / staffing "
+          "speed / entry lag), quality (rejections, substitutions, attendance overrides, "
+          "flagged rows) and the list of their documents."),
     ("b", "Crew movements — substitution history: who left, who joined, swaps."),
 
     ("h2", "9. Field intelligence, explained"),

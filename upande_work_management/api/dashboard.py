@@ -2648,9 +2648,304 @@ def wm_dashboard(**kwargs):
             ar["cost_per_unit"] = (ar["spent"] / ar["actual_qty"]) if ar["actual_qty"] else 0
             assigner_rows.append(ar)
         assigner_rows = sorted(assigner_rows, key=lambda x: -x["assignments"])
+        enterers = {}
+        for r in frappe.db.sql("""
+            SELECT ac.entered_by person, COUNT(DISTINCT ac.name) docs,
+                   COUNT(DISTINCT CONCAT(we.employee, '|', we.work_date)) worker_days,
+                   COALESCE(SUM(we.actual_quantity), 0) qty,
+                   COALESCE(SUM(we.amount), 0) value,
+                   AVG(DATEDIFF(ac.entry_date, we.work_date)) lag_days
+            FROM `tabWork Management Actuals` ac
+            INNER JOIN `tabWork Actuals Employee` we ON we.parent = ac.name
+            WHERE ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+              AND DATE(ac.creation) BETWEEN %s AND %s
+              AND IFNULL(ac.entered_by, '') != ''
+            GROUP BY ac.entered_by
+        """, (ppfrom, ppto), as_dict=True):
+            enterers[r.person] = {"person": r.person, "docs": frappe.utils.cint(r.docs),
+                                  "worker_days": frappe.utils.cint(r.worker_days),
+                                  "qty": frappe.utils.flt(r.qty), "value": frappe.utils.flt(r.value),
+                                  "lag_days": frappe.utils.flt(r.lag_days), "rejected": 0}
+        for r in frappe.db.sql("""
+            SELECT entered_by person, COUNT(*) n FROM `tabWork Management Actuals`
+            WHERE workflow_state = 'Rejected' AND DATE(creation) BETWEEN %s AND %s
+              AND IFNULL(entered_by, '') != ''
+            GROUP BY entered_by
+        """, (ppfrom, ppto), as_dict=True):
+            if r.person in enterers:
+                enterers[r.person]["rejected"] = frappe.utils.cint(r.n)
+            else:
+                enterers[r.person] = {"person": r.person, "docs": 0, "worker_days": 0,
+                                      "qty": 0, "value": 0, "lag_days": 0,
+                                      "rejected": frappe.utils.cint(r.n)}
+        out["enterers"] = sorted(enterers.values(), key=lambda x: -x["docs"])
         out["window"] = {"from": ppfrom, "to": ppto}
         out["creators"] = creator_rows
         out["assigners"] = assigner_rows
+
+    elif action == "person_kpi":
+        # ONE PERSON'S EVALUATION — role: creator | assigner | enterer.
+        # Volume, delivery, money (with a task-adjusted cost benchmark: their
+        # KES/unit per task vs everyone ELSE's on the same task, weighted by
+        # their volume), speed, and quality signals — plus their document list.
+        kprole = frappe.form_dict.get("role") or "creator"
+        kpwho = frappe.form_dict.get("person")
+        kpfrom = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -84))
+        kpto = frappe.form_dict.get("to_date") or str(frappe.utils.today())
+        if not kpwho:
+            out["error"] = "person is required"
+        elif kprole == "creator":
+            plans = frappe.db.sql("""
+                SELECT name, task, farm, block_section, from_date, to_date,
+                       quantity, total_cost, workflow_state, custom_close_state,
+                       creation, approval_date
+                FROM `tabWork Management Planner`
+                WHERE requested_by = %s AND DATE(creation) BETWEEN %s AND %s
+                ORDER BY creation DESC LIMIT 400
+            """, (kpwho, kpfrom, kpto), as_dict=True)
+            pnames = [r.name for r in plans]
+            done = {}
+            if pnames:
+                for r in frappe.db.sql("""
+                    SELECT a2.planner_request pr, ac.task task,
+                           COALESCE(SUM(ac.total_actual_qty),0) q,
+                           COALESCE(SUM(ac.total_payment),0) s
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                    WHERE ac.workflow_state = 'CONFIRMED' AND a2.planner_request IN %s
+                    GROUP BY a2.planner_request, ac.task
+                """, (tuple(pnames),), as_dict=True):
+                    dd = done.get(r.pr)
+                    if dd is None:
+                        dd = {"q": 0, "s": 0}
+                        done[r.pr] = dd
+                    dd["q"] = dd["q"] + frappe.utils.flt(r.q)
+                    dd["s"] = dd["s"] + frappe.utils.flt(r.s)
+            n_appr = 0
+            n_rej = 0
+            n_closed = 0
+            appr_wait_h = []
+            tt = 0
+            ta = 0
+            tb = 0
+            ts = 0
+            rows_out = []
+            for r in plans:
+                st = r.workflow_state or ""
+                if st == "Approved":
+                    n_appr = n_appr + 1
+                if st == "Rejected":
+                    n_rej = n_rej + 1
+                if (r.custom_close_state or "") == "Closed":
+                    n_closed = n_closed + 1
+                if r.approval_date and r.creation:
+                    try:
+                        appr_wait_h.append(frappe.utils.time_diff_in_hours(str(r.approval_date), str(r.creation)))
+                    except Exception:
+                        pass
+                dd = done.get(r.name, {"q": 0, "s": 0})
+                tgt = frappe.utils.flt(r.quantity)
+                bud = frappe.utils.flt(r.total_cost)
+                tt = tt + tgt
+                ta = ta + dd["q"]
+                tb = tb + bud
+                ts = ts + dd["s"]
+                rows_out.append({"doc": r.name, "task": r.task, "farm": r.farm,
+                                 "period": str(r.from_date) + " → " + str(r.to_date),
+                                 "target": tgt, "actual": dd["q"],
+                                 "achieved": (dd["q"] / tgt * 100) if tgt else 0,
+                                 "budget": bud, "spent": dd["s"],
+                                 "state": st + ((" · closed early") if (r.custom_close_state or "") == "Closed" else "")})
+            # task-adjusted cost benchmark: their cpu vs everyone else's, per task
+            my_task = {}
+            if pnames:
+                for r in frappe.db.sql("""
+                    SELECT ac.task task, COALESCE(SUM(ac.total_actual_qty),0) q,
+                           COALESCE(SUM(ac.total_payment),0) s
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                    WHERE ac.workflow_state = 'CONFIRMED' AND a2.planner_request IN %s
+                    GROUP BY ac.task
+                """, (tuple(pnames),), as_dict=True):
+                    my_task[r.task] = (frappe.utils.flt(r.q), frappe.utils.flt(r.s))
+            bench_num = 0
+            bench_den = 0
+            if my_task:
+                for r in frappe.db.sql("""
+                    SELECT ac.task task, COALESCE(SUM(ac.total_actual_qty),0) q,
+                           COALESCE(SUM(ac.total_payment),0) s
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                    INNER JOIN `tabWork Management Planner` p ON a2.planner_request = p.name
+                    WHERE ac.workflow_state = 'CONFIRMED'
+                      AND DATE(p.creation) BETWEEN %s AND %s
+                      AND ac.task IN %s
+                    GROUP BY ac.task
+                """, (kpfrom, kpto, tuple(my_task.keys())), as_dict=True):
+                    mt0 = my_task.get(r.task) or (0, 0)
+                    mq = mt0[0]
+                    ms = mt0[1]
+                    peer_q = frappe.utils.flt(r.q) - mq
+                    peer_s = frappe.utils.flt(r.s) - ms
+                    if mq > 0 and peer_q > 0:
+                        peer_cpu = peer_s / peer_q
+                        bench_num = bench_num + mq * ((ms / mq) - peer_cpu)
+                        bench_den = bench_den + mq * peer_cpu
+            out["kpi"] = {
+                "plans": len(plans), "approved": n_appr, "rejected": n_rej,
+                "closed_early": n_closed,
+                "closed_early_pct": (n_closed / len(plans) * 100) if plans else 0,
+                "rejected_pct": (n_rej / len(plans) * 100) if plans else 0,
+                "target": tt, "actual": ta, "achieved": (ta / tt * 100) if tt else 0,
+                "budget": tb, "spent": ts, "of_budget": (ts / tb * 100) if tb else 0,
+                "cost_per_unit": (ts / ta) if ta else 0,
+                "vs_peers_pct": (bench_num / bench_den * 100) if bench_den else None,
+                "approval_wait_h": (sum(appr_wait_h) / len(appr_wait_h)) if appr_wait_h else None,
+            }
+            out["rows"] = rows_out
+        elif kprole == "assigner":
+            asgs = frappe.db.sql("""
+                SELECT a.name, a.task, a.farm, a.from_date, a.to_date, a.planned_people,
+                       a.assigned_count, a.workflow_state, a.creation, a.planner_request,
+                       p.quantity tgt, p.approval_date plan_approved
+                FROM `tabWork Management Assigner` a
+                LEFT JOIN `tabWork Management Planner` p ON a.planner_request = p.name
+                WHERE a.assigned_by = %s AND DATE(a.creation) BETWEEN %s AND %s
+                ORDER BY a.creation DESC LIMIT 400
+            """, (kpwho, kpfrom, kpto), as_dict=True)
+            anames = [r.name for r in asgs]
+            adone = {}
+            subs_n = 0
+            if anames:
+                for r in frappe.db.sql("""
+                    SELECT ac.assignment asg, COALESCE(SUM(ac.total_actual_qty),0) q,
+                           COALESCE(SUM(ac.total_payment),0) s
+                    FROM `tabWork Management Actuals` ac
+                    WHERE ac.workflow_state = 'CONFIRMED' AND ac.assignment IN %s
+                    GROUP BY ac.assignment
+                """, (tuple(anames),), as_dict=True):
+                    adone[r.asg] = (frappe.utils.flt(r.q), frappe.utils.flt(r.s))
+                sr = frappe.db.sql("""
+                    SELECT COUNT(*) n FROM `tabWork Assignment Employee`
+                    WHERE parent IN %s AND status = 'Left'
+                """, (tuple(anames),), as_dict=True)
+                subs_n = frappe.utils.cint(sr[0].n) if sr else 0
+            ov_n = 0
+            if anames:
+                ovr = frappe.db.sql("""
+                    SELECT COUNT(*) n FROM `tabComment`
+                    WHERE reference_doctype = 'Work Management Assigner'
+                      AND reference_name IN %s AND content LIKE 'Attendance override%%'
+                """, (tuple(anames),), as_dict=True)
+                ov_n = frappe.utils.cint(ovr[0].n) if ovr else 0
+            tt = 0
+            ta = 0
+            ts = 0
+            pp_sum = 0
+            ac_sum = 0
+            n_rej = 0
+            staff_h = []
+            rows_out = []
+            for r in asgs:
+                if (r.workflow_state or "") == "Rejected":
+                    n_rej = n_rej + 1
+                if r.plan_approved and r.creation:
+                    try:
+                        staff_h.append(frappe.utils.time_diff_in_hours(str(r.creation), str(r.plan_approved)))
+                    except Exception:
+                        pass
+                ad0 = adone.get(r.name) or (0, 0)
+                dq = ad0[0]
+                ds = ad0[1]
+                tgt = frappe.utils.flt(r.tgt)
+                tt = tt + tgt
+                ta = ta + dq
+                ts = ts + ds
+                pp_sum = pp_sum + frappe.utils.cint(r.planned_people)
+                ac_sum = ac_sum + frappe.utils.cint(r.assigned_count)
+                rows_out.append({"doc": r.name, "task": r.task, "farm": r.farm,
+                                 "period": str(r.from_date) + " → " + str(r.to_date),
+                                 "crew": str(r.assigned_count) + " / " + str(r.planned_people),
+                                 "target": tgt, "actual": dq,
+                                 "achieved": (dq / tgt * 100) if tgt else 0,
+                                 "spent": ds, "state": r.workflow_state})
+            out["kpi"] = {
+                "assignments": len(asgs), "rejected": n_rej,
+                "rejected_pct": (n_rej / len(asgs) * 100) if asgs else 0,
+                "fill_pct": (ac_sum / pp_sum * 100) if pp_sum else 0,
+                "target": tt, "actual": ta, "achieved": (ta / tt * 100) if tt else 0,
+                "spent": ts, "cost_per_unit": (ts / ta) if ta else 0,
+                "substitutions": subs_n,
+                "subs_per_asg": (subs_n / len(asgs)) if asgs else 0,
+                "overrides": ov_n,
+                "staffing_wait_h": (sum(staff_h) / len(staff_h)) if staff_h else None,
+            }
+            out["rows"] = rows_out
+        else:
+            docs = frappe.db.sql("""
+                SELECT name, task, farm, workflow_state, entry_date, creation,
+                       total_actual_qty, total_payment, payroll_people
+                FROM `tabWork Management Actuals`
+                WHERE entered_by = %s AND DATE(creation) BETWEEN %s AND %s
+                ORDER BY creation DESC LIMIT 400
+            """, (kpwho, kpfrom, kpto), as_dict=True)
+            lag_r = frappe.db.sql("""
+                SELECT AVG(DATEDIFF(ac.entry_date, we.work_date)) lag
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Actuals Employee` we ON we.parent = ac.name
+                WHERE ac.entered_by = %s AND DATE(ac.creation) BETWEEN %s AND %s
+            """, (kpwho, kpfrom, kpto), as_dict=True)
+            # integrity: their rows flagged by the audit checks
+            flag_absent = frappe.db.sql("""
+                SELECT COUNT(*) n FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                INNER JOIN `tabAttendance` att ON att.employee = we.employee
+                      AND att.attendance_date = we.work_date
+                      AND att.docstatus = 1 AND att.status = 'Absent'
+                WHERE ac.entered_by = %s AND ac.workflow_state = 'CONFIRMED'
+                  AND we.amount > 0 AND DATE(ac.creation) BETWEEN %s AND %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM `tabAttendance` pp
+                    WHERE pp.employee = att.employee AND pp.attendance_date = att.attendance_date
+                      AND pp.docstatus = 1 AND pp.status IN ('Present','Half Day','Work From Home')
+                  )
+            """, (kpwho, kpfrom, kpto), as_dict=True)
+            flag_zero = frappe.db.sql("""
+                SELECT COUNT(*) n FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                INNER JOIN `tabEmployee` emp ON emp.name = we.employee
+                WHERE ac.entered_by = %s AND ac.workflow_state = 'CONFIRMED'
+                  AND we.actual_quantity > 0 AND IFNULL(we.amount,0) <= 0
+                  AND IFNULL(ac.rate,0) > 0 AND emp.employment_type = 'Task Worker'
+                  AND DATE(ac.creation) BETWEEN %s AND %s
+            """, (kpwho, kpfrom, kpto), as_dict=True)
+            n_rej = 0
+            tq = 0
+            tv = 0
+            rows_out = []
+            for r in docs:
+                if (r.workflow_state or "") == "Rejected":
+                    n_rej = n_rej + 1
+                tq = tq + frappe.utils.flt(r.total_actual_qty)
+                tv = tv + frappe.utils.flt(r.total_payment)
+                rows_out.append({"doc": r.name, "task": r.task, "farm": r.farm,
+                                 "period": str(r.entry_date or "")[:10],
+                                 "target": 0, "actual": frappe.utils.flt(r.total_actual_qty),
+                                 "achieved": 0, "spent": frappe.utils.flt(r.total_payment),
+                                 "crew": str(r.payroll_people or 0) + " paid",
+                                 "state": r.workflow_state})
+            out["kpi"] = {
+                "docs": len(docs), "rejected": n_rej,
+                "rejected_pct": (n_rej / len(docs) * 100) if docs else 0,
+                "qty": tq, "value": tv,
+                "lag_days": frappe.utils.flt(lag_r[0].lag) if lag_r and lag_r[0].lag is not None else None,
+                "flagged_absent": frappe.utils.cint(flag_absent[0].n) if flag_absent else 0,
+                "flagged_zero": frappe.utils.cint(flag_zero[0].n) if flag_zero else 0,
+            }
+            out["rows"] = rows_out
+        out["role"] = kprole
+        out["person"] = kpwho
+        out["window"] = {"from": kpfrom, "to": kpto}
 
     else:
         out["error"] = "unknown action: " + str(action)
