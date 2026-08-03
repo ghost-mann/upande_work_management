@@ -217,7 +217,23 @@ def wm_planner(**kwargs):
     elif action == "approve":
         nm = frappe.form_dict.get("name")
         cur_ws = frappe.db.get_value("Work Management Planner", nm, "workflow_state")
-        if cur_ws != "Pending Approval":
+        # CONSULTANT GATE: future-week plans need the week's consultant sign-off
+        gate_ok = 1
+        try:
+            if frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "require_consultant_approval")):
+                pfd = frappe.db.get_value("Work Management Planner", nm, "from_date")
+                if pfd:
+                    today_g = frappe.utils.getdate(frappe.utils.today())
+                    next_monday = frappe.utils.add_days(today_g, 7 - today_g.weekday())
+                    if frappe.utils.getdate(pfd) >= next_monday:
+                        cst = frappe.db.get_value("Work Management Planner", nm, "custom_consultant_state")
+                        if cst != "Approved":
+                            gate_ok = 0
+        except Exception:
+            gate_ok = 1
+        if not gate_ok:
+            out["error"] = "This plan starts in an upcoming week and is awaiting the consultant's weekly sign-off (Weekly review tab)."
+        elif cur_ws != "Pending Approval":
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
         else:
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", "Approved", update_modified=False)
@@ -253,6 +269,158 @@ def wm_planner(**kwargs):
             p["blocks"] = blist
             p["editable"] = 1 if p.workflow_state in ("Draft","Rejected","Pending Approval") else 0
         out["plan"] = p
+
+    elif action == "week_board":
+        # CONSULTANT WEEKLY BOARD: all of one farm's plans starting in a chosen
+        # week, with crew-load per day vs the farm's active workforce, budgets
+        # and consultant state. week_start should be a Monday.
+        wfarm = frappe.form_dict.get("farm")
+        wstart = frappe.form_dict.get("week_start")
+        if not wstart:
+            tdy = frappe.utils.getdate(frappe.utils.today())
+            wstart = str(frappe.utils.add_days(tdy, 7 - tdy.weekday()))
+        wend = str(frappe.utils.add_days(wstart, 6))
+        if not wfarm:
+            out["error"] = "farm is required"
+        else:
+            plans = frappe.db.sql("""
+                SELECT name, task, block_section, from_date, to_date, people_per_day,
+                       quantity, uom, rate, total_cost, workflow_state, requested_by,
+                       custom_consultant_state, custom_consultant_by, custom_consultant_at,
+                       custom_consultant_note, custom_close_state
+                FROM `tabWork Management Planner`
+                WHERE farm = %s AND from_date <= %s AND from_date >= %s
+                  AND workflow_state != 'Rejected'
+                ORDER BY from_date, task
+            """, (wfarm, wend, wstart), as_dict=True)
+            pnames = [r.name for r in plans]
+            blocks_map = {}
+            if pnames:
+                for r in frappe.db.sql("""
+                    SELECT parent, block FROM `tabWork Planner Block` WHERE parent IN %s
+                """, (tuple(pnames),), as_dict=True):
+                    bl = blocks_map.get(r.parent)
+                    if bl is None:
+                        bl = []
+                        blocks_map[r.parent] = bl
+                    if r.block:
+                        bl.append(r.block)
+            days = []
+            cur_d = wstart
+            g = 0
+            while cur_d <= wend and g < 8:
+                days.append(cur_d)
+                cur_d = str(frappe.utils.add_days(cur_d, 1))
+                g = g + 1
+            load = {}
+            for dd in days:
+                load[dd] = 0
+            tot_budget = 0
+            tot_target_v = 0
+            rows_b = []
+            for r in plans:
+                bl = []
+                if r.block_section:
+                    bl.append(r.block_section)
+                for b in blocks_map.get(r.name, []):
+                    if b not in bl:
+                        bl.append(b)
+                for dd in days:
+                    if str(r.from_date) <= dd <= str(r.to_date):
+                        load[dd] = load[dd] + frappe.utils.cint(r.people_per_day)
+                tot_budget = tot_budget + frappe.utils.flt(r.total_cost)
+                rows_b.append({"name": r.name, "task": r.task, "blocks": bl,
+                               "period": str(r.from_date) + " → " + str(r.to_date),
+                               "from_date": str(r.from_date), "to_date": str(r.to_date),
+                               "crew": frappe.utils.cint(r.people_per_day),
+                               "target": frappe.utils.flt(r.quantity), "uom": r.uom,
+                               "rate": frappe.utils.flt(r.rate),
+                               "budget": frappe.utils.flt(r.total_cost),
+                               "state": r.workflow_state,
+                               "requested_by": r.requested_by,
+                               "consultant_state": r.custom_consultant_state,
+                               "consultant_by": r.custom_consultant_by,
+                               "consultant_note": r.custom_consultant_note})
+            wf_row = frappe.db.sql("""
+                SELECT COUNT(*) n FROM `tabEmployee`
+                WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) = %s
+            """, (wfarm,), as_dict=True)
+            workforce = frappe.utils.cint(wf_row[0].n) if wf_row else 0
+            clist = []
+            gate_on = 0
+            try:
+                gate_on = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "require_consultant_approval"))
+                raw = frappe.db.get_single_value("Work Management Settings", "consultant_users") or ""
+                for c in raw.replace("\n", ",").split(","):
+                    cv = c.strip().lower()
+                    if cv:
+                        clist.append(cv)
+            except Exception:
+                pass
+            roles_w = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+            is_consultant = (frappe.session.user.lower() in clist) or ("System Manager" in roles_w)
+            out["week"] = {"start": wstart, "end": wend}
+            out["farm"] = wfarm
+            out["plans"] = rows_b
+            out["load"] = [{"d": dd, "crew": load[dd]} for dd in days]
+            out["workforce"] = workforce
+            out["totals"] = {"plans": len(rows_b), "budget": tot_budget,
+                             "peak_crew": max([load[dd] for dd in days]) if days else 0,
+                             "approved": len([x for x in rows_b if x["consultant_state"] == "Approved"]),
+                             "returned": len([x for x in rows_b if x["consultant_state"] == "Returned"])}
+            out["is_consultant"] = 1 if is_consultant else 0
+            out["gate_on"] = gate_on
+
+    elif action == "week_approve" or action == "week_return":
+        # consultant decision on a farm-week: stamp every plan in the package
+        wfarm = frappe.form_dict.get("farm")
+        wstart = frappe.form_dict.get("week_start")
+        wnote = (frappe.form_dict.get("note") or "").strip()
+        approving = (action == "week_approve")
+        err = None
+        if not wfarm or not wstart:
+            err = "farm and week_start are required"
+        if not err and not approving and not wnote:
+            err = "A note is required when returning a week"
+        clist = []
+        try:
+            raw = frappe.db.get_single_value("Work Management Settings", "consultant_users") or ""
+            for c in raw.replace("\n", ",").split(","):
+                cv = c.strip().lower()
+                if cv:
+                    clist.append(cv)
+        except Exception:
+            pass
+        roles_w = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        if not err and frappe.session.user.lower() not in clist and "System Manager" not in roles_w:
+            err = "Only the consultants named in Work Management Settings can decide a weekly package"
+        if err:
+            out["error"] = err
+        else:
+            wend = str(frappe.utils.add_days(wstart, 6))
+            plans = frappe.db.get_all("Work Management Planner",
+                filters={"farm": wfarm, "from_date": ["between", [wstart, wend]],
+                         "workflow_state": ["!=", "Rejected"]},
+                pluck="name", limit=300)
+            newstate = "Approved" if approving else "Returned"
+            wnow = frappe.utils.now()
+            for pn in plans:
+                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_state", newstate, update_modified=False)
+                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_by", frappe.session.user, update_modified=False)
+                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_at", wnow, update_modified=False)
+                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_note", wnote, update_modified=False)
+            frappe.db.commit()
+            for pn in plans:
+                try:
+                    frappe.get_doc("Work Management Planner", pn).add_comment("Comment",
+                        ("Consultant approved" if approving else "Consultant returned") +
+                        " (week " + wstart + ", " + wfarm + ") by " + frappe.session.user +
+                        (": " + wnote if wnote else ""))
+                except Exception:
+                    pass
+            out["decided"] = len(plans)
+            out["state"] = newstate
+
 
     else:
         out["error"] = "unknown action: " + str(action)

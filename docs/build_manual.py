@@ -41,6 +41,29 @@ SECTIONS = [
     ("n", "Save. The plan starts as PENDING and goes to the farm's approver (Farm Manager)."),
     ("n", "Approved plans become available to the Assigner. A plan's budget = rate × target quantity."),
 
+    ("h3", "Consultant weekly review (Weekly review tab)"),
+    ("p", "Plans that start in an upcoming week must be signed off by a consultant before the "
+          "Farm Manager can approve them individually. Plans for the current week are exempt, so "
+          "day-to-day operations are never blocked."),
+    ("n", "Open the Weekly review tab on /work-planner, pick the farm and the week (it defaults "
+          "to next Monday; use Prev/Next week to move)."),
+    ("n", "The board shows the whole week as one package: number of plans, total budgeted value "
+          "(rate × target across every plan), peak crew per day against the farm's active "
+          "workforce, and a day-by-day crew-load chart. If any day asks for more workers than "
+          "the farm has, the board flags the week as over-planned."),
+    ("n", "Below the chart, every plan is listed with its task, blocks, period, crew per day, "
+          "target, rate, budget, who requested it, and its consultant status."),
+    ("n", "Consultants decide the week in one action: 'Approve week' stamps every plan as "
+          "consultant-approved and unlocks Farm Manager approval; 'Return with note' sends the "
+          "whole week back — the note is required and is written on every plan for the planner "
+          "to act on."),
+    ("n", "Every decision is stamped on the plans (who, when, note) and logged as a comment, so "
+          "the trail survives on the document."),
+    ("p", "Who can decide: only the users named in Work Management Settings → Consultant users "
+          "(comma-separated emails), plus System Managers. Everyone else sees the board "
+          "read-only. The whole gate can be switched off with the 'Require consultant approval "
+          "for future-week plans' checkbox in Settings."),
+
     ("h2", "3. Assigner (/work-assigner)"),
     ("n", "Pick an approved plan; the farm's workers load in the picker."),
     ("n", "Every worker carries live badges: presence (P · 06:12 scanned in, 'not in yet', or "
@@ -226,6 +249,9 @@ SECTIONS = [
           "(default 09:00), check scans when recording actuals."),
     ("b", "Auto-release inactive employees from assignments (off by default)."),
     ("b", "Discrepancy checks: one checkbox per check listed in section 7."),
+    ("b", "Consultant weekly review: require consultant approval for future-week plans (on by "
+          "default), consultant users — the comma-separated emails allowed to approve or return "
+          "a farm's week."),
 
     ("h2", "11. Definitions"),
     ("b", "Man-day — one worker working one day (a worker on two tasks the same day is one man-day)."),

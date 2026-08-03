@@ -28,7 +28,10 @@
   "disc_no_pay",
   "disc_dup_day",
   "disc_inactive_assigned",
-  "att_auto_release_inactive"
+  "att_auto_release_inactive",
+  "sb_consult",
+  "require_consultant_approval",
+  "consultant_users"
  ],
  "fields": [
   {
@@ -188,6 +191,24 @@
    "label": "Auto-release inactive employees from assignments",
    "default": "0",
    "description": "When ON: deactivating an employee in HR marks their Active rows on live assignments as Left (dated today) with a comment on each assignment."
+  },
+  {
+   "fieldname": "sb_consult",
+   "fieldtype": "Section Break",
+   "label": "Consultant weekly review"
+  },
+  {
+   "fieldname": "require_consultant_approval",
+   "fieldtype": "Check",
+   "label": "Require consultant approval for future-week plans",
+   "default": "1",
+   "description": "Plans starting in an upcoming week cannot be approved by the Farm Manager until a consultant approves the farm's week on the Weekly review tab (/work-planner). Same-week plans are exempt."
+  },
+  {
+   "fieldname": "consultant_users",
+   "fieldtype": "Small Text",
+   "label": "Consultant users (comma-separated emails)",
+   "description": "These users (plus System Manager) can approve or return a farm's weekly plan package."
   }
  ],
  "idx": 0,

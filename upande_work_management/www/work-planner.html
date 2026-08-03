@@ -187,6 +187,18 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <div id="appr-body" class="loading">Loading&hellip;</div>
   </div>
 
+<div class="panel" id="p-week">
+    <div class="sech">Consultant weekly review</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+      <div><div class="lab">Farm</div><select id="wk-farm"><option>Saboti</option><option>Lokitela</option><option>Vale</option><option selected>Endebess</option></select></div>
+      <div><div class="lab">Week of (Monday)</div><input type="date" id="wk-start"></div>
+      <button type="button" class="btn" id="wk-prev">&larr; Prev week</button>
+      <button type="button" class="btn" id="wk-next">Next week &rarr;</button>
+      <button type="button" class="btn solid" id="wk-load">Load week</button>
+    </div>
+    <div id="wk-body" class="empty">Pick a farm and week.</div>
+  </div>
+
   <div id="wp-closedialog" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1000;align-items:center;justify-content:center"></div>
   <div class="toast" id="wp-toast"></div>
 

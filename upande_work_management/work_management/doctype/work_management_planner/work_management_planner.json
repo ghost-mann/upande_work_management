@@ -47,6 +47,10 @@
   "approval_date",
   "workflow_state",
   "amended_from",
+  "custom_consultant_state",
+  "custom_consultant_by",
+  "custom_consultant_at",
+  "custom_consultant_note",
   "custom_approved_at",
   "custom_balance_qty",
   "custom_close_reason",
@@ -314,6 +318,31 @@
    "print_hide": 1,
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "custom_consultant_state",
+   "fieldtype": "Select",
+   "label": "Consultant Review",
+   "options": "\nApproved\nReturned",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_consultant_by",
+   "fieldtype": "Data",
+   "label": "Consultant Reviewed By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_consultant_at",
+   "fieldtype": "Datetime",
+   "label": "Consultant Reviewed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_consultant_note",
+   "fieldtype": "Small Text",
+   "label": "Consultant Note",
+   "read_only": 1
   },
   {
    "fieldname": "custom_approved_at",
