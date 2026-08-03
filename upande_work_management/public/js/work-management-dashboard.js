@@ -153,6 +153,7 @@
           '<div class="subtabs" id="wm-perf-tabs" style="margin-bottom:10px">'+
             '<button type="button" class="subtab on" data-pp="creators">Plan creators</button>'+
             '<button type="button" class="subtab" data-pp="assigners">Assigners</button>'+
+            '<button type="button" class="subtab" data-pp="enterers">Actuals enterers</button>'+
           '</div>'+
           '<div id="wm-perf-body"><div class="loading">Measuring planners&hellip;</div></div>'+
         '</div></div>'+
@@ -2268,7 +2269,7 @@
   }
   function renderPerformers(){
     var box=el("wm-perf-body"); if(!box||!PP.data) return;
-    var rows=(PP.tab==="assigners"?PP.data.assigners:PP.data.creators)||[];
+    var rows=(PP.tab==="assigners"?PP.data.assigners:(PP.tab==="enterers"?PP.data.enterers:PP.data.creators))||[];
     if(!rows.length){ box.innerHTML='<div class="empty">No activity in this window.</div>'; return; }
     // most / least expensive by cost per unit (only people with real volume)
     var judged=rows.filter(function(r){ return (r.actual_qty||0)>500 && r.cost_per_unit>0; });
@@ -2294,7 +2295,7 @@
         '<th class="n"'+sth+'>Of budget</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
       rows.forEach(function(r){
         var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
-        h+='<tr'+hot+'><td><b>'+esc(shortUser(r.person))+'</b></td>'+
+        h+='<tr'+hot+'><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
           '<td class="n m">'+fmt(r.plans)+'</td><td class="n m">'+fmt(r.target_qty)+'</td>'+
           '<td class="n m">'+fmt(r.actual_qty)+'</td><td class="n">'+ppPct(r.achieved_pct)+'</td>'+
           '<td class="n m">'+fmt(r.budget,0)+'</td><td class="n m">'+fmt(r.spent,0)+'</td>'+
@@ -2311,6 +2312,25 @@
         '<span><b>Spent KES</b> — confirmed pay actually earned on their plans.</span>'+
         '<span><b>Of budget</b> — Spent ÷ Budget. Low is NOT automatically savings — read it with Achieved (50% spent at 50% achieved just means half the work happened).</span>'+
         '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this planner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
+    } else if(PP.tab==="enterers"){
+      h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
+        '<th'+sth+'>Enterer</th><th class="n"'+sth+'>Docs</th><th class="n"'+sth+'>Worker-days</th>'+
+        '<th class="n"'+sth+'>Qty entered</th><th class="n"'+sth+'>Value KES</th>'+
+        '<th class="n"'+sth+'>Avg entry lag</th><th class="n"'+sth+'>Rejected</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        h+='<tr><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
+          '<td class="n m">'+fmt(r.docs)+'</td><td class="n m">'+fmt(r.worker_days)+'</td>'+
+          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.value,0)+'</td>'+
+          '<td class="n m">'+(r.lag_days!=null?fmt(r.lag_days,1)+"d":"—")+'</td>'+
+          '<td class="n m"'+(r.rejected?' style="color:var(--bad);font-weight:700"':'')+'>'+fmt(r.rejected)+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
+        '<span><b>Docs</b> — actuals documents they entered.</span>'+
+        '<span><b>Worker-days</b> — distinct worker-day records inside them.</span>'+
+        '<span><b>Avg entry lag</b> — average days between the work date and when it was typed in; late entry is where errors breed.</span>'+
+        '<span><b>Rejected</b> — documents currently bounced by an approver.</span>'+
+        '<span>Click a name for their full evaluation.</span></div>';
     } else {
       h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
         '<th'+sth+'>Assigner</th><th class="n"'+sth+'>Assignments</th><th class="n"'+sth+'>Workers put on jobs</th>'+
@@ -2318,7 +2338,7 @@
         '<th class="n"'+sth+'>Spent KES</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
       rows.forEach(function(r){
         var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
-        h+='<tr'+hot+'><td><b>'+esc(shortUser(r.person))+'</b></td>'+
+        h+='<tr'+hot+'><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
           '<td class="n m">'+fmt(r.assignments)+'</td><td class="n m">'+fmt(r.workers_put)+'</td>'+
           '<td class="n m">'+fmt(r.target_qty)+'</td><td class="n m">'+fmt(r.actual_qty)+'</td>'+
           '<td class="n">'+ppPct(r.achieved_pct)+'</td>'+
@@ -2336,7 +2356,106 @@
         '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this assigner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
     }
     box.innerHTML=h;
+    box.querySelectorAll(".pp-person").forEach(function(a){
+      a.onclick=function(ev){ ev.preventDefault(); openPersonKpi(PP.tab, a.getAttribute("data-person")); };
+    });
   }
+
+  // ── person KPI popup ──
+  function pkTile(k,v,u,color){
+    return '<div style="border:1px solid var(--line);border-radius:12px;padding:9px 13px;background:var(--wash)">'+
+      '<div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:600">'+k+'</div>'+
+      '<div style="font-size:17px;font-weight:700;color:'+(color||"var(--ink)")+'">'+v+'</div>'+
+      (u?'<div style="font-size:9.5px;color:var(--mute)">'+u+'</div>':'')+'</div>';
+  }
+  function ensurePkModal(){
+    if(el("wm-pk-overlay")) return;
+    var d=document.createElement("div");
+    d.id="wm-pk-overlay";
+    d.style.cssText="display:none;position:fixed;inset:0;background:rgba(20,18,12,.42);z-index:900;padding:4vh 4vw;overflow:auto";
+    d.innerHTML='<div id="wm-pk-card" style="max-width:1020px;margin:0 auto;background:rgba(250,250,246,.97);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.8);border-radius:18px;box-shadow:0 40px 80px -30px rgba(10,10,10,.45);padding:22px 26px">'+
+      '<div style="display:flex;align-items:flex-start;gap:12px"><div style="flex:1"><div id="wm-pk-title" style="font-size:18px;font-weight:700"></div><div id="wm-pk-sub" style="font-size:11px;color:var(--mute);margin-top:2px"></div></div>'+
+      '<button type="button" id="wm-pk-x" style="border:1px solid var(--line);background:none;border-radius:10px;width:30px;height:30px;font-size:16px;cursor:pointer;color:var(--mute)">&times;</button></div>'+
+      '<div id="wm-pk-body" style="margin-top:14px"><div class="loading">Evaluating&hellip;</div></div></div>';
+    document.body.appendChild(d);
+    el("wm-pk-x").onclick=function(){ d.style.display="none"; };
+    d.addEventListener("click",function(ev){ if(ev.target===d) d.style.display="none"; });
+    document.addEventListener("keydown",function(ev){ if(ev.key==="Escape") d.style.display="none"; });
+  }
+  function openPersonKpi(tab, person){
+    ensurePkModal();
+    var role = tab==="assigners"?"assigner":(tab==="enterers"?"enterer":"creator");
+    var roleName = role==="assigner"?"Assigner":(role==="enterer"?"Actuals enterer":"Plan creator");
+    el("wm-pk-overlay").style.display="block";
+    el("wm-pk-title").textContent=shortUser(person);
+    el("wm-pk-sub").textContent=person+" · "+roleName;
+    el("wm-pk-body").innerHTML='<div class="loading">Evaluating&hellip;</div>';
+    call({action:"person_kpi", role:role, person:person}).then(function(d){
+      if(d.error){ el("wm-pk-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      renderPersonKpi(d, role);
+    }).catch(function(e){ el("wm-pk-body").innerHTML='<div class="empty">Could not evaluate: '+esc(e.message)+'</div>'; });
+  }
+  function pkPctColor(v, goodHigh){
+    if(v==null) return "var(--ink)";
+    if(goodHigh) return v>=90?"#0a7a43":(v>=60?"#a06000":"#b91c1c");
+    return v<=5?"#0a7a43":(v<=15?"#a06000":"#b91c1c");
+  }
+  function renderPersonKpi(d, role){
+    var k=d.kpi||{}, rows=d.rows||[];
+    var win=d.window||{};
+    var h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px">';
+    if(role==="creator"){
+      h+=pkTile("Plans", fmt(k.plans), fmt(k.approved)+" approved · "+fmt(k.rejected)+" rejected");
+      h+=pkTile("Achieved", fmt(k.achieved,0)+"%", fmt(k.actual)+" of "+fmt(k.target)+" units", pkPctColor(k.achieved,true));
+      h+=pkTile("Budget", "KES "+fmt(k.budget,0), "what their plans promised");
+      h+=pkTile("Spent", "KES "+fmt(k.spent,0), fmt(k.of_budget,0)+"% of budget");
+      h+=pkTile("KES / unit", k.cost_per_unit>0?fmt(k.cost_per_unit,2):"—", "raw cost of one unit");
+      if(k.vs_peers_pct!=null){
+        var vp=k.vs_peers_pct;
+        h+=pkTile("Vs peers, same tasks", (vp>0?"+":"")+fmt(vp,1)+"%", vp>0?"more expensive than others on the same tasks":"cheaper than others on the same tasks", vp>5?"#b91c1c":(vp<-5?"#0a7a43":"var(--ink)"));
+      }
+      h+=pkTile("Closed early", fmt(k.closed_early), fmt(k.closed_early_pct,0)+"% of their plans — targets not reached", pkPctColor(k.closed_early_pct,false));
+      h+=pkTile("Rejected", fmt(k.rejected_pct,0)+"%", "plans bounced by the approver", pkPctColor(k.rejected_pct,false));
+      if(k.approval_wait_h!=null) h+=pkTile("Approval wait", fmt(k.approval_wait_h,1)+"h", "avg creation → approval");
+    } else if(role==="assigner"){
+      h+=pkTile("Assignments", fmt(k.assignments), fmt(k.rejected)+" rejected");
+      h+=pkTile("Crew fill", fmt(k.fill_pct,0)+"%", "workers put on vs plan crew size", pkPctColor(k.fill_pct,true));
+      h+=pkTile("Achieved", fmt(k.achieved,0)+"%", fmt(k.actual)+" of "+fmt(k.target)+" units", pkPctColor(k.achieved,true));
+      h+=pkTile("Spent", "KES "+fmt(k.spent,0), (k.cost_per_unit>0?fmt(k.cost_per_unit,2)+" per unit":""));
+      h+=pkTile("Substitutions", fmt(k.substitutions), fmt(k.subs_per_asg,1)+" per assignment — crew churn", k.subs_per_asg>2?"#a06000":"var(--ink)");
+      h+=pkTile("Attendance overrides", fmt(k.overrides), "conflicts pushed through on their assignments", k.overrides>0?"#a06000":"#0a7a43");
+      if(k.staffing_wait_h!=null) h+=pkTile("Staffing speed", fmt(k.staffing_wait_h,1)+"h", "avg plan approval → assignment created");
+      h+=pkTile("Rejected", fmt(k.rejected_pct,0)+"%", "assignments bounced", pkPctColor(k.rejected_pct,false));
+    } else {
+      h+=pkTile("Documents", fmt(k.docs), fmt(k.rejected)+" rejected ("+fmt(k.rejected_pct,0)+"%)");
+      h+=pkTile("Qty entered", fmt(k.qty), "units recorded");
+      h+=pkTile("Value entered", "KES "+fmt(k.value,0), "confirmed pay on their documents");
+      h+=pkTile("Entry lag", k.lag_days!=null?fmt(k.lag_days,1)+"d":"—", "avg days from work date to entry — late entry breeds errors", k.lag_days>3?"#b91c1c":(k.lag_days>1.5?"#a06000":"#0a7a43"));
+      h+=pkTile("Absent-day rows", fmt(k.flagged_absent), "their rows on validated marked-Absent days", k.flagged_absent>0?"#a06000":"#0a7a43");
+      h+=pkTile("Zero-pay rows", fmt(k.flagged_zero), "quantities they entered that valued at 0", k.flagged_zero>0?"#b91c1c":"#0a7a43");
+    }
+    h+='</div>';
+    if(rows.length){
+      var isEnt=role==="enterer";
+      h+='<div class="sech" style="margin-top:14px;font-size:10px">'+(role==="creator"?"Their plans":(role==="assigner"?"Their assignments":"Their documents"))+' &middot; window '+esc(win.from||"")+' → '+esc(win.to||"")+'</div>';
+      h+='<div style="max-height:320px;overflow-y:auto"><table><thead><tr>'+
+        '<th>Doc</th><th>Task</th><th>Farm</th><th>'+(isEnt?"Entered":"Period")+'</th>'+
+        (role==="assigner"?'<th class="n">Crew</th>':'')+
+        (isEnt?'':'<th class="n">Target</th>')+'<th class="n">Actual</th>'+
+        (isEnt?'':'<th class="n">Achieved</th>')+'<th class="n">'+(role==="creator"?"Spent":"Spent KES")+'</th><th>Status</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        h+='<tr><td class="m" style="font-size:10px">'+esc(r.doc)+'</td><td>'+esc(r.task||"")+'</td><td>'+esc(r.farm||"")+'</td>'+
+          '<td class="m" style="font-size:10px">'+esc(r.period||"")+'</td>'+
+          (role==="assigner"?'<td class="n m">'+esc(r.crew||"")+'</td>':'')+
+          (isEnt?'':'<td class="n m">'+fmt(r.target)+'</td>')+'<td class="n m">'+fmt(r.actual)+'</td>'+
+          (isEnt?'':'<td class="n">'+ppPct(r.achieved)+'</td>')+'<td class="n m">'+fmt(r.spent,0)+'</td>'+
+          '<td style="font-size:10px">'+esc(r.state||"")+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }
+    el("wm-pk-body").innerHTML=h;
+  }
+
 
   function load(){
     el("wm-body").innerHTML=skeleton();
