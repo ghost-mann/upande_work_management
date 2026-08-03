@@ -3,7 +3,7 @@
   var ST = { farm:null, picked:{}, task:null, taskInfo:null, tasks:[], blocks:[], roles:null };
 
   function call(args){
-    var writes = {submit:1, approve:1, reject:1};
+    var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
@@ -133,6 +133,7 @@
   function buildTabs(){
     var tabs=[["new","New Request"],["mine","My Requests"],["rej","Rejected"]];
     if(ST.roles && ST.roles.is_approver) tabs.push(["appr","Approvals"]);
+    tabs.push(["week","Weekly review"]);
     var nav=el("wp-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button");
@@ -143,11 +144,12 @@
     showTab("new");
   }
   function showTab(name){
-    ["new","mine","rej","appr"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
+    ["new","mine","rej","appr","week"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
     document.querySelectorAll("#wp-tabs button").forEach(function(b){ b.setAttribute("aria-selected", b.getAttribute("data-tab")===name); });
     if(name==="mine") loadMine();
     if(name==="rej") loadRejected();
     if(name==="appr") loadAppr();
+    if(name==="week") initWeekBoard();
   }
 
   function initNew(meta){
@@ -510,6 +512,127 @@
       toast(name+" → "+d.workflow_state);
       loadAppr();
     }).catch(function(e){ toast("Action failed"); });
+  }
+
+
+  // ── consultant weekly review board ──
+  var WK={inited:false,data:null};
+  function wkMonday(offsetWeeks){
+    var d=new Date(); var wd=(d.getDay()+6)%7;   // Mon=0
+    d.setDate(d.getDate()-wd+7*(offsetWeeks||1)); // default: NEXT Monday
+    function p(n){ return (n<10?"0":"")+n; }
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+  }
+  function initWeekBoard(){
+    if(!WK.inited){
+      WK.inited=true;
+      el("wk-start").value=wkMonday(1);
+      el("wk-load").onclick=loadWeekBoard;
+      el("wk-farm").onchange=loadWeekBoard;
+      el("wk-prev").onclick=function(){ wkShift(-7); };
+      el("wk-next").onclick=function(){ wkShift(7); };
+    }
+    loadWeekBoard();
+  }
+  function wkShift(days){
+    var v=el("wk-start").value; if(!v) return;
+    var d=new Date(v+"T00:00:00"); d.setDate(d.getDate()+days);
+    function p(n){ return (n<10?"0":"")+n; }
+    el("wk-start").value=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+    loadWeekBoard();
+  }
+  function loadWeekBoard(){
+    var b=el("wk-body"); b.className="loading"; b.innerHTML="Loading week…";
+    call({action:"week_board", farm:el("wk-farm").value, week_start:el("wk-start").value||""}).then(function(d){
+      if(d.error){ b.className=""; b.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      WK.data=d; renderWeekBoard();
+    }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+  function renderWeekBoard(){
+    var b=el("wk-body"); var d=WK.data; if(!b||!d) return;
+    b.className="";
+    var t=d.totals||{}, plans=d.plans||[], load=d.load||[];
+    var h='';
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">';
+    function chip(k,v,u,c){ return '<div style="border:1px solid var(--line);border-radius:12px;padding:8px 14px;background:#fff"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:600">'+k+'</div><div style="font-size:17px;font-weight:700;color:'+(c||"var(--ink)")+'">'+v+'</div>'+(u?'<div style="font-size:9.5px;color:var(--mute)">'+u+'</div>':'')+'</div>'; }
+    h+=chip("Plans", fmt(t.plans), esc(d.farm)+" · week "+esc((d.week||{}).start||""));
+    h+=chip("Budgeted value", "KES "+fmt(t.budget,2), "rate × target across the week");
+    h+=chip("Peak crew / day", fmt(t.peak_crew), "of "+fmt(d.workforce)+" active workers", t.peak_crew>d.workforce?"#b91c1c":"var(--ink)");
+    var st = t.plans && t.approved===t.plans ? "Approved" : (t.returned===t.plans && t.plans ? "Returned" : (t.approved||t.returned ? "Partly decided" : "Awaiting review"));
+    h+=chip("Consultant state", st, fmt(t.approved)+" approved · "+fmt(t.returned)+" returned", st==="Approved"?"#0a7a43":(st==="Returned"?"#b91c1c":"#a06000"));
+    h+='</div>';
+    if(t.peak_crew>d.workforce){
+      h+='<div class="note" style="border-color:#fca5a5;background:#fef2f2;color:#b91c1c;margin-bottom:10px"><b>Over-planned:</b> the peak day asks for '+fmt(t.peak_crew)+' workers but the farm has '+fmt(d.workforce)+' active people.</div>';
+    }
+    if(load.length){
+      var mx=Math.max(d.workforce||0, 1);
+      load.forEach(function(l){ if(l.crew>mx) mx=l.crew; });
+      h+='<div class="sech" style="font-size:10px">Crew needed per day <span style="color:var(--mute);font-weight:500">vs '+fmt(d.workforce)+' active workers (dashed line)</span></div>';
+      h+='<div style="display:flex;gap:8px;align-items:flex-end;height:120px;padding:6px 4px 0;position:relative;margin-bottom:14px">';
+      var wfPct=(d.workforce/mx*100);
+      h+='<div style="position:absolute;left:0;right:0;bottom:'+wfPct.toFixed(1)+'%;border-top:2px dashed #a06000;opacity:.55"></div>';
+      load.forEach(function(l){
+        var pct=Math.max(2,(l.crew/mx*100));
+        var over=l.crew>d.workforce;
+        h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;z-index:1;justify-content:flex-end;height:100%">'+
+           '<div style="font-size:10px;font-weight:700">'+fmt(l.crew)+'</div>'+
+           '<div style="width:70%;max-width:52px;height:'+pct.toFixed(1)+'%;background:'+(over?"#b91c1c":"#2563eb")+';border-radius:6px 6px 0 0;opacity:.8"></div>'+
+           '<div style="font-size:9px;color:var(--mute)">'+esc(l.d.slice(5))+'</div></div>';
+      });
+      h+='</div>';
+    }
+    if(!plans.length){
+      h+='<div class="empty">No plans proposed for this farm-week yet.</div>';
+    } else {
+      h+='<table><thead><tr><th>Plan</th><th>Task</th><th>Blocks</th><th>Period</th><th class="n">Crew/day</th><th class="n">Target</th><th class="n">Rate</th><th class="n">Budget KES</th><th>Requested by</th><th>State</th><th>Consultant</th></tr></thead><tbody>';
+      plans.forEach(function(r){
+        var cs=r.consultant_state==="Approved"?'<span style="color:#0a7a43;font-weight:700">Approved</span>'
+             :(r.consultant_state==="Returned"?'<span style="color:#b91c1c;font-weight:700" title="'+esc(r.consultant_note||"")+'">Returned</span>'
+             :'<span style="color:#a06000">awaiting</span>');
+        h+='<tr><td class="m" style="font-size:10px">'+esc(r.name)+'</td><td><b>'+esc(r.task||"")+'</b></td>'+
+           '<td style="font-size:10px">'+esc((r.blocks||[]).map(lbl).join(", "))+'</td>'+
+           '<td class="m" style="font-size:10px">'+esc(r.period)+'</td>'+
+           '<td class="n m">'+fmt(r.crew)+'</td><td class="n m">'+fmt(r.target)+' '+esc(r.uom||"")+'</td>'+
+           '<td class="n m">'+fmt(r.rate,4)+'</td><td class="n m">'+fmt(r.budget,2)+'</td>'+
+           '<td style="font-size:10px">'+esc((r.requested_by||"").split("@")[0])+'</td>'+
+           '<td style="font-size:10px">'+esc(r.state||"")+'</td><td>'+cs+'</td></tr>';
+      });
+      h+='</tbody></table>';
+      if(d.is_consultant && d.gate_on){
+        h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px">'+
+           '<button type="button" class="btn solid" id="wk-approve">Approve week · '+fmt(t.plans)+' plans · KES '+fmt(t.budget,0)+'</button>'+
+           '<button type="button" class="btn" id="wk-return" style="color:#b91c1c;border-color:#fca5a5">Return with note</button>'+
+           '<span class="hint" style="font-size:10px">Approving stamps every plan; Farm Managers can then approve them individually. Returning sends the week back with your note on every plan.</span></div>';
+      } else if(d.gate_on){
+        h+='<div class="note" style="margin-top:12px">Only the consultants named in Work Management Settings can decide this week. Farm Managers cannot approve future-week plans until the week is consultant-approved.</div>';
+      }
+    }
+    b.innerHTML=h;
+    var ap=el("wk-approve");
+    if(ap){
+      ap.onclick=function(){
+        if(!window.confirm("Approve "+fmt(t.plans)+" plans for "+d.farm+", week of "+(d.week||{}).start+" — KES "+fmt(t.budget,0)+" budgeted?\n\nFarm Managers can then approve them individually.")) return;
+        ap.disabled=true;
+        call({action:"week_approve", farm:d.farm, week_start:(d.week||{}).start}).then(function(r){
+          if(r.error){ toast("Error: "+r.error); ap.disabled=false; return; }
+          toast(fmt(r.decided)+" plans consultant-approved");
+          loadWeekBoard();
+        }).catch(function(){ toast("Failed"); ap.disabled=false; });
+      };
+    }
+    var rt=el("wk-return");
+    if(rt){
+      rt.onclick=function(){
+        var note=window.prompt("Why is this week being returned? (required — goes on every plan)");
+        if(!note || !note.trim()) return;
+        rt.disabled=true;
+        call({action:"week_return", farm:d.farm, week_start:(d.week||{}).start, note:note.trim()}).then(function(r){
+          if(r.error){ toast("Error: "+r.error); rt.disabled=false; return; }
+          toast(fmt(r.decided)+" plans returned with your note");
+          loadWeekBoard();
+        }).catch(function(){ toast("Failed"); rt.disabled=false; });
+      };
+    }
   }
 
   function boot(){
