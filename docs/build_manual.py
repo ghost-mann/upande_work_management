@@ -157,11 +157,18 @@ SECTIONS = [
     ("b", "Approver KPIs — per approval stage: each approver's sign-offs, value and time taken."),
     ("b", "Value flow — weekly planned/assigned/confirmed value and a per-plan table with each "
           "plan's accountability chain."),
-    ("b", "Pipeline performers — planner and assigner economics, per person: plans created, "
-          "target vs actual quantity (achievement %), planned budget vs money spent, and cost "
-          "per unit, with most/least-expensive callouts (judged only on people with real "
-          "volume). The Assigners tab shows assignments made, workers put on jobs, output and "
-          "spend on their assignments."),
+    ("b", "Pipeline performers — planner and assigner economics, per person, with "
+          "most/least-expensive callouts (judged only on people with real volume, more than "
+          "500 units). Column key: Plans = approved plans created in the window; Target qty = "
+          "the output those plans promised; Actual qty = confirmed output delivered; "
+          "Achieved = Actual ÷ Target (green 90%+, amber 60%+, red below); Budget KES = what "
+          "the plans are worth if fully delivered (rate × target); Spent KES = confirmed pay "
+          "earned on them; Of budget = Spent ÷ Budget — low is NOT automatically savings, "
+          "read it with Achieved (50% spent at 50% achieved just means half the work "
+          "happened); KES/unit = Spent ÷ Actual, what one unit of output cost under this "
+          "person. The Assigners tab uses the same definitions over their assignments, plus "
+          "Workers put on jobs (assignment rows they created — a worker on two assignments "
+          "counts twice)."),
     ("b", "Crew movements — substitution history: who left, who joined, swaps."),
 
     ("h2", "9. Field intelligence, explained"),
