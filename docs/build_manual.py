@@ -77,6 +77,29 @@ SECTIONS = [
     ("n", "The General Manager signs off assignments. Mid-job changes use the swap button — "
           "substitutions record who left, who joined and when."),
 
+    ("h3", "How attendance is checked at assignment"),
+    ("p", "Every worker is screened against attendance before they can be given work. Each "
+          "check is a switch in Work Management Settings (section 10)."),
+    ("b", "Marked Absent — a submitted Absent attendance record blocks the worker for that day. "
+          "A Present, Half Day or WFH record on the same day always wins over a stale Absent "
+          "one, so corrected attendance clears the flag immediately."),
+    ("b", "Approved leave — leave overlapping the work window flags the worker."),
+    ("b", "Weekly offs and holidays — the off-day rule is configurable: flag only when offs "
+          "cover the whole window (default), flag any off day in the window, or ignore offs at "
+          "assignment. Night-shift guards whose off starts the morning after their shift are "
+          "handled by the same rule."),
+    ("b", "Morning presence — when the window includes today, the worker must have scanned in "
+          "(or have a Present record) by the cutoff time (default 09:00). Before the cutoff "
+          "nobody is blocked, so early assigning always works; night shifts are exempt."),
+    ("b", "Assigned elsewhere — a worker already on a live assignment for an overlapping period "
+          "cannot be picked at all; this one has no override because it creates double pay."),
+    ("b", "Overrides — leave, off-day and no-scan conflicts can be pushed through with an "
+          "explicit confirmation; the server re-checks on submit and writes every override on "
+          "the assignment, so the trail is permanent. Recording actuals on a marked-Absent day "
+          "is stricter: only the Farm Manager or GM can confirm it."),
+    ("b", "Missing attendance never blocks anyone — only an explicit record does, so a device "
+          "sync gap cannot stop work from being assigned."),
+
     ("h2", "4. Actuals (/work-actuals)"),
     ("n", "Open the assignment; the grid shows one row per worker and one column per day."),
     ("n", "Every past/today cell carries presence evidence: the check-in time (in 06:52), "
