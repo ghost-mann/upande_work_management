@@ -2261,6 +2261,7 @@
       PP.data=d; renderPerformers();
     }).catch(function(e){ box.innerHTML='<div class="empty">Could not measure planners: '+esc(e.message)+'</div>'; });
   }
+  function shortUser(u){ return (u||"").split("@")[0]; }
   function ppPct(v){
     var c=v>=90?"#0a7a43":(v>=60?"#a06000":"#b91c1c");
     return '<b style="color:'+c+'">'+fmt(v,0)+'%</b>';
