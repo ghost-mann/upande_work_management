@@ -580,6 +580,112 @@ def wm_rates(**kwargs):
                 out["remaining"] = len(rc_todo) - len(batch)
 
     # ==================================================================
+    # SYNC TASK RATES — re-mirror Task.custom_* from the active period
+    #
+    # Task.custom_rate was Float(2) until 2026-08-04, so the mirror stored 0.97
+    # where the period holds 0.9675 — a full day paying 388 instead of 387, and
+    # every NEW plan would have inherited it. Once the field precision is raised
+    # the stored values still hold the rounded numbers, so they have to be
+    # rewritten from the periods.
+    # ==================================================================
+    elif action == "sync_task_rates":
+        st_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 1)
+        st_today = frappe.utils.today()
+        st_rows = frappe.db.sql("""
+            SELECT wtr.task task, wtr.rate rate, wtr.uom uom, wtr.daily_target tgt,
+                   t.custom_rate cur_rate, t.custom_uom cur_uom,
+                   t.custom_daily_target cur_tgt
+            FROM `tabWork Task Rate` wtr
+            INNER JOIN `tabTask` t ON t.name = wtr.task
+            WHERE wtr.valid_from <= %(d)s
+              AND (wtr.valid_to IS NULL OR wtr.valid_to >= %(d)s)
+        """, {"d": st_today}, as_dict=True)
+        st_changed = []
+        for r in st_rows:
+            want_rate = frappe.utils.flt(r.rate, 6)
+            same_rate = abs(want_rate - frappe.utils.flt(r.cur_rate, 6)) <= 0.0000005
+            same_tgt = abs(frappe.utils.flt(r.tgt, 6) - frappe.utils.flt(r.cur_tgt, 6)) <= 0.0000005
+            same_uom = (r.uom or "") == (r.cur_uom or "")
+            if same_rate and same_tgt and same_uom:
+                continue
+            st_changed.append({"task": r.task,
+                               "old_rate": frappe.utils.flt(r.cur_rate, 6),
+                               "new_rate": want_rate,
+                               "daily_target": frappe.utils.flt(r.tgt),
+                               "day_before": frappe.utils.flt(frappe.utils.flt(r.cur_rate) * frappe.utils.flt(r.cur_tgt), 4),
+                               "day_after": frappe.utils.flt(want_rate * frappe.utils.flt(r.tgt), 4)})
+            if not st_dry:
+                frappe.db.set_value("Task", r.task, {
+                    "custom_rate": want_rate,
+                    "custom_uom": r.uom,
+                    "custom_daily_target": frappe.utils.flt(r.tgt),
+                }, update_modified=False)
+        if not st_dry:
+            frappe.db.commit()
+        out["dry_run"] = st_dry
+        out["tasks_examined"] = len(st_rows)
+        out["tasks_corrected"] = len(st_changed)
+        out["sample"] = st_changed[:25]
+
+    # ==================================================================
+    # SYNC PLANNER RATES — realign plan rate + total_cost with the period
+    #
+    # A plan snapshots the rate at creation, so plans built while Task.custom_rate
+    # was rounded carry the rounded value and would price their actuals wrong at
+    # confirm time. Plans that STRADDLE the rate change are reported, never
+    # forced onto one side: one plan document cannot hold two rates.
+    # ==================================================================
+    elif action == "sync_planner_rates":
+        sp_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 1)
+        sp_from = frappe.form_dict.get("from_date")
+        if not sp_from:
+            out["error"] = "from_date is required"
+        else:
+            sp_rows = frappe.db.sql("""
+                SELECT p.name, p.task, p.rate, p.quantity, p.total_cost,
+                       p.from_date, p.to_date, p.workflow_state
+                FROM `tabWork Management Planner` p
+                WHERE p.to_date >= %(d)s
+                  AND IFNULL(p.workflow_state,'') != 'Rejected'
+            """, {"d": sp_from}, as_dict=True)
+            sp_changed = []
+            sp_straddle = []
+            for r in sp_rows:
+                if r.from_date and str(r.from_date) < str(sp_from):
+                    sp_straddle.append({"planner": r.name, "task": r.task,
+                                        "from_date": str(r.from_date), "to_date": str(r.to_date)})
+                    continue
+                per = frappe.db.sql("""
+                    SELECT rate, derived FROM `tabWork Task Rate`
+                    WHERE task = %(t)s AND valid_from <= %(d)s
+                      AND (valid_to IS NULL OR valid_to >= %(d)s)
+                    ORDER BY valid_from DESC LIMIT 1
+                """, {"t": r.task, "d": r.from_date}, as_dict=True)
+                if not per or not frappe.utils.cint(per[0].derived):
+                    continue
+                want = frappe.utils.flt(per[0].rate, 6)
+                if abs(want - frappe.utils.flt(r.rate, 6)) <= 0.0000005:
+                    continue
+                new_cost = frappe.utils.flt(frappe.utils.flt(r.quantity) * want, 2)
+                sp_changed.append({"planner": r.name, "task": r.task,
+                                   "old_rate": frappe.utils.flt(r.rate, 6), "new_rate": want,
+                                   "old_cost": frappe.utils.flt(r.total_cost, 2), "new_cost": new_cost})
+                if not sp_dry:
+                    frappe.db.set_value("Work Management Planner", r.name, {
+                        "rate": want, "total_cost": new_cost,
+                    }, update_modified=False)
+            if not sp_dry:
+                frappe.db.commit()
+            out["dry_run"] = sp_dry
+            out["plans_examined"] = len(sp_rows)
+            out["plans_corrected"] = len(sp_changed)
+            out["straddling_the_change"] = len(sp_straddle)
+            out["straddling_sample"] = sp_straddle[:10]
+            out["cost_delta"] = frappe.utils.flt(
+                sum([c["new_cost"] - c["old_cost"] for c in sp_changed]), 2)
+            out["sample"] = sp_changed[:20]
+
+    # ==================================================================
     # REVERT PERIODS — undo rate periods written out of scope
     #
     # Deletes the named periods, re-opens whichever period they superseded, and
@@ -682,11 +788,10 @@ def wm_rates(**kwargs):
                 """, {"t": sr.task, "d": sr.wto}, as_dict=True)
                 if not per or not frappe.utils.cint(per[0].derived):
                     continue
-                # Work Management Actuals.rate is Float(4), so compare at the
-                # precision the field can actually hold -- otherwise a rate like
-                # 55.285714 stores as 55.2857 and this never converges.
-                new_rate = frappe.utils.flt(per[0].rate, 4)
-                if abs(new_rate - frappe.utils.flt(sr.cur_rate, 4)) <= 0.00005:
+                # Work Management Actuals.rate now holds 6dp, matching the period,
+                # so compare at that precision.
+                new_rate = frappe.utils.flt(per[0].rate, 6)
+                if abs(new_rate - frappe.utils.flt(sr.cur_rate, 6)) <= 0.0000005:
                     continue
                 entry = {"actuals": sr.actuals, "task": sr.task,
                          "old_rate": frappe.utils.flt(sr.cur_rate, 6), "new_rate": new_rate}

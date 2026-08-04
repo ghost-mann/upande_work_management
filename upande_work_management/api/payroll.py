@@ -60,11 +60,17 @@ def wm_payroll(**kwargs):
         # Kept for re-running after a bulk import; amount is set at creation time.
         bf_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 1)
         bf_limit = frappe.utils.cint(frappe.form_dict.get("limit") or 1000)
+        bf_force = frappe.utils.cint(frappe.form_dict.get("force"))
+        bf_cond = "" if bf_force else " WHERE IFNULL(p.payroll_date,'') = ''"
+        # anchor on the LAST DAY ACTUALLY WORKED in this payment, not period_to --
+        # period_to is the filter window that happened to be on screen when the
+        # worker was sent, so it can sit days after the work itself.
         rows = frappe.db.sql("""
-            SELECT name, employee, period_from, period_to, payroll_date, amount
-            FROM `tabWork Management Payment`
-            WHERE IFNULL(payroll_date,'') = ''
-            ORDER BY creation
+            SELECT p.name, p.employee, p.period_from, p.period_to, p.payroll_date, p.amount,
+                   (SELECT MAX(l.work_to) FROM `tabWork Payment Line` l WHERE l.parent = p.name) worked_to
+            FROM `tabWork Management Payment` p
+            """ + bf_cond + """
+            ORDER BY p.creation
             LIMIT %(lim)s
         """, {"lim": bf_limit}, as_dict=True)
 
@@ -84,7 +90,7 @@ def wm_payroll(**kwargs):
         done = []
         no_period = 0
         for r in rows:
-            anchor = r.period_to
+            anchor = r.worked_to or r.period_to
             if not anchor:
                 no_period = no_period + 1
                 continue
@@ -108,7 +114,8 @@ def wm_payroll(**kwargs):
                         break
                     step = step + 1
             entry = {"name": r.name, "employee": r.employee,
-                     "period_to": str(anchor), "payroll_date": str(payroll),
+                     "worked_to": str(anchor), "period_to": str(r.period_to),
+                     "was": str(r.payroll_date or ""), "payroll_date": str(payroll),
                      "amount": frappe.utils.flt(r.amount)}
             done.append(entry)
             if not bf_dry:
@@ -119,8 +126,9 @@ def wm_payroll(**kwargs):
         out["dry_run"] = bf_dry
         out["considered"] = len(rows)
         out["updated"] = len(done)
-        out["no_period_to"] = no_period
-        out["moved_off_period_end"] = len([d for d in done if d["payroll_date"] != d["period_to"]])
+        out["no_anchor_date"] = no_period
+        out["moved_off_last_worked_day"] = len([d for d in done if d["payroll_date"] != d["worked_to"]])
+        out["changed"] = len([d for d in done if d["was"] and d["was"] != d["payroll_date"]])
         out["sample"] = done[:15]
 
     elif action == "migrate_state":
