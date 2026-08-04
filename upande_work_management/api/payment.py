@@ -351,6 +351,10 @@ def wm_payment(**kwargs):
         is_acc = ("Accounts User" in rl) or ("Accounts Manager" in rl) or ("System Manager" in rl)
         out["user"] = frappe.session.user
         out["is_accounts"] = 1 if is_acc else 0
+        # the page picks pay weeks, not free dates, so it needs the configured
+        # week boundary
+        out["week_ends_on"] = frappe.db.get_single_value(
+            "Work Management Settings", "pay_week_ends_on") or "Sunday"
 
     elif action == "pay_audit":
         # Reconcile CONFIRMED actuals against assigner + payment, per task/block, for the range.
@@ -945,7 +949,26 @@ def wm_payment(**kwargs):
             out["error"] = "Payment reference not found"
         elif cur != "Unpaid":
             out["error"] = "Only payments awaiting accounts can be returned (state: " + str(cur) + ")"
+        elif frappe.db.sql("""
+            SELECT sd.parent FROM `tabSalary Detail` sd
+            INNER JOIN `tabAdditional Salary` a ON a.name = sd.additional_salary
+            WHERE a.ref_doctype = 'Work Management Payment' AND a.ref_docname = %(n)s LIMIT 1
+        """, {"n": nm}, as_dict=True):
+            # payroll has already consumed this payment; withdrawing would delete
+            # the document a Salary Slip is pointing at
+            out["error"] = ("Cannot withdraw: a Salary Slip has already paid this through payroll. "
+                            "Reverse it in payroll first.")
         else:
+            # cancel the payment's Additional Salary before the document goes --
+            # nothing has consumed it, so the payroll record must not outlive it
+            for asr in frappe.db.sql("""
+                SELECT name FROM `tabAdditional Salary`
+                WHERE ref_doctype = 'Work Management Payment' AND ref_docname = %(n)s
+                  AND docstatus = 1
+            """, {"n": nm}, as_dict=True):
+                adoc = frappe.get_doc("Additional Salary", asr.name)
+                adoc.flags.ignore_permissions = True
+                adoc.cancel()
             rows = frappe.db.get_all("Work Actuals Employee",
                 filters={"payment_ref": nm, "paid": 0}, pluck="name")
             for rn in rows:
@@ -2232,6 +2255,21 @@ def wm_payment(**kwargs):
                 if cur != "Unpaid":
                     results.append({"name": nm, "error": "state is " + str(cur)})
                     continue
+                if frappe.db.sql("""
+                    SELECT sd.parent FROM `tabSalary Detail` sd
+                    INNER JOIN `tabAdditional Salary` a ON a.name = sd.additional_salary
+                    WHERE a.ref_doctype = 'Work Management Payment' AND a.ref_docname = %(n)s LIMIT 1
+                """, {"n": nm}, as_dict=True):
+                    results.append({"name": nm, "error": "a Salary Slip has already paid this through payroll"})
+                    continue
+                for asr in frappe.db.sql("""
+                    SELECT name FROM `tabAdditional Salary`
+                    WHERE ref_doctype = 'Work Management Payment' AND ref_docname = %(n)s
+                      AND docstatus = 1
+                """, {"n": nm}, as_dict=True):
+                    adoc = frappe.get_doc("Additional Salary", asr.name)
+                    adoc.flags.ignore_permissions = True
+                    adoc.cancel()
                 rws = frappe.db.get_all("Work Actuals Employee",
                     filters={"payment_ref": nm, "paid": 0}, pluck="name")
                 for rn in rws:
