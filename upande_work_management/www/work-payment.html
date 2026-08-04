@@ -235,16 +235,15 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
     <div class="filters">
       <div class="fgrp">
-        <label class="fl" for="pf-from">Work done from</label>
-        <input type="date" id="pf-from">
-      </div>
-      <div class="fgrp">
-        <label class="fl" for="pf-to">to</label>
-        <input type="date" id="pf-to">
-      </div>
-      <div class="fgrp">
-        <label class="fl" for="pf-search">Find worker</label>
-        <input type="text" id="pf-search" placeholder="Name or ID&hellip;">
+        <label class="fl">Pay week</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button type="button" class="btn sm" id="pw-prev" title="Previous week" aria-label="Previous week">&lsaquo;</button>
+          <div id="pw-label" style="min-width:190px;text-align:center;font-weight:600;font-size:12px"></div>
+          <button type="button" class="btn sm" id="pw-next" title="Next week" aria-label="Next week">&rsaquo;</button>
+          <button type="button" class="btn sm" id="pw-latest" style="border-color:var(--line);color:var(--mute)">Latest</button>
+        </div>
+        <div id="pw-note" class="hint" style="margin-top:3px"></div>
+        <input type="hidden" id="pf-from"><input type="hidden" id="pf-to">
       </div>
       <button class="btn" id="pf-apply">Apply</button>
       <button class="btn" id="pf-reset" style="border-color:var(--line);color:var(--mute)">Reset</button>

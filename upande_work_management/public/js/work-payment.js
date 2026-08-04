@@ -516,6 +516,58 @@
     );
   }
 
+  // ── pay weeks ─────────────────────────────────────────────────────────
+  // Workers are paid by the week, so the Pay workers tab picks a WEEK rather
+  // than two loose dates: a window that straddles weeks cannot be sent as one
+  // payment anyway, so offering free dates only invited windows that split.
+  var PW = { start:null, endsOn:"Sunday" };
+  function pwStartWd(){
+    var names=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+    var i=names.indexOf(PW.endsOn); if(i<0) i=6;
+    return (i+1)%7;                       // weekday the pay week begins on
+  }
+  function pwWeekStart(d){
+    var wd=(d.getDay()+6)%7;              // JS Sun=0 → Mon=0 basis
+    var back=((wd - pwStartWd())%7+7)%7;
+    var s=new Date(d.getTime()); s.setDate(s.getDate()-back); s.setHours(0,0,0,0);
+    return s;
+  }
+  function pwISO(d){
+    return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+  }
+  function pwFmt(d){
+    var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return d.getDate()+" "+m[d.getMonth()];
+  }
+  function pwLatestCompleteStart(){
+    // the most recent week that has already closed
+    var t=new Date(); t.setHours(0,0,0,0);
+    var cur=pwWeekStart(t);
+    var prev=new Date(cur.getTime()); prev.setDate(prev.getDate()-7);
+    return prev;
+  }
+  function pwApply(start, reload){
+    PW.start=start;
+    var end=new Date(start.getTime()); end.setDate(end.getDate()+6);
+    el("pf-from").value=pwISO(start);
+    el("pf-to").value=pwISO(end);
+    if(el("pw-label")) el("pw-label").textContent=pwFmt(start)+" → "+pwFmt(end)+" "+end.getFullYear();
+    var t=new Date(); t.setHours(0,0,0,0);
+    var open=end.getTime()>=t.getTime();
+    if(el("pw-note")){
+      el("pw-note").innerHTML = open
+        ? '<span style="color:var(--warn)">This week is still in progress — it can be sent once it closes.</span>'
+        : 'Completed week. Sending creates one payment per worker for this week.';
+    }
+    if(el("pw-next")) el("pw-next").disabled = false;
+    if(reload!==false) loadPayable();
+  }
+  function pwStep(n){
+    var s=new Date((PW.start||pwLatestCompleteStart()).getTime());
+    s.setDate(s.getDate()+7*n);
+    pwApply(s);
+  }
+
   function payWindow(){
     var r=range();
     return { from:r.from, to:r.to, refresh:function(){ loadPayable(); refreshAccountsCount(); } };
@@ -1661,24 +1713,51 @@
 
   function approveWorker(emp, nm, amount, win){
     win=win||auditWindow();
-    confirmModal(
-      "Approve & send to accounts",
-      '<p style="margin:0 0 10px">Send <b>'+esc(nm)+'</b>&rsquo;s unpaid confirmed earnings of <b>'+money(amount)+'</b> to accounts?</p>'+
-      '<p class="note" style="margin:0">Work window '+esc(win.from||"start")+' &rarr; '+esc(win.to||"today")+
-      '. A payment reference is created for this worker alone and handed to accounts as <b>Unpaid</b>; when accounts releases it the worker&rsquo;s rows are stamped paid.</p>',
-      "Approve & send",
-      function(){
-        call({ action:"pay_worker_submit", employee:emp, from_date:win.from||"", to_date:win.to||"" }, true)
-          .then(function(d){
-            if(d.error){ toast(d.error,"bad"); return; }
-            toast((d.employee_name||emp)+" · "+money(d.amount)+" sent to accounts ("+d.name+")","good");
-            var m=el("pay-detail-modal"); if(m) m.classList.remove("on");
-            if(win.refresh) win.refresh();
-          })
-          .catch(function(e){ toast("Could not submit: "+e.message,"bad"); });
-      },
-      "good"
-    );
+    // Workers are paid weekly, so ask the server which COMPLETED pay weeks the
+    // unpaid work falls in before committing to anything — one payment per week.
+    call({ action:"pay_worker_submit", employee:emp, from_date:win.from||"", to_date:win.to||"", preview:1 }, true)
+      .then(function(p){
+        if(p.error){ toast(p.error,"bad"); return; }
+        var ready=p.weeks_ready||[], held=p.weeks_held||[];
+        if(!ready.length){
+          toast(held.length
+            ? ("Nothing to send yet — "+esc(nm)+"’s only unpaid work is in the week still in progress ("+held[0].week_from+" → "+held[0].week_to+")")
+            : ("No completed pay week to send for "+esc(nm)), "bad");
+          return;
+        }
+        var tot=0; ready.forEach(function(w){ tot+=w.amount||0; });
+        var body='<p style="margin:0 0 10px">Send <b>'+esc(nm)+'</b>&rsquo;s unpaid confirmed earnings to accounts as <b>'+
+          ready.length+' weekly payment'+(ready.length>1?'s':'')+'</b>, totalling <b>'+money(tot)+'</b>?</p>'+
+          '<table style="width:100%;margin:0 0 10px"><thead><tr><th>Pay week</th><th class="n">Days</th><th class="n">Amount</th></tr></thead><tbody>';
+        ready.forEach(function(w){
+          body+='<tr><td class="m" style="font-size:11px">'+esc(w.week_from)+' → '+esc(w.week_to)+'</td>'+
+                '<td class="n m">'+fmt(w.days)+'</td><td class="n m">'+money(w.amount)+'</td></tr>';
+        });
+        body+='</tbody></table>';
+        if(held.length){
+          body+='<p class="note" style="margin:0 0 8px;color:var(--warn)">Held back: '+
+            held.map(function(w){ return esc(w.week_from)+' → '+esc(w.week_to)+' ('+money(w.amount)+')'; }).join(", ")+
+            ' — that week is still in progress and can be sent once it closes.</p>';
+        }
+        body+='<p class="note" style="margin:0">Each week becomes its own payment reference, handed to accounts as <b>Unpaid</b>, '+
+          'so payroll picks up one line per worker per week.</p>';
+        confirmModal("Approve & send to accounts", body,
+          "Send "+ready.length+" week"+(ready.length>1?"s":""),
+          function(){
+            call({ action:"pay_worker_submit", employee:emp, from_date:win.from||"", to_date:win.to||"" }, true)
+              .then(function(d){
+                if(d.error){ toast(d.error,"bad"); return; }
+                var made=d.created||[];
+                toast((made.length&&made[0].employee_name?made[0].employee_name:emp)+" · "+
+                      made.length+" weekly payment"+(made.length>1?"s":"")+" · "+money(tot)+" sent to accounts","good");
+                var m=el("pay-detail-modal"); if(m) m.classList.remove("on");
+                if(win.refresh) win.refresh();
+              })
+              .catch(function(e){ toast("Could not submit: "+e.message,"bad"); });
+          },
+          "good");
+      })
+      .catch(function(e){ toast("Could not check pay weeks: "+e.message,"bad"); });
   }
 
   // ── print: opens a clean, self-contained window with both sheets ──
@@ -2017,9 +2096,8 @@
   }
 
   function init(){
-    // date defaults: month-to-date
-    el("pf-from").value=monthStartISO();
-    el("pf-to").value=todayISO();
+    // the pay window is a WEEK; default to the most recent completed one
+    pwApply(pwLatestCompleteStart(), false);
 
     // tabs
     document.querySelectorAll("#pay-tabs button").forEach(function(b){
@@ -2028,9 +2106,11 @@
 
     // build filters
     el("pf-apply").onclick=loadPayable;
+    if(el("pw-prev")) el("pw-prev").onclick=function(){ pwStep(-1); };
+    if(el("pw-next")) el("pw-next").onclick=function(){ pwStep(1); };
+    if(el("pw-latest")) el("pw-latest").onclick=function(){ pwApply(pwLatestCompleteStart()); };
     el("pf-reset").onclick=function(){
-      el("pf-from").value=monthStartISO();
-      el("pf-to").value=todayISO();
+      pwApply(pwLatestCompleteStart(), false);
       el("pf-search").value="";
       ST.activeFarms={};
       loadPayable();
@@ -2046,6 +2126,10 @@
     // roles (gate mark-paid) then first load
     call({ action:"pay_roles" }).then(function(d){
       ST.isAccounts=!!d.is_accounts;
+      if(d.week_ends_on && d.week_ends_on!==PW.endsOn){
+        PW.endsOn=d.week_ends_on;
+        pwApply(pwLatestCompleteStart(), false);
+      }
       el("pay-who").textContent=(d.user||"")+(d.is_accounts?" · accounts":"");
     }).catch(function(){}).then(function(){
       refreshAccountsCount();
