@@ -200,24 +200,48 @@ def wm_rates(**kwargs):
         out["borderline"] = bl
 
     elif action == "classify":
-        # record a decision on a borderline period: derived 1/0, once and for all
-        c_name = frappe.form_dict.get("name")
+        # Record a decision on borderline periods: derived 1/0, once and for all.
+        # Accepts one name, or a CSV of names so a whole review round settles in a
+        # single call. wage="implied" records each period's own rate x daily_target
+        # as its basis, which is the honest answer for a task that sat on its own
+        # odd wage (345, 360, 320) rather than a shared tier.
+        c_raw = frappe.form_dict.get("names") or frappe.form_dict.get("name") or ""
         c_derived = frappe.utils.cint(frappe.form_dict.get("derived"))
-        c_wage = frappe.utils.flt(frappe.form_dict.get("wage") or LEGACY_DAILY_WAGE)
-        if not c_name:
-            out["error"] = "name is required"
-        elif not frappe.db.exists("Work Task Rate", c_name):
-            out["error"] = "no such rate period: " + str(c_name)
+        c_wage_in = frappe.form_dict.get("wage")
+        c_names = []
+        for c in str(c_raw).split(","):
+            cv = c.strip()
+            if cv and cv not in c_names:
+                c_names.append(cv)
+        if not c_names:
+            out["error"] = "name or names is required"
         else:
-            frappe.db.set_value("Work Task Rate", c_name, {
-                "derived": 1 if c_derived else 0,
-                "daily_wage_basis": c_wage if c_derived else None,
-                "notes": ("Confirmed wage-derived by " if c_derived else
-                          "Confirmed NOT wage-derived by ") + frappe.session.user +
-                         " on " + frappe.utils.today(),
-            })
+            c_done = []
+            c_missing = []
+            for cn in c_names:
+                row = frappe.db.get_value("Work Task Rate", cn,
+                    ["name", "task", "rate", "daily_target"], as_dict=True)
+                if not row:
+                    c_missing.append(cn)
+                    continue
+                if not c_derived:
+                    c_basis = None
+                elif str(c_wage_in or "").lower() == "implied":
+                    c_basis = frappe.utils.flt(
+                        frappe.utils.flt(row.rate) * frappe.utils.flt(row.daily_target), 6)
+                else:
+                    c_basis = frappe.utils.flt(c_wage_in or LEGACY_DAILY_WAGE)
+                frappe.db.set_value("Work Task Rate", cn, {
+                    "derived": 1 if c_derived else 0,
+                    "daily_wage_basis": c_basis,
+                    "notes": ("Confirmed wage-derived (basis " + str(c_basis) + ") by "
+                              if c_derived else "Confirmed NOT wage-derived by ") +
+                             frappe.session.user + " on " + frappe.utils.today(),
+                })
+                c_done.append({"name": cn, "task": row.task, "basis": c_basis})
             frappe.db.commit()
-            out["name"] = c_name
+            out["classified"] = c_done
+            out["missing"] = c_missing
             out["derived"] = 1 if c_derived else 0
 
     # ==================================================================
