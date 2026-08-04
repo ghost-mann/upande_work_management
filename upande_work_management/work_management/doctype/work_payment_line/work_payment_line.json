@@ -103,7 +103,7 @@
    "fieldtype": "Currency",
    "label": "Rate",
    "read_only": 1,
-   "precision": "4"
+   "precision": "6"
   },
   {
    "fieldname": "assignment",
