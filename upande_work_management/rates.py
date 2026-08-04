@@ -26,6 +26,12 @@ TASK_RATE_FIELDS = ("custom_rate", "custom_uom", "custom_daily_target")
 #: The daily wage in force before the 2026-07-21 rate card.
 LEGACY_DAILY_WAGE = 340.0
 
+#: Daily wage tiers that legitimately existed before the rate card. 340 is the
+#: general wage; 350 is a distinct tier covering packhouse, greenhouse, QC and
+#: reliever work. Both rise to 387, so both classify as wage-derived — a task
+#: is measured against whichever tier it sits closest to.
+KNOWN_DAILY_WAGES = (340.0, 350.0)
+
 #: Within this fraction of the wage, a rate is treated as wage-derived outright.
 EXACT_BAND = 0.01
 
@@ -178,7 +184,7 @@ def task_on_update(doc, method=None):
 	today = getdate(nowdate())
 	target = flt(doc.get("custom_daily_target"))
 	rate = flt(doc.get("custom_rate"))
-	verdict, _implied = classify(rate, target)
+	verdict, _implied, matched_wage = classify(rate, target)
 
 	existing = frappe.db.sql_list(
 		"""
@@ -198,6 +204,7 @@ def task_on_update(doc, method=None):
 				"uom": doc.get("custom_uom"),
 				"daily_target": target,
 				"derived": 1 if verdict == "derived" else 0,
+				"daily_wage_basis": matched_wage if verdict == "derived" else None,
 				"source": "Task list edit",
 			},
 		)
@@ -225,7 +232,7 @@ def task_on_update(doc, method=None):
 			"rate": rate,
 			"uom": doc.get("custom_uom"),
 			"daily_target": target,
-			"daily_wage_basis": LEGACY_DAILY_WAGE if verdict == "derived" else None,
+			"daily_wage_basis": matched_wage if verdict == "derived" else None,
 			"derived": 1 if verdict == "derived" else 0,
 			"source": "Task list edit",
 		}
@@ -237,11 +244,13 @@ def task_on_update(doc, method=None):
 # -------------------------------------------------------------- classification
 
 
-def classify(rate, daily_target, wage=LEGACY_DAILY_WAGE):
-	"""Is this rate governed by the daily wage?
+def classify(rate, daily_target, wages=None):
+	"""Is this rate governed by a daily wage tier?
 
-	Returns ``(verdict, implied_daily_wage)`` where verdict is one of
-	``derived`` / ``borderline`` / ``not_derived`` / ``unknown``.
+	Returns ``(verdict, implied_daily_wage, matched_wage)`` where verdict is one
+	of ``derived`` / ``borderline`` / ``not_derived`` / ``unknown``. The rate is
+	measured against whichever known tier it sits closest to, so both the 340
+	and 350 populations are recognised.
 
 	``borderline`` is never decided automatically. The stored data is noisy —
 	337.50, 339.99, 340.05, 340.50, 345.00 all appear — and no numeric rule
@@ -251,18 +260,19 @@ def classify(rate, daily_target, wage=LEGACY_DAILY_WAGE):
 	rate = flt(rate)
 	daily_target = flt(daily_target)
 	if not rate or not daily_target:
-		return "unknown", None
+		return "unknown", None, None
 
 	implied = rate * daily_target
+	wage = min(wages or KNOWN_DAILY_WAGES, key=lambda w: abs(implied - w))
 	drift = abs(implied - wage)
 	# Bands are inclusive. The epsilon matters: 340 * 1.10 evaluates to
 	# 374.00000000000006, so an exact-boundary task would otherwise fall out of
 	# the band on float error alone.
 	if drift <= wage * EXACT_BAND + BAND_EPSILON:
-		return "derived", implied
+		return "derived", implied, wage
 	if drift <= wage * REVIEW_BAND + BAND_EPSILON:
-		return "borderline", implied
-	return "not_derived", implied
+		return "borderline", implied, wage
+	return "not_derived", implied, wage
 
 
 # -------------------------------------------------------------------- backfill
@@ -280,7 +290,7 @@ def default_epoch():
 	return getdate(earliest[0]) if earliest and earliest[0] else getdate(nowdate())
 
 
-def backfill_from_task_master(epoch=None, wage=LEGACY_DAILY_WAGE, dry_run=True):
+def backfill_from_task_master(epoch=None, wages=None, dry_run=True):
 	"""Give every rated Task one open period holding its current values.
 
 	The legacy rate is preserved exactly as stored, including its rounding —
@@ -305,7 +315,7 @@ def backfill_from_task_master(epoch=None, wage=LEGACY_DAILY_WAGE, dry_run=True):
 		if task.name in already:
 			skipped += 1
 			continue
-		verdict, implied = classify(task.custom_rate, task.custom_daily_target, wage)
+		verdict, implied, wage = classify(task.custom_rate, task.custom_daily_target, wages)
 		counts[verdict] += 1
 		if dry_run:
 			created += 1

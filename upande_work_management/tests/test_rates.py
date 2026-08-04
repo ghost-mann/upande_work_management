@@ -14,12 +14,12 @@ Every case below is a real row from the Kaitet live Task master as at
 
 import unittest
 
-from upande_work_management.rates import LEGACY_DAILY_WAGE, classify
+from upande_work_management.rates import KNOWN_DAILY_WAGES, LEGACY_DAILY_WAGE, classify
 
 
 class TestClassify(unittest.TestCase):
-	def assert_verdict(self, rate, target, expected, msg=None):
-		verdict, implied = classify(rate, target)
+	def assert_verdict(self, rate, target, expected, expected_wage=None, msg=None):
+		verdict, implied, wage = classify(rate, target)
 		self.assertEqual(
 			verdict,
 			expected,
@@ -27,6 +27,8 @@ class TestClassify(unittest.TestCase):
 				rate, target, implied, verdict, expected
 			),
 		)
+		if expected_wage is not None:
+			self.assertEqual(wage, expected_wage, "matched the wrong wage tier")
 
 	# ---------------------------------------------------------- clean matches
 
@@ -61,7 +63,7 @@ class TestClassify(unittest.TestCase):
 		and KES 19,665 of work that really is wage-derived. It must reach a
 		human instead of being dropped.
 		"""
-		verdict, implied = classify(4.6, 75)
+		verdict, implied, _wage = classify(4.6, 75)
 		self.assertEqual(verdict, "borderline")
 		self.assertAlmostEqual(implied, 345.0, places=6)
 		self.assertNotEqual(verdict, "not_derived", "Planting grass must not be silently excluded")
@@ -89,19 +91,56 @@ class TestClassify(unittest.TestCase):
 		self.assert_verdict(13.6, 0, "unknown")
 		self.assert_verdict(None, None, "unknown")
 
+	# ------------------------------------------------------------ 350 tier
+
+	def test_350_is_a_wage_tier_not_drift(self):
+		"""14 live tasks imply exactly 350.00/day.
+
+		Packhouse, greenhouse, QC and reliever work sit on a 350 tier rather
+		than 340. Confirmed as a real tier, so they are wage-derived and rise to
+		387 with everyone else — not held back as unclassifiable.
+		"""
+		# GREEN HOUSE OPERATIONS, QC SUPPORT, Trailer Offloading (350 x 1 Day)
+		self.assert_verdict(350.0, 1, "derived", expected_wage=350.0)
+		self.assert_verdict(3.5, 100, "derived", expected_wage=350.0)  # piece-rate equivalent
+		self.assert_verdict(43.75, 8, "derived", expected_wage=350.0)  # 8-hour equivalent
+
+	def test_tiers_do_not_poach_each_others_tasks(self):
+		"""A 340-derived rate must not be matched to the 350 tier."""
+		self.assert_verdict(340.0, 1, "derived", expected_wage=340.0)
+		self.assert_verdict(1.7, 200, "derived", expected_wage=340.0)
+		self.assert_verdict(2.27, 150, "derived", expected_wage=340.0)
+
+	def test_still_borderline_after_adding_the_350_tier(self):
+		"""These four live values sit between tiers and still need a decision."""
+		self.assert_verdict(4.6, 75, "borderline")  # Planting grass -> 345.00
+		self.assert_verdict(3.5, 103, "borderline")  # Loading crates to a container -> 360.50
+		self.assert_verdict(0.09, 4000, "borderline")  # White paints application-Nusery -> 360.00
+		self.assert_verdict(0.08, 4000, "borderline")  # White Paints ...(Lokitela) -> 320.00
+
 	# ------------------------------------------------------------- boundaries
 
 	def test_band_edges(self):
-		wage = LEGACY_DAILY_WAGE
-		# 1% -> derived, just outside -> borderline
-		self.assert_verdict(wage * 1.01, 1, "derived")
-		self.assert_verdict(wage * 0.99, 1, "derived")
-		self.assert_verdict(wage * 1.02, 1, "borderline")
-		# 10% -> borderline, just outside -> not derived
-		self.assert_verdict(wage * 1.10, 1, "borderline")
-		self.assert_verdict(wage * 0.90, 1, "borderline")
-		self.assert_verdict(wage * 1.11, 1, "not_derived")
-		self.assert_verdict(wage * 0.89, 1, "not_derived")
+		"""Bands are inclusive, and two tiers mean two overlapping windows.
+
+		Derived: 340 +/-1% = [336.6, 343.4] and 350 +/-1% = [346.5, 353.5].
+		Borderline reaches 340 -10% = 306 at the bottom and 350 +10% = 385 at
+		the top; outside that union nothing is wage-derived.
+		"""
+		self.assertEqual(KNOWN_DAILY_WAGES, (340.0, 350.0))
+		# inside each tier's exact band
+		self.assert_verdict(343.4, 1, "derived", expected_wage=340.0)
+		self.assert_verdict(336.6, 1, "derived", expected_wage=340.0)
+		self.assert_verdict(346.5, 1, "derived", expected_wage=350.0)
+		self.assert_verdict(353.5, 1, "derived", expected_wage=350.0)
+		# between the two tiers -> nobody claims it outright
+		self.assert_verdict(345.0, 1, "borderline")
+		# outer edges of the review window, inclusive
+		self.assert_verdict(306.0, 1, "borderline", expected_wage=340.0)
+		self.assert_verdict(385.0, 1, "borderline", expected_wage=350.0)
+		# just beyond
+		self.assert_verdict(305.0, 1, "not_derived")
+		self.assert_verdict(386.0, 1, "not_derived")
 
 
 class TestWageUplift(unittest.TestCase):

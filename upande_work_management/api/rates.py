@@ -35,8 +35,12 @@ def wm_rates(**kwargs):
     # No def/return allowed in the sandbox, so everything is inline.
     # ==================================================================
 
-    # Daily wage in force before the 2026-07-21 rate card.
+    # Daily wage tiers that legitimately existed before the 2026-07-21 rate card.
+    # 340 is the general wage; 350 is a distinct tier covering packhouse, greenhouse,
+    # QC and reliever work. Both rise to 387, so both count as wage-derived — a task
+    # is measured against whichever tier it sits closest to.
     LEGACY_DAILY_WAGE = 340.0
+    KNOWN_DAILY_WAGES = [340.0, 350.0]
 
     # Within 1% of the wage -> wage-derived outright.
     # Within 10% -> borderline, needs a human decision and is NEVER auto-applied.
@@ -87,7 +91,8 @@ def wm_rates(**kwargs):
     # ==================================================================
     elif action == "backfill":
         bf_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 1)
-        bf_wage = frappe.utils.flt(frappe.form_dict.get("wage") or LEGACY_DAILY_WAGE)
+        bf_wage = frappe.utils.flt(frappe.form_dict.get("wage") or 0)
+        bf_tiers = [bf_wage] if bf_wage else KNOWN_DAILY_WAGES
         bf_epoch = frappe.form_dict.get("epoch")
         if not bf_epoch:
             # history has to start no later than the earliest plan, or the recalc
@@ -119,10 +124,14 @@ def wm_rates(**kwargs):
                 implied = 0
             else:
                 implied = r * g
-                drift = abs(implied - bf_wage)
-                if drift <= bf_wage * EXACT_BAND + BAND_EPSILON:
+                matched = bf_tiers[0]
+                for w in bf_tiers:
+                    if abs(implied - w) < abs(implied - matched):
+                        matched = w
+                drift = abs(implied - matched)
+                if drift <= matched * EXACT_BAND + BAND_EPSILON:
                     verdict = "derived"
-                elif drift <= bf_wage * REVIEW_BAND + BAND_EPSILON:
+                elif drift <= matched * REVIEW_BAND + BAND_EPSILON:
                     verdict = "borderline"
                 else:
                     verdict = "not_derived"
@@ -134,8 +143,8 @@ def wm_rates(**kwargs):
             note = None
             if verdict == "borderline":
                 note = ("Borderline: implied daily wage " + str(round(implied, 2)) +
-                        " against " + str(bf_wage) + ". Confirm whether this rate is "
-                        "wage-derived before recalculating.")
+                        " against nearest tier " + str(matched) + ". Confirm whether this "
+                        "rate is wage-derived before recalculating.")
             elif verdict == "not_derived":
                 note = ("Not wage-derived: implied daily wage " + str(round(implied, 2)) +
                         ". Excluded from wage recalculations.")
@@ -150,7 +159,7 @@ def wm_rates(**kwargs):
             d.rate = r
             d.uom = t.uom
             d.daily_target = g
-            d.daily_wage_basis = bf_wage if verdict == "derived" else None
+            d.daily_wage_basis = matched if verdict == "derived" else None
             d.derived = 1 if verdict == "derived" else 0
             d.source = "backfill from Task master"
             d.notes = note
@@ -167,6 +176,7 @@ def wm_rates(**kwargs):
         out["periods_created"] = bf_created
         out["already_covered"] = bf_skipped
         out["classification"] = bf_counts
+        out["tiers"] = bf_tiers
 
     # ==================================================================
     # BORDERLINE — tasks whose classification a human has to settle
