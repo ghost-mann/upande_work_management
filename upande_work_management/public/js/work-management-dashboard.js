@@ -145,7 +145,7 @@
       '<div class="card"><div class="bd" id="wm-farmstrip">'+farmStrip(farms)+'</div></div>'+
       // ===== approval speed: how long each sign-off step takes =====
       '<div class="sech">Pipeline performers &mdash; planners &amp; assigners</div>'+
-      '<div class="card"><div class="hd"><h3>Who plans the work, and what it costs</h3><div class="cap">per person &middot; plans created, targets vs actuals, budget vs money spent, cost per unit &middot; last 12 weeks</div></div>'+
+      '<div class="card"><div class="hd"><h3>Who plans the work, and what it costs</h3><div class="cap">per person &middot; plans created, targets vs actuals, planned vs money spent, cost per unit &middot; last 12 weeks</div></div>'+
         '<div class="bd">'+
           '<div class="subtabs" id="wm-perf-tabs" style="margin-bottom:10px">'+
             '<button type="button" class="subtab on" data-pp="creators">Plan creators</button>'+
@@ -2288,13 +2288,13 @@
         '<th'+sth+'>Planner</th><th class="n"'+sth+'>Plans</th><th class="n"'+sth+'>Target qty</th>'+
         '<th class="n"'+sth+'>Actual qty</th><th class="n"'+sth+'>Achieved</th>'+
         '<th class="n"'+sth+'>Budget KES</th><th class="n"'+sth+'>Spent KES</th>'+
-        '<th class="n"'+sth+'>Of budget</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
+        '<th class="n"'+sth+'>Of plan</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
       rows.forEach(function(r){
         var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
         h+='<tr'+hot+'><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
           '<td class="n m">'+fmt(r.plans)+'</td><td class="n m">'+fmt(r.target_qty)+'</td>'+
           '<td class="n m">'+fmt(r.actual_qty)+'</td><td class="n">'+ppPct(r.achieved_pct)+'</td>'+
-          '<td class="n m">'+fmt(r.budget,0)+'</td><td class="n m">'+fmt(r.spent,0)+'</td>'+
+          '<td class="n m">'+fmt(r.planned,0)+'</td><td class="n m">'+fmt(r.spent,0)+'</td>'+
           '<td class="n">'+ppPct(r.spend_pct)+'</td>'+
           '<td class="n m">'+(r.cost_per_unit>0?fmt(r.cost_per_unit,2):"—")+'</td></tr>';
       });
@@ -2306,7 +2306,7 @@
         '<span><b>Achieved</b> — Actual ÷ Target: how much of what they planned got done (green ≥90%, amber ≥60%, red below).</span>'+
         '<span><b>Budget KES</b> — what their plans were worth if fully delivered (rate × target).</span>'+
         '<span><b>Spent KES</b> — confirmed pay actually earned on their plans.</span>'+
-        '<span><b>Of budget</b> — Spent ÷ Budget. Low is NOT automatically savings — read it with Achieved (50% spent at 50% achieved just means half the work happened).</span>'+
+        '<span><b>Of plan</b> — Spent ÷ Planned. Low is NOT automatically savings — read it with Achieved (50% spent at 50% achieved just means half the work happened).</span>'+
         '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this planner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
     } else if(PP.tab==="enterers"){
       h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
@@ -2403,8 +2403,8 @@
     if(role==="creator"){
       h+=pkTile("Plans", fmt(k.plans), fmt(k.approved)+" approved · "+fmt(k.rejected)+" rejected");
       h+=pkTile("Achieved", fmt(k.achieved,0)+"%", fmt(k.actual)+" of "+fmt(k.target)+" units", pkPctColor(k.achieved,true));
-      h+=pkTile("Budget", "KES "+fmt(k.budget,0), "what their plans promised");
-      h+=pkTile("Spent", "KES "+fmt(k.spent,0), fmt(k.of_budget,0)+"% of budget");
+      h+=pkTile("Budget", "KES "+fmt(k.planned,0), "what their plans promised");
+      h+=pkTile("Spent", "KES "+fmt(k.spent,0), fmt(k.of_planned,0)+"% of budget");
       h+=pkTile("KES / unit", k.cost_per_unit>0?fmt(k.cost_per_unit,2):"—", "raw cost of one unit");
       if(k.vs_peers_pct!=null){
         var vp=k.vs_peers_pct;

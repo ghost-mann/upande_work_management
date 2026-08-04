@@ -2556,7 +2556,7 @@ def wm_dashboard(**kwargs):
 
     elif action == "planner_performance":
         # PLANNER & ASSIGNER PERFORMANCE: per person — plans created, targets,
-        # actuals vs target, budget vs money spent, cost per unit. Confirmed
+        # actuals vs target, planned vs money spent, cost per unit. Confirmed
         # work only; window filters on plan/assignment creation.
         ppfrom = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -84))
         ppto = frappe.form_dict.get("to_date") or str(frappe.utils.today())
@@ -2564,7 +2564,7 @@ def wm_dashboard(**kwargs):
         for r in frappe.db.sql("""
             SELECT requested_by person, COUNT(*) plans,
                    COALESCE(SUM(quantity), 0) target_qty,
-                   COALESCE(SUM(total_cost), 0) budget
+                   COALESCE(SUM(total_cost), 0) planned
             FROM `tabWork Management Planner`
             WHERE workflow_state = 'Approved'
               AND DATE(creation) BETWEEN %s AND %s
@@ -2573,7 +2573,7 @@ def wm_dashboard(**kwargs):
         """, (ppfrom, ppto), as_dict=True):
             creators[r.person] = {"person": r.person, "plans": frappe.utils.cint(r.plans),
                                   "target_qty": frappe.utils.flt(r.target_qty),
-                                  "budget": frappe.utils.flt(r.budget),
+                                  "planned": frappe.utils.flt(r.planned),
                                   "actual_qty": 0, "spent": 0}
         for r in frappe.db.sql("""
             SELECT p.requested_by person,
@@ -2589,7 +2589,7 @@ def wm_dashboard(**kwargs):
         """, (ppfrom, ppto), as_dict=True):
             cr = creators.get(r.person)
             if cr is None:
-                cr = {"person": r.person, "plans": 0, "target_qty": 0, "budget": 0,
+                cr = {"person": r.person, "plans": 0, "target_qty": 0, "planned": 0,
                       "actual_qty": 0, "spent": 0}
                 creators[r.person] = cr
             cr["actual_qty"] = frappe.utils.flt(r.aq)
@@ -2597,7 +2597,7 @@ def wm_dashboard(**kwargs):
         creator_rows = []
         for cr in creators.values():
             cr["achieved_pct"] = (cr["actual_qty"] / cr["target_qty"] * 100) if cr["target_qty"] else 0
-            cr["spend_pct"] = (cr["spent"] / cr["budget"] * 100) if cr["budget"] else 0
+            cr["spend_pct"] = (cr["spent"] / cr["planned"] * 100) if cr["planned"] else 0
             cr["cost_per_unit"] = (cr["spent"] / cr["actual_qty"]) if cr["actual_qty"] else 0
             creator_rows.append(cr)
         creator_rows = sorted(creator_rows, key=lambda x: -x["plans"])
@@ -2754,7 +2754,7 @@ def wm_dashboard(**kwargs):
                                  "period": str(r.from_date) + " → " + str(r.to_date),
                                  "target": tgt, "actual": dd["q"],
                                  "achieved": (dd["q"] / tgt * 100) if tgt else 0,
-                                 "budget": bud, "spent": dd["s"],
+                                 "planned": bud, "spent": dd["s"],
                                  "state": st + ((" · closed early") if (r.custom_close_state or "") == "Closed" else "")})
             # task-adjusted cost benchmark: their cpu vs everyone else's, per task
             my_task = {}
@@ -2797,7 +2797,7 @@ def wm_dashboard(**kwargs):
                 "closed_early_pct": (n_closed / len(plans) * 100) if plans else 0,
                 "rejected_pct": (n_rej / len(plans) * 100) if plans else 0,
                 "target": tt, "actual": ta, "achieved": (ta / tt * 100) if tt else 0,
-                "budget": tb, "spent": ts, "of_budget": (ts / tb * 100) if tb else 0,
+                "planned": tb, "spent": ts, "of_planned": (ts / tb * 100) if tb else 0,
                 "cost_per_unit": (ts / ta) if ta else 0,
                 "vs_peers_pct": (bench_num / bench_den * 100) if bench_den else None,
                 "approval_wait_h": (sum(appr_wait_h) / len(appr_wait_h)) if appr_wait_h else None,
@@ -2882,12 +2882,22 @@ def wm_dashboard(**kwargs):
             }
             out["rows"] = rows_out
         else:
+            # work_from/work_to = the days the work actually covers, which is not
+            # the same as entry_date: an enterer can key a week's work in one go,
+            # and the gap between the two is exactly what "entry lag" measures.
             docs = frappe.db.sql("""
-                SELECT name, task, farm, workflow_state, entry_date, creation,
-                       total_actual_qty, total_payment, payroll_people
-                FROM `tabWork Management Actuals`
-                WHERE entered_by = %s AND DATE(creation) BETWEEN %s AND %s
-                ORDER BY creation DESC LIMIT 400
+                SELECT ac.name, ac.task, ac.farm, ac.workflow_state, ac.entry_date,
+                       ac.creation, ac.total_actual_qty, ac.total_payment,
+                       ac.payroll_people, ac.rate,
+                       MIN(we.work_date) work_from, MAX(we.work_date) work_to,
+                       COUNT(DISTINCT we.work_date) work_days
+                FROM `tabWork Management Actuals` ac
+                LEFT JOIN `tabWork Actuals Employee` we ON we.parent = ac.name
+                WHERE ac.entered_by = %s AND DATE(ac.creation) BETWEEN %s AND %s
+                GROUP BY ac.name, ac.task, ac.farm, ac.workflow_state, ac.entry_date,
+                         ac.creation, ac.total_actual_qty, ac.total_payment,
+                         ac.payroll_people, ac.rate
+                ORDER BY ac.creation DESC LIMIT 400
             """, (kpwho, kpfrom, kpto), as_dict=True)
             lag_r = frappe.db.sql("""
                 SELECT AVG(DATEDIFF(ac.entry_date, we.work_date)) lag
@@ -2928,8 +2938,16 @@ def wm_dashboard(**kwargs):
                     n_rej = n_rej + 1
                 tq = tq + frappe.utils.flt(r.total_actual_qty)
                 tv = tv + frappe.utils.flt(r.total_payment)
+                wf = str(r.work_from or "")[:10]
+                wt = str(r.work_to or "")[:10]
                 rows_out.append({"doc": r.name, "task": r.task, "farm": r.farm,
-                                 "period": str(r.entry_date or "")[:10],
+                                 "period": (wf + " → " + wt) if wf else "",
+                                 "work_from": wf, "work_to": wt,
+                                 "work_days": frappe.utils.cint(r.work_days),
+                                 "entered": str(r.entry_date or "")[:10],
+                                 "lag_days": (frappe.utils.date_diff(r.entry_date, r.work_to)
+                                              if (r.entry_date and r.work_to) else None),
+                                 "rate": frappe.utils.flt(r.rate),
                                  "target": 0, "actual": frappe.utils.flt(r.total_actual_qty),
                                  "achieved": 0, "spent": frappe.utils.flt(r.total_payment),
                                  "crew": str(r.payroll_people or 0) + " paid",
