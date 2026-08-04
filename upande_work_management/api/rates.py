@@ -67,7 +67,8 @@ def wm_rates(**kwargs):
         out["legacy_daily_wage"] = LEGACY_DAILY_WAGE
         out["tasks_with_rate"] = frappe.db.count("Task", {"custom_rate": [">", 0]})
         out["periods"] = frappe.db.count("Work Task Rate")
-        out["tasks_covered"] = len(frappe.db.sql_list("SELECT DISTINCT task FROM `tabWork Task Rate`"))
+        out["tasks_covered"] = len(frappe.db.sql(
+            "SELECT DISTINCT task FROM `tabWork Task Rate`", as_dict=True))
         wages = frappe.db.sql("""
             SELECT daily_wage_basis wage, COUNT(*) n
             FROM `tabWork Task Rate`
@@ -107,8 +108,8 @@ def wm_rates(**kwargs):
             FROM `tabTask` WHERE IFNULL(custom_rate,0) > 0
         """, as_dict=True)
         bf_have = {}
-        for t in frappe.db.sql_list("SELECT DISTINCT task FROM `tabWork Task Rate`"):
-            bf_have[t] = 1
+        for t in frappe.db.sql("SELECT DISTINCT task t FROM `tabWork Task Rate`", as_dict=True):
+            bf_have[t.t] = 1
 
         bf_created = 0
         bf_skipped = 0
@@ -309,11 +310,14 @@ def wm_rates(**kwargs):
                 d.insert(ignore_permissions=True)
                 # CUSTOM doctype on live = no controller, so close the superseded
                 # period and mirror onto Task right here
-                frappe.db.sql("""
-                    UPDATE `tabWork Task Rate` SET valid_to = %(prev_end)s
+                # the sandbox allows read-only SQL only, so close the superseded
+                # period through the ORM rather than an UPDATE statement
+                for pv in frappe.db.sql("""
+                    SELECT name FROM `tabWork Task Rate`
                     WHERE task = %(task)s AND name != %(me)s AND valid_to IS NULL
                       AND valid_from < %(vfrom)s
-                """, {"prev_end": aw_day_before, "task": r.task, "me": d.name, "vfrom": aw_from})
+                """, {"task": r.task, "me": d.name, "vfrom": aw_from}, as_dict=True):
+                    frappe.db.set_value("Work Task Rate", pv.name, "valid_to", aw_day_before)
                 if aw_made % 100 == 0:
                     frappe.db.commit()
 
@@ -548,8 +552,8 @@ def wm_rates(**kwargs):
                 run.delta = frappe.utils.flt(run.new_total) - frappe.utils.flt(run.old_total)
                 run.rows_skipped = sum([s["rows"] for s in rc_skips.values()])
                 run.payments_updated = frappe.utils.cint(run.payments_updated) + len(rc_payments)
-                run.summary = frappe.as_json({
-                    "by_task": out["by_task"], "skipped": out["skipped"]})
+                run.summary = json.dumps({
+                    "by_task": out["by_task"], "skipped": out["skipped"]}, default=str)
                 run.flags.ignore_permissions = True
                 run.save(ignore_permissions=True)
                 frappe.db.commit()
@@ -559,6 +563,67 @@ def wm_rates(**kwargs):
                 out["parents_resummed"] = len(rc_parents)
                 out["payments_updated"] = len(rc_payments)
                 out["remaining"] = len(rc_todo) - len(batch)
+
+    # ==================================================================
+    # SYNC DOC RATES — realign Work Management Actuals.rate after a recalc
+    #
+    # The recalc rewrites row amounts but the parent document keeps the rate it
+    # was created with, and the "Amount doesn't match qty x rate" discrepancy
+    # check compares amount against qty x ac.rate. Left alone, every revalued row
+    # would show up as a false discrepancy. Docs whose rows straddle the change
+    # are REPORTED, never silently forced onto one side.
+    # ==================================================================
+    elif action == "sync_doc_rates":
+        sd_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 1)
+        sd_from = frappe.form_dict.get("from_date")
+        if not sd_from:
+            out["error"] = "from_date is required"
+        else:
+            sd_rows = frappe.db.sql("""
+                SELECT ac.name actuals, ac.task task, ac.rate cur_rate,
+                       MAX(we.work_date) wto,
+                       SUM(CASE WHEN we.work_date < %(d)s THEN 1 ELSE 0 END) before_n,
+                       SUM(CASE WHEN we.work_date >= %(d)s THEN 1 ELSE 0 END) after_n
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE IFNULL(we.count_in_payroll,0) = 1 AND IFNULL(we.paid,0) = 0
+                GROUP BY ac.name, ac.task, ac.rate
+                HAVING after_n > 0
+            """, {"d": sd_from}, as_dict=True)
+            sd_changed = []
+            sd_mixed = []
+            for sr in sd_rows:
+                per = frappe.db.sql("""
+                    SELECT rate, derived FROM `tabWork Task Rate`
+                    WHERE task = %(t)s AND valid_from <= %(d)s
+                      AND (valid_to IS NULL OR valid_to >= %(d)s)
+                    ORDER BY valid_from DESC LIMIT 1
+                """, {"t": sr.task, "d": sr.wto}, as_dict=True)
+                if not per or not frappe.utils.cint(per[0].derived):
+                    continue
+                # Work Management Actuals.rate is Float(4), so compare at the
+                # precision the field can actually hold -- otherwise a rate like
+                # 55.285714 stores as 55.2857 and this never converges.
+                new_rate = frappe.utils.flt(per[0].rate, 4)
+                if abs(new_rate - frappe.utils.flt(sr.cur_rate, 4)) <= 0.00005:
+                    continue
+                entry = {"actuals": sr.actuals, "task": sr.task,
+                         "old_rate": frappe.utils.flt(sr.cur_rate, 6), "new_rate": new_rate}
+                if frappe.utils.cint(sr.before_n):
+                    entry["rows_before"] = frappe.utils.cint(sr.before_n)
+                    entry["rows_after"] = frappe.utils.cint(sr.after_n)
+                    sd_mixed.append(entry)
+                sd_changed.append(entry)
+                if not sd_dry:
+                    frappe.db.set_value("Work Management Actuals", sr.actuals, "rate",
+                                        new_rate, update_modified=False)
+            if not sd_dry:
+                frappe.db.commit()
+            out["dry_run"] = sd_dry
+            out["docs_examined"] = len(sd_rows)
+            out["docs_realigned"] = len(sd_changed)
+            out["straddling_the_change"] = sd_mixed
+            out["sample"] = sd_changed[:20]
 
     # ==================================================================
     # REVERSE — put every row a run touched back to its old value
