@@ -203,11 +203,25 @@ def task_on_update(doc, method=None):
 		)
 		return
 
+	# A rate card may already be queued ahead of today. The edit applies only up
+	# to the day that card takes over — otherwise this period would run open
+	# alongside a future one and trip the no-overlap rule with a message that
+	# means nothing to someone editing a Task.
+	upcoming = frappe.db.sql_list(
+		"""
+		SELECT valid_from FROM `tabWork Task Rate`
+		WHERE task = %(task)s AND valid_from > %(today)s
+		ORDER BY valid_from ASC LIMIT 1
+		""",
+		{"task": doc.name, "today": today},
+	)
+
 	period = frappe.new_doc("Work Task Rate")
 	period.update(
 		{
 			"task": doc.name,
 			"valid_from": today,
+			"valid_to": add_days(getdate(upcoming[0]), -1) if upcoming else None,
 			"rate": rate,
 			"uom": doc.get("custom_uom"),
 			"daily_target": target,
