@@ -495,7 +495,7 @@
     confirmModal(
       "Send "+fmt(s.all.length)+" workers to accounts",
       '<p style="margin:0 0 10px">Send <b>'+fmt(s.all.length)+' workers</b> totalling <b>'+money(s.amt)+'</b> to accounts?</p>'+
-      '<p class="note" style="margin:0">Each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Pending Accounts. Your user and the time are stamped on every included day-row.</p>',
+      '<p class="note" style="margin:0">Each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Unpaid. Your user and the time are stamped on every included day-row.</p>',
       "Send all to accounts",
       function(){
         var bs=el("bulk-send"); if(bs){ bs.disabled=true; bs.textContent="Sending…"; }
@@ -572,7 +572,7 @@
         }, true).then(function(d){
           el("dk-create").disabled=false;
           if(d.error){ toast(d.error,"bad"); return; }
-          toast("Run "+(d.name||"")+" submitted · "+money(d.grand_total),"good");
+          toast("Run "+(d.name||"")+" submitted · "+money(d.amount),"good");
           ST.picked={};
           loadPayable();
           refreshAccountsCount();
@@ -668,15 +668,15 @@
     }
     return '<div class="runcard">'+
       '<div class="rc-head">'+
-        '<input type="checkbox" class="awpick" data-name="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" data-amt="'+(r.grand_total||0)+'" title="Select for bulk return to unpaid" style="margin:4px 10px 0 0;flex-shrink:0"'+(ST.accBulk[r.name]?" checked":"")+'>'+
+        '<input type="checkbox" class="awpick" data-name="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" data-amt="'+(r.amount||0)+'" title="Select for bulk return to unpaid" style="margin:4px 10px 0 0;flex-shrink:0"'+(ST.accBulk[r.name]?" checked":"")+'>'+
         '<div style="flex:1"><div class="rc-title">'+esc(r.run_title||r.name)+'</div>'+
-        '<div class="rc-sub">'+esc(r.name)+' · prepared by '+esc(r.prepared_by||"—")+' · '+esc(r.run_date||"")+
+        '<div class="rc-sub">'+esc(r.name)+' · prepared by '+esc(r.prepared_by||"—")+' · '+esc(r.payroll_date||"")+
         (r.period_from?' · work '+esc(dshort(r.period_from))+' → '+esc(dshort(r.period_to)):'')+'</div></div>'+
-        '<span class="tag pending">Pending accounts</span>'+
+        '<span class="tag pending">Unpaid</span>'+
       '</div>'+
       '<div class="rc-figs">'+
         '<div class="rc-fig"><div class="rf-k">Worker'+(r.total_workers===1?'':'s')+'</div><div class="rf-v">'+(r.total_workers===1?esc(r.employee_name||"1"):fmt(r.total_workers))+'</div></div>'+
-        '<div class="rc-fig"><div class="rf-k">Grand total</div><div class="rf-v">'+money(r.grand_total)+'</div></div>'+
+        '<div class="rc-fig"><div class="rf-k">Amount</div><div class="rf-v">'+money(r.amount)+'</div></div>'+
       '</div>'+
       '<div class="rc-foot">'+foot+'</div>'+
     '</div>';
@@ -817,9 +817,9 @@
         h+='<tr><td><span class="rowlink" data-view="'+esc(r.name)+'">'+esc(r.name)+'</span></td>'+
            '<td>'+esc(r.run_title||"—")+'</td>'+
            '<td class="n m">'+fmt(r.total_workers)+'</td>'+
-           '<td class="n m">'+money(r.grand_total)+'</td>'+
+           '<td class="n m">'+money(r.amount)+'</td>'+
            '<td class="c">'+stateTag(r.workflow_state)+'</td>'+
-           '<td>'+esc(r.run_date||"")+'</td></tr>';
+           '<td>'+esc(r.payroll_date||"")+'</td></tr>';
       });
       h+='</tbody></table></div></div>';
       box.innerHTML=h;
@@ -1665,7 +1665,7 @@
       "Approve & send to accounts",
       '<p style="margin:0 0 10px">Send <b>'+esc(nm)+'</b>&rsquo;s unpaid confirmed earnings of <b>'+money(amount)+'</b> to accounts?</p>'+
       '<p class="note" style="margin:0">Work window '+esc(win.from||"start")+' &rarr; '+esc(win.to||"today")+
-      '. A payment reference is created for this worker alone and handed to accounts as <b>Pending Accounts</b>; when accounts releases it the worker&rsquo;s rows are stamped paid.</p>',
+      '. A payment reference is created for this worker alone and handed to accounts as <b>Unpaid</b>; when accounts releases it the worker&rsquo;s rows are stamped paid.</p>',
       "Approve & send",
       function(){
         call({ action:"pay_worker_submit", employee:emp, from_date:win.from||"", to_date:win.to||"" }, true)
@@ -1912,9 +1912,9 @@
     s=s||"Draft";
     var cls="unpaid";
     if(s==="Paid") cls="paid";
-    else if(s==="Pending Accounts") cls="pending";
+    else if(s==="Unpaid") cls="pending";
     else if(s==="Rejected") cls="submitted";
-    var label = s==="Pending Accounts" ? "Pending accounts" : s;
+    var label = s==="Unpaid" ? "Unpaid" : s;
     return '<span class="tag '+cls+'">'+esc(label)+'</span>';
   }
 
@@ -1941,7 +1941,7 @@
         var h='';
         h+='<div class="rc-figs" style="padding:0 0 14px;border-bottom:1px solid var(--faint);margin-bottom:14px">'+
            '<div class="rc-fig"><div class="rf-k">Workers</div><div class="rf-v">'+fmt(p.total_workers)+'</div></div>'+
-           '<div class="rc-fig"><div class="rf-k">Grand total</div><div class="rf-v">'+money(p.grand_total)+'</div></div>'+
+           '<div class="rc-fig"><div class="rf-k">Amount</div><div class="rf-v">'+money(p.amount)+'</div></div>'+
            '<div class="rc-fig"><div class="rf-k">Period</div><div class="rf-v" style="font-size:13px">'+esc(p.period_from||"?")+' → '+esc(p.period_to||"?")+'</div></div>'+
            '</div>';
         if(!lines.length){
@@ -1953,11 +1953,11 @@
             h+='<tr><td>'+esc(ln.employee_name||ln.employee||"")+'</td><td>'+esc(lbl(ln.farm)||"")+'</td>'+
                '<td class="n m">'+fmt(ln.days)+'</td><td class="n m">'+fmt(ln.qty)+'</td><td class="n m">'+money(ln.amount)+'</td></tr>';
           });
-          h+='</tbody><tfoot><tr><td colspan="4">Grand total</td><td class="n m">'+money(p.grand_total)+'</td></tr></tfoot></table></div></div>';
+          h+='</tbody><tfoot><tr><td colspan="4">Amount</td><td class="n m">'+money(p.amount)+'</td></tr></tfoot></table></div></div>';
         }
         el("pr-body").innerHTML=h;
         // if this run is pending and the user is accounts, offer mark-paid from the modal too
-        if(p.workflow_state==="Pending Accounts" && ST.isAccounts){
+        if(p.workflow_state==="Unpaid" && ST.isAccounts){
           var foot=el("pr-foot");
           foot.innerHTML='<button type="button" class="btn" id="pr-dismiss">Close</button>'+
                          '<button type="button" class="btn good" id="pr-paid">Mark paid</button>';
@@ -1967,7 +1967,7 @@
       })
       .catch(function(){ el("pr-body").innerHTML='<div class="err">Could not load run lines.</div>'; });
   }
-  function stateText(s){ return s==="Pending Accounts"?"Pending accounts":(s||"Draft"); }
+  function stateText(s){ return s==="Unpaid"?"Unpaid":(s||"Draft"); }
 
   // ════════════════════════════════════════════════
   //  CONFIRM MODAL (generic)

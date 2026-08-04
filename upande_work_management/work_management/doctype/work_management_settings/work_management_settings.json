@@ -46,7 +46,9 @@
   "last_recalc_on",
   "column_break_last",
   "last_recalc_by",
-  "last_recalc_summary"
+  "last_recalc_summary",
+  "sb_payroll",
+  "additional_salary_component"
  ],
  "fields": [
   {
@@ -229,10 +231,10 @@
    "fieldname": "sb_rates",
    "fieldtype": "Section Break",
    "label": "Rates",
-   "description": "Task rates are effective-dated in Work Task Rate. Task.custom_rate is mirrored from whichever period is active today, so the Task list stays the place you edit rates day to day — an edit there is recorded as a period starting today. Backdated changes belong to a rate card."
+   "description": "Task rates are effective-dated in Work Task Rate. Task.custom_rate is mirrored from whichever period is active today, so the Task list stays the place you edit rates day to day \u2014 an edit there is recorded as a period starting today. Backdated changes belong to a rate card."
   },
   {
-   "description": "The daily wage most active rate periods are derived from. Read-only — change it by applying a rate card, not by typing here.",
+   "description": "The daily wage most active rate periods are derived from. Read-only \u2014 change it by applying a rate card, not by typing here.",
    "fieldname": "current_daily_wage",
    "fieldtype": "Currency",
    "label": "Current Daily Wage",
@@ -252,7 +254,7 @@
    "description": "Revalues UNPAID day-rows at the rate in force on each work date. Never touches paid rows, tasks that are not wage-derived, or tasks whose unit or daily target changed at the boundary. Always dry-run it first."
   },
   {
-   "description": "Revalue work dated on or after this day, e.g. 2026-07-21 for the 340 → 387 rate card.",
+   "description": "Revalue work dated on or after this day, e.g. 2026-07-21 for the 340 \u2192 387 rate card.",
    "fieldname": "rate_recalc_from",
    "fieldtype": "Date",
    "label": "Recalculate From"
@@ -314,6 +316,19 @@
    "fieldtype": "Small Text",
    "label": "Last Run Summary",
    "read_only": 1
+  },
+  {
+   "fieldname": "sb_payroll",
+   "fieldtype": "Section Break",
+   "label": "Payroll",
+   "description": "Sending a worker to accounts creates a submitted Additional Salary against this component, so payroll picks the earnings up on the next salary slip."
+  },
+  {
+   "fieldname": "additional_salary_component",
+   "fieldtype": "Link",
+   "label": "Additional Salary Component",
+   "options": "Salary Component",
+   "description": "Earning component used for Work Management payments. Leave empty to stop Additional Salary records being created."
   }
  ],
  "idx": 0,

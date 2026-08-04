@@ -792,86 +792,59 @@
   "send_email_alert": 0,
   "states": [
    {
-    "allow_edit": "HR Clerk",
+    "state": "Unpaid",
     "doc_status": "0",
-    "is_optional_state": 0,
-    "state": "Draft"
-   },
-   {
     "allow_edit": "Accounts Manager",
-    "doc_status": "0",
-    "is_optional_state": 0,
-    "state": "Pending Accounts"
+    "doctype": "Workflow Document State"
    },
    {
+    "state": "Paid",
+    "doc_status": "0",
     "allow_edit": "Accounts Manager",
-    "doc_status": "1",
-    "is_optional_state": 0,
-    "state": "Paid"
+    "doctype": "Workflow Document State"
    },
    {
-    "allow_edit": "HR Clerk",
+    "state": "Cancelled",
     "doc_status": "0",
-    "is_optional_state": 0,
-    "state": "Rejected"
+    "allow_edit": "Accounts Manager",
+    "doctype": "Workflow Document State"
    }
   ],
   "transitions": [
    {
-    "action": "Send to Accounts",
-    "allow_self_approval": 1,
-    "allowed": "HR Clerk",
-    "next_state": "Pending Accounts",
-    "send_email_to_creator": 0,
-    "state": "Draft"
-   },
-   {
-    "action": "Send to Accounts",
-    "allow_self_approval": 1,
-    "allowed": "HOD HR",
-    "next_state": "Pending Accounts",
-    "send_email_to_creator": 0,
-    "state": "Draft"
-   },
-   {
+    "state": "Unpaid",
     "action": "Mark Paid",
-    "allow_self_approval": 1,
-    "allowed": "Accounts Manager",
     "next_state": "Paid",
-    "send_email_to_creator": 0,
-    "state": "Pending Accounts"
+    "allowed": "Accounts Manager",
+    "doctype": "Workflow Transition"
    },
    {
+    "state": "Unpaid",
     "action": "Mark Paid",
-    "allow_self_approval": 1,
+    "next_state": "Paid",
     "allowed": "Accounts User",
-    "next_state": "Paid",
-    "send_email_to_creator": 0,
-    "state": "Pending Accounts"
+    "doctype": "Workflow Transition"
    },
    {
-    "action": "Reject",
-    "allow_self_approval": 1,
+    "state": "Unpaid",
+    "action": "Cancel",
+    "next_state": "Cancelled",
     "allowed": "Accounts Manager",
-    "next_state": "Rejected",
-    "send_email_to_creator": 0,
-    "state": "Pending Accounts"
+    "doctype": "Workflow Transition"
    },
    {
-    "action": "Re-submit",
-    "allow_self_approval": 1,
-    "allowed": "HR Clerk",
-    "next_state": "Pending Accounts",
-    "send_email_to_creator": 0,
-    "state": "Rejected"
+    "state": "Unpaid",
+    "action": "Cancel",
+    "next_state": "Cancelled",
+    "allowed": "Accounts User",
+    "doctype": "Workflow Transition"
    },
    {
-    "action": "Send to Accounts",
-    "allow_self_approval": 1,
-    "allowed": "HR Manager Kaitet",
-    "next_state": "Pending Accounts",
-    "send_email_to_creator": 0,
-    "state": "Draft"
+    "state": "Paid",
+    "action": "Cancel",
+    "next_state": "Cancelled",
+    "allowed": "Accounts Manager",
+    "doctype": "Workflow Transition"
    }
   ],
   "workflow_name": "Work Management Payment Approval",

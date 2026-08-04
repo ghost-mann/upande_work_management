@@ -63,7 +63,7 @@ def wm_payment(**kwargs):
             d = frappe.new_doc("Work Management Payment")
             d.run_title = title or ("Payment run " + frappe.utils.today())
             d.company = DEFAULT_COMPANY
-            d.run_date = frappe.utils.today()
+            d.payroll_date = frappe.utils.today()
             d.prepared_by = frappe.session.user
             # store the window if the fields exist (safe: set_value later per-row anyway)
             try:
@@ -106,17 +106,17 @@ def wm_payment(**kwargs):
                 row.amount = frappe.utils.flt(g.owed)
                 gt = gt + frappe.utils.flt(g.owed)
                 cnt = cnt + 1
-            d.grand_total = gt
+            d.amount = gt
             d.total_workers = cnt
             d.total_actuals = cnt
             d.flags.ignore_permissions = True
             d.insert(ignore_permissions=True)
             if submit_now:
-                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Pending Accounts", update_modified=False)
-                d.workflow_state = "Pending Accounts"
+                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Unpaid", update_modified=False)
+                d.workflow_state = "Unpaid"
             out["name"] = d.name
             out["workflow_state"] = d.workflow_state
-            out["grand_total"] = d.grand_total
+            out["amount"] = d.amount
             out["total_workers"] = cnt
 
     elif action == "pay_workers":
@@ -193,7 +193,7 @@ def wm_payment(**kwargs):
                 runstate = frappe.db.get_value("Work Management Payment", rref, "workflow_state")
             if r.get("max_paid") == 1 and r.get("min_paid") == 1:
                 r["pay_status"] = "Paid"
-            elif rref and runstate in ("Pending Accounts",):
+            elif rref and runstate in ("Unpaid",):
                 r["pay_status"] = "Sent to accounts"
             elif rref and runstate == "Paid" and frappe.utils.flt(r.get("unpaid_amt")) <= 0.001:
                 r["pay_status"] = "Paid"
@@ -212,7 +212,7 @@ def wm_payment(**kwargs):
         for r in rows:
             if r.get("payable"):
                 tot = tot + frappe.utils.flt(r.owed)
-        out["grand_total"] = tot
+        out["amount"] = tot
         # ALL farms that have earnings in the same window (unpaid-only for the multi-select summary)
         fconds = "ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
         fparams = []
@@ -268,10 +268,10 @@ def wm_payment(**kwargs):
 
     elif action == "pay_pending":
         pend = frappe.db.get_all("Work Management Payment",
-            filters={"workflow_state":"Pending Accounts"},
-            fields=["name","run_title","total_actuals","total_workers","grand_total","prepared_by","run_date",
+            filters={"workflow_state":"Unpaid"},
+            fields=["name","run_title","total_actuals","total_workers","amount","prepared_by","payroll_date",
                     "period_from","period_to"],
-            order_by="run_date desc", limit=200)
+            order_by="payroll_date desc", limit=200)
         for pr in pend:
             ln = frappe.db.get_all("Work Payment Line", filters={"parent": pr.name},
                 fields=["employee", "employee_name"], limit=1)
@@ -285,7 +285,7 @@ def wm_payment(**kwargs):
         nm = frappe.form_dict.get("name")
         cur = frappe.db.get_value("Work Management Payment", nm,
             ["workflow_state","period_from","period_to"], as_dict=True)
-        if not cur or cur.workflow_state != "Pending Accounts":
+        if not cur or cur.workflow_state != "Unpaid":
             out["error"] = "Not awaiting accounts (state: " + str(cur.workflow_state if cur else "not found") + ")"
         else:
             # finalise via direct writes (bypass workflow engine + doctype gate)
@@ -343,7 +343,7 @@ def wm_payment(**kwargs):
     elif action == "pay_my":
         out["runs"] = frappe.db.get_all("Work Management Payment",
             filters={"prepared_by":frappe.session.user},
-            fields=["name","run_title","total_actuals","total_workers","grand_total","workflow_state","run_date"],
+            fields=["name","run_title","total_actuals","total_workers","amount","workflow_state","payroll_date"],
             order_by="creation desc", limit=200)
 
     elif action == "pay_roles":
@@ -432,7 +432,7 @@ def wm_payment(**kwargs):
                 pstat = "Paid"
             elif paid > 0:
                 pstat = "Part paid"
-            elif s.run_refs and run_state == "Pending Accounts":
+            elif s.run_refs and run_state == "Unpaid":
                 pstat = "In run (awaiting accounts)"
             else:
                 pstat = "Unpaid"
@@ -919,12 +919,12 @@ def wm_payment(**kwargs):
             out["daily"] = daily
             # payment runs that include this worker
             runs = frappe.db.sql("""
-                SELECT p.name run, p.run_title title, p.run_date rdate, p.workflow_state state,
+                SELECT p.name run, p.run_title title, p.payroll_date rdate, p.workflow_state state,
                        l.amount amount, l.days days, l.qty qty
                 FROM `tabWork Payment Line` l
                 INNER JOIN `tabWork Management Payment` p ON l.parent = p.name
                 WHERE l.employee = %s
-                ORDER BY p.run_date DESC LIMIT 100
+                ORDER BY p.payroll_date DESC LIMIT 100
             """, (emp,), as_dict=True)
             runlist = []
             for r in runs:
@@ -943,7 +943,7 @@ def wm_payment(**kwargs):
         cur = frappe.db.get_value("Work Management Payment", nm, "workflow_state")
         if not cur:
             out["error"] = "Payment reference not found"
-        elif cur != "Pending Accounts":
+        elif cur != "Unpaid":
             out["error"] = "Only payments awaiting accounts can be returned (state: " + str(cur) + ")"
         else:
             rows = frappe.db.get_all("Work Actuals Employee",
@@ -954,7 +954,6 @@ def wm_payment(**kwargs):
                 frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_by", None, update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_at", None, update_modified=False)
             wname = frappe.db.get_value("Work Management Payment", nm, "run_title")
-            frappe.db.set_value("Work Management Payment", nm, "workflow_state", "Draft", update_modified=False)
             frappe.delete_doc("Work Management Payment", nm, ignore_permissions=True, force=True)
             frappe.db.commit()
             out["name"] = nm
@@ -985,7 +984,7 @@ def wm_payment(**kwargs):
             elif frappe.db.get_value("Work Actuals Employee", rowname, "payment_ref") and \
                  frappe.db.get_value("Work Management Payment",
                     frappe.db.get_value("Work Actuals Employee", rowname, "payment_ref"),
-                    "workflow_state") == "Pending Accounts":
+                    "workflow_state") == "Unpaid":
                 out["error"] = ("This day is inside a payment awaiting accounts (" +
                     str(frappe.db.get_value("Work Actuals Employee", rowname, "payment_ref")) +
                     "). Return it to Unpaid first, then edit.")
@@ -1108,7 +1107,7 @@ def wm_payment(**kwargs):
                 d = frappe.new_doc("Work Management Payment")
                 d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                 d.company = DEFAULT_COMPANY
-                d.run_date = frappe.utils.today()
+                d.payroll_date = frappe.utils.today()
                 d.prepared_by = frappe.session.user
                 try:
                     if dfrom:
@@ -1170,12 +1169,12 @@ def wm_payment(**kwargs):
                 d.total_qty = total_qty
                 d.reviewed_by = rv_by
                 d.reviewed_at = rv_at
-                d.grand_total = total_owed
+                d.amount = total_owed
                 d.total_workers = 1
                 d.total_actuals = len(d.lines)
                 d.flags.ignore_permissions = True
                 d.insert(ignore_permissions=True)
-                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Pending Accounts", update_modified=False)
+                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Unpaid", update_modified=False)
                 # stamp the reference on the included rows (NOT paid yet) so the
                 # worker shows as "Sent to accounts" until accounts releases it
                 refrows = frappe.db.sql("""
@@ -1194,7 +1193,7 @@ def wm_payment(**kwargs):
                     frappe.db.set_value("Work Management Payment", d.name, "reviewed_at", subnow, update_modified=False)
                 frappe.db.commit()
                 out["name"] = d.name
-                out["workflow_state"] = "Pending Accounts"
+                out["workflow_state"] = "Unpaid"
                 out["employee"] = emp
                 out["employee_name"] = ename
                 out["amount"] = total_owed
@@ -1303,7 +1302,7 @@ def wm_payment(**kwargs):
                 d = frappe.new_doc("Work Management Payment")
                 d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                 d.company = DEFAULT_COMPANY
-                d.run_date = frappe.utils.today()
+                d.payroll_date = frappe.utils.today()
                 d.prepared_by = frappe.session.user
                 try:
                     if dfrom:
@@ -1361,12 +1360,12 @@ def wm_payment(**kwargs):
                 d.total_qty = total_qty
                 d.reviewed_by = rv_by
                 d.reviewed_at = rv_at
-                d.grand_total = total_owed
+                d.amount = total_owed
                 d.total_workers = 1
                 d.total_actuals = len(d.lines)
                 d.flags.ignore_permissions = True
                 d.insert(ignore_permissions=True)
-                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Pending Accounts", update_modified=False)
+                frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Unpaid", update_modified=False)
                 refrows = frappe.db.sql("""
                     SELECT we.name rowname FROM `tabWork Actuals Employee` we
                     INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
@@ -2080,7 +2079,7 @@ def wm_payment(**kwargs):
                 if not cur:
                     results.append({"name": nm, "error": "not found"})
                     continue
-                if cur != "Pending Accounts":
+                if cur != "Unpaid":
                     results.append({"name": nm, "error": "state is " + str(cur)})
                     continue
                 rws = frappe.db.get_all("Work Actuals Employee",
@@ -2091,7 +2090,6 @@ def wm_payment(**kwargs):
                     frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_by", None, update_modified=False)
                     frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_at", None, update_modified=False)
                 wt = frappe.db.get_value("Work Management Payment", nm, "run_title")
-                frappe.db.set_value("Work Management Payment", nm, "workflow_state", "Draft", update_modified=False)
                 frappe.delete_doc("Work Management Payment", nm, ignore_permissions=True, force=True)
                 done_n = done_n + 1
                 rows_n = rows_n + len(rws)
@@ -2199,7 +2197,7 @@ def wm_payment(**kwargs):
                 if not frappe.utils.cint(row.count_in_payroll):
                     errors.append({"rowname": rowname, "error": "not payroll-counted"})
                     continue
-                if row.payment_ref and frappe.db.get_value("Work Management Payment", row.payment_ref, "workflow_state") == "Pending Accounts":
+                if row.payment_ref and frappe.db.get_value("Work Management Payment", row.payment_ref, "workflow_state") == "Unpaid":
                     errors.append({"rowname": rowname, "error": "inside " + row.payment_ref + " — return it to unpaid first"})
                     continue
                 pstate = frappe.db.get_value("Work Management Actuals", row.parent, "workflow_state")
