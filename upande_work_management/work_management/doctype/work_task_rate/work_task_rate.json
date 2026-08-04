@@ -1,0 +1,176 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-04 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "task",
+  "column_break_period",
+  "valid_from",
+  "valid_to",
+  "sb_rate",
+  "daily_wage_basis",
+  "daily_target",
+  "column_break_rate",
+  "rate",
+  "uom",
+  "derived",
+  "sb_origin",
+  "source",
+  "source_activity",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "options": "WTR-.#####",
+   "default": "WTR-.#####"
+  },
+  {
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Task",
+   "options": "Task",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_period",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "First day this rate applies to work.",
+   "fieldname": "valid_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Valid From",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Last day this rate applies. Leave empty for the currently-active period.",
+   "fieldname": "valid_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Valid To"
+  },
+  {
+   "fieldname": "sb_rate",
+   "fieldtype": "Section Break",
+   "label": "Rate"
+  },
+  {
+   "description": "The daily wage this rate is derived from (e.g. 340 before 21 Jul 2026, 387 from then on). Empty when the rate is not wage-derived.",
+   "fieldname": "daily_wage_basis",
+   "fieldtype": "Currency",
+   "label": "Daily Wage Basis",
+   "precision": "6"
+  },
+  {
+   "description": "Units one person is expected to complete in a day.",
+   "fieldname": "daily_target",
+   "fieldtype": "Float",
+   "label": "Daily Target",
+   "precision": "6"
+  },
+  {
+   "fieldname": "column_break_rate",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Pay per unit. Held to 6 decimal places — rounding this to 2dp is what makes a full day pay 340.50 instead of 340.",
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Rate",
+   "precision": "6",
+   "reqd": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UoM"
+  },
+  {
+   "default": "0",
+   "description": "This rate is governed by daily wage ÷ daily target. A classification decided once — not an equality test. Backfilled periods keep the legacy stored value and can still be marked derived.",
+   "fieldname": "derived",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Wage Derived"
+  },
+  {
+   "fieldname": "sb_origin",
+   "fieldtype": "Section Break",
+   "label": "Origin"
+  },
+  {
+   "description": "Where this period came from, e.g. \"KPI rate card 21 Jul 2026\", \"Task list edit\", \"backfill from Task master\".",
+   "fieldname": "source",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Source"
+  },
+  {
+   "description": "The activity label used in the source rate card, so the next card maps itself.",
+   "fieldname": "source_activity",
+   "fieldtype": "Data",
+   "label": "Source Activity"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "idx": 0,
+ "links": [],
+ "modified": "2026-08-04 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Task Rate",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager"
+  }
+ ],
+ "sort_field": "valid_from",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "task",
+ "track_changes": 1
+}

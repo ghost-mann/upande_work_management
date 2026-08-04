@@ -1,0 +1,231 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-04 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "status",
+  "column_break_scope",
+  "from_date",
+  "to_date",
+  "farm",
+  "dry_run",
+  "sb_result",
+  "rows_changed",
+  "rows_skipped",
+  "planners_updated",
+  "payments_updated",
+  "column_break_result",
+  "old_total",
+  "new_total",
+  "delta",
+  "sb_audit",
+  "executed_by",
+  "executed_on",
+  "column_break_audit",
+  "reversed_by",
+  "reversed_on",
+  "sb_summary",
+  "summary",
+  "sb_lines",
+  "lines"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "options": "WRR-.#####",
+   "default": "WRR-.#####"
+  },
+  {
+   "default": "Dry Run",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Dry Run\nApplied\nReversed\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Revalue work dated on or after this day.",
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "From Date",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "To Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "farm",
+   "fieldtype": "Data",
+   "label": "Farm Scope",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "dry_run",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Dry Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_result",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "fieldname": "rows_changed",
+   "fieldtype": "Int",
+   "label": "Day-rows Changed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rows_skipped",
+   "fieldtype": "Int",
+   "label": "Rows Skipped",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planners_updated",
+   "fieldtype": "Int",
+   "label": "Planners Updated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payments_updated",
+   "fieldtype": "Int",
+   "label": "Payment Documents Updated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "old_total",
+   "fieldtype": "Currency",
+   "label": "Old Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "new_total",
+   "fieldtype": "Currency",
+   "label": "New Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delta",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Delta",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_audit",
+   "fieldtype": "Section Break",
+   "label": "Audit"
+  },
+  {
+   "fieldname": "executed_by",
+   "fieldtype": "Link",
+   "label": "Executed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "executed_on",
+   "fieldtype": "Datetime",
+   "label": "Executed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_audit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reversed_by",
+   "fieldtype": "Link",
+   "label": "Reversed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reversed_on",
+   "fieldtype": "Datetime",
+   "label": "Reversed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_summary",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "description": "Per-task breakdown and every skip reason.",
+   "fieldname": "summary",
+   "fieldtype": "Code",
+   "label": "Summary",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_lines",
+   "fieldtype": "Section Break",
+   "label": "Changed Rows"
+  },
+  {
+   "description": "Every row this run touched, with its value before and after. This is what makes the run reversible.",
+   "fieldname": "lines",
+   "fieldtype": "Table",
+   "label": "Lines",
+   "options": "Work Rate Recalc Line",
+   "read_only": 1
+  }
+ ],
+ "idx": 0,
+ "links": [],
+ "modified": "2026-08-04 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Rate Recalc Run",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

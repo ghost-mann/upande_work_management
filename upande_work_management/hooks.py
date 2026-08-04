@@ -15,6 +15,11 @@ doc_events = {
 	"Employee": {
 		"on_update": "upande_work_management.api.hr.release_inactive",
 	},
+	# Editing a rate in the Task list records a rate period effective today, so
+	# history writes itself rather than depending on anyone maintaining it.
+	"Task": {
+		"on_update": "upande_work_management.rates.task_on_update",
+	},
 }
 
 override_whitelisted_methods = {
@@ -23,6 +28,16 @@ override_whitelisted_methods = {
 	"wm_assigner": "upande_work_management.api.assigner.wm_assigner",
 	"wm_actuals": "upande_work_management.api.actuals.wm_actuals",
 	"wm_payment": "upande_work_management.api.payment.wm_payment",
+	"wm_rates": "upande_work_management.api.rates.wm_rates",
+}
+
+scheduler_events = {
+	# Activates any rate period that starts today. Without this a rate card
+	# loaded in advance would never take effect — nothing else fires on its
+	# start date.
+	"daily": [
+		"upande_work_management.rates.sync_active_periods",
+	],
 }
 
 after_install = "upande_work_management.install.after_install"

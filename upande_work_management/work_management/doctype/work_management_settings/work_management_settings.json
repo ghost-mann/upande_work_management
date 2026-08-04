@@ -31,7 +31,22 @@
   "att_auto_release_inactive",
   "sb_consult",
   "require_consultant_approval",
-  "consultant_users"
+  "consultant_users",
+  "sb_rates",
+  "current_daily_wage",
+  "rate_periods_html",
+  "sb_recalc",
+  "rate_recalc_from",
+  "rate_recalc_to",
+  "column_break_recalc",
+  "rate_recalc_farm",
+  "rate_recalc_dry_run",
+  "sb_last_recalc",
+  "last_recalc_run",
+  "last_recalc_on",
+  "column_break_last",
+  "last_recalc_by",
+  "last_recalc_summary"
  ],
  "fields": [
   {
@@ -209,6 +224,96 @@
    "fieldtype": "Small Text",
    "label": "Consultant users (comma-separated emails)",
    "description": "These users (plus System Manager) can approve or return a farm's weekly plan package."
+  },
+  {
+   "fieldname": "sb_rates",
+   "fieldtype": "Section Break",
+   "label": "Rates",
+   "description": "Task rates are effective-dated in Work Task Rate. Task.custom_rate is mirrored from whichever period is active today, so the Task list stays the place you edit rates day to day — an edit there is recorded as a period starting today. Backdated changes belong to a rate card."
+  },
+  {
+   "description": "The daily wage most active rate periods are derived from. Read-only — change it by applying a rate card, not by typing here.",
+   "fieldname": "current_daily_wage",
+   "fieldtype": "Currency",
+   "label": "Current Daily Wage",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rate_periods_html",
+   "fieldtype": "HTML",
+   "label": "Rate Coverage",
+   "options": "<p class=\"text-muted small\">Coverage, borderline tasks awaiting a decision and the last run are loaded by the Rates buttons above.</p>"
+  },
+  {
+   "fieldname": "sb_recalc",
+   "fieldtype": "Section Break",
+   "label": "Recalculate from a date",
+   "description": "Revalues UNPAID day-rows at the rate in force on each work date. Never touches paid rows, tasks that are not wage-derived, or tasks whose unit or daily target changed at the boundary. Always dry-run it first."
+  },
+  {
+   "description": "Revalue work dated on or after this day, e.g. 2026-07-21 for the 340 → 387 rate card.",
+   "fieldname": "rate_recalc_from",
+   "fieldtype": "Date",
+   "label": "Recalculate From"
+  },
+  {
+   "description": "Optional upper bound. Leave empty to run to the latest recorded work.",
+   "fieldname": "rate_recalc_to",
+   "fieldtype": "Date",
+   "label": "Recalculate To"
+  },
+  {
+   "fieldname": "column_break_recalc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Leave empty for all farms.",
+   "fieldname": "rate_recalc_farm",
+   "fieldtype": "Data",
+   "label": "Farm Scope"
+  },
+  {
+   "default": "1",
+   "description": "On: report what would change and write nothing. Turn this off only after reading the dry-run figures.",
+   "fieldname": "rate_recalc_dry_run",
+   "fieldtype": "Check",
+   "label": "Dry Run"
+  },
+  {
+   "fieldname": "sb_last_recalc",
+   "fieldtype": "Section Break",
+   "label": "Last recalculation"
+  },
+  {
+   "fieldname": "last_recalc_run",
+   "fieldtype": "Link",
+   "label": "Last Run",
+   "options": "Work Rate Recalc Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_recalc_on",
+   "fieldtype": "Datetime",
+   "label": "Last Run On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_last",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_recalc_by",
+   "fieldtype": "Link",
+   "label": "Last Run By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_recalc_summary",
+   "fieldtype": "Small Text",
+   "label": "Last Run Summary",
+   "read_only": 1
   }
  ],
  "idx": 0,
