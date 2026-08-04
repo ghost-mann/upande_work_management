@@ -261,14 +261,28 @@ def wm_rates(**kwargs):
         else:
             aw_day_before = frappe.utils.add_days(aw_from, -1)
             # every task whose period in force the day before is wage-derived
+            # optional project scope: rates live on Task, and Task belongs to a
+            # Project, so a rate card that only covers e.g. the avocado and coffee
+            # task lists must not touch anything else.
+            aw_projects = []
+            for pj in str(frappe.form_dict.get("projects") or "").split(","):
+                pv = pj.strip()
+                if pv and pv not in aw_projects:
+                    aw_projects.append(pv)
+            aw_cond = ""
+            aw_params = {"d": aw_day_before}
+            if aw_projects:
+                aw_cond = " AND t.project IN %(projects)s"
+                aw_params["projects"] = tuple(aw_projects)
             aw_rows = frappe.db.sql("""
                 SELECT wtr.name period, wtr.task, wtr.rate, wtr.uom, wtr.daily_target,
                        wtr.daily_wage_basis, wtr.valid_from, wtr.valid_to
                 FROM `tabWork Task Rate` wtr
+                INNER JOIN `tabTask` t ON t.name = wtr.task
                 WHERE wtr.derived = 1
                   AND wtr.valid_from <= %(d)s
                   AND (wtr.valid_to IS NULL OR wtr.valid_to >= %(d)s)
-            """, {"d": aw_day_before}, as_dict=True)
+            """ + aw_cond, aw_params, as_dict=True)
 
             aw_existing = {}
             for e in frappe.db.sql("""
@@ -342,6 +356,7 @@ def wm_rates(**kwargs):
             out["wage"] = aw_wage
             out["effective_from"] = aw_from
             out["periods_written"] = aw_made
+            out["projects"] = aw_projects or "all"
             out["skipped"] = aw_skipped
             out["preview"] = aw_preview[:400]
 
@@ -563,6 +578,72 @@ def wm_rates(**kwargs):
                 out["parents_resummed"] = len(rc_parents)
                 out["payments_updated"] = len(rc_payments)
                 out["remaining"] = len(rc_todo) - len(batch)
+
+    # ==================================================================
+    # REVERT PERIODS — undo rate periods written out of scope
+    #
+    # Deletes the named periods, re-opens whichever period they superseded, and
+    # mirrors the restored rate back onto the Task. Refuses any period that has
+    # already priced work, so this can only ever undo an unused rate change.
+    # ==================================================================
+    elif action == "revert_periods":
+        rp_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 1)
+        rp_raw = frappe.form_dict.get("names") or ""
+        rp_names = []
+        for rp in str(rp_raw).split(","):
+            rv = rp.strip()
+            if rv and rv not in rp_names:
+                rp_names.append(rv)
+        if not rp_names:
+            out["error"] = "names is required (CSV)"
+        else:
+            rp_done = []
+            rp_refused = []
+            for rn in rp_names:
+                row = frappe.db.get_value("Work Task Rate", rn,
+                    ["name", "task", "valid_from", "rate"], as_dict=True)
+                if not row:
+                    rp_refused.append({"name": rn, "why": "not found"})
+                    continue
+                used = frappe.db.sql("""
+                    SELECT COUNT(*) n
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE ac.task = %(t)s AND we.work_date >= %(d)s
+                      AND IFNULL(we.amount,0) > 0
+                """, {"t": row.task, "d": row.valid_from}, as_dict=True)
+                if used and frappe.utils.cint(used[0].n):
+                    rp_refused.append({"name": rn, "task": row.task,
+                                       "why": "has " + str(used[0].n) + " valued rows on/after " +
+                                              str(row.valid_from) + " - reverse the recalc first"})
+                    continue
+                prev = frappe.db.sql("""
+                    SELECT name, rate, uom, daily_target FROM `tabWork Task Rate`
+                    WHERE task = %(t)s AND name != %(me)s AND valid_to = %(yday)s
+                    ORDER BY valid_from DESC LIMIT 1
+                """, {"t": row.task, "me": rn,
+                      "yday": frappe.utils.add_days(row.valid_from, -1)}, as_dict=True)
+                entry = {"name": rn, "task": row.task, "removed_rate": frappe.utils.flt(row.rate, 6),
+                         "restored_rate": frappe.utils.flt(prev[0].rate, 6) if prev else None}
+                rp_done.append(entry)
+                if rp_dry:
+                    continue
+                frappe.delete_doc("Work Task Rate", rn, ignore_permissions=True, force=True)
+                if prev:
+                    frappe.db.set_value("Work Task Rate", prev[0].name, "valid_to", None)
+                    # db.set_value bypasses document events, so the Task hook cannot
+                    # fire and re-create the period we just removed
+                    frappe.db.set_value("Task", row.task, {
+                        "custom_rate": frappe.utils.flt(prev[0].rate),
+                        "custom_uom": prev[0].uom,
+                        "custom_daily_target": frappe.utils.flt(prev[0].daily_target),
+                    })
+            if not rp_dry:
+                frappe.db.commit()
+            out["dry_run"] = rp_dry
+            out["reverted"] = rp_done
+            out["reverted_count"] = len(rp_done)
+            out["refused"] = rp_refused
 
     # ==================================================================
     # SYNC DOC RATES — realign Work Management Actuals.rate after a recalc
