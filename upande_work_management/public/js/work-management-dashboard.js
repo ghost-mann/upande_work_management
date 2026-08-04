@@ -603,7 +603,7 @@
     if(!rows.length) return h+'<div class="empty">Empty.</div></div></div>';
     h+='<table><thead><tr><th>Ref</th><th>Run</th><th class="n">Workers</th><th class="n">Total KES</th></tr></thead><tbody>';
     rows.forEach(function(r){
-      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.run_title)+'</td><td class="n m">'+fmt(r.total_workers)+'</td><td class="n m">'+fmt(r.grand_total)+'</td></tr>';
+      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.run_title)+'</td><td class="n m">'+fmt(r.total_workers)+'</td><td class="n m">'+fmt(r.amount)+'</td></tr>';
     });
     return h+'</tbody></table></div></div>';
   }
@@ -984,7 +984,7 @@
     } else if(stage==="actuals"){
       h+='<th class="n">Std</th><th>Actual</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Workers</th><th class="n">Payment</th><th>State</th><th>Entered by</th><th>Created</th>';
     } else {
-      h+='<th>Payment</th><th class="n">Grand total</th><th>Period</th><th>State</th><th>Created</th>';
+      h+='<th>Payment</th><th class="n">Amount</th><th>Period</th><th>State</th><th>Created</th>';
     }
     h+='</tr></thead><tbody>';
     rows.forEach(function(r){
@@ -997,7 +997,7 @@
       } else if(stage==="actuals"){
         h+='<tr data-actual="'+esc(r.name)+'"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+money(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.entered_by||"—")+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       } else {
-        h+='<tr data-payment="'+esc(r.name)+'"><td><b>'+esc(r.run_title||r.name)+'</b></td><td class="n m">'+money(r.grand_total)+'</td><td>'+esc(r.period_from||"?")+' → '+esc(r.period_to||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-payment="'+esc(r.name)+'"><td><b>'+esc(r.run_title||r.name)+'</b></td><td class="n m">'+money(r.amount)+'</td><td>'+esc(r.period_from||"?")+' → '+esc(r.period_to||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       }
     });
     return h+'</tbody></table>';
@@ -1083,8 +1083,8 @@
       h+='<div class="pex-sec">PAYMENT RUNS ('+pays.length+')</div>';
       if(!pays.length){ h+='<div class="empty">No payment runs.</div>'; }
       else {
-        h+='<table class="pex"><thead><tr><th>Run</th><th class="n">Grand total</th><th>Period</th><th>State</th><th>Created</th><th></th></tr></thead><tbody>';
-        pays.forEach(function(pm){ h+='<tr><td>'+esc(pm.name)+'</td><td class="n m">'+money(pm.grand_total)+'</td><td>'+esc(pm.period_from||"?")+' → '+esc(pm.period_to||"?")+'</td><td>'+stateTag(pm.workflow_state)+'</td><td>'+fmtDT(pm.creation)+'</td><td>'+deskLink("Work Management Payment",pm.name)+'</td></tr>'; });
+        h+='<table class="pex"><thead><tr><th>Run</th><th class="n">Amount</th><th>Period</th><th>State</th><th>Created</th><th></th></tr></thead><tbody>';
+        pays.forEach(function(pm){ h+='<tr><td>'+esc(pm.name)+'</td><td class="n m">'+money(pm.amount)+'</td><td>'+esc(pm.period_from||"?")+' → '+esc(pm.period_to||"?")+'</td><td>'+stateTag(pm.workflow_state)+'</td><td>'+fmtDT(pm.creation)+'</td><td>'+deskLink("Work Management Payment",pm.name)+'</td></tr>'; });
         h+='</tbody></table>';
       }
       body.innerHTML=h;
@@ -1179,15 +1179,15 @@
       var p=d.payment||{}; var lines=d.lines||[];
       var h='<div class="pex-h"><h2>'+esc(p.run_title||p.name||payName)+'</h2>'+stateTag(p.workflow_state)+deskLink("Work Management Payment",p.name||payName)+'</div>';
       h+='<div class="pex-sec">PAYMENT RUN</div><div class="pex-kv">'+
-         '<div><span>Grand total</span><b>'+money(p.grand_total)+' KES</b></div>'+
+         '<div><span>Amount</span><b>'+money(p.amount)+' KES</b></div>'+
          '<div><span>Period</span><b>'+esc(p.period_from||"?")+' → '+esc(p.period_to||"?")+'</b></div>'+
-         '<div><span>Run date</span><b>'+esc(p.run_date||"—")+'</b></div>'+
+         '<div><span>Payroll date</span><b>'+esc(p.payroll_date||"—")+'</b></div>'+
          '<div><span>Company</span><b>'+esc(p.company||"—")+'</b></div>'+
          '<div><span>Actuals in run</span><b>'+fmt(p.total_actuals)+'</b></div>'+
          '<div><span>Workers paid</span><b>'+fmt(p.total_workers)+'</b></div>'+
          '<div><span>Created</span><b>'+fmtDT(p.creation)+'</b></div>'+
          '</div>';
-      h+='<div class="pex-trail">'+trail("Prepared by",p.prepared_by,p.run_date)+trail("Accounts approved",p.accounts_approved_by,p.accounts_approval_date)+'</div>';
+      h+='<div class="pex-trail">'+trail("Prepared by",p.prepared_by,p.payroll_date)+trail("Accounts approved",p.accounts_approved_by,p.accounts_approval_date)+'</div>';
       h+='<div class="pex-sec">PAYMENT LINES ('+lines.length+')</div>';
       if(!lines.length){ h+='<div class="empty">No payment lines.</div>'; }
       else {
@@ -1203,7 +1203,7 @@
   function setStates(){
     var stSel=el("pex-state");
     if(!stSel) return;
-    var opts={plans:["Draft","Pending Approval","Approved","Rejected"],assignments:["Draft","Pending Farm Manager","Pending HR Head","Pending GM","Assigned","Rejected"],actuals:["Draft","Pending Farm Manager","Pending HR Head","Pending GM","Confirmed","Rejected"],payments:["Draft","Pending Accounts","Paid","Rejected"]};
+    var opts={plans:["Draft","Pending Approval","Approved","Rejected"],assignments:["Draft","Pending Farm Manager","Pending HR Head","Pending GM","Assigned","Rejected"],actuals:["Draft","Pending Farm Manager","Pending HR Head","Pending GM","Confirmed","Rejected"],payments:["Draft","Unpaid","Paid","Rejected"]};
     stSel.innerHTML='<option value="">All states</option>';
     (opts[PEX.stage]||[]).forEach(function(o){ var e=document.createElement("option"); e.value=o; e.textContent=o; stSel.appendChild(e); });
   }
@@ -1856,7 +1856,7 @@
     } else {
       box.innerHTML=qTable(D.pay_pending_list||[],
         [["Ref"],["Run"],["Workers",1],["Total KES",1]],
-        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.run_title||"—")+'</td><td class="n m">'+fmt(r.total_workers)+'</td><td class="n m">'+fmt(r.grand_total)+'</td>'; });
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.run_title||"—")+'</td><td class="n m">'+fmt(r.total_workers)+'</td><td class="n m">'+fmt(r.amount)+'</td>'; });
     }
   }
 

@@ -544,9 +544,9 @@ def wm_rates(**kwargs):
                             ln.old_amount = frappe.utils.flt(pl.amount)
                             ln.new_amount = new_line_amt
                         grand = grand + new_line_amt
-                    old_grand = frappe.utils.flt(frappe.db.get_value("Work Management Payment", pay, "grand_total"))
+                    old_grand = frappe.utils.flt(frappe.db.get_value("Work Management Payment", pay, "amount"))
                     if abs(grand - old_grand) > 0.005:
-                        frappe.db.set_value("Work Management Payment", pay, "grand_total",
+                        frappe.db.set_value("Work Management Payment", pay, "amount",
                                             frappe.utils.flt(grand, 2), update_modified=False)
                         frappe.get_doc({
                             "doctype": "Comment",
@@ -748,7 +748,7 @@ def wm_rates(**kwargs):
                         SELECT COALESCE(SUM(amount),0) a FROM `tabWork Payment Line` WHERE parent = %s
                     """, (pay,), as_dict=True)
                     if tot:
-                        frappe.db.set_value("Work Management Payment", pay, "grand_total",
+                        frappe.db.set_value("Work Management Payment", pay, "amount",
                                             frappe.utils.flt(tot[0].a, 2), update_modified=False)
                 frappe.db.set_value("Work Rate Recalc Run", rv_run, {
                     "status": "Reversed",

@@ -18,14 +18,14 @@
   "workflow_state",
   "cb_top",
   "company",
-  "run_date",
+  "payroll_date",
   "sb_lines",
   "lines",
   "sb_tot",
   "total_actuals",
   "total_workers",
   "cb_tot",
-  "grand_total",
+  "amount",
   "sb_audit",
   "prepared_by",
   "cb_audit",
@@ -115,9 +115,9 @@
    "read_only": 1
   },
   {
-   "fieldname": "run_date",
+   "fieldname": "payroll_date",
    "fieldtype": "Date",
-   "label": "Run Date",
+   "label": "Payroll Date",
    "read_only": 1
   },
   {
@@ -154,10 +154,10 @@
   },
   {
    "bold": 1,
-   "fieldname": "grand_total",
+   "fieldname": "amount",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Grand Total (KES)",
+   "label": "Amount (KES)",
    "read_only": 1
   },
   {

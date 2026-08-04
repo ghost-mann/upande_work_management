@@ -130,7 +130,7 @@ def wm_dashboard(**kwargs):
                 rows_out.append(r)
         elif stage == "payments":
             recs = safe_get_all("Work Management Payment",
-                ["name","run_title","workflow_state","period_from","period_to","grand_total","total_workers","creation"], "creation desc", 1000)
+                ["name","run_title","workflow_state","period_from","period_to","amount","total_workers","creation"], "creation desc", 1000)
             for r in recs:
                 if fstate and r.get("workflow_state") != fstate:
                     continue
@@ -304,7 +304,7 @@ def wm_dashboard(**kwargs):
         out["assignments"] = asgs
         # payments that include any actuals from this plan (via period + farm best-effort) — list all, UI notes linkage
         out["payments"] = lin_get("Work Management Payment", {},
-            ["name","workflow_state","period_from","period_to","grand_total","creation"], "creation desc", 50)
+            ["name","workflow_state","period_from","period_to","amount","creation"], "creation desc", 50)
 
     elif action == "actual_detail":
         aname = frappe.form_dict.get("actual")
@@ -349,8 +349,8 @@ def wm_dashboard(**kwargs):
         pm_valid = ["name","creation","modified","owner"]
         for f in pm_meta.fields:
             pm_valid.append(f.fieldname)
-        pm_want = ["name","run_title","workflow_state","company","run_date","period_from","period_to",
-                   "total_actuals","total_workers","grand_total","prepared_by","accounts_approved_by",
+        pm_want = ["name","run_title","workflow_state","company","payroll_date","period_from","period_to",
+                   "total_actuals","total_workers","amount","prepared_by","accounts_approved_by",
                    "accounts_approval_date","creation"]
         pm_fields = []
         for f in pm_want:
@@ -737,7 +737,7 @@ def wm_dashboard(**kwargs):
         unpaid_row = frappe.db.sql("""SELECT SUM(total_payment) s FROM `tabWork Management Actuals`
             WHERE workflow_state='CONFIRMED' AND IFNULL(paid,0)=0""", as_dict=True)
         unpaid = (unpaid_row[0].s or 0) if unpaid_row else 0
-        paid_row = frappe.db.sql("""SELECT SUM(grand_total) s FROM `tabWork Management Payment`
+        paid_row = frappe.db.sql("""SELECT SUM(amount) s FROM `tabWork Management Payment`
             WHERE workflow_state='Paid'""", as_dict=True)
         paid_total = (paid_row[0].s or 0) if paid_row else 0
 
@@ -786,7 +786,7 @@ def wm_dashboard(**kwargs):
             "crew_days": tot_crewdays,
             "unpaid": unpaid, "paid_total": paid_total,
             "act_pending": act_states.get("Pending Farm Manager", 0) + act_states.get("Pending HR Head", 0) + act_states.get("Pending GM", 0),
-            "pay_pending": pay_states.get("Pending Accounts", 0)}
+            "pay_pending": pay_states.get("Unpaid", 0)}
         out["funnel"] = {"planned": plan_states.get("Approved", 0), "assigned": asg_states.get("Assigned", 0),
             "confirmed": act_states.get("CONFIRMED", 0), "paid": pay_states.get("Paid", 0)}
         out["plan_pending"] = frappe.db.get_all("Work Management Planner",
@@ -802,8 +802,8 @@ def wm_dashboard(**kwargs):
             fields=["name","farm","task","workflow_state","actual_people","payroll_people","total_payment"],
             order_by="entry_date desc", limit=50)
         out["pay_pending_list"] = frappe.db.get_all("Work Management Payment",
-            filters={"workflow_state": "Pending Accounts"},
-            fields=["name","run_title","total_workers","grand_total"], order_by="run_date desc", limit=50)
+            filters={"workflow_state": "Unpaid"},
+            fields=["name","run_title","total_workers","amount"], order_by="payroll_date desc", limit=50)
         # ---- approval speed (step by step): per sign-off step, timing + who + what's waiting now ----
         appr_names = {}
         appr_eff = []
@@ -862,7 +862,7 @@ def wm_dashboard(**kwargs):
         eff_step("Work plans", "Approve", "Work Management Planner", "approved_by", "approval_date", "Approved", ["Pending Approval"])
         eff_step("Assignments", "GM", "Work Management Assigner", "approved_by", "approval_date", "Assigned", ["Pending Farm Manager","Pending HR Head","Pending GM"])
         eff_step("Work records", "GM", "Work Management Actuals", "gm_approved_by", "gm_approval_date", "CONFIRMED", ["Pending Farm Manager","Pending HR Head","Pending GM"])
-        eff_step("Payments", "Accounts", "Work Management Payment", "accounts_approved_by", "accounts_approval_date", "Paid", ["Pending Accounts"])
+        eff_step("Payments", "Accounts", "Work Management Payment", "accounts_approved_by", "accounts_approval_date", "Paid", ["Unpaid"])
         out["approval_eff"] = appr_eff
         out["approver_names"] = appr_names
 
@@ -1470,9 +1470,9 @@ def wm_dashboard(**kwargs):
             "v_mid": frappe.utils.flt(cu[0].vm) if cu else 0,
             "v_old": frappe.utils.flt(cu[0].vo) if cu else 0})
         ledge("sent_accounts", "Sent, awaiting release by accounts", "/work-payment",
-            frappe.db.get_all("Work Management Payment", filters={"workflow_state": "Pending Accounts"},
-                fields=["grand_total", "custom_submitted_at", "creation"], limit=2000),
-            "grand_total", ["custom_submitted_at", "creation"])
+            frappe.db.get_all("Work Management Payment", filters={"workflow_state": "Unpaid"},
+                fields=["amount", "custom_submitted_at", "creation"], limit=2000),
+            "amount", ["custom_submitted_at", "creation"])
         out["ledger"] = ledger
 
         # ---- 2 · SPEED TO PAY: how long a day of work takes to reach the worker ----
@@ -1580,7 +1580,7 @@ def wm_dashboard(**kwargs):
         desk_add("Work Management Actuals", {"hr_approved_by": ["is", "set"]}, "hr_approved_by",
                  "total_payment", ["custom_hr_approved_at", "hr_approval_date"], False)
         desk_add("Work Management Payment", {"accounts_approved_by": ["is", "set"]}, "accounts_approved_by",
-                 "grand_total", ["custom_accounts_approved_at", "accounts_approval_date"], False)
+                 "amount", ["custom_accounts_approved_at", "accounts_approval_date"], False)
         GLBL = {"Work Management Planner": "Plans", "Work Management Assigner": "Assignments",
                 "Work Management Actuals": "Actuals", "Work Management Payment": "Payments"}
         dlist = []
@@ -1673,7 +1673,7 @@ def wm_dashboard(**kwargs):
                    "gm_approved_by", "total_payment", ["custom_gm_approved_at", "gm_approval_date"],
                    ["custom_hr_approved_at", "custom_fm_approved_at", "custom_submitted_at"])
         stage_bars("Payment — accounts release", "Work Management Payment",
-                   "accounts_approved_by", "grand_total", ["custom_accounts_approved_at", "accounts_approval_date"],
+                   "accounts_approved_by", "amount", ["custom_accounts_approved_at", "accounts_approval_date"],
                    ["custom_submitted_at"])
         out["stages"] = stages_out
 
@@ -1800,7 +1800,7 @@ def wm_dashboard(**kwargs):
         prole("actuals_entered", "Work Management Actuals", "entered_by", "total_payment", "entry_date", None)
         prole("hr_approved", "Work Management Actuals", "hr_approved_by", "total_payment", "hr_approval_date", None)
         prole("gm_confirmed", "Work Management Actuals", "gm_approved_by", "total_payment", "gm_approval_date", None)
-        prole("pay_released", "Work Management Payment", "accounts_approved_by", "grand_total", "accounts_approval_date", None)
+        prole("pay_released", "Work Management Payment", "accounts_approved_by", "amount", "accounts_approval_date", None)
 
         plist = []
         for who in people:
@@ -2076,7 +2076,7 @@ def wm_dashboard(**kwargs):
         qcount("Work Management Actuals", "Pending Farm Manager", "Actuals → FM", ["custom_submitted_at"])
         qcount("Work Management Actuals", "Pending HR Head", "Actuals → HR", ["custom_fm_approved_at", "custom_submitted_at"])
         qcount("Work Management Actuals", "Pending GM", "Actuals → GM", ["custom_hr_approved_at", "custom_submitted_at"])
-        qcount("Work Management Payment", "Pending Accounts", "Payments → Accounts", ["custom_submitted_at", "creation"])
+        qcount("Work Management Payment", "Unpaid", "Payments → Accounts", ["custom_submitted_at", "creation"])
         out["queues"] = queues
         out["window"] = {"from": str(kfrom), "to": str(kto)}
 
