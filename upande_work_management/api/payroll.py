@@ -42,7 +42,7 @@ def wm_payroll(**kwargs):
 
     if action == "meta":
         out["component"] = frappe.db.get_single_value(
-            "Work Management Settings", "additional_salary_component")
+            "Work Management Settings", "salary_component")
         out["payments"] = frappe.db.count("Work Management Payment")
         out["with_payroll_date"] = frappe.db.count(
             "Work Management Payment", {"payroll_date": ["is", "set"]})
@@ -164,7 +164,7 @@ def wm_payroll(**kwargs):
             else:
                 out["payment"] = p
                 out["component"] = frappe.db.get_single_value(
-                    "Work Management Settings", "additional_salary_component")
+                    "Work Management Settings", "salary_component")
                 out["existing"] = frappe.db.get_all("Additional Salary",
                     filters={"ref_doctype": "Work Management Payment", "ref_docname": ap_name},
                     fields=["name", "docstatus", "amount", "payroll_date", "salary_component"])
