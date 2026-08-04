@@ -48,7 +48,7 @@
   "last_recalc_by",
   "last_recalc_summary",
   "sb_payroll",
-  "additional_salary_component"
+  "salary_component"
  ],
  "fields": [
   {
@@ -324,11 +324,11 @@
    "description": "Sending a worker to accounts creates a submitted Additional Salary against this component, so payroll picks the earnings up on the next salary slip."
   },
   {
-   "fieldname": "additional_salary_component",
+   "fieldname": "salary_component",
    "fieldtype": "Link",
-   "label": "Additional Salary Component",
+   "label": "Salary Component",
    "options": "Salary Component",
-   "description": "Earning component used for Work Management payments. Leave empty to stop Additional Salary records being created."
+   "description": "Earning component the Additional Salary is raised against. Leave empty to stop Additional Salary records being created."
   }
  ],
  "idx": 0,
