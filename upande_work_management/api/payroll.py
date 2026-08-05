@@ -56,80 +56,35 @@ def wm_payroll(**kwargs):
             "Additional Salary", {"ref_doctype": "Work Management Payment"})
 
     elif action == "backfill_fields":
-        # payroll_date = last working day of the work period for THIS worker.
-        # Kept for re-running after a bulk import; amount is set at creation time.
+        # payroll_date = the day the pay week closes, which IS the pay day. Periods
+        # are pay weeks, so that is simply period_to. Kept as an action so a bulk
+        # import or a change of pay day can be re-applied.
         bf_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 1)
-        bf_limit = frappe.utils.cint(frappe.form_dict.get("limit") or 1000)
         bf_force = frappe.utils.cint(frappe.form_dict.get("force"))
-        bf_cond = "" if bf_force else " WHERE IFNULL(p.payroll_date,'') = ''"
-        # anchor on the LAST DAY ACTUALLY WORKED in this payment, not period_to --
-        # period_to is the filter window that happened to be on screen when the
-        # worker was sent, so it can sit days after the work itself.
+        bf_limit = frappe.utils.cint(frappe.form_dict.get("limit") or 5000)
+        bf_cond = "" if bf_force else " AND IFNULL(p.payroll_date,'') = ''"
         rows = frappe.db.sql("""
-            SELECT p.name, p.employee, p.period_from, p.period_to, p.payroll_date, p.amount,
-                   (SELECT MAX(l.work_to) FROM `tabWork Payment Line` l WHERE l.parent = p.name) worked_to
+            SELECT p.name, p.period_from, p.period_to, p.payroll_date
             FROM `tabWork Management Payment` p
-            """ + bf_cond + """
+            WHERE IFNULL(p.period_to,'') != ''""" + bf_cond + """
             ORDER BY p.creation
             LIMIT %(lim)s
         """, {"lim": bf_limit}, as_dict=True)
-
-        # holiday lists for every employee involved, fetched once
-        emps = []
-        for r in rows:
-            if r.employee and r.employee not in emps:
-                emps.append(r.employee)
-        hl_by_emp = {}
-        if emps:
-            for e in frappe.db.sql("""
-                SELECT name, holiday_list FROM `tabEmployee` WHERE name IN %(e)s
-            """, {"e": tuple(emps)}, as_dict=True):
-                hl_by_emp[e.name] = e.holiday_list
-        hol_cache = {}
-
         done = []
-        no_period = 0
         for r in rows:
-            anchor = r.worked_to or r.period_to
-            if not anchor:
-                no_period = no_period + 1
+            want = str(r.period_to)[:10]
+            if str(r.payroll_date or "")[:10] == want:
                 continue
-            hl = hl_by_emp.get(r.employee)
-            payroll = anchor
-            if hl:
-                key = str(hl)
-                if key not in hol_cache:
-                    hset = {}
-                    for h in frappe.db.sql("""
-                        SELECT holiday_date d FROM `tabHoliday` WHERE parent = %(p)s
-                    """, {"p": hl}, as_dict=True):
-                        hset[str(h.d)] = 1
-                    hol_cache[key] = hset
-                hset = hol_cache[key]
-                step = 0
-                while step < MAX_LOOKBACK:
-                    cand = frappe.utils.add_days(anchor, -step)
-                    if not hset.get(str(cand)):
-                        payroll = cand
-                        break
-                    step = step + 1
-            entry = {"name": r.name, "employee": r.employee,
-                     "worked_to": str(anchor), "period_to": str(r.period_to),
-                     "was": str(r.payroll_date or ""), "payroll_date": str(payroll),
-                     "amount": frappe.utils.flt(r.amount)}
-            done.append(entry)
+            done.append({"name": r.name, "was": str(r.payroll_date or ""), "now": want})
             if not bf_dry:
                 frappe.db.set_value("Work Management Payment", r.name,
-                                    "payroll_date", payroll, update_modified=False)
+                                    "payroll_date", want, update_modified=False)
         if not bf_dry:
             frappe.db.commit()
         out["dry_run"] = bf_dry
         out["considered"] = len(rows)
-        out["updated"] = len(done)
-        out["no_anchor_date"] = no_period
-        out["moved_off_last_worked_day"] = len([d for d in done if d["payroll_date"] != d["worked_to"]])
-        out["changed"] = len([d for d in done if d["was"] and d["was"] != d["payroll_date"]])
-        out["sample"] = done[:15]
+        out["changed"] = len(done)
+        out["sample"] = done[:12]
 
     elif action == "migrate_state":
         # Workflow State masters cannot be renamed in Frappe, so the move from

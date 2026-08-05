@@ -7,6 +7,7 @@
     workers: [],        // current payable list (from pay_workers)
     picked: {},         // employee -> row, selected for the run
     bulk: {},           // employee -> {status, amt, nm} ticked for bulk review/send
+    canSend: false,     // only HR head / accounting / GM may send work to accounts
     accBulk: {},        // WMPAY name -> {nm, amt} ticked for bulk return-to-unpaid
     farms: [],          // [{farm, workers, owed}] summary across window
     activeFarms: {},    // farm -> 1 (chip filter); empty = all
@@ -359,7 +360,7 @@
       var unpaid=w.unpaid_amt!=null?w.unpaid_amt:w.owed;
       tq+=(w.qty||0); te+=(w.owed||0); tp+=(w.paid_amt||0); tu+=(unpaid||0);
       var acts='<button type="button" class="btn sm" data-review="'+esc(w.emp)+'">Review</button>';
-      if(w.pay_status==="Unpaid"||w.pay_status==="Reviewed"){
+      if(ST.canSend && (w.pay_status==="Unpaid"||w.pay_status==="Reviewed")){
         acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
       }
       var actionable=(w.pay_status==="Unpaid"||w.pay_status==="Reviewed") && (unpaid||0)>0.001;
@@ -1321,7 +1322,7 @@
       flt.forEach(function(g){
         tq+=g.qty; te+=g.amount; tp+=g.paid_amt; tu+=g.unpaid_amt;
         var acts='<button type="button" class="btn sm" data-review="'+esc(g.emp)+'">Review</button>';
-        if(g.unpaid_amt>0.001 && g.status==="Reviewed"){
+        if(ST.canSend && g.unpaid_amt>0.001 && g.status==="Reviewed"){
           acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.unpaid_amt+'">Send to accounts</button>';
         }
         t+='<tr><td><span class="rowlink" data-review="'+esc(g.emp)+'">'+esc(g.nm)+'</span></td>'+
@@ -2126,6 +2127,7 @@
     // roles (gate mark-paid) then first load
     call({ action:"pay_roles" }).then(function(d){
       ST.isAccounts=!!d.is_accounts;
+      ST.canSend=!!d.can_send;
       if(d.week_ends_on && d.week_ends_on!==PW.endsOn){
         PW.endsOn=d.week_ends_on;
         pwApply(pwLatestCompleteStart(), false);

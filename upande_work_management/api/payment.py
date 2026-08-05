@@ -30,6 +30,18 @@ def wm_payment(**kwargs):
     SATURDAY_HOURS = 6
     SUNDAY_HOURS = 8
 
+    # WHO MAY SEND WORK TO ACCOUNTS
+    # Sending creates the payment record and commits the money, so it is limited to
+    # the HR head, accounting and the general manager. Everyone else can review and
+    # audit; the buttons are hidden for them and the actions refuse server-side, so
+    # hiding the UI is not the only thing standing between a farm clerk and payroll.
+    SEND_ROLES = ["HOD HR", "Accounts Manager", "Accounts User", "General Manager", "System Manager"]
+    send_role_list = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+    CAN_SEND = 0
+    for sr in SEND_ROLES:
+        if sr in send_role_list:
+            CAN_SEND = 1
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -40,6 +52,10 @@ def wm_payment(**kwargs):
             fields=["name","farm","task","block_section","payroll_people","total_payment","entry_date"],
             order_by="farm", limit=500)
         out["actuals"] = rows
+
+    elif action == "pay_submit" and not CAN_SEND:
+        out["error"] = ("Only the HR head, accounting or the general manager can send work to "
+                        "accounts. You can review and audit, but not create the payment.")
 
     elif action == "pay_submit":
         # Worker-centric: pay a list of employees. Each becomes ONE payment line summarising
@@ -267,19 +283,60 @@ def wm_payment(**kwargs):
         out["total_days"] = len(days)
 
     elif action == "pay_pending":
+        # The queue can run to thousands. It is paged rather than silently cut off
+        # at 200: the true total always comes back, so the tab can never imply the
+        # queue is smaller than it is.
+        pp_limit = frappe.utils.cint(frappe.form_dict.get("limit") or 200)
+        if pp_limit < 1:
+            pp_limit = 200
+        if pp_limit > 1000:
+            pp_limit = 1000
+        pp_start = frappe.utils.cint(frappe.form_dict.get("start") or 0)
+        pp_week = frappe.form_dict.get("payroll_date")
+        pp_filters = {"workflow_state": "Unpaid"}
+        if pp_week:
+            pp_filters["payroll_date"] = pp_week
+        out["total"] = frappe.db.count("Work Management Payment", pp_filters)
+        out["total_amount"] = frappe.utils.flt(frappe.db.sql("""
+            SELECT COALESCE(SUM(amount),0) a FROM `tabWork Management Payment`
+            WHERE workflow_state = 'Unpaid'
+        """, as_dict=True)[0].a)
+        # every pay week in the queue, so accounts can work a week at a time
+        out["weeks"] = frappe.db.sql("""
+            SELECT payroll_date, period_from, period_to, COUNT(*) n,
+                   COALESCE(SUM(amount),0) amount
+            FROM `tabWork Management Payment`
+            WHERE workflow_state = 'Unpaid'
+            GROUP BY payroll_date, period_from, period_to
+            ORDER BY payroll_date DESC
+        """, as_dict=True)
         pend = frappe.db.get_all("Work Management Payment",
-            filters={"workflow_state":"Unpaid"},
+            filters=pp_filters,
             fields=["name","run_title","total_actuals","total_workers","amount","prepared_by","payroll_date",
                     "period_from","period_to"],
-            order_by="payroll_date desc", limit=200)
+            order_by="payroll_date desc, name asc", limit=pp_limit, start=pp_start)
+        # one query for the worker names rather than one per payment
+        pp_names = [pr.name for pr in pend]
+        pp_emp = {}
+        if pp_names:
+            for ln in frappe.db.sql("""
+                SELECT parent, employee, employee_name FROM `tabWork Payment Line`
+                WHERE parent IN %(p)s GROUP BY parent, employee, employee_name
+            """, {"p": tuple(pp_names)}, as_dict=True):
+                if ln.parent not in pp_emp:
+                    pp_emp[ln.parent] = ln
         for pr in pend:
-            ln = frappe.db.get_all("Work Payment Line", filters={"parent": pr.name},
-                fields=["employee", "employee_name"], limit=1)
-            pr["employee"] = ln[0].employee if ln else None
-            pr["employee_name"] = ln[0].employee_name if ln else None
+            ln = pp_emp.get(pr.name)
+            pr["employee"] = ln.employee if ln else None
+            pr["employee_name"] = ln.employee_name if ln else None
             pr["period_from"] = str(pr.period_from) if pr.period_from else None
             pr["period_to"] = str(pr.period_to) if pr.period_to else None
+            pr["payroll_date"] = str(pr.payroll_date) if pr.payroll_date else None
         out["pending"] = pend
+        out["start"] = pp_start
+        out["limit"] = pp_limit
+        out["returned"] = len(pend)
+        out["has_more"] = 1 if (pp_start + len(pend)) < out["total"] else 0
 
     elif action == "pay_mark_paid":
         nm = frappe.form_dict.get("name")
@@ -351,10 +408,19 @@ def wm_payment(**kwargs):
         is_acc = ("Accounts User" in rl) or ("Accounts Manager" in rl) or ("System Manager" in rl)
         out["user"] = frappe.session.user
         out["is_accounts"] = 1 if is_acc else 0
+        out["can_send"] = CAN_SEND
         # the page picks pay weeks, not free dates, so it needs the configured
         # week boundary
-        out["week_ends_on"] = frappe.db.get_single_value(
-            "Work Management Settings", "pay_week_ends_on") or "Sunday"
+        r_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        r_start = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
+        r_end = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
+        r_pay = frappe.db.get_single_value("Work Management Settings", "pay_day") or r_end
+        r_si = r_names.index(r_start) if r_start in r_names else 6
+        r_ei = r_names.index(r_end) if r_end in r_names else 5
+        out["week_starts_on"] = r_start
+        out["week_ends_on"] = r_end
+        out["pay_day"] = r_pay
+        out["week_days"] = ((r_ei - r_si) % 7) + 1
 
     elif action == "pay_audit":
         # Reconcile CONFIRMED actuals against assigner + payment, per task/block, for the range.
@@ -1085,6 +1151,10 @@ def wm_payment(**kwargs):
                 out["rows_reviewed"] = len(rows)
                 out["reviewed_by"] = frappe.session.user
 
+    elif action == "pay_worker_submit" and not CAN_SEND:
+        out["error"] = ("Only the HR head, accounting or the general manager can send work to "
+                        "accounts. You can review and audit, but not create the payment.")
+
     elif action == "pay_worker_submit":
         # Approve ONE worker's unpaid confirmed earnings and send them to accounts
         # as a single-worker payment run (workers are paid one at a time).
@@ -1099,11 +1169,18 @@ def wm_payment(**kwargs):
             # instead of a single lump covering several. The week still in progress
             # is held back until it closes -- otherwise that week would need a
             # second document later and payroll would see it twice.
-            wk_end_day = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Sunday"
+            # Start day, end day and pay day are three independent settings. The
+            # week length follows from start and end, so a week need not be seven
+            # days; the pay day may be the closing day or any day after it.
             wk_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            wk_end_idx = wk_names.index(wk_end_day) if wk_end_day in wk_names else 6
-            wk_start_wd = (wk_end_idx + 1) % 7
-            wconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+            wk_start_day = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
+            wk_end_day = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
+            wk_pay_day = frappe.db.get_single_value("Work Management Settings", "pay_day") or wk_end_day
+            wk_start_wd = wk_names.index(wk_start_day) if wk_start_day in wk_names else 6
+            wk_end_idx = wk_names.index(wk_end_day) if wk_end_day in wk_names else 5
+            wk_pay_idx = wk_names.index(wk_pay_day) if wk_pay_day in wk_names else wk_end_idx
+            wk_len = ((wk_end_idx - wk_start_wd) % 7) + 1
+            wconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
             wparams = [emp]
             if dfrom:
                 wconds = wconds + " AND we.work_date >= %s"
@@ -1120,11 +1197,17 @@ def wm_payment(**kwargs):
             """, tuple(wparams), as_dict=True)
             wk_today = frappe.utils.getdate(frappe.utils.today())
             wk_map = {}
+            wk_outside = []
             for wr in wk_rows:
                 wdd = frappe.utils.getdate(wr.d)
                 wk_back = (wdd.weekday() - wk_start_wd) % 7
+                if wk_back >= wk_len:
+                    # the pay week is shorter than seven days and this weekday sits
+                    # in the gap, so it belongs to no week -- reported, never dropped
+                    wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
+                    continue
                 wk_s = frappe.utils.add_days(wdd, -wk_back)
-                wk_e = frappe.utils.add_days(wk_s, 6)
+                wk_e = frappe.utils.add_days(wk_s, wk_len - 1)
                 wk_key = str(wk_s)
                 if wk_key not in wk_map:
                     wk_map[wk_key] = {"week_from": str(wk_s), "week_to": str(wk_e),
@@ -1138,7 +1221,11 @@ def wm_payment(**kwargs):
             out["weeks"] = wk_list
             out["weeks_ready"] = wk_ready
             out["weeks_held"] = wk_held
+            out["week_starts_on"] = wk_start_day
             out["week_ends_on"] = wk_end_day
+            out["pay_day"] = wk_pay_day
+            out["week_days"] = wk_len
+            out["outside_any_week"] = wk_outside
             if frappe.utils.cint(frappe.form_dict.get("preview")):
                 out["preview"] = 1
                 out["would_create"] = len(wk_ready)
@@ -1163,7 +1250,9 @@ def wm_payment(**kwargs):
                         dfrom = wq_from
                     if wq_to and str(dto) > str(wq_to):
                         dto = wq_to
-                    sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                    # IFNULL(payment_ref,'')='' matters: without it a second send re-claims rows
+                    # that already sit on a payment, silently orphaning the first document
+                    sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
                     sparams = [emp]
                     if dfrom:
                         sconds = sconds + " AND we.work_date >= %s"
@@ -1199,26 +1288,13 @@ def wm_payment(**kwargs):
                         d = frappe.new_doc("Work Management Payment")
                         d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                         d.company = DEFAULT_COMPANY
-                        # last working day of this pay week for THIS worker: employees sit
-                        # on different weekly offs, so it is resolved against their own
-                        # Holiday List rather than a company-wide calendar
-                        pd_hl = frappe.db.get_value("Employee", emp, "holiday_list")
-                        pd_anchor = dto
-                        pd_val = pd_anchor
-                        if pd_hl:
-                            pd_step = 0
-                            while pd_step < 14:
-                                pd_c = frappe.utils.add_days(pd_anchor, -pd_step)
-                                if str(pd_c) < str(dfrom):
-                                    break
-                                pd_clash = frappe.db.sql("""
-                                    SELECT name FROM `tabHoliday`
-                                    WHERE parent = %(p)s AND holiday_date = %(d)s LIMIT 1
-                                """, {"p": pd_hl, "d": pd_c}, as_dict=True)
-                                if not pd_clash:
-                                    pd_val = pd_c
-                                    break
-                                pd_step = pd_step + 1
+                        # payroll date = the first pay day on or after the week ends, so
+                        # setting the pay day to the closing day pays on that day
+                        pd_val = dto
+                        pd_guard = 0
+                        while frappe.utils.getdate(pd_val).weekday() != wk_pay_idx and pd_guard < 7:
+                            pd_val = frappe.utils.add_days(pd_val, 1)
+                            pd_guard = pd_guard + 1
                         d.payroll_date = pd_val
                         d.prepared_by = frappe.session.user
                         try:
@@ -1359,6 +1435,10 @@ def wm_payment(**kwargs):
             out["rows_reviewed"] = total_rows
             out["reviewed_by"] = frappe.session.user
 
+    elif action == "pay_bulk_submit" and not CAN_SEND:
+        out["error"] = ("Only the HR head, accounting or the general manager can send work to "
+                        "accounts. You can review and audit, but not create the payment.")
+
     elif action == "pay_bulk_submit":
         # Send SEVERAL reviewed workers to accounts in one call: one Work
         # Management Payment per employee (same shape as pay_worker_submit).
@@ -1380,16 +1460,21 @@ def wm_payment(**kwargs):
             sent_total = 0
             bw_from = dfrom
             bw_to = dto
-            bw_end_day = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Sunday"
             bw_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            bw_start_wd = ((bw_names.index(bw_end_day) if bw_end_day in bw_names else 6) + 1) % 7
+            bw_start_day = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
+            bw_end_day = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
+            bw_pay_day = frappe.db.get_single_value("Work Management Settings", "pay_day") or bw_end_day
+            bw_start_wd = bw_names.index(bw_start_day) if bw_start_day in bw_names else 6
+            bw_end_idx = bw_names.index(bw_end_day) if bw_end_day in bw_names else 5
+            bw_pay_idx = bw_names.index(bw_pay_day) if bw_pay_day in bw_names else bw_end_idx
+            bw_len = ((bw_end_idx - bw_start_wd) % 7) + 1
             bw_today = frappe.utils.getdate(frappe.utils.today())
             for emp in emp_list:
                 # same weekly rule as the single send: one payment per worker per
                 # COMPLETED pay week, with the week in progress held back
                 dfrom = bw_from
                 dto = bw_to
-                bconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                bconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
                 bparams = [emp]
                 if dfrom:
                     bconds = bconds + " AND we.work_date >= %s"
@@ -1407,8 +1492,10 @@ def wm_payment(**kwargs):
                 for br in bwk_rows:
                     bdd = frappe.utils.getdate(br.d)
                     bback = (bdd.weekday() - bw_start_wd) % 7
+                    if bback >= bw_len:
+                        continue
                     bs = frappe.utils.add_days(bdd, -bback)
-                    be = frappe.utils.add_days(bs, 6)
+                    be = frappe.utils.add_days(bs, bw_len - 1)
                     if frappe.utils.getdate(be) < bw_today:
                         bwk[str(bs)] = {"week_from": str(bs), "week_to": str(be)}
                 for wk in sorted(bwk.values(), key=lambda x: x["week_from"]):
@@ -1418,7 +1505,9 @@ def wm_payment(**kwargs):
                         dfrom = bw_from
                     if bw_to and str(dto) > str(bw_to):
                         dto = bw_to
-                    sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                    # IFNULL(payment_ref,'')='' matters: without it a second send re-claims rows
+                    # that already sit on a payment, silently orphaning the first document
+                    sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
                     sparams = [emp]
                     if dfrom:
                         sconds = sconds + " AND we.work_date >= %s"
@@ -1454,26 +1543,14 @@ def wm_payment(**kwargs):
                     d = frappe.new_doc("Work Management Payment")
                     d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                     d.company = DEFAULT_COMPANY
-                    # last working day of this pay week for THIS worker: employees sit
-                    # on different weekly offs, so it is resolved against their own
-                    # Holiday List rather than a company-wide calendar
-                    pd_hl = frappe.db.get_value("Employee", emp, "holiday_list")
-                    pd_anchor = dto
-                    pd_val = pd_anchor
-                    if pd_hl:
-                        pd_step = 0
-                        while pd_step < 14:
-                            pd_c = frappe.utils.add_days(pd_anchor, -pd_step)
-                            if str(pd_c) < str(dfrom):
-                                break
-                            pd_clash = frappe.db.sql("""
-                                SELECT name FROM `tabHoliday`
-                                WHERE parent = %(p)s AND holiday_date = %(d)s LIMIT 1
-                            """, {"p": pd_hl, "d": pd_c}, as_dict=True)
-                            if not pd_clash:
-                                pd_val = pd_c
-                                break
-                            pd_step = pd_step + 1
+                    # payroll date = the day the week closes, which IS the pay day, so a
+                    # week's earnings land on one known date for everyone
+                    # payroll date = the first pay day on or after the week ends
+                    pd_val = dto
+                    pd_guard = 0
+                    while frappe.utils.getdate(pd_val).weekday() != bw_pay_idx and pd_guard < 7:
+                        pd_val = frappe.utils.add_days(pd_val, 1)
+                        pd_guard = pd_guard + 1
                     d.payroll_date = pd_val
                     d.prepared_by = frappe.session.user
                     try:
@@ -2278,7 +2355,16 @@ def wm_payment(**kwargs):
                     frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_by", None, update_modified=False)
                     frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed_at", None, update_modified=False)
                 wt = frappe.db.get_value("Work Management Payment", nm, "run_title")
-                frappe.delete_doc("Work Management Payment", nm, ignore_permissions=True, force=True)
+                try:
+                    frappe.delete_doc("Work Management Payment", nm, ignore_permissions=True, force=True)
+                    # commit per document: a lock clash on one entry must not roll
+                    # back the entries already returned, which is what made the bulk
+                    # action look like it had done nothing
+                    frappe.db.commit()
+                except Exception as e:
+                    frappe.db.rollback()
+                    results.append({"name": nm, "error": str(e)[:120]})
+                    continue
                 done_n = done_n + 1
                 rows_n = rows_n + len(rws)
                 results.append({"name": nm, "run_title": wt, "rows_reset": len(rws)})
@@ -2287,6 +2373,65 @@ def wm_payment(**kwargs):
             out["withdrawn"] = done_n
             out["rows_reset"] = rows_n
             out["errors"] = len([r for r in results if r.get("error")])
+
+    elif action == "pay_purge_queue":
+        # Empty the accounts queue wholesale. Same end state as returning every
+        # entry to unpaid -- refs and review stamps cleared, documents deleted --
+        # but in one server-side pass rather than a round trip per document.
+        # Refuses anything payroll has already consumed. Chunked: repeat until
+        # "remaining" comes back 0.
+        pq_chunk = frappe.utils.cint(frappe.form_dict.get("chunk") or 400)
+        if pq_chunk < 1 or pq_chunk > 1000:
+            pq_chunk = 400
+        pq_total = frappe.db.count("Work Management Payment", {"workflow_state": "Unpaid"})
+        pq_rows = frappe.db.sql("""
+            SELECT name FROM `tabWork Management Payment`
+            WHERE workflow_state = 'Unpaid' ORDER BY creation LIMIT %(n)s
+        """, {"n": pq_chunk}, as_dict=True)
+        pq_names = [r.name for r in pq_rows]
+        out["total"] = pq_total
+        out["batch"] = len(pq_names)
+        if not pq_names:
+            out["remaining"] = 0
+            out["deleted"] = 0
+        else:
+            pq_used = {}
+            for u in frappe.db.sql("""
+                SELECT a.ref_docname n FROM `tabSalary Detail` sd
+                INNER JOIN `tabAdditional Salary` a ON a.name = sd.additional_salary
+                WHERE a.ref_doctype = 'Work Management Payment' AND a.ref_docname IN %(p)s
+            """, {"p": tuple(pq_names)}, as_dict=True):
+                pq_used[u.n] = 1
+            pq_go = [n for n in pq_names if not pq_used.get(n)]
+            pq_freed = 0
+            if pq_go:
+                for rr in frappe.db.sql("""
+                    SELECT name FROM `tabWork Actuals Employee`
+                    WHERE payment_ref IN %(p)s AND IFNULL(paid,0) = 0
+                """, {"p": tuple(pq_go)}, as_dict=True):
+                    frappe.db.set_value("Work Actuals Employee", rr.name, "payment_ref", None, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.name, "custom_reviewed", 0, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.name, "custom_reviewed_by", None, update_modified=False)
+                    frappe.db.set_value("Work Actuals Employee", rr.name, "custom_reviewed_at", None, update_modified=False)
+                    pq_freed = pq_freed + 1
+                frappe.db.commit()
+            pq_gone = 0
+            for n in pq_go:
+                for asr in frappe.db.sql("""
+                    SELECT name FROM `tabAdditional Salary`
+                    WHERE ref_doctype = 'Work Management Payment' AND ref_docname = %(n)s
+                      AND docstatus = 1
+                """, {"n": n}, as_dict=True):
+                    adoc = frappe.get_doc("Additional Salary", asr.name)
+                    adoc.flags.ignore_permissions = True
+                    adoc.cancel()
+                frappe.delete_doc("Work Management Payment", n, ignore_permissions=True, force=True)
+                pq_gone = pq_gone + 1
+            frappe.db.commit()
+            out["deleted"] = pq_gone
+            out["rows_freed"] = pq_freed
+            out["skipped_paid_by_payroll"] = len(pq_used)
+            out["remaining"] = frappe.db.count("Work Management Payment", {"workflow_state": "Unpaid"})
 
     elif action == "pay_release_inactive":
         # CLEAN SLATE for the "left the company but still assigned" backlog:

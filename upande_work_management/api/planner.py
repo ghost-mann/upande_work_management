@@ -270,6 +270,110 @@ def wm_planner(**kwargs):
             p["editable"] = 1 if p.workflow_state in ("Draft","Rejected","Pending Approval") else 0
         out["plan"] = p
 
+    elif action == "plan_trace":
+        # ONE PLAN, END TO END: who asked for it, who approved it, the crews it was
+        # staffed with, the people actually on those crews, what they recorded and
+        # what it cost. The weekly board could only show a plan's own row, so there
+        # was no way to answer "who approved this and who worked it".
+        tr = frappe.form_dict.get("plan")
+        pl = frappe.db.get_value("Work Management Planner", tr,
+            ["name","farm","block_section","task","quantity","from_date","to_date",
+             "workflow_state","uom","daily_target","rate","total_cost","people_per_day",
+             "person_days","requested_by","request_date","approved_by","approval_date",
+             "custom_consultant_state","custom_consultant_by","custom_consultant_note",
+             "fulfilled_qty","remaining_qty","fulfilment_pct","custom_close_state"], as_dict=True)
+        if not pl:
+            out["error"] = "no such plan: " + str(tr)
+        else:
+            blist = []
+            if pl.block_section:
+                blist.append(pl.block_section)
+            for b in frappe.db.get_all("Work Planner Block", filters={"parent": tr},
+                                       fields=["block"], order_by="idx"):
+                if b.block:
+                    blist.append(b.block)
+            pl["blocks"] = blist
+            out["plan"] = pl
+
+            # the approval chain, in the order it actually happens
+            chain = []
+            chain.append({"step": "Requested", "who": pl.requested_by, "when": str(pl.request_date or "")})
+            if pl.custom_consultant_state:
+                chain.append({"step": "Consultant " + str(pl.custom_consultant_state),
+                              "who": pl.custom_consultant_by, "when": "",
+                              "note": pl.custom_consultant_note})
+            chain.append({"step": "Farm Manager approved" if pl.approved_by else "Farm Manager approval",
+                          "who": pl.approved_by, "when": str(pl.approval_date or "")})
+            out["chain"] = chain
+
+            asgs = frappe.db.get_all("Work Management Assigner",
+                filters={"planner_request": tr},
+                fields=["name","workflow_state","assigned_by","assign_date","approved_by",
+                        "approval_date","from_date","to_date","planned_people","assigned_count",
+                        "variance","planned_cost"],
+                order_by="creation")
+            out["assignments"] = asgs
+            anames = [a.name for a in asgs]
+
+            # the people put on those crews
+            crew = []
+            if anames:
+                crew = frappe.db.sql("""
+                    SELECT we.parent assignment, we.employee, we.employee_name,
+                           we.status, we.left_date
+                    FROM `tabWork Assignment Employee` we
+                    WHERE we.parent IN %(a)s
+                    ORDER BY we.employee_name
+                """, {"a": tuple(anames)}, as_dict=True)
+            out["crew"] = crew
+
+            # what was recorded against those assignments
+            acts = []
+            worked = []
+            if anames:
+                acts = frappe.db.sql("""
+                    SELECT ac.name, ac.assignment, ac.workflow_state, ac.entered_by,
+                           ac.hr_approved_by, ac.gm_approved_by, ac.entry_date,
+                           ac.total_actual_qty, ac.total_payment, ac.rate,
+                           ac.payroll_people
+                    FROM `tabWork Management Actuals` ac
+                    WHERE ac.assignment IN %(a)s
+                    ORDER BY ac.entry_date
+                """, {"a": tuple(anames)}, as_dict=True)
+                worked = frappe.db.sql("""
+                    SELECT we.employee, we.employee_name,
+                           COUNT(DISTINCT we.work_date) days,
+                           COALESCE(SUM(we.actual_quantity),0) qty,
+                           COALESCE(SUM(we.amount),0) amount,
+                           MAX(IFNULL(we.paid,0)) paid,
+                           MIN(we.work_date) first_day, MAX(we.work_date) last_day
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE ac.assignment IN %(a)s
+                    GROUP BY we.employee, we.employee_name
+                    ORDER BY COALESCE(SUM(we.amount),0) DESC
+                """, {"a": tuple(anames)}, as_dict=True)
+            out["actuals"] = acts
+            out["workers"] = worked
+
+            act_qty = 0
+            act_pay = 0
+            for a in acts:
+                if a.workflow_state == "CONFIRMED":
+                    act_qty = act_qty + frappe.utils.flt(a.total_actual_qty)
+                    act_pay = act_pay + frappe.utils.flt(a.total_payment)
+            tgt = frappe.utils.flt(pl.quantity)
+            bud = frappe.utils.flt(pl.total_cost)
+            out["delivery"] = {
+                "target": tgt, "actual": act_qty,
+                "achieved_pct": (act_qty / tgt * 100) if tgt else 0,
+                "planned": bud, "spent": act_pay,
+                "of_planned_pct": (act_pay / bud * 100) if bud else 0,
+                "crew_planned": frappe.utils.cint(pl.people_per_day),
+                "crew_assigned": len(crew),
+                "workers_paid": len(worked),
+            }
+
     elif action == "week_board":
         # CONSULTANT WEEKLY BOARD: all of one farm's plans starting in a chosen
         # week, with crew-load per day vs the farm's active workforce, budgets
