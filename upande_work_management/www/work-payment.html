@@ -243,6 +243,18 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
           <button type="button" class="btn sm" id="pw-latest" style="border-color:var(--line);color:var(--mute)">Latest</button>
         </div>
         <div id="pw-note" class="hint" style="margin-top:3px"></div>
+      </div>
+      <div class="fgrp" id="pw-custom-grp" style="display:none">
+        <label class="fl" for="pf-from">Custom range</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="date" id="pf-from-v"><span class="hint">to</span><input type="date" id="pf-to-v">
+          <button type="button" class="btn sm" id="pw-apply-range">Apply</button>
+        </div>
+        <div class="hint" style="margin-top:3px">Sending still creates one payment per pay week, whatever range you review.</div>
+      </div>
+      <div class="fgrp">
+        <label class="fl">&nbsp;</label>
+        <button type="button" class="btn sm" id="pw-mode" style="border-color:var(--line);color:var(--mute)">Custom range</button>
         <input type="hidden" id="pf-from"><input type="hidden" id="pf-to">
       </div>
       <button class="btn" id="pf-apply">Apply</button>

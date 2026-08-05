@@ -48,7 +48,12 @@
   "last_recalc_by",
   "last_recalc_summary",
   "sb_payroll",
-  "salary_component"
+  "salary_component",
+  "sb_whopays",
+  "tw_employment_types",
+  "tw_designations",
+  "tw_categories",
+  "allow_part_week_send"
  ],
  "fields": [
   {
@@ -329,6 +334,40 @@
    "label": "Salary Component",
    "options": "Salary Component",
    "description": "Earning component the Additional Salary is raised against. Leave empty to stop Additional Salary records being created."
+  },
+  {
+   "fieldname": "sb_whopays",
+   "fieldtype": "Section Break",
+   "label": "Who this system pays",
+   "description": "This system pays task work only. Salaried staff are paid through payroll, so their recorded work must never become a payment here. An employee qualifies if ANY of the three lists below matches \u2014 that way a blank employment type on a new hire does not quietly make them unpayable."
+  },
+  {
+   "fieldname": "tw_employment_types",
+   "fieldtype": "Small Text",
+   "label": "Employment types paid here",
+   "default": "Task Worker",
+   "description": "Comma-separated, matched against Employee \u2192 Employment Type."
+  },
+  {
+   "fieldname": "tw_designations",
+   "fieldtype": "Small Text",
+   "label": "Designations paid here",
+   "default": "Task Worker",
+   "description": "Comma-separated, matched against Employee \u2192 Designation."
+  },
+  {
+   "fieldname": "tw_categories",
+   "fieldtype": "Small Text",
+   "label": "Categories paid here",
+   "default": "Task Worker",
+   "description": "Comma-separated, matched against Employee \u2192 Category (custom_category)."
+  },
+  {
+   "fieldname": "allow_part_week_send",
+   "fieldtype": "Check",
+   "label": "Allow sending the week still in progress",
+   "default": "0",
+   "description": "Off: a pay week can only be sent once it closes, so a week is never paid twice. On: the current week can be sent for the days worked so far."
   }
  ],
  "idx": 0,

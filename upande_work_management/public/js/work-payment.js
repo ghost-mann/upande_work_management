@@ -521,7 +521,29 @@
   // Workers are paid by the week, so the Pay workers tab picks a WEEK rather
   // than two loose dates: a window that straddles weeks cannot be sent as one
   // payment anyway, so offering free dates only invited windows that split.
-  var PW = { start:null, endsOn:"Sunday" };
+  var PW = { start:null, endsOn:"Sunday", custom:false };
+  function pwSetMode(custom){
+    PW.custom=!!custom;
+    var wkGrp=el("pw-prev") ? el("pw-prev").parentNode.parentNode : null;
+    if(wkGrp) wkGrp.style.display = PW.custom ? "none" : "";
+    if(el("pw-custom-grp")) el("pw-custom-grp").style.display = PW.custom ? "" : "none";
+    if(el("pw-mode")) el("pw-mode").textContent = PW.custom ? "Back to pay weeks" : "Custom range";
+    if(PW.custom){
+      // seed the range from the week on screen so nothing jumps
+      if(el("pf-from-v") && !el("pf-from-v").value) el("pf-from-v").value=el("pf-from").value||"";
+      if(el("pf-to-v") && !el("pf-to-v").value) el("pf-to-v").value=el("pf-to").value||"";
+    } else {
+      pwApply(PW.start||pwLatestCompleteStart());
+    }
+  }
+  function pwApplyRange(){
+    var a=el("pf-from-v").value||"", b=el("pf-to-v").value||"";
+    if(!a || !b){ toast("Pick both dates","bad"); return; }
+    if(a>b){ toast("The start date is after the end date","bad"); return; }
+    el("pf-from").value=a; el("pf-to").value=b;
+    if(el("pw-note")) el("pw-note").textContent="";
+    loadPayable();
+  }
   function pwStartWd(){
     var names=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
     var i=names.indexOf(PW.endsOn); if(i<0) i=6;
@@ -549,6 +571,7 @@
   }
   function pwApply(start, reload){
     PW.start=start;
+    if(PW.custom) return;
     var end=new Date(start.getTime()); end.setDate(end.getDate()+6);
     el("pf-from").value=pwISO(start);
     el("pf-to").value=pwISO(end);
@@ -2110,6 +2133,8 @@
     if(el("pw-prev")) el("pw-prev").onclick=function(){ pwStep(-1); };
     if(el("pw-next")) el("pw-next").onclick=function(){ pwStep(1); };
     if(el("pw-latest")) el("pw-latest").onclick=function(){ pwApply(pwLatestCompleteStart()); };
+    if(el("pw-mode")) el("pw-mode").onclick=function(){ pwSetMode(!PW.custom); };
+    if(el("pw-apply-range")) el("pw-apply-range").onclick=pwApplyRange;
     el("pf-reset").onclick=function(){
       pwApply(pwLatestCompleteStart(), false);
       el("pf-search").value="";
