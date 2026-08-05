@@ -31,13 +31,38 @@ def wm_payment(**kwargs):
     SUNDAY_HOURS = 8
 
     # WHO THIS SYSTEM PAYS
-    # Only Task Workers. Permanent, Contract and Temporary staff are salaried and
-    # paid through payroll, so their recorded work must never turn into a payment
-    # here. The row's own employment_type column cannot be trusted for this -- every
-    # row carries "Task Worker" regardless -- so the test is always against the
-    # Employee master.
+    # Task work only. Permanent, Contract and Temporary staff are salaried and paid
+    # through payroll, so their recorded work must never turn into a payment here.
+    # The row's own employment_type column cannot be trusted for this -- every row
+    # carries "Task Worker" regardless of the Employee master -- so the test always
+    # reads tabEmployee.
+    # An employee qualifies if ANY of the three configured lists matches. A blank
+    # employment type on a new hire therefore does not quietly make them unpayable.
+    TW_FIELDS = [
+        ("employment_type", frappe.db.get_single_value("Work Management Settings", "tw_employment_types")),
+        ("designation", frappe.db.get_single_value("Work Management Settings", "tw_designations")),
+        ("custom_category", frappe.db.get_single_value("Work Management Settings", "tw_categories")),
+    ]
+    TW_CLAUSES = []
+    for tw_col, tw_raw in TW_FIELDS:
+        tw_vals = []
+        for tw_v in str(tw_raw or "").split(","):
+            tw_c = tw_v.strip()
+            # values come from Settings and land in SQL, so allow only the shapes a
+            # job title can actually take and drop anything else outright
+            tw_ok = 1
+            for tw_ch in tw_c:
+                if not (tw_ch.isalnum() or tw_ch in " -_/&().'"):
+                    tw_ok = 0
+            if tw_c and tw_ok:
+                tw_vals.append("'" + tw_c.replace("'", "''") + "'")
+        if tw_vals:
+            TW_CLAUSES.append("twe." + tw_col + " IN (" + ", ".join(tw_vals) + ")")
+    if not TW_CLAUSES:
+        # never leave the gate wide open if Settings is blank or unusable
+        TW_CLAUSES = ["twe.employment_type = 'Task Worker'"]
     TW_ONLY = (" AND EXISTS (SELECT 1 FROM `tabEmployee` twe WHERE twe.name = we.employee"
-               "             AND twe.employment_type = 'Task Worker')")
+               "             AND (" + " OR ".join(TW_CLAUSES) + "))")
 
     # WHO MAY SEND WORK TO ACCOUNTS
     # Sending creates the payment record and commits the money, so it is limited to
@@ -1207,6 +1232,8 @@ def wm_payment(**kwargs):
                 GROUP BY we.work_date ORDER BY we.work_date
             """, tuple(wparams), as_dict=True)
             wk_today = frappe.utils.getdate(frappe.utils.today())
+            wk_part_ok = frappe.utils.cint(frappe.db.get_single_value(
+                "Work Management Settings", "allow_part_week_send"))
             wk_map = {}
             wk_outside = []
             for wr in wk_rows:
@@ -1223,7 +1250,7 @@ def wm_payment(**kwargs):
                 if wk_key not in wk_map:
                     wk_map[wk_key] = {"week_from": str(wk_s), "week_to": str(wk_e),
                                       "amount": 0, "days": 0,
-                                      "complete": 1 if frappe.utils.getdate(wk_e) < wk_today else 0}
+                                      "complete": 1 if (frappe.utils.getdate(wk_e) < wk_today or wk_part_ok) else 0}
                 wk_map[wk_key]["amount"] = wk_map[wk_key]["amount"] + frappe.utils.flt(wr.a)
                 wk_map[wk_key]["days"] = wk_map[wk_key]["days"] + 1
             wk_list = sorted(wk_map.values(), key=lambda x: x["week_from"])
@@ -1477,6 +1504,8 @@ def wm_payment(**kwargs):
             bw_pay_idx = bw_names.index(bw_pay_day) if bw_pay_day in bw_names else bw_end_idx
             bw_len = ((bw_end_idx - bw_start_wd) % 7) + 1
             bw_today = frappe.utils.getdate(frappe.utils.today())
+            bw_part_ok = frappe.utils.cint(frappe.db.get_single_value(
+                "Work Management Settings", "allow_part_week_send"))
             for emp in emp_list:
                 # same weekly rule as the single send: one payment per worker per
                 # COMPLETED pay week, with the week in progress held back
@@ -1506,7 +1535,7 @@ def wm_payment(**kwargs):
                         continue
                     bs = frappe.utils.add_days(bdd, -bback)
                     be = frappe.utils.add_days(bs, bw_len - 1)
-                    if frappe.utils.getdate(be) < bw_today:
+                    if frappe.utils.getdate(be) < bw_today or bw_part_ok:
                         bwk[str(bs)] = {"week_from": str(bs), "week_to": str(be)}
                 for wk in sorted(bwk.values(), key=lambda x: x["week_from"]):
                     dfrom = wk["week_from"]
