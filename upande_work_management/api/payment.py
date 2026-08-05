@@ -30,6 +30,15 @@ def wm_payment(**kwargs):
     SATURDAY_HOURS = 6
     SUNDAY_HOURS = 8
 
+    # WHO THIS SYSTEM PAYS
+    # Only Task Workers. Permanent, Contract and Temporary staff are salaried and
+    # paid through payroll, so their recorded work must never turn into a payment
+    # here. The row's own employment_type column cannot be trusted for this -- every
+    # row carries "Task Worker" regardless -- so the test is always against the
+    # Employee master.
+    TW_ONLY = (" AND EXISTS (SELECT 1 FROM `tabEmployee` twe WHERE twe.name = we.employee"
+               "             AND twe.employment_type = 'Task Worker')")
+
     # WHO MAY SEND WORK TO ACCOUNTS
     # Sending creates the payment record and commits the money, so it is limited to
     # the HR head, accounting and the general manager. Everyone else can review and
@@ -143,7 +152,7 @@ def wm_payment(**kwargs):
         dfrom = frappe.form_dict.get("from_date")
         dto = frappe.form_dict.get("to_date")
         include_all = frappe.form_dict.get("include_all")
-        conds = "ac.workflow_state='CONFIRMED' AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+        conds = "ac.workflow_state='CONFIRMED' AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0" + TW_ONLY
         if not include_all:
             conds = conds + " AND IFNULL(we.paid,0)=0"
         params = []
@@ -1180,7 +1189,9 @@ def wm_payment(**kwargs):
             wk_end_idx = wk_names.index(wk_end_day) if wk_end_day in wk_names else 5
             wk_pay_idx = wk_names.index(wk_pay_day) if wk_pay_day in wk_names else wk_end_idx
             wk_len = ((wk_end_idx - wk_start_wd) % 7) + 1
-            wconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
+            wconds = ("we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
+                      " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                      " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY
             wparams = [emp]
             if dfrom:
                 wconds = wconds + " AND we.work_date >= %s"
@@ -1252,7 +1263,9 @@ def wm_payment(**kwargs):
                         dto = wq_to
                     # IFNULL(payment_ref,'')='' matters: without it a second send re-claims rows
                     # that already sit on a payment, silently orphaning the first document
-                    sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
+                    sconds = ("we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
+                               " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                               " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY
                     sparams = [emp]
                     if dfrom:
                         sconds = sconds + " AND we.work_date >= %s"
@@ -1469,7 +1482,9 @@ def wm_payment(**kwargs):
                 # COMPLETED pay week, with the week in progress held back
                 dfrom = bw_from
                 dto = bw_to
-                bconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
+                bconds = ("we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
+                           " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                           " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY
                 bparams = [emp]
                 if dfrom:
                     bconds = bconds + " AND we.work_date >= %s"
