@@ -13,8 +13,6 @@
   "farm",
   "total_days",
   "total_qty",
-  "reviewed_by",
-  "reviewed_at",
   "workflow_state",
   "cb_top",
   "company",
@@ -63,10 +61,11 @@
   },
   {
    "fieldname": "farm",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "label": "Farm",
    "in_standard_filter": 1,
-   "read_only": 1
+   "read_only": 1,
+   "options": "Farm"
   },
   {
    "fieldname": "total_days",
@@ -78,19 +77,6 @@
    "fieldname": "total_qty",
    "fieldtype": "Float",
    "label": "Total Quantity",
-   "read_only": 1
-  },
-  {
-   "fieldname": "reviewed_by",
-   "fieldtype": "Link",
-   "label": "Reviewed By",
-   "options": "User",
-   "read_only": 1
-  },
-  {
-   "fieldname": "reviewed_at",
-   "fieldtype": "Datetime",
-   "label": "Reviewed At",
    "read_only": 1
   },
   {

@@ -1355,8 +1355,6 @@ def wm_payment(**kwargs):
                         d.farm = agg[0].farm
                         d.total_days = total_days
                         d.total_qty = total_qty
-                        d.reviewed_by = rv_by
-                        d.reviewed_at = rv_at
                         d.amount = total_owed
                         d.total_workers = 1
                         d.total_actuals = len(d.lines)
@@ -1376,9 +1374,6 @@ def wm_payment(**kwargs):
                             frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed", 1, update_modified=False)
                             frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_by", frappe.session.user, update_modified=False)
                             frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_at", subnow, update_modified=False)
-                        if not d.reviewed_by:
-                            frappe.db.set_value("Work Management Payment", d.name, "reviewed_by", frappe.session.user, update_modified=False)
-                            frappe.db.set_value("Work Management Payment", d.name, "reviewed_at", subnow, update_modified=False)
                         frappe.db.commit()
                         out["created"].append({
                             "name": d.name, "workflow_state": "Unpaid",
@@ -1607,8 +1602,6 @@ def wm_payment(**kwargs):
                     d.farm = agg[0].farm
                     d.total_days = total_days
                     d.total_qty = total_qty
-                    d.reviewed_by = rv_by
-                    d.reviewed_at = rv_at
                     d.amount = total_owed
                     d.total_workers = 1
                     d.total_actuals = len(d.lines)
@@ -1626,9 +1619,6 @@ def wm_payment(**kwargs):
                         frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed", 1, update_modified=False)
                         frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_by", frappe.session.user, update_modified=False)
                         frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed_at", bulknow, update_modified=False)
-                    if not rv_by:
-                        frappe.db.set_value("Work Management Payment", d.name, "reviewed_by", frappe.session.user, update_modified=False)
-                        frappe.db.set_value("Work Management Payment", d.name, "reviewed_at", bulknow, update_modified=False)
                     sent = sent + 1
                     sent_total = sent_total + total_owed
                     results.append({"employee": emp, "employee_name": ename, "name": d.name,
