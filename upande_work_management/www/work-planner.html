@@ -199,6 +199,21 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <div id="wk-body" class="empty">Pick a farm and week.</div>
   </div>
 
+  <div class="panel" id="p-mp">
+    <div class="sech">Master plan &mdash; the budget behind every request</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+      <div><div class="lab">Farm</div><select id="mp-farm"></select></div>
+      <div><div class="lab">Status</div><select id="mp-state">
+        <option value="">All</option>
+        <option>Draft</option><option>Pending Consultant</option>
+        <option>Pending GM</option><option>Approved</option><option>Rejected</option>
+      </select></div>
+      <button type="button" class="btn solid" id="mp-refresh">Show</button>
+      <button type="button" class="btn" id="mp-new" style="display:none">New master plan</button>
+    </div>
+    <div id="mp-body" class="empty">Pick a farm and status, then Show.</div>
+  </div>
+
   <div id="wp-closedialog" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1000;align-items:center;justify-content:center"></div>
   <div class="toast" id="wp-toast"></div>
 

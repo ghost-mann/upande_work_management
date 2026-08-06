@@ -29,6 +29,7 @@ override_whitelisted_methods = {
 	"wm_actuals": "upande_work_management.api.actuals.wm_actuals",
 	"wm_payment": "upande_work_management.api.payment.wm_payment",
 	"wm_rates": "upande_work_management.api.rates.wm_rates",
+	"wm_masterplan": "upande_work_management.api.masterplan.wm_masterplan",
 }
 
 scheduler_events = {
@@ -59,6 +60,7 @@ fixtures = [
 					"Paid",
 					"Pending Accounts",
 					"Pending Approval",
+					"Pending Consultant",
 					"Pending Farm Manager",
 					"Pending GM",
 					"Pending HR Head",
@@ -81,7 +83,9 @@ fixtures = [
 					"Mark Paid",
 					"Re-submit",
 					"Reject",
+					"Send for Consultant Review",
 					"Send to Accounts",
+					"Send to GM",
 					"Submit for Approval",
 				],
 			]

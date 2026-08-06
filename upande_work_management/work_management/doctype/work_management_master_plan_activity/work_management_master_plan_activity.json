@@ -1,0 +1,170 @@
+{
+ "creation": "2026-08-06 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "task",
+  "man_days",
+  "days",
+  "work_qty",
+  "uom",
+  "rate",
+  "cost",
+  "cb_mpa",
+  "consultant_state",
+  "consultant_by",
+  "consultant_on",
+  "original_qty",
+  "original_cost",
+  "planned_qty",
+  "planned_cost",
+  "remaining_qty",
+  "remaining_cost",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Activity",
+   "options": "Task",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "description": "Budgeted crew effort. Reported, never enforced.",
+   "fieldname": "man_days",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Man Days"
+  },
+  {
+   "columns": 1,
+   "description": "Duration the budget assumes. Reported, never enforced.",
+   "fieldname": "days",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Days"
+  },
+  {
+   "columns": 1,
+   "description": "The quantity ceiling. Planning stops here.",
+   "fieldname": "work_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Work",
+   "precision": "6"
+  },
+  {
+   "columns": 1,
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Unit",
+   "read_only": 1
+  },
+  {
+   "description": "From the rate period covering the master plan start, then frozen.",
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "label": "Rate",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "description": "Work x Rate. The money ceiling.",
+   "fieldname": "cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_mpa",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 1,
+   "default": "Pending",
+   "fieldname": "consultant_state",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Consultant Approval",
+   "options": "Pending\nOK\nEdit work\nRejected"
+  },
+  {
+   "fieldname": "consultant_by",
+   "fieldtype": "Link",
+   "label": "Decided By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consultant_on",
+   "fieldtype": "Datetime",
+   "label": "Decided On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "original_qty",
+   "fieldtype": "Float",
+   "label": "Originally Asked (Qty)",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "original_cost",
+   "fieldtype": "Currency",
+   "label": "Originally Asked (Cost)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planned_qty",
+   "fieldtype": "Float",
+   "label": "Planned Qty",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planned_cost",
+   "fieldtype": "Currency",
+   "label": "Planned Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remaining_qty",
+   "fieldtype": "Float",
+   "label": "Remaining Qty",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remaining_cost",
+   "fieldtype": "Currency",
+   "label": "Remaining Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  }
+ ],
+ "idx": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Master Plan Activity",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}
