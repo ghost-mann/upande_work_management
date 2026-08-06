@@ -9,6 +9,8 @@
     bulk: {},           // employee -> {status, amt, nm} ticked for bulk review/send
     canSend: false,     // only HR head / accounting / GM may send work to accounts
     accBulk: {},        // WMPAY name -> {nm, amt} ticked for bulk return-to-unpaid
+    accRows: [],        // pending runs loaded so far (the queue is paged, not truncated)
+    accStart: 0, accTotal: 0, accAmount: 0, accWeeks: [], accWeek: null, accMore: false,
     farms: [],          // [{farm, workers, owed}] summary across window
     activeFarms: {},    // farm -> 1 (chip filter); empty = all
     isAccounts: false,
@@ -293,15 +295,13 @@
   }
 
   function renderBuildKpis(d){
-    var payable=0, toreview=0, reviewed=0, sent=0;
+    var payable=0, toreview=0, sent=0;
     ST.workers.forEach(function(w){
       if(w.pay_status==="Unpaid"){ toreview+=1; payable+=(w.unpaid_amt||w.owed||0); }
-      else if(w.pay_status==="Reviewed"){ reviewed+=1; payable+=(w.unpaid_amt||w.owed||0); }
       else if(w.pay_status==="Sent to accounts"){ sent+=1; }
     });
     el("k-owed").textContent=fmt(payable);
     el("k-toreview").textContent=fmt(toreview);
-    el("k-reviewed").textContent=fmt(reviewed);
     el("k-sent").textContent=fmt(sent);
   }
 
@@ -339,7 +339,7 @@
       box.innerHTML='<div class="empty"><b>No workers here</b>No confirmed work matches this window and filter. Widen the dates or clear the farm filter.</div>';
       return;
     }
-    var order={"Unpaid":0,"Reviewed":1,"Sent to accounts":2,"Paid":3};
+    var order={"Unpaid":0,"Sent to accounts":1,"Paid":2};
     rows.sort(function(a,b){
       var oa=order[a.pay_status]!=null?order[a.pay_status]:0, ob=order[b.pay_status]!=null?order[b.pay_status]:0;
       if(oa!==ob) return oa-ob;
@@ -348,9 +348,11 @@
     var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px"><span class="hint" id="pw-count">'+
       fmt(rows.length)+' of '+fmt((ST.workers||[]).length)+' workers</span>'+
       '<span class="hint" id="bulk-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
-      '<button type="button" class="btn good sm" id="bulk-send" style="display:none">Review &amp; send to accounts</button>'+
+      (ST.canSend?'<button type="button" class="btn good sm" id="bulk-send" style="display:none">Review &amp; send to accounts</button>':'')+
       '<button type="button" class="btn sm" id="bulk-clear" style="display:none">Clear</button>'+
-      '<span class="hint" id="bulk-hint">Tick workers to send them to accounts in one go, or open each one for the full check first.</span></div>';
+      '<span class="hint" id="bulk-hint">'+(ST.canSend
+        ? 'Tick workers to send them to accounts in one go, or open each one for the full check first.'
+        : 'You can review and audit here. Sending work to accounts is done by the HR head, accounting or the general manager.')+'</span></div>';
     h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
       '<th class="c" style="width:34px"><input type="checkbox" id="bulk-all" title="Select every actionable worker shown"></th>'+
       '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
@@ -360,10 +362,10 @@
       var unpaid=w.unpaid_amt!=null?w.unpaid_amt:w.owed;
       tq+=(w.qty||0); te+=(w.owed||0); tp+=(w.paid_amt||0); tu+=(unpaid||0);
       var acts='<button type="button" class="btn sm" data-review="'+esc(w.emp)+'">Review</button>';
-      if(ST.canSend && (w.pay_status==="Unpaid"||w.pay_status==="Reviewed")){
+      if(ST.canSend && w.pay_status==="Unpaid"){
         acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
       }
-      var actionable=(w.pay_status==="Unpaid"||w.pay_status==="Reviewed") && (unpaid||0)>0.001;
+      var actionable=w.pay_status==="Unpaid" && (unpaid||0)>0.001;
       var cb=actionable?
         '<input type="checkbox" class="bpick" data-emp="'+esc(w.emp)+'" data-status="'+esc(w.pay_status)+'" data-amt="'+(unpaid||0)+'" data-nm="'+esc(w.emp_name||w.emp)+'"'+(ST.bulk[w.emp]?" checked":"")+'>':'';
       var runRef=w.run_ref?('<div style="font-size:9px;color:var(--mute);margin-top:2px">'+esc(w.run_ref)+'</div>'):'';
@@ -387,7 +389,7 @@
     h+='</tbody><tfoot><tr><th colspan="7">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
        '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te,2)+'</th><th class="n">'+fmt(tp,2)+'</th><th class="n">'+fmt(tu,2)+'</th>'+
        '<th colspan="2"></th></tr></tfoot></table></div></div>';
-    h+='<div class="note">Unpaid &rarr; review the worker &middot; Reviewed &rarr; send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
+    h+='<div class="note">Unpaid &rarr; review the worker and send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
     box.innerHTML=h;
     box.querySelectorAll("[data-review]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-review"), payWindow()); };
@@ -697,39 +699,134 @@
   // ════════════════════════════════════════════════
   //  AWAITING ACCOUNTS
   // ════════════════════════════════════════════════
-  function loadAccounts(){
+  function loadAccounts(reset){
     var box=el("accounts-body");
-    box.innerHTML='<div class="sk sk-row"></div><div class="sk sk-row"></div>';
-    call({ action:"pay_pending" }).then(function(d){
-      var rows=d.pending||[];
-      ST.accCount=rows.length;
+    if(reset!==false){ ST.accStart=0; ST.accRows=[]; }
+    if(!ST.accRows.length) box.innerHTML='<div class="sk sk-row"></div><div class="sk sk-row"></div>';
+    var args={ action:"pay_pending", start:ST.accStart||0, limit:200 };
+    if(ST.accWeek) args.payroll_date=ST.accWeek;
+    // same filters the Pay workers tab offers, applied server-side so the
+    // totals and the paging describe the filtered queue, not just this page
+    var afl=Object.keys(ST.accFarms||{});
+    if(afl.length) args.farms=afl.join(",");
+    if(ST.accFrom) args.from_date=ST.accFrom;
+    if(ST.accTo)   args.to_date=ST.accTo;
+    if(ST.accQ)    args.q=ST.accQ;
+    call(args).then(function(d){
+      ST.accRows=(ST.accRows||[]).concat(d.pending||[]);
+      ST.accTotal=d.total||0;
+      ST.accAmount=d.total_amount||0;
+      ST.accWeeks=d.weeks||[];
+      ST.accFarmList=d.farms||[];
+      ST.accQueueTotal=(d.queue_total!=null?d.queue_total:d.total)||0;
+      ST.accFiltered=!!d.filtered;
+      ST.accMore=!!d.has_more;
+      ST.accStart=(d.start||0)+(d.returned||0);
+      ST.accCount=ST.accTotal;
       updateAccBadge();
-      var bn=el("pay-acc-banner");
-      if(!ST.isAccounts){
-        bn.innerHTML='<div class="banner info"><b>View only.</b> You can see runs awaiting accounts, but only an Accounts user can mark them paid.</div>';
-      } else {
-        bn.innerHTML='';
-      }
-      if(!rows.length){
-        box.innerHTML='<div class="empty"><b>Nothing awaiting accounts</b>Runs you submit from the Build tab will appear here for release.</div>';
-        return;
-      }
-      var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px">'+
-        '<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;cursor:pointer"><input type="checkbox" id="aw-all"> Select all</label>'+
-        '<span class="hint" id="aw-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
-        '<button type="button" class="btn sm" id="aw-return" style="display:none;color:var(--warn);border-color:#fde68a">Return selected to unpaid</button>'+
-        '<span class="hint" id="aw-hint">Tick entries to return several to unpaid at once.</span></div>';
-      h+='<div class="runlist">';
-      rows.forEach(function(r){
-        h+=runCard(r, ST.isAccounts);
-      });
-      h+='</div>';
-      box.innerHTML=h;
-      wireRunCards(box);
-      wireAccBulk(box);
+      renderAccounts();
     }).catch(function(e){
       box.innerHTML='<div class="err">Could not load pending runs: '+esc(e.message)+'</div>';
     });
+  }
+  function accFilterBar(){
+    var chips='';
+    (ST.accFarmList||[]).forEach(function(f){
+      chips+='<div class="fchip'+(ST.accFarms&&ST.accFarms[f.farm]?" on":"")+'" data-accfarm="'+esc(f.farm)+'">'+
+             esc(f.farm)+' <b>'+fmt(f.n)+'</b></div>';
+    });
+    var showing=ST.accFiltered
+      ? (fmt(ST.accTotal)+' of '+fmt(ST.accQueueTotal)+' runs match')
+      : (fmt(ST.accTotal)+' run'+(ST.accTotal===1?'':'s')+' in the queue');
+    return '<div class="filters" style="margin-bottom:10px">'+
+      '<div class="fgrp"><label class="fl" for="ac-q">Find worker or reference</label>'+
+        '<input type="text" id="ac-q" placeholder="Name, ID or WMPAY&hellip;" value="'+esc(ST.accQ||"")+'"></div>'+
+      '<div class="fgrp"><label class="fl" for="ac-from">Work period</label>'+
+        '<div style="display:flex;align-items:center;gap:6px">'+
+          '<input type="date" id="ac-from" value="'+esc(ST.accFrom||"")+'">'+
+          '<span class="hint">to</span>'+
+          '<input type="date" id="ac-to" value="'+esc(ST.accTo||"")+'"></div></div>'+
+      '<button class="btn" id="ac-apply">Apply</button>'+
+      '<button class="btn" id="ac-reset" style="border-color:var(--line);color:var(--mute)">Reset</button>'+
+      '<span style="flex:1"></span><span class="hint">'+showing+'</span>'+
+      (chips?'</div><div class="farmchips" style="margin-bottom:10px">'+
+        '<div class="fchip allchip'+(Object.keys(ST.accFarms||{}).length?"":" on")+'" data-accfarm="">All farms</div>'+chips+'</div>'
+       :'</div>');
+  }
+
+  function wireAccFilters(box){
+    function apply(){
+      ST.accQ=(el("ac-q")?el("ac-q").value:"").trim();
+      ST.accFrom=el("ac-from")?el("ac-from").value:"";
+      ST.accTo=el("ac-to")?el("ac-to").value:"";
+      ST.accBulk={}; loadAccounts(true);
+    }
+    if(el("ac-apply")) el("ac-apply").onclick=apply;
+    if(el("ac-q")) el("ac-q").onkeydown=function(ev){ if(ev.key==="Enter") apply(); };
+    if(el("ac-reset")) el("ac-reset").onclick=function(){
+      ST.accQ=""; ST.accFrom=""; ST.accTo=""; ST.accFarms={}; ST.accWeek=null; ST.accBulk={};
+      loadAccounts(true);
+    };
+    box.querySelectorAll("[data-accfarm]").forEach(function(c){
+      c.onclick=function(){
+        var f=c.getAttribute("data-accfarm");
+        ST.accFarms=ST.accFarms||{};
+        if(!f){ ST.accFarms={}; }
+        else if(ST.accFarms[f]){ delete ST.accFarms[f]; }
+        else { ST.accFarms[f]=1; }
+        ST.accBulk={}; loadAccounts(true);
+      };
+    });
+  }
+
+  function renderAccounts(){
+    var box=el("accounts-body"), rows=ST.accRows||[];
+    var bn=el("pay-acc-banner");
+    if(!ST.isAccounts){
+      bn.innerHTML='<div class="banner info"><b>View only.</b> You can see runs awaiting accounts, but only an Accounts user can mark them paid.</div>';
+    } else { bn.innerHTML=''; }
+    if(!ST.accTotal && !ST.accFiltered && !ST.accWeek){
+      box.innerHTML=accFilterBar()+'<div class="empty"><b>Nothing awaiting accounts</b>Runs you send from the Pay workers tab appear here for release.</div>';
+      wireAccFilters(box);
+      return;
+    }
+    if(!ST.accTotal){
+      box.innerHTML=accFilterBar()+'<div class="empty"><b>Nothing matches these filters</b>'+
+        fmt(ST.accQueueTotal)+' run'+(ST.accQueueTotal===1?'':'s')+' in the queue overall &mdash; widen the dates, clear the farm or the search.</div>';
+      wireAccFilters(box);
+      return;
+    }
+    var h=accFilterBar();
+    // pay weeks: accounts releases a week at a time, so the queue is filtered by week
+    h+='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:6px;flex-wrap:wrap">'+
+      '<span class="hint" style="font-weight:600;color:var(--ink)">Pay week</span>'+
+      '<button type="button" class="btn sm'+(ST.accWeek?"":" good")+'" data-accwk="">All · '+fmt(ST.accTotal)+'</button>';
+    (ST.accWeeks||[]).forEach(function(w){
+      h+='<button type="button" class="btn sm'+(ST.accWeek===w.payroll_date?" good":"")+'" data-accwk="'+esc(w.payroll_date)+'">'+
+         esc(dshort(w.period_from))+' → '+esc(dshort(w.period_to))+' · '+fmt(w.n)+'</button>';
+    });
+    h+='</div>';
+    h+='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px">'+
+      '<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;cursor:pointer"><input type="checkbox" id="aw-all"> Select all shown</label>'+
+      '<span class="hint" id="aw-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
+      '<span class="hint">Showing '+fmt(rows.length)+' of '+fmt(ST.accTotal)+' · '+money(ST.accAmount)+' in the queue</span>'+
+      '<button type="button" class="btn sm" id="aw-return" style="display:none;color:var(--warn);border-color:#fde68a">Return selected to unpaid</button>'+
+      '</div>';
+    h+='<div class="runlist">';
+    rows.forEach(function(r){ h+=runCard(r, ST.isAccounts); });
+    h+='</div>';
+    if(ST.accMore){
+      h+='<div style="text-align:center;margin-top:12px"><button type="button" class="btn" id="aw-more">Load next 200 &middot; '+
+         fmt(ST.accTotal-rows.length)+' still to show</button></div>';
+    }
+    box.innerHTML=h;
+    wireAccFilters(box);
+    box.querySelectorAll("[data-accwk]").forEach(function(b){
+      b.onclick=function(){ ST.accWeek=b.getAttribute("data-accwk")||null; ST.accBulk={}; loadAccounts(true); };
+    });
+    if(el("aw-more")) el("aw-more").onclick=function(){ loadAccounts(false); };
+    wireRunCards(box);
+    wireAccBulk(box);
   }
 
   function runCard(r, canPay){
@@ -744,7 +841,7 @@
     }
     return '<div class="runcard">'+
       '<div class="rc-head">'+
-        '<input type="checkbox" class="awpick" data-name="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" data-amt="'+(r.amount||0)+'" title="Select for bulk return to unpaid" style="margin:4px 10px 0 0;flex-shrink:0"'+(ST.accBulk[r.name]?" checked":"")+'>'+
+        '<input type="checkbox" class="awpick" data-name="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" data-amt="'+(r.amount||0)+'" title="Select for bulk return to unpaid" style="margin:0 10px 0 0;flex-shrink:0;align-self:center"'+(ST.accBulk[r.name]?" checked":"")+'>'+
         '<div style="flex:1"><div class="rc-title">'+esc(r.run_title||r.name)+'</div>'+
         '<div class="rc-sub">'+esc(r.name)+' · prepared by '+esc(r.prepared_by||"—")+' · '+esc(r.payroll_date||"")+
         (r.period_from?' · work '+esc(dshort(r.period_from))+' → '+esc(dshort(r.period_to)):'')+'</div></div>'+
@@ -828,10 +925,15 @@
           }
           var batch=keys.slice(i, i+SIZE); i+=SIZE;
           call({action:"pay_bulk_withdraw", names:batch.join(",")}, true).then(function(d){
-            if(d.error){ toast(d.error,"bad"); if(rb) rb.disabled=false; return; }
+            if(d.error){ errs+=batch.length; step(); return; }
             done+=(d.withdrawn||0); rowsReset+=(d.rows_reset||0); errs+=(d.errors||0);
+            if(rb) rb.textContent="Returning… "+fmt(done)+"/"+fmt(keys.length);
             step();
-          }).catch(function(e){ toast("Bulk return stopped: "+e.message,"bad"); if(rb) rb.disabled=false; });
+          }).catch(function(){
+            // a batch can fail on a lock clash; carry on so the run finishes
+            // and the count at the end is the truth
+            errs+=batch.length; step();
+          });
         }
         step();
       }
@@ -989,7 +1091,7 @@
   }
 
   function payTag(s){
-    var m={"Paid":"paid","Part paid":"submitted","In run (awaiting accounts)":"submitted","Unpaid":"unpaid","Reviewed":"reviewed","Sent to accounts":"sent","Submitted":"sent"};
+    var m={"Paid":"paid","Part paid":"submitted","In run (awaiting accounts)":"submitted","Unpaid":"unpaid","Sent to accounts":"sent","Submitted":"sent"};
     var c=m[s]||"";
     return '<span class="tag '+c+'">'+esc(s||"")+'</span>';
   }
@@ -1312,7 +1414,6 @@
       g.run_list=Object.keys(g.runs).sort().join(", ");
       if(g.amount>0 && g.paid_amt>=g.amount-0.001) g.status="Paid";
       else if(g.paid_amt>0) g.status="Part paid";
-      else if((g.unreviewed_amt||0)<=0.001) g.status="Reviewed";
       else g.status="Unpaid";
       return g;
     });
@@ -1345,7 +1446,7 @@
       flt.forEach(function(g){
         tq+=g.qty; te+=g.amount; tp+=g.paid_amt; tu+=g.unpaid_amt;
         var acts='<button type="button" class="btn sm" data-review="'+esc(g.emp)+'">Review</button>';
-        if(ST.canSend && g.unpaid_amt>0.001 && g.status==="Reviewed"){
+        if(ST.canSend && g.unpaid_amt>0.001 && g.status==="Unpaid"){
           acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.unpaid_amt+'">Send to accounts</button>';
         }
         t+='<tr><td><span class="rowlink" data-review="'+esc(g.emp)+'">'+esc(g.nm)+'</span></td>'+
@@ -2096,8 +2197,9 @@
     else { b.style.display="none"; }
   }
   function refreshAccountsCount(){
-    call({ action:"pay_pending" }).then(function(d){
-      ST.accCount=(d.pending||[]).length; updateAccBadge();
+    // limit=1: we only want the total, not the page
+    call({ action:"pay_pending", limit:1 }).then(function(d){
+      ST.accCount=d.total||0; updateAccBadge();
     }).catch(function(){});
   }
 
@@ -2136,6 +2238,7 @@
     if(el("pw-mode")) el("pw-mode").onclick=function(){ pwSetMode(!PW.custom); };
     if(el("pw-apply-range")) el("pw-apply-range").onclick=pwApplyRange;
     el("pf-reset").onclick=function(){
+      pwSetMode(false);
       pwApply(pwLatestCompleteStart(), false);
       el("pf-search").value="";
       ST.activeFarms={};
@@ -2153,11 +2256,11 @@
     call({ action:"pay_roles" }).then(function(d){
       ST.isAccounts=!!d.is_accounts;
       ST.canSend=!!d.can_send;
+      el("pay-who").textContent=(d.user||"")+(d.is_accounts?" · accounts":"");
       if(d.week_ends_on && d.week_ends_on!==PW.endsOn){
-        PW.endsOn=d.week_ends_on;
+        PW.endsOn=d.week_ends_on;                 // re-anchor to the configured boundary
         pwApply(pwLatestCompleteStart(), false);
       }
-      el("pay-who").textContent=(d.user||"")+(d.is_accounts?" · accounts":"");
     }).catch(function(){}).then(function(){
       refreshAccountsCount();
       showTab("build");

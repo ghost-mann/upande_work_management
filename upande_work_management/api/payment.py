@@ -251,14 +251,12 @@ def wm_payment(**kwargs):
                 r["pay_status"] = "Paid"
             elif r.get("max_paid") == 1 and frappe.utils.flt(r.get("unpaid_amt")) <= 0.001:
                 r["pay_status"] = "Paid"
-            elif frappe.utils.flt(r.get("unreviewed_amt")) <= 0.001:
-                r["pay_status"] = "Reviewed"
             else:
                 r["pay_status"] = "Unpaid"
             r["run_ref"] = rref or None
             r["wfrom"] = str(r.get("wfrom")) if r.get("wfrom") else None
             r["wto"] = str(r.get("wto")) if r.get("wto") else None
-            r["payable"] = 1 if r["pay_status"] in ("Unpaid", "Reviewed") else 0
+            r["payable"] = 1 if r["pay_status"] == "Unpaid" else 0
         out["workers"] = rows
         tot = 0
         for r in rows:
@@ -329,28 +327,73 @@ def wm_payment(**kwargs):
             pp_limit = 1000
         pp_start = frappe.utils.cint(frappe.form_dict.get("start") or 0)
         pp_week = frappe.form_dict.get("payroll_date")
+        # Same filters the Pay workers tab offers, so accounts can narrow the queue
+        # the way the person who built it did: farm, worked-date range, and a search
+        # over the worker or the reference. Applied server-side, so the totals and
+        # the paging stay honest rather than filtering only the page on screen.
+        pp_farms = (frappe.form_dict.get("farms") or "").strip()
+        pp_from = frappe.form_dict.get("from_date")
+        pp_to = frappe.form_dict.get("to_date")
+        pp_q = (frappe.form_dict.get("q") or "").strip()
         pp_filters = {"workflow_state": "Unpaid"}
         if pp_week:
             pp_filters["payroll_date"] = pp_week
-        out["total"] = frappe.db.count("Work Management Payment", pp_filters)
-        out["total_amount"] = frappe.utils.flt(frappe.db.sql("""
-            SELECT COALESCE(SUM(amount),0) a FROM `tabWork Management Payment`
-            WHERE workflow_state = 'Unpaid'
-        """, as_dict=True)[0].a)
-        # every pay week in the queue, so accounts can work a week at a time
-        out["weeks"] = frappe.db.sql("""
-            SELECT payroll_date, period_from, period_to, COUNT(*) n,
-                   COALESCE(SUM(amount),0) amount
-            FROM `tabWork Management Payment`
-            WHERE workflow_state = 'Unpaid'
-            GROUP BY payroll_date, period_from, period_to
-            ORDER BY payroll_date DESC
+        pp_cond = "p.workflow_state = 'Unpaid'"
+        pp_args = {}
+        if pp_week:
+            pp_cond = pp_cond + " AND p.payroll_date = %(wk)s"
+            pp_args["wk"] = pp_week
+        if pp_farms:
+            pp_flist = [f.strip() for f in pp_farms.split(",") if f.strip()]
+            if pp_flist:
+                pp_cond = pp_cond + " AND p.farm IN %(fl)s"
+                pp_args["fl"] = tuple(pp_flist)
+        if pp_from:
+            pp_cond = pp_cond + " AND p.period_to >= %(pf)s"
+            pp_args["pf"] = pp_from
+        if pp_to:
+            pp_cond = pp_cond + " AND p.period_from <= %(pt)s"
+            pp_args["pt"] = pp_to
+        if pp_q:
+            pp_cond = pp_cond + (" AND (p.name LIKE %(q)s OR p.run_title LIKE %(q)s"
+                                 " OR EXISTS (SELECT 1 FROM `tabWork Payment Line` wl"
+                                 " WHERE wl.parent = p.name AND (wl.employee LIKE %(q)s"
+                                 " OR wl.employee_name LIKE %(q)s)))")
+            pp_args["q"] = "%" + pp_q + "%"
+        pp_agg = frappe.db.sql("""
+            SELECT COUNT(*) n, COALESCE(SUM(p.amount),0) a
+            FROM `tabWork Management Payment` p WHERE """ + pp_cond, pp_args, as_dict=True)[0]
+        out["total"] = frappe.utils.cint(pp_agg.n)
+        out["total_amount"] = frappe.utils.flt(pp_agg.a)
+        out["filtered"] = 1 if (pp_farms or pp_from or pp_to or pp_q) else 0
+        out["queue_total"] = frappe.db.count("Work Management Payment", {"workflow_state": "Unpaid"})
+        out["farms"] = frappe.db.sql("""
+            SELECT p.farm, COUNT(*) n FROM `tabWork Management Payment` p
+            WHERE p.workflow_state = 'Unpaid' AND IFNULL(p.farm,'') != ''
+            GROUP BY p.farm ORDER BY p.farm
         """, as_dict=True)
-        pend = frappe.db.get_all("Work Management Payment",
-            filters=pp_filters,
-            fields=["name","run_title","total_actuals","total_workers","amount","prepared_by","payroll_date",
-                    "period_from","period_to"],
-            order_by="payroll_date desc, name asc", limit=pp_limit, start=pp_start)
+        # every pay week in the queue, so accounts can work a week at a time
+        pp_wcond = pp_cond
+        if pp_week:
+            pp_wcond = pp_wcond.replace(" AND p.payroll_date = %(wk)s", "")
+        out["weeks"] = frappe.db.sql("""
+            SELECT p.payroll_date, p.period_from, p.period_to, COUNT(*) n,
+                   COALESCE(SUM(p.amount),0) amount
+            FROM `tabWork Management Payment` p
+            WHERE """ + pp_wcond + """
+            GROUP BY p.payroll_date, p.period_from, p.period_to
+            ORDER BY p.payroll_date DESC
+        """, pp_args, as_dict=True)
+        pp_args["lim"] = pp_limit
+        pp_args["off"] = pp_start
+        pend = frappe.db.sql("""
+            SELECT p.name, p.run_title, p.total_actuals, p.total_workers, p.amount,
+                   p.prepared_by, p.payroll_date, p.period_from, p.period_to, p.farm
+            FROM `tabWork Management Payment` p
+            WHERE """ + pp_cond + """
+            ORDER BY p.payroll_date DESC, p.name ASC
+            LIMIT %(lim)s OFFSET %(off)s
+        """, pp_args, as_dict=True)
         # one query for the worker names rather than one per payment
         pp_names = [pr.name for pr in pend]
         pp_emp = {}
@@ -2468,6 +2511,60 @@ def wm_payment(**kwargs):
             out["rows_freed"] = pq_freed
             out["skipped_paid_by_payroll"] = len(pq_used)
             out["remaining"] = frappe.db.count("Work Management Payment", {"workflow_state": "Unpaid"})
+
+    elif action == "pay_fix_orphan_refs":
+        # REPAIR: a work row keeps its payment_ref long after the payment it names
+        # has gone. pay_purge_queue clears the refs of the documents it deletes,
+        # but a payment removed any other way -- straight off the list view, say --
+        # leaves its rows stamped. Those rows are then invisible to every send,
+        # because pay_worker_submit only picks up rows whose payment_ref is empty,
+        # so the worker looks payable on screen and refuses to send.
+        # Only rows that are NOT paid and whose ref names a payment that no longer
+        # exists are cleared. dry_run=1 reports without writing.
+        fo_dry = frappe.utils.cint(frappe.form_dict.get("dry_run") or 0)
+        fo_chunk = frappe.utils.cint(frappe.form_dict.get("chunk") or 500)
+        if fo_chunk < 1 or fo_chunk > 2000:
+            fo_chunk = 500
+        fo_rows = frappe.db.sql("""
+            SELECT we.name, we.employee, we.payment_ref, we.amount
+            FROM `tabWork Actuals Employee` we
+            LEFT JOIN `tabWork Management Payment` p ON p.name = we.payment_ref
+            WHERE IFNULL(we.payment_ref,'') != ''
+              AND IFNULL(we.paid,0) = 0
+              AND p.name IS NULL
+            ORDER BY we.name
+            LIMIT %(n)s
+        """, {"n": fo_chunk}, as_dict=True)
+        fo_total = frappe.db.sql("""
+            SELECT COUNT(*) n, COALESCE(SUM(we.amount),0) a
+            FROM `tabWork Actuals Employee` we
+            LEFT JOIN `tabWork Management Payment` p ON p.name = we.payment_ref
+            WHERE IFNULL(we.payment_ref,'') != ''
+              AND IFNULL(we.paid,0) = 0
+              AND p.name IS NULL
+        """, as_dict=True)[0]
+        out["dry_run"] = fo_dry
+        out["orphan_rows"] = frappe.utils.cint(fo_total.n)
+        out["orphan_amount"] = frappe.utils.flt(fo_total.a)
+        out["batch"] = len(fo_rows)
+        out["sample"] = [{"row": r.name, "employee": r.employee, "ref": r.payment_ref} for r in fo_rows[:8]]
+        fo_done = 0
+        if not fo_dry:
+            for r in fo_rows:
+                frappe.db.set_value("Work Actuals Employee", r.name, "payment_ref", None, update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", r.name, "custom_reviewed", 0, update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", r.name, "custom_reviewed_by", None, update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", r.name, "custom_reviewed_at", None, update_modified=False)
+                fo_done = fo_done + 1
+            frappe.db.commit()
+        out["cleared"] = fo_done
+        out["remaining"] = frappe.utils.cint(frappe.db.sql("""
+            SELECT COUNT(*) n FROM `tabWork Actuals Employee` we
+            LEFT JOIN `tabWork Management Payment` p ON p.name = we.payment_ref
+            WHERE IFNULL(we.payment_ref,'') != ''
+              AND IFNULL(we.paid,0) = 0
+              AND p.name IS NULL
+        """, as_dict=True)[0].n)
 
     elif action == "pay_release_inactive":
         # CLEAN SLATE for the "left the company but still assigned" backlog:

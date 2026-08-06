@@ -2403,8 +2403,8 @@
     if(role==="creator"){
       h+=pkTile("Plans", fmt(k.plans), fmt(k.approved)+" approved · "+fmt(k.rejected)+" rejected");
       h+=pkTile("Achieved", fmt(k.achieved,0)+"%", fmt(k.actual)+" of "+fmt(k.target)+" units", pkPctColor(k.achieved,true));
-      h+=pkTile("Budget", "KES "+fmt(k.planned,0), "what their plans promised");
-      h+=pkTile("Spent", "KES "+fmt(k.spent,0), fmt(k.of_planned,0)+"% of budget");
+      h+=pkTile("Planned", "KES "+fmt(k.planned,0), "what their plans promised");
+      h+=pkTile("Spent", "KES "+fmt(k.spent,0), fmt(k.of_planned,0)+"% of planned");
       h+=pkTile("KES / unit", k.cost_per_unit>0?fmt(k.cost_per_unit,2):"—", "raw cost of one unit");
       if(k.vs_peers_pct!=null){
         var vp=k.vs_peers_pct;
@@ -2435,13 +2435,14 @@
       var isEnt=role==="enterer";
       h+='<div class="sech" style="margin-top:14px;font-size:10px">'+(role==="creator"?"Their plans":(role==="assigner"?"Their assignments":"Their documents"))+' &middot; window '+esc(win.from||"")+' → '+esc(win.to||"")+'</div>';
       h+='<div style="max-height:320px;overflow-y:auto"><table><thead><tr>'+
-        '<th>Doc</th><th>Task</th><th>Farm</th><th>'+(isEnt?"Entered":"Period")+'</th>'+
+        '<th>Doc</th><th>Task</th><th>Farm</th><th>Period</th>'+(isEnt?'<th>Entered</th>':'')+
         (role==="assigner"?'<th class="n">Crew</th>':'')+
         (isEnt?'':'<th class="n">Target</th>')+'<th class="n">Actual</th>'+
         (isEnt?'':'<th class="n">Achieved</th>')+'<th class="n">'+(role==="creator"?"Spent":"Spent KES")+'</th><th>Status</th></tr></thead><tbody>';
       rows.forEach(function(r){
         h+='<tr><td class="m" style="font-size:10px">'+esc(r.doc)+'</td><td>'+esc(r.task||"")+'</td><td>'+esc(r.farm||"")+'</td>'+
           '<td class="m" style="font-size:10px">'+esc(r.period||"")+'</td>'+
+          (isEnt?'<td class="m" style="font-size:10px">'+esc(r.entered||"")+'</td>':'')+
           (role==="assigner"?'<td class="n m">'+esc(r.crew||"")+'</td>':'')+
           (isEnt?'':'<td class="n m">'+fmt(r.target)+'</td>')+'<td class="n m">'+fmt(r.actual)+'</td>'+
           (isEnt?'':'<td class="n">'+ppPct(r.achieved)+'</td>')+'<td class="n m">'+fmt(r.spent,0)+'</td>'+
@@ -2471,10 +2472,6 @@
     var rb=el("wm-refresh"); if(rb) rb.onclick=function(){ load(); toast("Refreshed"); };
     load();
   }
-  // No `frappe` global check here: this page only GETs /api/method/wm_dashboard
-  // with the session cookie, and www/work-management.py already refuses Guests,
-  // so the global is never read. Gating on it blanked the whole dashboard on any
-  // page render that did not define it. A bad session now surfaces as the HTTP
-  // error from load(), which says what actually went wrong.
-  if(el("wm-body")) boot(); else document.addEventListener("DOMContentLoaded", boot);
+  if(typeof frappe==="undefined"){ var b=el("wm-body"); if(b) b.innerHTML='<div class="err">Open inside Frappe (logged in).</div>'; }
+  else { if(el("wm-body")) boot(); else document.addEventListener("DOMContentLoaded", boot); }
 })();
