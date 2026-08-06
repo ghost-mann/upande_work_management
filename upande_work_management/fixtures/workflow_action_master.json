@@ -36,8 +36,18 @@
  },
  {
   "doctype": "Workflow Action Master",
+  "name": "Send for Consultant Review",
+  "workflow_action_name": "Send for Consultant Review"
+ },
+ {
+  "doctype": "Workflow Action Master",
   "name": "Send to Accounts",
   "workflow_action_name": "Send to Accounts"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Send to GM",
+  "workflow_action_name": "Send to GM"
  },
  {
   "doctype": "Workflow Action Master",

@@ -36,6 +36,11 @@
  },
  {
   "doctype": "Workflow State",
+  "name": "Pending Consultant",
+  "workflow_state_name": "Pending Consultant"
+ },
+ {
+  "doctype": "Workflow State",
   "name": "Pending Farm Manager",
   "workflow_state_name": "Pending Farm Manager"
  },
