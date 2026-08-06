@@ -1,0 +1,206 @@
+{
+ "allow_rename": 1,
+ "autoname": "naming_series:",
+ "creation": "2026-08-06 00:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "farm",
+  "workflow_state",
+  "cb_mp_top",
+  "period_from",
+  "period_to",
+  "company",
+  "sb_mp_act",
+  "activities",
+  "sb_mp_tot",
+  "total_activities",
+  "total_man_days",
+  "cb_mp_tot",
+  "total_cost",
+  "sb_mp_audit",
+  "raised_by",
+  "raised_on",
+  "cb_mp_audit",
+  "gm_approved_by",
+  "gm_approved_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "options": "WMMP-.#####",
+   "default": "WMMP-.#####"
+  },
+  {
+   "fieldname": "farm",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Farm",
+   "options": "Farm",
+   "reqd": 1
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Workflow State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_mp_top",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "period_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Period From",
+   "reqd": 1
+  },
+  {
+   "fieldname": "period_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Period To",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "description": "Only these activities may be planned for this farm in this period, and only up to the Work and Cost budgeted here.",
+   "fieldname": "sb_mp_act",
+   "fieldtype": "Section Break",
+   "label": "Activities"
+  },
+  {
+   "fieldname": "activities",
+   "fieldtype": "Table",
+   "label": "Activities",
+   "options": "Work Management Master Plan Activity"
+  },
+  {
+   "fieldname": "sb_mp_tot",
+   "fieldtype": "Section Break",
+   "label": "Totals"
+  },
+  {
+   "fieldname": "total_activities",
+   "fieldtype": "Int",
+   "label": "Activities",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_man_days",
+   "fieldtype": "Float",
+   "label": "Total Man Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_mp_tot",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_mp_audit",
+   "fieldtype": "Section Break",
+   "label": "Raised & Approved"
+  },
+  {
+   "fieldname": "raised_by",
+   "fieldtype": "Link",
+   "label": "Raised By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "raised_on",
+   "fieldtype": "Datetime",
+   "label": "Raised On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_mp_audit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "gm_approved_by",
+   "fieldtype": "Link",
+   "label": "GM Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gm_approved_on",
+   "fieldtype": "Datetime",
+   "label": "GM Approved On",
+   "read_only": 1
+  }
+ ],
+ "idx": 0,
+ "is_submittable": 0,
+ "links": [],
+ "modified": "2026-08-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Master Plan",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "report": 1,
+   "role": "General Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HOD HR",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "farm",
+ "track_changes": 1
+}

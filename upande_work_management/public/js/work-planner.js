@@ -2,19 +2,20 @@
   var API = "/api/method/wm_planner";
   var ST = { farm:null, picked:{}, task:null, taskInfo:null, tasks:[], blocks:[], roles:null };
 
-  function call(args){
+  function call(args, method){
+    var ep = "/api/method/" + (method || "wm_planner");
     var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
     var token = (typeof frappe!=="undefined" && frappe.csrf_token) ? frappe.csrf_token : "";
     if(!isWrite){
-      return fetch("/api/method/wm_planner?" + p.toString(), {
+      return fetch(ep + "?" + p.toString(), {
         method: "GET", headers: { "Accept": "application/json" }, credentials: "same-origin"
       }).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
         .then(function(j){ return j.message || {}; });
     }
-    return fetch("/api/method/wm_planner", {
+    return fetch(ep, {
       method: "POST",
       headers: { "Content-Type":"application/x-www-form-urlencoded", "X-Frappe-CSRF-Token":token, "Accept":"application/json" },
       body: p.toString(), credentials: "same-origin"
@@ -130,10 +131,140 @@
     };
   }
 
+  // ── master plan: the budget the planner draws down against ──────────────
+  var MP = { roles:null, inited:false };
+  function loadMasterPlans(){
+    if(!MP.inited){
+      MP.inited=true;
+      el("mp-refresh").onclick=loadMasterPlans;
+      el("mp-farm").onchange=loadMasterPlans;
+      el("mp-state").onchange=loadMasterPlans;
+      el("mp-new").onclick=function(){ window.open("/app/work-management-master-plan/new","_blank"); };
+    }
+    var box=el("mp-body");
+    box.innerHTML='<div class="empty">Loading…</div>';
+    call({ action:"meta" }, "wm_masterplan").then(function(m){
+      MP.roles=m;
+      var fs=el("mp-farm");
+      if(fs && !fs.options.length){
+        var oAll=document.createElement("option"); oAll.value=""; oAll.textContent="All farms"; fs.appendChild(oAll);
+        (m.farms||[]).forEach(function(f){
+          var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o);
+        });
+      }
+      if(el("mp-new")) el("mp-new").style.display = m.can_edit ? "" : "none";
+      return call({ action:"list", farm:(el("mp-farm").value||""),
+                    state:(el("mp-state").value||"") }, "wm_masterplan");
+    }).then(function(d){
+      var rows=d.plans||[];
+      if(!rows.length){
+        var fv=el("mp-farm").value;
+        box.innerHTML='<div class="empty">No master plans'+(fv?(" for "+esc(fv)):"")+' yet.</div>';
+        return;
+      }
+      var h='<table><thead><tr><th>Master plan</th><th>Farm</th><th>Period</th>'+
+        '<th class="n">Activities</th><th class="n">Man days</th><th class="n">Budget KES</th>'+
+        '<th>Status</th><th>Raised by</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        h+='<tr><td class="m" style="font-size:10px"><a href="#" data-mp="'+esc(r.name)+'">'+esc(r.name)+'</a></td>'+
+           '<td>'+esc(r.farm||"")+'</td>'+
+           '<td class="m" style="font-size:10px">'+esc(r.period_from)+' → '+esc(r.period_to)+'</td>'+
+           '<td class="n m">'+fmt(r.total_activities)+'</td>'+
+           '<td class="n m">'+fmt(r.total_man_days)+'</td>'+
+           '<td class="n m">'+fmt(r.total_cost,2)+'</td>'+
+           '<td style="font-size:10px">'+esc(r.workflow_state||"")+'</td>'+
+           '<td style="font-size:10px">'+esc((r.raised_by||"").split("@")[0])+'</td></tr>';
+      });
+      box.innerHTML=h+'</tbody></table>';
+      box.querySelectorAll("[data-mp]").forEach(function(a){
+        a.onclick=function(ev){ ev.preventDefault(); openMasterPlan(a.getAttribute("data-mp")); };
+      });
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+  function openMasterPlan(name){
+    var box=el("mp-body");
+    box.innerHTML='<div class="empty">Loading…</div>';
+    call({ action:"get", name:name }, "wm_masterplan").then(function(d){
+      if(d.error){ toast(d.error); return; }
+      var p=d.plan, acts=d.activities||[];
+      // "get" reads the last-persisted planned/remaining figures, which only "headroom"
+      // refreshes -- pull it for this plan's own period so "Left" is never stale.
+      return call({ action:"headroom", farm:p.farm, from_date:p.period_from, to_date:p.period_to },
+                  "wm_masterplan").then(function(hd){
+        var byRow={};
+        (hd.activities||[]).forEach(function(x){ byRow[x.row]=x; });
+        acts.forEach(function(a){
+          var live=byRow[a.name];
+          if(live){ a.planned_qty=live.planned_qty; a.planned_cost=live.planned_cost;
+                    a.remaining_qty=live.remaining_qty; a.remaining_cost=live.remaining_cost; }
+        });
+        return {p:p, acts:acts};
+      }).catch(function(){ return {p:p, acts:acts}; });
+    }).then(function(res){
+      if(!res) return;
+      var p=res.p, acts=res.acts;
+      var h='<div class="sech">'+esc(p.name)+' · '+esc(p.farm)+' · '+esc(p.period_from)+' → '+
+            esc(p.period_to)+' · '+esc(p.workflow_state)+'</div>';
+      h+='<div class="note" style="margin-bottom:8px">Click an activity to see which plans are drawing on its budget — including stale drafts still holding it.</div>';
+      h+='<table><thead><tr><th>Activity</th><th class="n">Man days</th><th class="n">Days</th>'+
+         '<th class="n">Work</th><th>Unit</th><th class="n">Rate</th><th class="n">Cost</th>'+
+         '<th class="n">Planned</th><th class="n">Left</th><th>Consultant</th><th>Remarks</th></tr></thead><tbody>';
+      acts.forEach(function(a,i){
+        var exhausted = (a.remaining_qty!=null && a.remaining_qty<=0.005) ||
+                        (a.remaining_cost!=null && a.remaining_cost<=0.005);
+        h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(a.task)+'</td><td class="n m">'+fmt(a.man_days)+'</td>'+
+           '<td class="n m">'+fmt(a.days)+'</td><td class="n m">'+fmt(a.work_qty)+'</td>'+
+           '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
+           '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
+           '<td class="n m">'+fmt(a.remaining_qty)+
+           (exhausted?' <span style="color:#b91c1c;font-weight:600;font-size:9px;text-transform:uppercase">used up</span>':'')+'</td>'+
+           '<td style="font-size:10px">'+esc(a.consultant_state||"")+
+           (a.original_qty?(' <span class="hint">was '+fmt(a.original_qty)+'</span>'):'')+'</td>'+
+           '<td style="font-size:10px">'+esc(a.remarks||"")+'</td></tr>';
+        h+='<tr class="mp-actdetail" data-ad="'+i+'" style="display:none"><td colspan="11" style="background:var(--wash);padding:0">'+
+           '<div class="mp-consumers" data-panel="'+i+'"></div></td></tr>';
+      });
+      h+='</tbody></table>';
+      box.innerHTML=h;
+      box.querySelectorAll(".mp-actrow").forEach(function(tr){
+        tr.onclick=function(){
+          var i=parseInt(tr.getAttribute("data-ai"),10);
+          var dr=box.querySelector('.mp-actdetail[data-ad="'+i+'"]');
+          var open=dr && dr.style.display!=="none";
+          box.querySelectorAll(".mp-actdetail").forEach(function(x){ x.style.display="none"; });
+          if(open || !dr) return;
+          dr.style.display="";
+          var panel=box.querySelector('.mp-consumers[data-panel="'+i+'"]');
+          panel.innerHTML='<div class="empty">Loading…</div>';
+          call({ action:"consumers", row: acts[i].name }, "wm_masterplan").then(function(cd){
+            if(cd.error){ panel.innerHTML='<div class="empty">'+esc(cd.error)+'</div>'; return; }
+            var rows=cd.plans||[], stale=cd.stale_drafts||[];
+            if(!rows.length){ panel.innerHTML='<div class="empty">Nothing is drawing on this line yet.</div>'; return; }
+            var ph='<table><thead><tr><th>Plan</th><th>Block</th><th>Period</th><th class="n">Qty</th>'+
+                   '<th class="n">Cost</th><th>Status</th><th>Requested by</th></tr></thead><tbody>';
+            rows.forEach(function(r){
+              var isStale = stale.indexOf(r.name)>-1;
+              ph+='<tr><td class="m" style="font-size:10px">'+esc(r.name)+'</td>'+
+                  '<td style="font-size:10px">'+esc(lbl(r.block_section))+'</td>'+
+                  '<td class="m" style="font-size:10px">'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+
+                  '<td class="n m">'+fmt(r.quantity)+'</td><td class="n m">'+fmt(r.total_cost,2)+'</td>'+
+                  '<td style="font-size:10px">'+esc(r.workflow_state||"")+
+                  (isStale?' <span style="color:#a06000;font-weight:600">(stale draft — still holding budget)</span>':'')+'</td>'+
+                  '<td style="font-size:10px">'+esc(shortUser(r.requested_by))+'</td></tr>';
+            });
+            ph+='</tbody></table>';
+            panel.innerHTML=ph;
+          }).catch(function(e){ panel.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+        };
+      });
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not open: '+esc(e.message)+'</div>'; });
+  }
+
   function buildTabs(){
     var tabs=[["new","New Request"],["mine","My Requests"],["rej","Rejected"]];
     if(ST.roles && ST.roles.is_approver) tabs.push(["appr","Approvals"]);
     tabs.push(["week","Weekly review"]);
+    tabs.push(["mp","Master plan"]);
     var nav=el("wp-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button");
@@ -144,12 +275,13 @@
     showTab("new");
   }
   function showTab(name){
-    ["new","mine","rej","appr","week"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
+    ["new","mine","rej","appr","week","mp"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
     document.querySelectorAll("#wp-tabs button").forEach(function(b){ b.setAttribute("aria-selected", b.getAttribute("data-tab")===name); });
     if(name==="mine") loadMine();
     if(name==="rej") loadRejected();
     if(name==="appr") loadAppr();
     if(name==="week") initWeekBoard();
+    if(name==="mp") loadMasterPlans();
   }
 
   function initNew(meta){
@@ -187,7 +319,17 @@
       ST.tasks=d.tasks||[];
       var sel=el("f-task");
       sel.innerHTML='<option value="">— select task —</option>';
-      ST.tasks.forEach(function(t){ var o=document.createElement("option"); o.value=t.name; o.textContent=t.subject; sel.appendChild(o); });
+      ST.tasks.forEach(function(t){
+        var o=document.createElement("option");
+        o.value=t.name;
+        o.textContent=t.subject+" · "+fmt(t.remaining_qty)+" "+(t.uom||"")+" / KES "+fmt(t.remaining_cost,0)+" left";
+        if(t.exhausted){ o.disabled=true; o.textContent=t.subject+" · budget used up"; }
+        sel.appendChild(o);
+      });
+      if(d.blocked_reason){
+        sel.innerHTML="";
+        toast(d.blocked_reason);
+      }
     });
     recalc();
   }
