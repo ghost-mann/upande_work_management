@@ -945,6 +945,22 @@
     "next_state": "Rejected",
     "send_email_to_creator": 0,
     "state": "Pending GM"
+   },
+   {
+    "action": "Send to GM",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Pending GM",
+    "send_email_to_creator": 0,
+    "state": "Pending Consultant"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Consultant"
    }
   ],
   "workflow_name": "Work Management Master Plan Approval",
