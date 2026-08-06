@@ -849,5 +849,105 @@
   ],
   "workflow_name": "Work Management Payment Approval",
   "workflow_state_field": "workflow_state"
+ },
+ {
+  "doctype": "Workflow",
+  "document_type": "Work Management Master Plan",
+  "is_active": 1,
+  "name": "Work Management Master Plan Approval",
+  "override_status": 0,
+  "send_email_alert": 0,
+  "states": [
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Draft"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending Consultant"
+   },
+   {
+    "allow_edit": "General Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Pending GM"
+   },
+   {
+    "allow_edit": "General Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Approved"
+   },
+   {
+    "allow_edit": "Farm Manager",
+    "doc_status": "0",
+    "is_optional_state": 0,
+    "state": "Rejected"
+   }
+  ],
+  "transitions": [
+   {
+    "action": "Send for Consultant Review",
+    "allow_self_approval": 1,
+    "allowed": "Farm Manager",
+    "next_state": "Pending Consultant",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Send for Consultant Review",
+    "allow_self_approval": 1,
+    "allowed": "HOD HR",
+    "next_state": "Pending Consultant",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Send for Consultant Review",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Pending Consultant",
+    "send_email_to_creator": 0,
+    "state": "Draft"
+   },
+   {
+    "action": "Send to GM",
+    "allow_self_approval": 1,
+    "allowed": "System Manager",
+    "next_state": "Pending GM",
+    "send_email_to_creator": 0,
+    "state": "Pending Consultant"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "System Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending Consultant"
+   },
+   {
+    "action": "GM Approve",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Approved",
+    "send_email_to_creator": 0,
+    "state": "Pending GM"
+   },
+   {
+    "action": "Reject",
+    "allow_self_approval": 1,
+    "allowed": "General Manager",
+    "next_state": "Rejected",
+    "send_email_to_creator": 0,
+    "state": "Pending GM"
+   }
+  ],
+  "workflow_name": "Work Management Master Plan Approval",
+  "workflow_state_field": "workflow_state"
  }
 ]
