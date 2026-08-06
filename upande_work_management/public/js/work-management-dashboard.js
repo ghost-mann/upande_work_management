@@ -2471,6 +2471,10 @@
     var rb=el("wm-refresh"); if(rb) rb.onclick=function(){ load(); toast("Refreshed"); };
     load();
   }
-  if(typeof frappe==="undefined"){ var b=el("wm-body"); if(b) b.innerHTML='<div class="err">Open inside Frappe (logged in).</div>'; }
-  else { if(el("wm-body")) boot(); else document.addEventListener("DOMContentLoaded", boot); }
+  // No `frappe` global check here: this page only GETs /api/method/wm_dashboard
+  // with the session cookie, and www/work-management.py already refuses Guests,
+  // so the global is never read. Gating on it blanked the whole dashboard on any
+  // page render that did not define it. A bad session now surfaces as the HTTP
+  // error from load(), which says what actually went wrong.
+  if(el("wm-body")) boot(); else document.addEventListener("DOMContentLoaded", boot);
 })();
