@@ -110,6 +110,26 @@ def wm_masterplan(**kwargs):
                             "original_qty", "original_cost",
                             "planned_qty", "planned_cost", "remaining_qty", "remaining_cost", "remarks"],
                     order_by="idx")
+                # a rate card landing mid-period leaves the budget's money fixed
+                # while the planner costs work at the new rate, so fewer units fit
+                dr = []
+                for da in out["activities"]:
+                    dr_live = frappe.db.sql("""
+                        SELECT rate FROM `tabWork Task Rate`
+                        WHERE task = %(t)s AND valid_from <= %(d)s
+                          AND (valid_to IS NULL OR valid_to >= %(d)s)
+                        ORDER BY valid_from DESC LIMIT 1
+                    """, {"t": da.get("task"), "d": frappe.utils.today()}, as_dict=True)
+                    if not dr_live:
+                        continue
+                    dr_r = frappe.utils.flt(dr_live[0].rate, 6)
+                    if abs(dr_r - frappe.utils.flt(da.get("rate"), 6)) > 0.0000005:
+                        dr.append({"row": da.get("name"), "task": da.get("task"),
+                                   "budget_rate": frappe.utils.flt(da.get("rate"), 6),
+                                   "live_rate": dr_r,
+                                   "cost_at_live_rate": frappe.utils.flt(
+                                       frappe.utils.flt(da.get("work_qty")) * dr_r, 2)})
+                out["rate_drift"] = dr
                 out["can_edit"] = 1 if (CAN_EDIT and mp.workflow_state in ("Draft", "Rejected")) else 0
                 out["can_decide"] = 1 if (IS_CONSULTANT and mp.workflow_state == "Pending Consultant") else 0
                 out["can_gm_approve"] = 1 if (CAN_GM and mp.workflow_state == "Pending GM") else 0
@@ -442,6 +462,39 @@ def wm_masterplan(**kwargs):
             """, {"t": cs.task, "f": cs_mp.farm,
                   "pfrom": cs_mp.period_from, "pto": cs_mp.period_to}, as_dict=True)
             out["stale_drafts"] = [p.name for p in out["plans"] if p.workflow_state == "Draft"]
+
+    elif action == "pickable_tasks":
+        # Every task the farm's project could put on a master plan, with the rate
+        # that would be frozen onto the line if raised on period_from -- the same
+        # lookup "save" uses, so the number shown here is the number that lands.
+        # Read-only: this never touches "tasks" in wm_planner.py, which stays
+        # scoped to what an approved master plan already allows.
+        pt_farm = frappe.form_dict.get("farm")
+        pt_from = frappe.form_dict.get("period_from") or frappe.utils.today()
+        pt_proj_map = {"Saboti": "PROJ-0031", "Lokitela": "PROJ-0031", "Vale": "PROJ-0031",
+                       "Endebess": "PROJ-0032"}
+        pt_proj = pt_proj_map.get(pt_farm)
+        if not pt_farm:
+            out["error"] = "farm is required"
+        elif not pt_proj:
+            out["error"] = "no project is mapped for farm: " + str(pt_farm)
+        else:
+            out["project"] = pt_proj
+            pt_out = []
+            for pt in frappe.db.get_all("Task",
+                    filters={"project": pt_proj, "is_group": 0},
+                    fields=["name", "subject", "custom_uom", "custom_rate"],
+                    order_by="subject"):
+                pt_rp = frappe.db.sql("""
+                    SELECT rate FROM `tabWork Task Rate`
+                    WHERE task = %(t)s AND valid_from <= %(d)s
+                      AND (valid_to IS NULL OR valid_to >= %(d)s)
+                    ORDER BY valid_from DESC LIMIT 1
+                """, {"t": pt.name, "d": pt_from}, as_dict=True)
+                pt_rate = frappe.utils.flt(pt_rp[0].rate, 6) if pt_rp else frappe.utils.flt(pt.custom_rate, 6)
+                pt_out.append({"name": pt.name, "subject": pt.subject,
+                               "uom": pt.custom_uom, "rate": pt_rate})
+            out["tasks"] = pt_out
 
     else:
         out["error"] = "unknown action: " + str(action)
