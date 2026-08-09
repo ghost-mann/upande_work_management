@@ -57,6 +57,16 @@ def wm_rates(**kwargs):
     # Rows revalued per call. Repeat until "remaining" comes back 0.
     CHUNK = 800
 
+    # Changing a rate reaches money that has already been approved, so it is held
+    # tighter than raising a master plan: the general manager, the HR head and a
+    # System Manager, and nobody else.
+    RATE_ROLES = ["General Manager", "HOD HR", "System Manager"]
+    rt_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+    CAN_RATE = 0
+    for rr in RATE_ROLES:
+        if rr in rt_roles:
+            CAN_RATE = 1
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -817,56 +827,132 @@ def wm_rates(**kwargs):
     # REVERSE — put every row a run touched back to its old value
     # ==================================================================
     elif action == "reverse":
-        rv_run = frappe.form_dict.get("run")
-        if not rv_run:
-            out["error"] = "run is required"
-        elif not frappe.db.exists("Work Rate Recalc Run", rv_run):
-            out["error"] = "no such run: " + str(rv_run)
+        if not CAN_RATE:
+            out["error"] = ("Only the general manager, the HR head or a System Manager "
+                            "can change a rate.")
         else:
-            rv = frappe.get_doc("Work Rate Recalc Run", rv_run)
-            if rv.status == "Reversed":
-                out["error"] = "run " + rv_run + " has already been reversed"
+            rv_run = frappe.form_dict.get("run")
+            if not rv_run:
+                out["error"] = "run is required"
+            elif not frappe.db.exists("Work Rate Recalc Run", rv_run):
+                out["error"] = "no such run: " + str(rv_run)
             else:
-                rv_parents = {}
-                rv_pays = {}
-                rv_n = 0
-                for ln in rv.lines:
-                    if ln.ref_doctype == "Work Actuals Employee":
-                        if frappe.db.exists("Work Actuals Employee", ln.ref_name):
+                rv = frappe.get_doc("Work Rate Recalc Run", rv_run)
+                if rv.status == "Reversed":
+                    out["error"] = "run " + rv_run + " has already been reversed"
+                else:
+                    rv_parents = {}
+                    rv_pays = {}
+                    rv_n = 0
+                    rv_plans = 0
+                    rv_planners = 0
+                    rv_periods = 0
+                    rv_skipped = 0
+                    for ln in rv.lines:
+                        # A row is only put back when it still holds the new_amount /
+                        # new_rate THIS run recorded. If a later run has moved it on
+                        # since, restoring old_amount here would drag it to a stale
+                        # figure -- skip and count it instead of reversing silently.
+                        if ln.ref_doctype == "Work Actuals Employee":
+                            rv_cur = frappe.db.get_value("Work Actuals Employee", ln.ref_name, "amount")
+                            if rv_cur is None:
+                                continue
+                            if frappe.utils.flt(rv_cur, 2) != frappe.utils.flt(ln.new_amount, 2):
+                                rv_skipped = rv_skipped + 1
+                                continue
                             frappe.db.set_value("Work Actuals Employee", ln.ref_name, "amount",
                                                 frappe.utils.flt(ln.old_amount), update_modified=False)
                             rv_parents[ln.ref_parent] = 1
                             rv_n = rv_n + 1
-                    elif ln.ref_doctype == "Work Payment Line":
-                        if frappe.db.exists("Work Payment Line", ln.ref_name):
+                        elif ln.ref_doctype == "Work Payment Line":
+                            rv_cur = frappe.db.get_value("Work Payment Line", ln.ref_name, "amount")
+                            if rv_cur is None:
+                                continue
+                            if frappe.utils.flt(rv_cur, 2) != frappe.utils.flt(ln.new_amount, 2):
+                                rv_skipped = rv_skipped + 1
+                                continue
                             frappe.db.set_value("Work Payment Line", ln.ref_name, "amount",
                                                 frappe.utils.flt(ln.old_amount), update_modified=False)
                             rv_pays[ln.ref_parent] = 1
                             rv_n = rv_n + 1
-                for pname in rv_parents:
-                    tot = frappe.db.sql("""
-                        SELECT COALESCE(SUM(amount),0) p FROM `tabWork Actuals Employee` WHERE parent = %s
-                    """, (pname,), as_dict=True)
-                    if tot:
-                        frappe.db.set_value("Work Management Actuals", pname, "total_payment",
-                                            frappe.utils.flt(tot[0].p), update_modified=False)
-                for pay in rv_pays:
-                    tot = frappe.db.sql("""
-                        SELECT COALESCE(SUM(amount),0) a FROM `tabWork Payment Line` WHERE parent = %s
-                    """, (pay,), as_dict=True)
-                    if tot:
-                        frappe.db.set_value("Work Management Payment", pay, "amount",
-                                            frappe.utils.flt(tot[0].a, 2), update_modified=False)
-                frappe.db.set_value("Work Rate Recalc Run", rv_run, {
-                    "status": "Reversed",
-                    "reversed_by": frappe.session.user,
-                    "reversed_on": frappe.utils.now(),
-                })
-                frappe.db.commit()
-                out["run"] = rv_run
-                out["rows_reverted"] = rv_n
-                out["parents_resummed"] = len(rv_parents)
-                out["payments_resummed"] = len(rv_pays)
+                        elif ln.ref_doctype == "Work Management Master Plan Activity":
+                            rv_cur = frappe.db.get_value("Work Management Master Plan Activity", ln.ref_name,
+                                ["rate", "cost"], as_dict=True)
+                            if not rv_cur:
+                                continue
+                            if frappe.utils.flt(rv_cur.rate, 6) != frappe.utils.flt(ln.new_rate, 6) or \
+                               frappe.utils.flt(rv_cur.cost, 2) != frappe.utils.flt(ln.new_amount, 2):
+                                rv_skipped = rv_skipped + 1
+                                continue
+                            frappe.db.set_value("Work Management Master Plan Activity", ln.ref_name,
+                                                {"rate": frappe.utils.flt(ln.old_rate, 6),
+                                                 "cost": frappe.utils.flt(ln.old_amount)},
+                                                update_modified=False)
+                            rv_n = rv_n + 1
+                            rv_plans = rv_plans + 1
+                        elif ln.ref_doctype == "Work Management Planner":
+                            rv_cur = frappe.db.get_value("Work Management Planner", ln.ref_name,
+                                ["rate", "total_cost"], as_dict=True)
+                            if not rv_cur:
+                                continue
+                            if frappe.utils.flt(rv_cur.rate, 6) != frappe.utils.flt(ln.new_rate, 6) or \
+                               frappe.utils.flt(rv_cur.total_cost, 2) != frappe.utils.flt(ln.new_amount, 2):
+                                rv_skipped = rv_skipped + 1
+                                continue
+                            frappe.db.set_value("Work Management Planner", ln.ref_name,
+                                                {"rate": frappe.utils.flt(ln.old_rate, 6),
+                                                 "total_cost": frappe.utils.flt(ln.old_amount)},
+                                                update_modified=False)
+                            rv_n = rv_n + 1
+                            rv_planners = rv_planners + 1
+                        elif ln.ref_doctype == "Work Task Rate":
+                            rv_cur = frappe.db.get_value("Work Task Rate", ln.ref_name, "rate")
+                            if rv_cur is None:
+                                continue
+                            if frappe.utils.flt(rv_cur, 6) != frappe.utils.flt(ln.new_rate, 6):
+                                rv_skipped = rv_skipped + 1
+                                continue
+                            frappe.db.set_value("Work Task Rate", ln.ref_name, "rate",
+                                                frappe.utils.flt(ln.old_rate, 6), update_modified=False)
+                            rv_period = frappe.db.get_value("Work Task Rate", ln.ref_name,
+                                ["valid_from", "valid_to"], as_dict=True)
+                            # only drag Task.custom_rate back when this period is the one
+                            # covering today -- a historical period's reversal must not
+                            # move today's mirrored rate.
+                            if rv_period and str(rv_period.valid_from) <= str(frappe.utils.today()) and \
+                               (not rv_period.valid_to or str(rv_period.valid_to) >= str(frappe.utils.today())):
+                                frappe.db.set_value("Task", ln.task, "custom_rate",
+                                                    frappe.utils.flt(ln.old_rate, 6), update_modified=False)
+                            rv_n = rv_n + 1
+                            rv_periods = rv_periods + 1
+                    for pname in rv_parents:
+                        tot = frappe.db.sql("""
+                            SELECT COALESCE(SUM(amount),0) p FROM `tabWork Actuals Employee` WHERE parent = %s
+                        """, (pname,), as_dict=True)
+                        if tot:
+                            frappe.db.set_value("Work Management Actuals", pname, "total_payment",
+                                                frappe.utils.flt(tot[0].p), update_modified=False)
+                    for pay in rv_pays:
+                        tot = frappe.db.sql("""
+                            SELECT COALESCE(SUM(amount),0) a FROM `tabWork Payment Line` WHERE parent = %s
+                        """, (pay,), as_dict=True)
+                        if tot:
+                            frappe.db.set_value("Work Management Payment", pay, "amount",
+                                                frappe.utils.flt(tot[0].a, 2), update_modified=False)
+                    frappe.db.set_value("Work Rate Recalc Run", rv_run, {
+                        "status": "Reversed",
+                        "reversed_by": frappe.session.user,
+                        "reversed_on": frappe.utils.now(),
+                    })
+                    frappe.db.commit()
+                    out["run"] = rv_run
+                    out["rows_reverted"] = rv_n
+                    out["parents_resummed"] = len(rv_parents)
+                    out["payments_resummed"] = len(rv_pays)
+                    out["master_plans_reverted"] = rv_plans
+                    out["planners_reverted"] = rv_planners
+                    out["periods_reverted"] = rv_periods
+                    out["rows_skipped"] = rv_skipped
 
     # ==================================================================
     # PERIODS — rate history for one task
@@ -884,6 +970,474 @@ def wm_rates(**kwargs):
             """, (p_task,), as_dict=True)
             out["task_master"] = frappe.db.get_value(
                 "Task", p_task, ["custom_rate", "custom_uom", "custom_daily_target"], as_dict=True)
+
+    # ==================================================================
+    # RATE META — what the Rates tab shows before you do anything
+    # ==================================================================
+    elif action == "rate_meta":
+        out["can_edit"] = CAN_RATE
+        out["tasks"] = frappe.db.sql("""
+            SELECT t.name, t.subject, t.custom_uom uom, t.custom_daily_target daily_target,
+                   t.custom_rate rate
+            FROM `tabTask` t
+            WHERE t.is_group = 0 AND IFNULL(t.project,'') IN ('PROJ-0031','PROJ-0032')
+            ORDER BY t.subject
+        """, as_dict=True)
+
+    # ==================================================================
+    # NEW RATE — the one write that is always safe: a new rate from a date
+    #
+    # A rate card: the old figure stays true for the days it applied to. Close the
+    # period the day before and open a new one. Nothing recalculates.
+    # ==================================================================
+    elif action == "new_rate":
+        nr_task = frappe.form_dict.get("task")
+        nr_rate = frappe.utils.flt(frappe.form_dict.get("rate"), 6)
+        nr_from = frappe.form_dict.get("effective_from")
+        if not CAN_RATE:
+            out["error"] = ("Only the general manager, the HR head or a System Manager "
+                            "can change a rate.")
+        elif not (nr_task and nr_from):
+            out["error"] = "task and effective_from are required"
+        elif nr_rate <= 0:
+            out["error"] = "rate must be greater than zero"
+        else:
+            nr_cur = frappe.db.sql("""
+                SELECT name, valid_from, valid_to FROM `tabWork Task Rate`
+                WHERE task = %(t)s AND valid_from <= %(d)s
+                  AND (valid_to IS NULL OR valid_to >= %(d)s)
+                ORDER BY valid_from DESC LIMIT 1
+            """, {"t": nr_task, "d": nr_from}, as_dict=True)
+            if nr_cur and str(nr_cur[0].valid_from) == str(nr_from):
+                out["error"] = ("A rate period already starts on " + str(nr_from) +
+                                " (" + nr_cur[0].name + "). Correct that period instead.")
+            else:
+                nr_next = None
+                if not nr_cur:
+                    # effective_from predates every period the task has (or the task
+                    # has none at all yet) -- the new period must not run past
+                    # whichever period starts next, or the two would overlap once
+                    # that later start date arrives.
+                    nr_next = frappe.db.sql("""
+                        SELECT name, valid_from FROM `tabWork Task Rate`
+                        WHERE task = %(t)s AND valid_from > %(d)s
+                        ORDER BY valid_from ASC LIMIT 1
+                    """, {"t": nr_task, "d": nr_from}, as_dict=True)
+                nr_closed = None
+                if nr_cur:
+                    frappe.db.set_value("Work Task Rate", nr_cur[0].name, "valid_to",
+                                        frappe.utils.add_days(nr_from, -1))
+                    nr_closed = nr_cur[0].name
+                nr_ti = frappe.db.get_value("Task", nr_task,
+                    ["custom_uom", "custom_daily_target"], as_dict=True)
+                nr_doc = frappe.new_doc("Work Task Rate")
+                nr_doc.task = nr_task
+                nr_doc.valid_from = nr_from
+                if nr_cur:
+                    nr_doc.valid_to = nr_cur[0].valid_to if nr_cur[0].valid_to else None
+                elif nr_next:
+                    nr_doc.valid_to = frappe.utils.add_days(nr_next[0].valid_from, -1)
+                else:
+                    nr_doc.valid_to = None
+                nr_doc.rate = nr_rate
+                nr_doc.uom = nr_ti.custom_uom if nr_ti else None
+                nr_doc.daily_target = frappe.utils.flt(nr_ti.custom_daily_target, 6) if nr_ti else 0
+                nr_doc.derived = 0
+                nr_doc.source = "Rates tab — new rate"
+                nr_doc.flags.ignore_permissions = True
+                nr_doc.insert(ignore_permissions=True)
+                # Only mirror onto the Task master when the period just written is
+                # the one actually in force today -- a historical insert that ends
+                # before today, or a future-dated one, must not overwrite it.
+                nr_today = frappe.utils.today()
+                if (str(nr_doc.valid_from) <= str(nr_today) and
+                        (not nr_doc.valid_to or str(nr_doc.valid_to) >= str(nr_today))):
+                    frappe.db.set_value("Task", nr_task, "custom_rate", nr_rate)
+                frappe.db.commit()
+                out["closed"] = nr_closed
+                out["created"] = nr_doc.name
+
+    # ==================================================================
+    # CORRECT PREVIEW — the impact list a correction has to pass first
+    #
+    # A rate card is not an edit: the old figure stays true for the days it
+    # applied to (new_rate handles that). A correction is different — the number
+    # was simply wrong, so everything priced from that period is wrong too,
+    # whatever state it has reached. This computes and reports what amending the
+    # period IN PLACE would touch. It writes nothing; Task 6 applies it.
+    # ==================================================================
+    elif action == "correct_preview":
+        cp_period = frappe.form_dict.get("period")
+        cp_rate = frappe.utils.flt(frappe.form_dict.get("rate"), 6)
+        cp_p = frappe.db.get_value("Work Task Rate", cp_period,
+            ["name", "task", "rate", "valid_from", "valid_to"], as_dict=True)
+        if not CAN_RATE:
+            out["error"] = ("Only the general manager, the HR head or a System Manager "
+                            "can change a rate.")
+        elif not cp_p:
+            out["error"] = "no such rate period: " + str(cp_period)
+        elif cp_rate <= 0:
+            out["error"] = "rate must be greater than zero"
+        else:
+            cp_to = cp_p.valid_to or "2999-12-31"
+            cp_args = {"t": cp_p.task, "f": str(cp_p.valid_from), "e": str(cp_to)}
+            out["period"] = cp_p.name
+            out["task"] = cp_p.task
+            out["old_rate"] = frappe.utils.flt(cp_p.rate, 6)
+            out["new_rate"] = cp_rate
+            out["valid_from"] = str(cp_p.valid_from)
+            out["valid_to"] = str(cp_p.valid_to) if cp_p.valid_to else None
+
+            # master plan lines whose budget period starts inside the corrected window
+            out["master_plans"] = frappe.db.sql("""
+                SELECT a.name row, a.parent plan, a.task, a.work_qty qty, a.cost old_cost,
+                       mp.farm, mp.workflow_state state
+                FROM `tabWork Management Master Plan Activity` a
+                INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
+                WHERE a.task = %(t)s AND IFNULL(mp.workflow_state,'') != 'Rejected'
+                  AND mp.period_from <= %(e)s AND mp.period_to >= %(f)s
+                ORDER BY mp.period_from DESC
+            """, cp_args, as_dict=True)
+            for cm in out["master_plans"]:
+                cm["new_cost"] = frappe.utils.flt(frappe.utils.flt(cm.qty) * cp_rate, 2)
+
+            # planner requests overlapping the window
+            cp_pl = frappe.db.sql("""
+                SELECT COUNT(*) n, COALESCE(SUM(total_cost),0) old_total,
+                       COALESCE(SUM(quantity),0) qty
+                FROM `tabWork Management Planner`
+                WHERE task = %(t)s AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date <= %(e)s AND to_date >= %(f)s
+            """, cp_args, as_dict=True)[0]
+            out["planners"] = {"rows": frappe.utils.cint(cp_pl.n),
+                               "old_total": frappe.utils.flt(cp_pl.old_total, 2),
+                               "new_total": frappe.utils.flt(frappe.utils.flt(cp_pl.qty) * cp_rate, 2)}
+
+            # confirmed day-rows in the window that are NOT already paid
+            cp_ac = frappe.db.sql("""
+                SELECT COUNT(*) n, COALESCE(SUM(we.amount),0) old_total,
+                       COALESCE(SUM(we.actual_quantity),0) qty
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                LEFT JOIN `tabWork Management Payment` p ON p.name = we.payment_ref
+                WHERE ac.task = %(t)s AND we.work_date >= %(f)s AND we.work_date <= %(e)s
+                  AND IFNULL(we.paid,0) = 0
+                  AND (we.payment_ref IS NULL OR IFNULL(we.payment_ref,'') = ''
+                       OR p.name IS NULL OR IFNULL(p.workflow_state,'') = 'Cancelled')
+            """, cp_args, as_dict=True)[0]
+            out["actuals"] = {"rows": frappe.utils.cint(cp_ac.n),
+                              "old_total": frappe.utils.flt(cp_ac.old_total, 2),
+                              "new_total": frappe.utils.flt(frappe.utils.flt(cp_ac.qty) * cp_rate, 2)}
+
+            # and the ones that are untouchable, so they are visible rather than absent
+            cp_lk = frappe.db.sql("""
+                SELECT COUNT(*) n, COALESCE(SUM(we.amount),0) total
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                LEFT JOIN `tabWork Management Payment` p ON p.name = we.payment_ref
+                WHERE ac.task = %(t)s AND we.work_date >= %(f)s AND we.work_date <= %(e)s
+                  AND (IFNULL(we.paid,0) = 1
+                       OR (IFNULL(we.payment_ref,'') != '' AND p.name IS NOT NULL
+                           AND IFNULL(p.workflow_state,'') != 'Cancelled'))
+            """, cp_args, as_dict=True)[0]
+            out["locked"] = {"rows": frappe.utils.cint(cp_lk.n),
+                             "total": frappe.utils.flt(cp_lk.total, 2)}
+
+    # ==================================================================
+    # CORRECT APPLY — do exactly what correct_preview promised, and record it
+    #
+    # Only the master plan lines that were ticked, plus planner requests and
+    # actuals rows if their groups were ticked, then the rate period itself.
+    # Paid actuals are excluded by the SAME predicate correct_preview used for
+    # its changeable-rows query, so apply can never re-price what the preview
+    # said was untouchable. Every row is logged on a Work Rate Recalc Run so
+    # wm_rates' "reverse" action can undo it in one step.
+    # ==================================================================
+    elif action == "correct_apply":
+        ca_period = frappe.form_dict.get("period")
+        ca_rate = frappe.utils.flt(frappe.form_dict.get("rate"), 6)
+        ca_rows = json.loads(frappe.form_dict.get("plan_rows") or "[]")
+        ca_do_pl = frappe.utils.cint(frappe.form_dict.get("do_planners"))
+        ca_do_ac = frappe.utils.cint(frappe.form_dict.get("do_actuals"))
+        ca_p = frappe.db.get_value("Work Task Rate", ca_period,
+            ["name", "task", "rate", "valid_from", "valid_to"], as_dict=True)
+        if not CAN_RATE:
+            out["error"] = ("Only the general manager, the HR head or a System Manager "
+                            "can change a rate.")
+        elif not ca_p:
+            out["error"] = "no such rate period: " + str(ca_period)
+        elif ca_rate <= 0:
+            out["error"] = "rate must be greater than zero"
+        else:
+            ca_to = ca_p.valid_to or "2999-12-31"
+            ca_args = {"t": ca_p.task, "f": str(ca_p.valid_from), "e": str(ca_to)}
+            ca_run = frappe.new_doc("Work Rate Recalc Run")
+            ca_run.status = "Applied"
+            ca_run.from_date = ca_p.valid_from
+            ca_run.to_date = ca_p.valid_to
+            ca_run.dry_run = 0
+            ca_run.executed_by = frappe.session.user
+            ca_run.executed_on = frappe.utils.now()
+            ca_old = 0
+            ca_new = 0
+            ca_n = 0
+            ca_skipped_rows = 0
+
+            for ca_r in ca_rows:
+                # A row is only priced here if it still qualifies under the SAME
+                # state-and-window filter correct_preview used to offer it: not on
+                # a Rejected plan, and the plan's budget period overlaps the
+                # corrected window. Ticking a row correct_preview never offered
+                # must not silently re-price it.
+                ca_qargs = {"t": ca_p.task, "f": ca_args["f"], "e": ca_args["e"], "r": ca_r}
+                ca_a_rows = frappe.db.sql("""
+                    SELECT a.name, a.parent, a.task, a.work_qty, a.cost
+                    FROM `tabWork Management Master Plan Activity` a
+                    INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
+                    WHERE a.name = %(r)s AND a.task = %(t)s
+                      AND IFNULL(mp.workflow_state,'') != 'Rejected'
+                      AND mp.period_from <= %(e)s AND mp.period_to >= %(f)s
+                """, ca_qargs, as_dict=True)
+                if not ca_a_rows:
+                    ca_skipped_rows = ca_skipped_rows + 1
+                    continue
+                ca_a = ca_a_rows[0]
+                ca_nc = frappe.utils.flt(frappe.utils.flt(ca_a.work_qty) * ca_rate, 2)
+                ln = ca_run.append("lines", {})
+                ln.ref_doctype = "Work Management Master Plan Activity"
+                ln.ref_name = ca_a.name
+                ln.ref_parent = ca_a.parent
+                ln.task = ca_a.task
+                ln.old_rate = frappe.utils.flt(ca_p.rate, 6)
+                ln.new_rate = ca_rate
+                ln.old_amount = frappe.utils.flt(ca_a.cost)
+                ln.new_amount = ca_nc
+                frappe.db.set_value("Work Management Master Plan Activity", ca_a.name,
+                                    {"rate": ca_rate, "cost": ca_nc})
+                ca_old = ca_old + frappe.utils.flt(ca_a.cost)
+                ca_new = ca_new + ca_nc
+                ca_n = ca_n + 1
+
+            if ca_do_pl:
+                for ca_pl in frappe.db.sql("""
+                    SELECT name, quantity, total_cost FROM `tabWork Management Planner`
+                    WHERE task = %(t)s AND IFNULL(workflow_state,'') != 'Rejected'
+                      AND from_date <= %(e)s AND to_date >= %(f)s
+                """, ca_args, as_dict=True):
+                    ca_nc = frappe.utils.flt(frappe.utils.flt(ca_pl.quantity) * ca_rate, 2)
+                    ln = ca_run.append("lines", {})
+                    ln.ref_doctype = "Work Management Planner"
+                    ln.ref_name = ca_pl.name
+                    ln.task = ca_p.task
+                    ln.old_rate = frappe.utils.flt(ca_p.rate, 6)
+                    ln.new_rate = ca_rate
+                    ln.old_amount = frappe.utils.flt(ca_pl.total_cost)
+                    ln.new_amount = ca_nc
+                    frappe.db.set_value("Work Management Planner", ca_pl.name,
+                                        {"rate": ca_rate, "total_cost": ca_nc})
+                    ca_old = ca_old + frappe.utils.flt(ca_pl.total_cost)
+                    ca_new = ca_new + ca_nc
+                    ca_n = ca_n + 1
+
+            ca_ac_parents = {}
+            if ca_do_ac:
+                for ca_we in frappe.db.sql("""
+                    SELECT we.name, we.parent, we.employee, we.work_date,
+                           we.actual_quantity qty, we.amount
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    LEFT JOIN `tabWork Management Payment` p ON p.name = we.payment_ref
+                    WHERE ac.task = %(t)s AND we.work_date >= %(f)s AND we.work_date <= %(e)s
+                      AND IFNULL(we.paid,0) = 0
+                      AND (we.payment_ref IS NULL OR IFNULL(we.payment_ref,'') = ''
+                           OR p.name IS NULL OR IFNULL(p.workflow_state,'') = 'Cancelled')
+                """, ca_args, as_dict=True):
+                    ca_na = frappe.utils.flt(frappe.utils.flt(ca_we.qty) * ca_rate, 2)
+                    ln = ca_run.append("lines", {})
+                    ln.ref_doctype = "Work Actuals Employee"
+                    ln.ref_name = ca_we.name
+                    ln.ref_parent = ca_we.parent
+                    ln.task = ca_p.task
+                    ln.employee = ca_we.employee
+                    ln.work_date = ca_we.work_date
+                    ln.old_rate = frappe.utils.flt(ca_p.rate, 6)
+                    ln.new_rate = ca_rate
+                    ln.old_amount = frappe.utils.flt(ca_we.amount)
+                    ln.new_amount = ca_na
+                    frappe.db.set_value("Work Actuals Employee", ca_we.name, "amount", ca_na)
+                    ca_ac_parents[ca_we.parent] = 1
+                    ca_old = ca_old + frappe.utils.flt(ca_we.amount)
+                    ca_new = ca_new + ca_na
+                    ca_n = ca_n + 1
+
+                # re-sum every parent Actuals doc touched, same as reverse already
+                # does -- otherwise total_payment keeps the pre-correction sum while
+                # its children hold the corrected one.
+                for ca_pname in ca_ac_parents:
+                    ca_tot = frappe.db.sql("""
+                        SELECT COALESCE(SUM(amount),0) p FROM `tabWork Actuals Employee` WHERE parent = %s
+                    """, (ca_pname,), as_dict=True)
+                    if ca_tot:
+                        frappe.db.set_value("Work Management Actuals", ca_pname, "total_payment",
+                                            frappe.utils.flt(ca_tot[0].p), update_modified=False)
+
+            # the period itself, and the Task master when this period is the one in force
+            # -- recorded as its own line (no amount: a rate period isn't money) so
+            # reverse can put the period back, not just the rows priced from it.
+            ln = ca_run.append("lines", {})
+            ln.ref_doctype = "Work Task Rate"
+            ln.ref_name = ca_p.name
+            ln.task = ca_p.task
+            ln.old_rate = frappe.utils.flt(ca_p.rate, 6)
+            ln.new_rate = ca_rate
+            ln.old_amount = 0
+            ln.new_amount = 0
+
+            frappe.db.set_value("Work Task Rate", ca_p.name, "rate", ca_rate)
+            if str(ca_p.valid_from) <= str(frappe.utils.today()) and \
+               (not ca_p.valid_to or str(ca_p.valid_to) >= str(frappe.utils.today())):
+                frappe.db.set_value("Task", ca_p.task, "custom_rate", ca_rate)
+
+            ca_run.rows_changed = ca_n
+            ca_run.rows_skipped = ca_skipped_rows
+            ca_run.old_total = ca_old
+            ca_run.new_total = ca_new
+            ca_run.delta = ca_new - ca_old
+            ca_run.summary = ("Corrected " + str(ca_p.task) + " from " +
+                              str(frappe.utils.flt(ca_p.rate, 6)) + " to " + str(ca_rate) +
+                              " for " + str(ca_p.valid_from) + " to " +
+                              str(ca_p.valid_to or "open"))
+            ca_run.flags.ignore_permissions = True
+            ca_run.insert(ignore_permissions=True)
+            frappe.db.commit()
+            out["run"] = ca_run.name
+            out["changed"] = ca_n
+            out["delta"] = ca_run.delta
+            out["skipped_plan_rows"] = ca_skipped_rows
+            out["parents_resummed"] = len(ca_ac_parents)
+
+    # ==================================================================
+    # UNIT CHANGE PREVIEW — what changing a task's unit would mean
+    #
+    # Changing the unit changes what a quantity MEANS. Nothing may be converted
+    # automatically, because only a person knows that a Day is eight Hours here.
+    # Writes nothing.
+    # ==================================================================
+    elif action == "unit_change_preview":
+        uc_task = frappe.form_dict.get("task")
+        uc_uom = frappe.form_dict.get("uom")
+        uc_tgt = frappe.utils.flt(frappe.form_dict.get("daily_target"), 6)
+        uc_t = frappe.db.get_value("Task", uc_task,
+            ["custom_uom", "custom_daily_target", "custom_rate"], as_dict=True)
+        if not CAN_RATE:
+            out["error"] = ("Only the general manager, the HR head or a System Manager "
+                            "can change a rate.")
+        elif not uc_t:
+            out["error"] = "no such task: " + str(uc_task)
+        elif not uc_uom or uc_tgt <= 0:
+            out["error"] = "uom and a daily target greater than zero are required"
+        else:
+            uc_basis = frappe.utils.flt(uc_t.custom_rate) * frappe.utils.flt(uc_t.custom_daily_target)
+            out["task"] = uc_task
+            out["old_uom"] = uc_t.custom_uom
+            out["new_uom"] = uc_uom
+            out["old_target"] = frappe.utils.flt(uc_t.custom_daily_target, 6)
+            out["new_target"] = uc_tgt
+            out["daily_basis"] = frappe.utils.flt(uc_basis, 6)
+            out["derived_rate"] = frappe.utils.flt(uc_basis / uc_tgt, 6) if uc_tgt else 0
+            out["affected"] = {
+                "master_plan_lines": frappe.db.sql("""
+                    SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity` a
+                    INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
+                    WHERE a.task = %(t)s AND mp.workflow_state != 'Rejected'
+                """, {"t": uc_task}, as_dict=True)[0].n,
+                "planners": frappe.db.sql("""
+                    SELECT COUNT(*) n FROM `tabWork Management Planner`
+                    WHERE task = %(t)s AND IFNULL(workflow_state,'') != 'Rejected'
+                """, {"t": uc_task}, as_dict=True)[0].n,
+                "actuals": frappe.db.sql("""
+                    SELECT COUNT(*) n FROM `tabWork Management Actuals` WHERE task = %(t)s
+                """, {"t": uc_task}, as_dict=True)[0].n}
+
+    # ==================================================================
+    # UNIT CHANGE APPLY — open a new rate period in the new unit
+    #
+    # Opens a new rate period in the new unit from today. Quantities are converted
+    # only when a factor is given, and never guessed.
+    # ==================================================================
+    elif action == "unit_change_apply":
+        ua_task = frappe.form_dict.get("task")
+        ua_uom = frappe.form_dict.get("uom")
+        ua_tgt = frappe.utils.flt(frappe.form_dict.get("daily_target"), 6)
+        ua_factor = frappe.utils.flt(frappe.form_dict.get("factor"))
+        ua_t = frappe.db.get_value("Task", ua_task,
+            ["custom_uom", "custom_daily_target", "custom_rate"], as_dict=True)
+        if not CAN_RATE:
+            out["error"] = ("Only the general manager, the HR head or a System Manager "
+                            "can change a rate.")
+        elif not ua_t:
+            out["error"] = "no such task: " + str(ua_task)
+        elif not ua_uom or ua_tgt <= 0:
+            out["error"] = "uom and a daily target greater than zero are required"
+        else:
+            ua_basis = frappe.utils.flt(ua_t.custom_rate) * frappe.utils.flt(ua_t.custom_daily_target)
+            ua_rate = frappe.utils.flt(ua_basis / ua_tgt, 6)
+            ua_today = frappe.utils.today()
+            ua_cur = frappe.db.sql("""
+                SELECT name, valid_from, valid_to FROM `tabWork Task Rate`
+                WHERE task = %(t)s AND valid_from <= %(d)s
+                  AND (valid_to IS NULL OR valid_to >= %(d)s)
+                ORDER BY valid_from DESC LIMIT 1
+            """, {"t": ua_task, "d": ua_today}, as_dict=True)
+            ua_notes = ("Unit changed from " + str(ua_t.custom_uom) + " at " +
+                        str(frappe.utils.flt(ua_t.custom_daily_target, 6)) + "/day to " +
+                        str(ua_uom) + " at " + str(ua_tgt) + "/day")
+            if ua_cur and str(ua_cur[0].valid_from) == str(ua_today):
+                # the period in force already STARTS today -- nothing has ever been
+                # priced against it, so closing it at yesterday would put valid_to
+                # before valid_from (unreachable forever, and a gap over yesterday).
+                # Amend it in place instead; there is no history to preserve.
+                frappe.db.set_value("Work Task Rate", ua_cur[0].name, {
+                    "uom": ua_uom, "daily_target": ua_tgt, "rate": ua_rate,
+                    "daily_wage_basis": frappe.utils.flt(ua_basis, 6),
+                    "derived": 1, "notes": ua_notes})
+                ua_created = ua_cur[0].name
+            else:
+                if ua_cur:
+                    frappe.db.set_value("Work Task Rate", ua_cur[0].name, "valid_to",
+                                        frappe.utils.add_days(ua_today, -1))
+                ua_doc = frappe.new_doc("Work Task Rate")
+                ua_doc.task = ua_task
+                ua_doc.valid_from = ua_today
+                ua_doc.valid_to = None
+                ua_doc.rate = ua_rate
+                ua_doc.uom = ua_uom
+                ua_doc.daily_target = ua_tgt
+                ua_doc.daily_wage_basis = frappe.utils.flt(ua_basis, 6)
+                ua_doc.derived = 1
+                ua_doc.source = "Rates tab — unit change"
+                ua_doc.notes = ua_notes
+                ua_doc.flags.ignore_permissions = True
+                ua_doc.insert(ignore_permissions=True)
+                ua_created = ua_doc.name
+            frappe.db.set_value("Task", ua_task,
+                {"custom_uom": ua_uom, "custom_daily_target": ua_tgt, "custom_rate": ua_rate})
+            ua_conv = 0
+            if ua_factor > 0:
+                for ua_a in frappe.db.sql("""
+                    SELECT a.name, a.work_qty FROM `tabWork Management Master Plan Activity` a
+                    INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
+                    WHERE a.task = %(t)s AND mp.workflow_state IN ('Draft','Rejected')
+                """, {"t": ua_task}, as_dict=True):
+                    ua_q = frappe.utils.flt(ua_a.work_qty) * ua_factor
+                    frappe.db.set_value("Work Management Master Plan Activity", ua_a.name,
+                        {"work_qty": ua_q, "uom": ua_uom,
+                         "cost": frappe.utils.flt(ua_q * ua_rate, 2), "rate": ua_rate})
+                    ua_conv = ua_conv + 1
+            frappe.db.commit()
+            out["created"] = ua_created
+            out["rate"] = ua_rate
+            out["converted"] = ua_conv
 
     else:
         out["error"] = "unknown action: " + str(action)

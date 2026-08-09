@@ -139,7 +139,15 @@
       MP.inited=true;
       el("mp-refresh").onclick=loadMasterPlans;
       el("mp-farm").onchange=loadMasterPlans;
-      el("mp-state").onchange=loadMasterPlans;
+      var stages=el("mp-stages");
+      if(stages) stages.querySelectorAll("[data-stage]").forEach(function(b){
+        b.onclick=function(){
+          stages.querySelectorAll("[data-stage]").forEach(function(x){ x.setAttribute("aria-selected","false"); });
+          b.setAttribute("aria-selected","true");
+          el("mp-state").value=b.getAttribute("data-stage");
+          loadMasterPlans();
+        };
+      });
       el("mp-new").onclick=function(){ mpOpenForm(null, loadMasterPlans); };
     }
     var box=el("mp-body");
@@ -153,35 +161,117 @@
           var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o);
         });
       }
-      if(el("mp-new")) el("mp-new").style.display = m.can_edit ? "" : "none";
+      // raising a plan belongs to the farm managers, the HR head and the GM; a
+      // consultant reviews and may correct in place, so can_edit is the wrong flag
+      if(el("mp-new")) el("mp-new").style.display = m.can_create ? "" : "none";
+      var cnt={}; (m.counts||[]).forEach(function(c){ cnt[c.st]=c.n; });
+      var badge={ "mpc-consultant":"Pending Consultant", "mpc-gm":"Pending GM",
+                  "mpc-appr":"Approved", "mpc-draft":"Draft", "mpc-rej":"Rejected" };
+      Object.keys(badge).forEach(function(id){
+        var e=el(id); if(e) e.textContent=fmt(cnt[badge[id]]||0);
+      });
       return call({ action:"list", farm:(el("mp-farm").value||""),
                     state:(el("mp-state").value||"") }, "wm_masterplan");
     }).then(function(d){
       var rows=d.plans||[];
+      MP.canGm=d.can_gm_approve; MP.canDecide=d.can_decide; MP.rows=rows;
       if(!rows.length){
         var fv=el("mp-farm").value;
         box.innerHTML='<div class="empty">No master plans'+(fv?(" for "+esc(fv)):"")+' yet.</div>';
         return;
       }
-      var h='<table><thead><tr><th>Master plan</th><th>Farm</th><th>Period</th>'+
+      var stage=el("mp-state").value;
+      var mpAct = (stage==="Pending Consultant" && MP.canDecide) ||
+                  (stage==="Pending GM" && MP.canGm);
+      var h='';
+      var note={"Pending Consultant":"Waiting on the consultants. Approve sends the plan to the general manager.",
+                "Pending GM":"Waiting on the general manager. Approve puts the budget in force.",
+                "Approved":"In force. These are the budgets the planner caps every request against.",
+                "Draft":"Still with whoever raised them — not yet submitted for review.",
+                "Rejected":"Turned down. The raiser can edit one and submit it again."}[stage];
+      if(note) h+='<div class="mpd-stagenote">'+esc(note)+'</div>';
+      if(mpAct){
+        h+='<div class="mpd-bulk" id="mpl-bulkbar">'+
+             '<label><input type="checkbox" id="mpl-all"> Select all</label>'+
+             '<span class="hint" id="mpl-sel">none selected</span>'+
+             '<span style="flex:1"></span>'+
+             '<button type="button" class="btn sm solid" id="mpl-appr" disabled>Approve selected</button>'+
+             '<button type="button" class="btn sm" id="mpl-rej" disabled style="color:#b91c1c;border-color:#fca5a5">Reject selected</button>'+
+           '</div>';
+      }
+      h+='<div class="mpf-tablewrap"><table><thead><tr>'+
+        (mpAct?'<th style="width:30px"></th>':'')+'<th>Master plan</th><th>Farm</th><th>Period</th>'+
         '<th class="n">Activities</th><th class="n">Man days</th><th class="n">Budget KES</th>'+
         '<th>Status</th><th>Raised by</th></tr></thead><tbody>';
       rows.forEach(function(r){
-        h+='<tr><td class="m" style="font-size:10px"><a href="#" data-mp="'+esc(r.name)+'">'+esc(r.name)+'</a></td>'+
+        h+='<tr>'+
+           (mpAct?('<td><input type="checkbox" class="mpl-ck" data-n="'+esc(r.name)+'" data-st="'+esc(r.workflow_state||"")+'"></td>'):'')+
+           '<td class="m" style="font-size:10px"><a href="#" data-mp="'+esc(r.name)+'">'+esc(r.name)+'</a></td>'+
            '<td>'+esc(r.farm||"")+'</td>'+
            '<td class="m" style="font-size:10px">'+esc(r.period_from)+' → '+esc(r.period_to)+'</td>'+
            '<td class="n m">'+fmt(r.total_activities)+'</td>'+
            '<td class="n m">'+fmt(r.total_man_days)+'</td>'+
            '<td class="n m">'+fmt(r.total_cost,2)+'</td>'+
-           '<td style="font-size:10px">'+esc(r.workflow_state||"")+'</td>'+
+           '<td>'+mpStateTag(r.workflow_state)+'</td>'+
            '<td style="font-size:10px">'+esc((r.raised_by||"").split("@")[0])+'</td></tr>';
       });
-      box.innerHTML=h+'</tbody></table>';
+      box.innerHTML=h+'</tbody></table></div>';
+      if(mpAct) wirePlanBulk(box);
       box.querySelectorAll("[data-mp]").forEach(function(a){
         a.onclick=function(ev){ ev.preventDefault(); openMasterPlan(a.getAttribute("data-mp")); };
       });
     }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
   }
+  function wirePlanBulk(box){
+    var picked=function(st){
+      var out=[];
+      box.querySelectorAll(".mpl-ck").forEach(function(c){
+        if(c.checked && (!st || c.getAttribute("data-st")===st)) out.push(c.getAttribute("data-n"));
+      });
+      return out;
+    };
+    var sync=function(){
+      var k=picked().length;
+      el("mpl-sel").textContent = k? (k+" selected") : "none selected";
+      if(el("mpl-appr")) el("mpl-appr").disabled = !k;
+      if(el("mpl-rej"))  el("mpl-rej").disabled  = !k;
+    };
+    var paintRow=function(c){
+      var tr=c.parentNode; while(tr && tr.tagName!=="TR") tr=tr.parentNode;
+      if(tr) tr.className = c.checked ? "mpl-on" : "";
+    };
+    box.querySelectorAll(".mpl-ck").forEach(function(c){
+      c.onchange=function(){ paintRow(c); sync(); };
+    });
+    if(el("mpl-all")) el("mpl-all").onchange=function(){
+      var on=this.checked;
+      box.querySelectorAll(".mpl-ck").forEach(function(c){ c.checked=on; paintRow(c); });
+      sync();
+    };
+    // each plan is judged on its own state server-side, so a mixed selection
+    // reports per plan instead of refusing the lot
+    var run=function(op,names,btn){
+      if(!names.length) return;
+      btn.disabled=true;
+      call({action:"plans_bulk", op:op, names:JSON.stringify(names)}, "wm_masterplan").then(function(d){
+        if(d.error){ toast(d.error); btn.disabled=false; return; }
+        var msg=(d.done||[]).length+" plan"+((d.done||[]).length===1?"":"s")+" "+
+                (op==="approve"?"approved":op==="reject"?"rejected":"sent to the GM");
+        if((d.failed||[]).length){
+          msg+=" \u00b7 "+d.failed.length+" skipped: "+d.failed.map(function(f){ return f.name+" ("+f.why+")"; }).join(", ");
+        }
+        toast(msg);
+        loadMasterPlans();
+      }).catch(function(){ toast("Could not apply that"); btn.disabled=false; });
+    };
+    // "approve" means whatever approval this stage is: the consultants pass the
+    // plan to the GM, the GM puts it in force
+    var stage=el("mp-state").value;
+    var op = (stage==="Pending Consultant") ? "send_to_gm" : "approve";
+    if(el("mpl-appr")) el("mpl-appr").onclick=function(){ run(op,picked(),this); };
+    if(el("mpl-rej"))  el("mpl-rej").onclick=function(){ run("reject",picked(),this); };
+  }
+
   function openMasterPlan(name){
     var box=el("mp-body");
     box.innerHTML='<div class="empty">Loading…</div>';
@@ -200,23 +290,65 @@
                     a.remaining_qty=live.remaining_qty; a.remaining_cost=live.remaining_cost; }
         });
         return {p:p, acts:acts, rate_drift:d.rate_drift,
-                can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve};
+                can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
+                edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
+                can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
+                edited_lines:d.edited_lines, ok_lines:d.ok_lines};
       }).catch(function(){ return {p:p, acts:acts, rate_drift:d.rate_drift,
-                can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve}; });
+                can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
+                edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
+                can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
+                edited_lines:d.edited_lines, ok_lines:d.ok_lines}; });
     }).then(function(res){
       if(!res) return;
       var p=res.p, acts=res.acts;
-      var h='<div class="sech">'+esc(p.name)+' · '+esc(p.farm)+' · '+esc(p.period_from)+' → '+
-            esc(p.period_to)+' · '+esc(p.workflow_state)+'</div>';
+      var mpTotQty=0, mpTotCost=0, mpTotMd=0, mpTotLeft=0;
+      acts.forEach(function(a){
+        mpTotQty+=(a.work_qty||0); mpTotCost+=(a.cost||0); mpTotMd+=(a.man_days||0);
+        mpTotLeft+=(a.remaining_cost!=null?a.remaining_cost:0);
+      });
+      var h='<button type="button" class="mpd-back" id="mp-back">&larr; All master plans</button>'+
+        '<div class="mpd-head"><div class="mpd-top">'+
+          '<div><div class="mpd-name">'+esc(p.name)+' &middot; '+esc(p.farm)+'</div>'+
+            '<div class="mpd-meta">'+esc(p.period_from)+' &rarr; '+esc(p.period_to)+
+            (p.raised_by?(' &middot; raised by '+esc((p.raised_by||"").split("@")[0])):'')+
+            (p.gm_approved_by?(' &middot; approved by '+esc((p.gm_approved_by||"").split("@")[0])):'')+
+            '</div></div>'+
+          mpStateTag(p.workflow_state)+
+        '</div>'+
+        '<div class="mpd-figs">'+
+          '<div><span class="fk">Activities</span><span class="fv">'+fmt(acts.length)+'</span></div>'+
+          '<div><span class="fk">Man days</span><span class="fv">'+fmt(mpTotMd)+'</span></div>'+
+          '<div><span class="fk">Budgeted</span><span class="fv">KES '+fmt(mpTotCost,2)+'</span></div>'+
+          '<div><span class="fk">Still available</span><span class="fv">KES '+fmt(mpTotLeft,2)+'</span></div>'+
+        '</div></div>';
       // hiding these is only a convenience -- every rule they call is re-checked
       // and re-reported by the server, never trusted from these flags alone
       if(res.can_edit || res.can_decide || res.can_gm_approve){
         h+='<div class="btns" style="margin:8px 0 4px">';
         if(res.can_edit){
-          h+='<button type="button" class="btn" id="mp-edit">Edit</button>'+
-             '<button type="button" class="btn solid" id="mp-submitrev">Submit for review</button>';
+          // during review the same button corrects the plan in place; submitting is
+          // the raiser's action alone, and the server refuses it in any other state
+          h+='<button type="button" class="btn" id="mp-edit">'+
+             (res.edit_is_review?"Correct this plan":"Edit")+'</button>';
+          if(!res.edit_is_review){
+            h+='<button type="button" class="btn solid" id="mp-submitrev">Submit for review</button>';
+          }
         }
         if(res.can_decide){
+          // the plan also advances on its own once the last line is decided; this is
+          // the explicit step, and it says what is still outstanding rather than
+          // simply not being there
+          if(res.can_send_to_gm){
+            h+='<button type="button" class="btn solid" id="mp-sendgm">Approve &amp; send to GM</button>';
+          } else {
+            var why = res.edited_lines ? (res.edited_lines+" line"+(res.edited_lines>1?"s":"")+" marked Edit work — goes back to the raiser")
+                    : res.undecided_lines ? (res.undecided_lines+" line"+(res.undecided_lines>1?"s":"")+" still undecided")
+                    : !res.ok_lines ? "every line rejected — nothing to approve"
+                    : "";
+            h+='<button type="button" class="btn" id="mp-sendgm" disabled title="'+esc(why)+'">Send to GM</button>'+
+               (why?'<span class="hint">'+esc(why)+'</span>':'');
+          }
           h+='<button type="button" class="btn" id="mp-rejectdoc" style="color:#b91c1c;border-color:#fca5a5">Reject entire plan</button>';
         }
         if(res.can_gm_approve){
@@ -225,22 +357,35 @@
         }
         h+='</div>';
       }
+      if(res.deciding_as_standin){
+        h+='<div class="mpd-standin">You are deciding these lines as the <b>general manager standing in '+
+           'for a consultant</b>. Each decision is recorded against your name on the line and on this plan.</div>';
+      }
       if((res.rate_drift||[]).length){
-        h+='<div style="margin:8px 0;padding:10px 14px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;font-size:12px">'+
-           '<b>Rates have changed since this plan was budgeted.</b> The money is fixed, '+
-           'so fewer units now fit the same budget:<ul style="margin:6px 0 0 16px">';
+        var anyUnit=res.rate_drift.some(function(x){ return x.kind==="unit"; });
+        h+='<div class="mpd-drift">'+
+           '<b>This plan was budgeted at rates that have since changed.</b> '+
+           (anyUnit ? 'Some of it changed unit, which the budget cannot convert on its own:'
+                    : 'The money is fixed, so fewer units now fit the same budget:')+
+           '<ul style="margin:6px 0 0 16px">';
         res.rate_drift.forEach(function(x){
-          h+='<li>'+esc(x.task)+' — budgeted at '+fmt(x.budget_rate,6)+', now '+fmt(x.live_rate,6)+
-             ' (same work would cost '+fmt(x.cost_at_live_rate,2)+')</li>';
+          if(x.kind==="unit"){
+            h+='<li><b>'+esc(x.task)+' changed unit.</b> Budgeted per '+esc(x.budget_uom||"—")+
+               ' at '+fmt(x.budget_rate,6)+'; the task is now priced per '+esc(x.live_uom||"—")+
+               ' at '+fmt(x.live_rate,6)+'. The quantity has to be re-entered in the new unit — '+
+               'one '+esc(x.budget_uom||"unit")+' is not one '+esc(x.live_uom||"unit")+'.</li>';
+          } else {
+            h+='<li>'+esc(x.task)+' — budgeted at '+fmt(x.budget_rate,6)+', now '+fmt(x.live_rate,6)+
+               ' (same work would cost '+fmt(x.cost_at_live_rate,2)+')</li>';
+          }
         });
         h+='</ul></div>';
       }
       h+='<div class="note" style="margin-bottom:8px">Click an activity to see which plans are drawing on its budget — including stale drafts still holding it.</div>';
-      var mpColspan = res.can_decide ? 12 : 11;
-      h+='<table><thead><tr><th>Activity</th><th class="n">Man days</th><th class="n">Days</th>'+
+      var mpColspan = 10;
+      h+='<div class="mpf-tablewrap"><table><thead><tr><th>Activity</th><th class="n">Man days</th><th class="n">Days</th>'+
          '<th class="n">Work</th><th>Unit</th><th class="n">Rate</th><th class="n">Cost</th>'+
-         '<th class="n">Planned</th><th class="n">Left</th><th>Consultant</th><th>Remarks</th>'+
-         (res.can_decide?'<th>Decide</th>':'')+'</tr></thead><tbody>';
+         '<th class="n">Planned</th><th class="n">Left</th><th>Remarks</th></tr></thead><tbody>';
       acts.forEach(function(a,i){
         var exhausted = (a.remaining_qty!=null && a.remaining_qty<=0.005) ||
                         (a.remaining_cost!=null && a.remaining_cost<=0.005);
@@ -249,27 +394,26 @@
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
            '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
            '<td class="n m">'+fmt(a.remaining_qty)+
-           (exhausted?' <span style="color:#b91c1c;font-weight:600;font-size:9px;text-transform:uppercase">used up</span>':'')+'</td>'+
-           '<td style="font-size:10px">'+esc(a.consultant_state||"")+
-           (a.original_qty?(' <span class="hint">was '+fmt(a.original_qty)+'</span>'):'')+'</td>'+
-           '<td style="font-size:10px">'+esc(a.remarks||"")+'</td>'+
-           (res.can_decide?(
-             '<td onclick="event.stopPropagation()" style="min-width:150px">'+
-             '<select class="mp-dec-state" data-i="'+i+'" style="width:100%">'+
-               '<option value="">— decide —</option><option value="OK">OK</option>'+
-               '<option value="Edit work">Edit work</option><option value="Rejected">Rejected</option>'+
-             '</select>'+
-             '<input type="number" class="mp-dec-qty" data-i="'+i+'" placeholder="revised qty" '+
-               'style="margin-top:4px;display:none;width:100%">'+
-             '<input type="text" class="mp-dec-remarks" data-i="'+i+'" placeholder="remarks" style="margin-top:4px;width:100%">'+
-             '<button type="button" class="btn sm mp-dec-save" data-i="'+i+'" style="margin-top:4px">Save decision</button>'+
-             '</td>'
-           ):'')+'</tr>';
+           (exhausted?' <span class="mpd-used">used up</span>':'')+'</td>'+
+           '<td style="font-size:10px">'+esc(a.remarks||"")+
+           (a.original_qty?('<span class="mpd-was">was '+fmt(a.original_qty)+'</span>'):'')+'</td>'+
+'</tr>';
         h+='<tr class="mp-actdetail" data-ad="'+i+'" style="display:none"><td colspan="'+mpColspan+'" style="background:var(--wash);padding:0">'+
            '<div class="mp-consumers" data-panel="'+i+'"></div></td></tr>';
       });
-      h+='</tbody></table>';
+      h+='</tbody></table></div>';
       box.innerHTML=h;
+      var mpBack=el("mp-back");
+      if(mpBack) mpBack.onclick=loadMasterPlans;
+      var mpSendGm=el("mp-sendgm");
+      if(mpSendGm && !mpSendGm.disabled) mpSendGm.onclick=function(){
+        mpSendGm.disabled=true;
+        call({action:"send_to_gm", name:p.name}, "wm_masterplan").then(function(d){
+          if(d.error){ toast(d.error); mpSendGm.disabled=false; return; }
+          toast(p.name+" sent to the GM");
+          openMasterPlan(p.name);
+        }).catch(function(){ toast("Could not send to the GM"); mpSendGm.disabled=false; });
+      };
       var mpEditBtn=el("mp-edit");
       if(mpEditBtn) mpEditBtn.onclick=function(){ mpOpenForm(p.name, function(nm){ openMasterPlan(nm); }); };
       var mpSubBtn=el("mp-submitrev");
@@ -299,33 +443,6 @@
           openMasterPlan(p.name);
         }).catch(function(){ toast("Could not approve"); mpGmBtn.disabled=false; });
       };
-      if(res.can_decide){
-        box.querySelectorAll(".mp-dec-state").forEach(function(sel){
-          sel.onchange=function(){
-            var i=this.getAttribute("data-i");
-            var qi=box.querySelector('.mp-dec-qty[data-i="'+i+'"]');
-            if(qi) qi.style.display = (this.value==="Edit work") ? "" : "none";
-          };
-        });
-        box.querySelectorAll(".mp-dec-save").forEach(function(btn){
-          btn.onclick=function(){
-            var i=btn.getAttribute("data-i");
-            var sel=box.querySelector('.mp-dec-state[data-i="'+i+'"]');
-            var qi=box.querySelector('.mp-dec-qty[data-i="'+i+'"]');
-            var ri=box.querySelector('.mp-dec-remarks[data-i="'+i+'"]');
-            var state=sel.value;
-            if(!state){ toast("Choose OK, Edit work or Rejected"); return; }
-            var args={ action:"decide_line", row:acts[i].name, state:state, remarks:ri.value||"" };
-            if(state==="Edit work") args.work_qty=parseFloat(qi.value)||0;
-            btn.disabled=true;
-            call(args, "wm_masterplan").then(function(dd){
-              if(dd.error){ toast(dd.error); btn.disabled=false; return; }
-              toast("Line "+dd.state+(dd.moved_to?(" · plan moved to "+dd.moved_to):""));
-              openMasterPlan(p.name);
-            }).catch(function(){ toast("Could not save decision"); btn.disabled=false; });
-          };
-        });
-      }
       box.querySelectorAll(".mp-actrow").forEach(function(tr){
         tr.onclick=function(ev){
           var t=ev.target;
@@ -367,11 +484,28 @@
   // on Period From (falling back to Task.custom_rate) -- never sent here,
   // only mirrored so the budget is visible before Save. man_days/days are
   // reporting fields only: nothing below treats them as a ceiling.
-  var MPF = { editing:null, rows:[], catalog:[], onSaved:null };
+  var MPF = { editing:null, rows:[], catalog:[], catalogState:"nofarm", filter:"", clash:null, onSaved:null };
 
+  function mpStateTag(st){
+    var k={"Draft":"draft","Pending Consultant":"consultant","Pending GM":"gm",
+           "Approved":"approved","Rejected":"rejected"}[st]||"draft";
+    return '<span class="mps '+k+'">'+esc(st||"—")+'</span>';
+  }
+  function mpFilteredCatalog(selected){
+    var q=(MPF.filter||"").trim().toLowerCase();
+    if(!q) return MPF.catalog;
+    return MPF.catalog.filter(function(t){
+      return t.name===selected ||
+             (t.subject||"").toLowerCase().indexOf(q)>-1 ||
+             (t.uom||"").toLowerCase().indexOf(q)>-1;
+    });
+  }
   function mpTaskOptions(selected){
-    var h='<option value="">— select task —</option>';
-    MPF.catalog.forEach(function(t){
+    var lbl={nofarm:"— choose a farm first —", loading:"— loading tasks… —",
+             empty:"— no tasks on this farm's project —", error:"— could not load tasks —"}[MPF.catalogState]
+             || "— select task —";
+    var h='<option value="">'+lbl+'</option>';
+    mpFilteredCatalog(selected).forEach(function(t){
       h+='<option value="'+esc(t.name)+'"'+(t.name===selected?' selected':'')+'>'+esc(t.subject)+'</option>';
     });
     return h;
@@ -386,18 +520,30 @@
     var cost=(r.work_qty||0)*rate;
     return '<tr data-i="'+i+'">'+
       '<td><select class="mpf-r-task" data-i="'+i+'">'+mpTaskOptions(r.task)+'</select></td>'+
-      '<td><input type="number" class="mpf-r-md" data-i="'+i+'" min="0" step="any" value="'+(r.man_days||"")+'"></td>'+
-      '<td><input type="number" class="mpf-r-days" data-i="'+i+'" min="0" step="1" value="'+(r.days||"")+'"></td>'+
-      '<td><input type="number" class="mpf-r-qty" data-i="'+i+'" min="0" step="any" value="'+(r.work_qty||"")+'"></td>'+
-      '<td class="mpf-r-unit" data-i="'+i+'">'+esc(unit||"—")+'</td>'+
-      '<td class="n m mpf-r-rate" data-i="'+i+'">'+(c?fmt(rate,6):"—")+'</td>'+
-      '<td class="n m mpf-r-cost" data-i="'+i+'">'+(c?fmt(cost,2):"—")+'</td>'+
-      '<td><button type="button" class="btn sm mpf-r-remove" data-i="'+i+'">&times;</button></td>'+
+      '<td><input type="number" class="mpf-r-md" data-i="'+i+'" min="0" step="any" placeholder="0" value="'+(r.man_days||"")+'">'+
+        (c&&c.daily_target?('<span class="mpf-std">'+fmt(c.daily_target)+' '+esc(c.uom||"")+'/day</span>'):
+                            (c?'<span class="mpf-std">no daily target set</span>':''))+'</td>'+
+      '<td><input type="number" class="mpf-r-days" data-i="'+i+'" min="0" step="1" placeholder="0" value="'+(r.days||"")+'"></td>'+
+      '<td><input type="number" class="mpf-r-qty" data-i="'+i+'" min="0" step="any" placeholder="0" value="'+(r.work_qty||"")+'"></td>'+
+      '<td class="mpf-unit mpf-r-unit" data-i="'+i+'">'+esc(unit||"—")+'</td>'+
+      '<td class="mpf-derived'+(c?" set":"")+' mpf-r-rate" data-i="'+i+'">'+(c?fmt(rate,6):"—")+'</td>'+
+      '<td class="mpf-cost mpf-r-cost" data-i="'+i+'">'+(c&&cost?("KES "+fmt(cost,2)):"—")+'</td>'+
+      '<td><button type="button" class="mpf-rm mpf-r-remove" data-i="'+i+'" title="Remove this activity" aria-label="Remove">&times;</button></td>'+
     '</tr>';
   }
   function mpRenderRows(){
     var tb=el("mpf-rows"); if(!tb) return;
-    tb.innerHTML=MPF.rows.map(mpRowMarkup).join("");
+    var cnt=el("mpf-count");
+    if(cnt){
+      var tot=MPF.catalog.length, shown=mpFilteredCatalog(null).length;
+      cnt.textContent = !tot ? "" : ((MPF.filter||"").trim()
+        ? (fmt(shown)+" of "+fmt(tot)+" activities")
+        : (fmt(tot)+" activities"));
+    }
+    tb.innerHTML=MPF.rows.length
+      ? MPF.rows.map(mpRowMarkup).join("")
+      : '<tr><td colspan="8"><div class="mpf-empty"><b>No activities yet</b>'+
+        'Add the activities this farm may plan in this period, and how much work each may cover.</div></td></tr>';
     mpWireRows();
     mpUpdateTotals();
   }
@@ -405,6 +551,14 @@
     var r=MPF.rows[i]; var c=mpCatalogEntry(r.task);
     var rate=c?c.rate:0, unit=c?(c.uom||""):"";
     var cost=(r.work_qty||0)*rate;
+    // man-days are what the quantity is worth in labour: quantity / daily target.
+    // Typed over freely -- some work does not match the standard -- but correct
+    // by default, and the same arithmetic the planner uses.
+    if(c && c.daily_target>0 && !MPF.rows[i].md_touched){
+      MPF.rows[i].man_days = Math.round((MPF.rows[i].work_qty||0)/c.daily_target*100)/100;
+      var mdi=document.querySelector('.mpf-r-md[data-i="'+i+'"]');
+      if(mdi) mdi.value = MPF.rows[i].man_days || "";
+    }
     var tb=el("mpf-rows"); if(!tb) return;
     var u=tb.querySelector('.mpf-r-unit[data-i="'+i+'"]'); if(u) u.textContent=unit||"—";
     var rt=tb.querySelector('.mpf-r-rate[data-i="'+i+'"]'); if(rt) rt.textContent=c?fmt(rate,6):"—";
@@ -416,7 +570,8 @@
       s.onchange=function(){ var i=parseInt(this.getAttribute("data-i"),10); MPF.rows[i].task=this.value; mpRenderRowCalc(i); mpUpdateTotals(); };
     });
     tb.querySelectorAll(".mpf-r-md").forEach(function(s){
-      s.oninput=function(){ var i=parseInt(this.getAttribute("data-i"),10); MPF.rows[i].man_days=parseFloat(this.value)||0; };
+      s.oninput=function(){ var i=parseInt(this.getAttribute("data-i"),10);
+        MPF.rows[i].man_days=parseFloat(this.value)||0; MPF.rows[i].md_touched=1; };
     });
     tb.querySelectorAll(".mpf-r-days").forEach(function(s){
       s.oninput=function(){ var i=parseInt(this.getAttribute("data-i"),10); MPF.rows[i].days=parseFloat(this.value)||0; };
@@ -436,45 +591,90 @@
       var c=mpCatalogEntry(r.task);
       if(c) cost+=(r.work_qty||0)*c.rate;
     });
-    t.textContent=MPF.rows.length+" activit"+(MPF.rows.length===1?"y":"ies")+" · "+fmt(md)+" mandays · KES "+fmt(cost,2)+" budgeted";
+    t.innerHTML='<div><span class="tk">Activities</span><span class="tv">'+fmt(MPF.rows.length)+'</span></div>'+
+      '<div><span class="tk">Man days</span><span class="tv">'+fmt(md)+'</span></div>'+
+      '<div><span class="tk">Budgeted</span><span class="tv">KES '+fmt(cost,2)+'</span></div>';
   }
   function mpRefreshCatalog(){
     var fs=el("mpf-farm"), fr=el("mpf-from");
     if(!fs || !fr) return;
     var farm=fs.value, from=fr.value;
-    if(!farm || !from){ MPF.catalog=[]; mpRenderRows(); return; }
-    call({action:"pickable_tasks", farm:farm, period_from:from}, "wm_masterplan").then(function(d){
-      if(d.error){ toast(d.error); MPF.catalog=[]; }
-      else { MPF.catalog=d.tasks||[]; }
+    // the farm alone is enough to list the tasks; Period From only decides WHICH
+    // rate is shown, so waiting for both left the picker empty with no reason given
+    if(!farm){ MPF.catalog=[]; MPF.catalogState="nofarm"; mpRenderRows(); return; }
+    MPF.catalogState="loading"; mpRenderRows();
+    call({action:"pickable_tasks", farm:farm, period_from:from||""}, "wm_masterplan").then(function(d){
+      if(d.error){ toast(d.error); MPF.catalog=[]; MPF.catalogState="error"; }
+      else { MPF.catalog=d.tasks||[]; MPF.catalogState=MPF.catalog.length?"ok":"empty"; }
+      if(MPF.seedTouch){ mpSeedTouched(); MPF.seedTouch=false; }
       mpRenderRows();
-    }).catch(function(){ toast("Could not load tasks for this farm"); });
+    }).catch(function(){
+      MPF.catalog=[]; MPF.catalogState="error"; MPF.seedTouch=false; mpRenderRows();
+      toast("Could not load tasks for this farm");
+    });
+  }
+  function mpSeedTouched(){
+    // A reopened plan's rows carry no record of whether Man Days was typed over --
+    // that flag lived only in the browser and was never sent to the server. Rebuild
+    // it once the catalog (and its daily targets) has actually loaded: a stored
+    // figure that still matches the derivation was never overridden, so leave it
+    // derivable -- if quantity changes later, man-days should follow it. A stored
+    // figure that differs was a deliberate choice and must survive later edits.
+    MPF.rows.forEach(function(r){
+      if(r.md_touched) return;
+      var c=mpCatalogEntry(r.task);
+      if(!c || !(c.daily_target>0)) return;
+      var derived=Math.round((r.work_qty||0)/c.daily_target*100)/100;
+      if(Math.abs((r.man_days||0)-derived) > 0.005) r.md_touched=1;
+    });
   }
   function mpFormShell(){
-    return '<div style="background:#fff;max-width:960px;width:96%;max-height:92vh;display:flex;flex-direction:column;border:2px solid var(--ink)">'+
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--faint)">'+
-        '<div style="font-size:13px;font-weight:700" id="mpf-title">New master plan</div>'+
-        '<button type="button" id="mpf-x" style="border:none;background:none;font-size:20px;line-height:1;color:var(--mute);cursor:pointer">&times;</button>'+
-      '</div>'+
-      '<div style="padding:16px 18px;overflow:auto;flex:1">'+
-        '<div class="row">'+
-          '<div><label class="fl">Farm</label><select id="mpf-farm"><option value="">— select farm —</option></select></div>'+
-          '<div><label class="fl">Period From</label><input type="date" id="mpf-from"></div>'+
-          '<div><label class="fl">Period To</label><input type="date" id="mpf-to"></div>'+
+    return '<div class="mpf-card">'+
+      '<div class="mpf-head">'+
+        '<div>'+
+          '<div class="mpf-eyebrow">Work Management</div>'+
+          '<div class="mpf-title" id="mpf-title">New master plan</div>'+
+          '<div class="mpf-sub">One farm, one period. Every activity you list here becomes plannable '+
+            'once the consultants and the GM approve it &mdash; and nothing outside this list can be planned at all.</div>'+
         '</div>'+
-        '<div class="sech" style="margin-top:18px">Activities</div>'+
-        '<table><thead><tr><th>Task</th><th class="n">Man Days</th><th class="n">Days</th>'+
-          '<th class="n">Work Qty</th><th>Unit</th><th class="n">Rate</th><th class="n">Cost</th><th></th></tr></thead>'+
-          '<tbody id="mpf-rows"></tbody></table>'+
-        '<button type="button" class="btn" id="mpf-addrow" style="margin-top:10px">+ Add activity</button>'+
-        '<div class="note" style="margin-top:10px">Rate is the one in force on Period From — the same rate the '+
-        'server freezes onto the line when you save. Man Days and Days are recorded for reporting only; Work Qty '+
-        'is what the budget is measured against.</div>'+
+        '<button type="button" class="mpf-x" id="mpf-x" title="Close" aria-label="Close">&times;</button>'+
       '</div>'+
-      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 18px;border-top:1px solid var(--faint);flex-wrap:wrap">'+
-        '<div style="font-size:11.5px;color:var(--mute)" id="mpf-totals"></div>'+
+      '<div class="mpf-body">'+
+        '<div class="mpf-grid">'+
+          '<div><label class="fl" for="mpf-farm">Farm</label><select id="mpf-farm"><option value="">— select farm —</option></select></div>'+
+          '<div><label class="fl" for="mpf-from">Period from</label><input type="date" id="mpf-from"></div>'+
+          '<div><label class="fl" for="mpf-to">Period to</label><input type="date" id="mpf-to"></div>'+
+        '</div>'+
+        '<div class="mpf-clash" id="mpf-clash" style="display:none"></div>'+
+        '<div class="mpf-sechrow">'+
+          '<div class="sech">Activities &amp; budget</div>'+
+          '<div class="mpf-find">'+
+            '<input type="search" id="mpf-find" placeholder="Filter activities&hellip;" autocomplete="off">'+
+            '<span class="mpf-count" id="mpf-count"></span>'+
+          '</div>'+
+        '</div>'+
+        '<div class="mpf-tablewrap">'+
+          '<table><thead><tr>'+
+            '<th style="width:34%">Activity</th>'+
+            '<th class="n" style="width:9%">Man days</th>'+
+            '<th class="n" style="width:8%">Days</th>'+
+            '<th class="n" style="width:12%">Work qty</th>'+
+            '<th style="width:8%">Unit</th>'+
+            '<th class="n" style="width:12%">Rate</th>'+
+            '<th class="n" style="width:15%">Cost</th>'+
+            '<th style="width:34px"></th>'+
+          '</tr></thead><tbody id="mpf-rows"></tbody></table>'+
+        '</div>'+
+        '<button type="button" class="mpf-add" id="mpf-addrow">+ Add activity</button>'+
+        '<div class="mpf-note">Unit, rate and cost come from the server &mdash; the rate is the one in force on '+
+          '<b>Period from</b>, and it is frozen onto the line when you save. <b>Work qty</b> and <b>cost</b> are what '+
+          'the budget is enforced against. Man days and days are recorded for reporting and never cap anything.</div>'+
+      '</div>'+
+      '<div class="mpf-foot">'+
+        '<div class="mpf-tot" id="mpf-totals"></div>'+
         '<div class="btns">'+
           '<button type="button" class="btn" id="mpf-cancel">Cancel</button>'+
-          '<button type="button" class="btn" id="mpf-save">Save Draft</button>'+
+          '<button type="button" class="btn" id="mpf-save">Save draft</button>'+
           '<button type="button" class="btn solid" id="mpf-submit">Save &amp; submit for review</button>'+
         '</div>'+
       '</div>'+
@@ -525,7 +725,7 @@
   function mpOpenForm(existingName, onSaved){
     var dlg=el("mp-formdialog"); if(!dlg) return;
     MPF.editing=existingName||null;
-    MPF.rows=[]; MPF.catalog=[];
+    MPF.rows=[]; MPF.catalog=[]; MPF.filter=""; MPF.clash=null; MPF.seedTouch=false;
     MPF.onSaved=onSaved||loadMasterPlans;
     dlg.innerHTML=mpFormShell();
     dlg.style.display="flex";
@@ -536,9 +736,40 @@
     el("mpf-x").onclick=shut; el("mpf-cancel").onclick=shut;
     dlg.onclick=function(ev){ if(ev.target===dlg) shut(); };
     el("mpf-addrow").onclick=function(){ MPF.rows.push({task:"",man_days:0,days:0,work_qty:0}); mpRenderRows(); };
-    fs.onchange=mpRefreshCatalog;
-    el("mpf-from").onchange=mpRefreshCatalog;
+    fs.onchange=function(){ mpRefreshCatalog(); chkPeriod(); };
+    var chkPeriod=function(){
+      var fm=el("mpf-farm").value, a=el("mpf-from").value, b=el("mpf-to").value;
+      var bar=el("mpf-clash"); if(!bar) return;
+      if(!fm||!a||!b){ bar.style.display="none"; MPF.clash=null; mpSaveState(); return; }
+      call({action:"period_free", farm:fm, period_from:a, period_to:b,
+            name:MPF.editing||""}, "wm_masterplan").then(function(d){
+        if(d.free){ bar.style.display="none"; MPF.clash=null; }
+        else {
+          MPF.clash=d.clash;
+          bar.style.display="";
+          bar.innerHTML='<b>'+esc(fm)+' already has a master plan for these dates.</b> '+
+            esc(d.clash)+' covers '+esc(d.clash_from)+' &rarr; '+esc(d.clash_to)+
+            ' ('+esc(d.clash_state)+'). A farm has one budget per period &mdash; put this work on '+
+            esc(d.clash)+', or choose dates outside it.';
+        }
+        mpSaveState();
+      });
+    };
+    el("mpf-from").onchange=function(){ mpRefreshCatalog(); chkPeriod(); };
+    el("mpf-to").onchange=chkPeriod;
+    var findBox=el("mpf-find");
+    if(findBox){
+      // narrows every task picker at once; a row's own selection always stays in
+      // its list, so typing can never quietly drop an activity already chosen
+      findBox.oninput=function(){ MPF.filter=this.value; mpRenderRows(); };
+      findBox.onkeydown=function(ev){ if(ev.key==="Escape"){ this.value=""; MPF.filter=""; mpRenderRows(); } };
+    }
     var saveBtn=el("mpf-save"), submitBtn=el("mpf-submit");
+    var mpSaveState=function(){
+      var bad=!!MPF.clash;
+      saveBtn.disabled=bad; submitBtn.disabled=bad;
+      saveBtn.title = bad ? "This period already has a master plan" : "";
+    };
     saveBtn.onclick=function(){ mpDoSave(false, saveBtn, submitBtn); };
     submitBtn.onclick=function(){ mpDoSave(true, saveBtn, submitBtn); };
     if(existingName){
@@ -552,6 +783,7 @@
         MPF.rows=(d.activities||[]).map(function(a){
           return { task:a.task, man_days:a.man_days||0, days:a.days||0, work_qty:a.work_qty||0 };
         });
+        MPF.seedTouch=true;
         mpRefreshCatalog();
       }).catch(function(){ toast("Could not load plan for editing"); shut(); });
     } else {
@@ -561,11 +793,91 @@
     }
   }
 
+  // what may be planned depends on the DATES, not just the farm: the budget that
+  // governs 10-15 Aug is not necessarily the one governing the week after. Fetch
+  // against the dates on screen so the picker and the cap can never disagree.
+  function loadPlannableTasks(){
+    var sel=el("f-task"); if(!sel || !ST.farm) return;
+    var f=el("f-from").value, t=el("f-to").value;
+    call({action:"tasks", farm:ST.farm, from_date:f||"", to_date:t||""}).then(function(d){
+      ST.tasks=d.tasks||[];
+      ST.lastTasks=d;
+      ST.blocked = d.blocked_reason || null;
+      var keep=sel.value;
+      sel.innerHTML='<option value="">'+
+        (d.blocked_reason ? "— nothing can be planned for these dates —" : "— select task —")+
+        '</option>';
+      ST.tasks.forEach(function(x){
+        var o=document.createElement("option");
+        o.value=x.name;
+        o.textContent=x.subject+" · "+fmt(x.remaining_qty)+" "+(x.uom||"")+" / KES "+fmt(x.remaining_cost,0)+" left";
+        if(x.exhausted){ o.disabled=true; o.textContent=x.subject+" · budget used up"; }
+        sel.appendChild(o);
+      });
+      if(keep) sel.value=keep;
+      renderPeriodBar(d);
+      recalc();
+    });
+  }
+
+  // every budget the farm has, so a period is chosen from what exists rather than
+  // typed and then refused. The active one is the budget the dates currently sit in.
+  function loadBudgets(){
+    if(!ST.farm){ ST.budgets=[]; renderPeriodBar(ST.lastTasks||{}); return; }
+    call({action:"budgets", farm:ST.farm}).then(function(d){
+      ST.budgets=d.budgets||[];
+      renderPeriodBar(ST.lastTasks||{});
+    });
+  }
+
+  function renderPeriodBar(d){
+    var bar=el("f-mpperiod"), txt=el("f-mptext"), btn=el("f-usemp");
+    if(!bar) return;
+    var buds=ST.budgets||[];
+    var active=d.master_plan||null;
+    var f=el("f-from").value, t=el("f-to").value;
+    if(!buds.length){
+      // no budget at all for this farm: nothing here can be planned, and saying so
+      // plainly beats an empty task list the person is left to interpret
+      bar.style.display=""; bar.className="mp-period out"; btn.style.display="none";
+      txt.innerHTML='<b>'+esc(ST.farm||"This farm")+' cannot be planned yet.</b> '+
+        'Work is capped by an approved master plan, and this farm has none'+
+        (d.pending_plan ? (' &mdash; '+esc(d.pending_plan)+' is still at '+esc(d.pending_plan_state)+
+                           ', so planning opens when it is approved.')
+                        : '. Someone with the farm manager, HR head or GM role raises one '+
+                          'from the Master plan tab, and the GM approves it.');
+      return;
+    }
+    bar.style.display=""; btn.style.display="none";
+    var inside = buds.filter(function(b){ return (!f||f>=b.period_from) && (!t||t<=b.period_to); }).length>0;
+    bar.className = inside ? "mp-period" : "mp-period out";
+    var h = (inside
+      ? "Budget period &mdash; the request must fit inside one:"
+      : "<b>These dates cannot be planned.</b> A request has to sit wholly inside one "+
+        "approved budget, and "+esc(ST.farm||"this farm")+"&rsquo;s budgets are below. "+
+        "Pick one to snap the dates to it:") + "<div class=\"mp-buds\">";
+    buds.forEach(function(b){
+      var on = (active===b.name) || (b.period_from===f && b.period_to===t);
+      h += '<button type="button" class="bud'+(on?" on":"")+'" data-bf="'+esc(b.period_from)+
+           '" data-bt="'+esc(b.period_to)+'">'+esc(b.name)+
+           '<span>'+esc(b.period_from)+' &rarr; '+esc(b.period_to)+
+           ' · '+fmt(b.activities)+' activit'+(b.activities===1?"y":"ies")+'</span></button>';
+    });
+    txt.innerHTML = h+"</div>";
+    bar.querySelectorAll("[data-bf]").forEach(function(x){
+      x.onclick=function(){
+        el("f-from").value=x.getAttribute("data-bf");
+        el("f-to").value=x.getAttribute("data-bt");
+        syncSlider(); recalc(); loadPlannableTasks();
+      };
+    });
+  }
+
   function buildTabs(){
     var tabs=[["new","New Request"],["mine","My Requests"],["rej","Rejected"]];
     if(ST.roles && ST.roles.is_approver) tabs.push(["appr","Approvals"]);
-    tabs.push(["week","Weekly review"]);
     tabs.push(["mp","Master plan"]);
+    if(ST.canRates) tabs.push(["rates","Rates"]);
     var nav=el("wp-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button");
@@ -576,13 +888,13 @@
     showTab("new");
   }
   function showTab(name){
-    ["new","mine","rej","appr","week","mp"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
+    ["new","mine","rej","appr","week","mp","rates"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
     document.querySelectorAll("#wp-tabs button").forEach(function(b){ b.setAttribute("aria-selected", b.getAttribute("data-tab")===name); });
     if(name==="mine") loadMine();
     if(name==="rej") loadRejected();
     if(name==="appr") loadAppr();
-    if(name==="week") initWeekBoard();
     if(name==="mp") loadMasterPlans();
+    if(name==="rates") loadRates();
   }
 
   function initNew(meta){
@@ -593,8 +905,8 @@
     el("f-block").onchange=function(){ if(this.value){ ST.picked[this.value]=true; this.value=''; } syncBlockGrid(); recalc(); };
     el("f-task").onchange=onTask;
     el("f-qty").oninput=recalc;
-    el("f-from").onchange=function(){ syncSlider(); recalc(); };
-    el("f-to").onchange=function(){ syncSlider(); recalc(); };
+    el("f-from").onchange=function(){ syncSlider(); recalc(); loadPlannableTasks(); };
+    el("f-to").onchange=function(){ syncSlider(); recalc(); loadPlannableTasks(); };
     el("f-slider").oninput=onSlider;
     el("f-from").value=today();
     el("f-to").value=addDays(today(),6);
@@ -616,22 +928,8 @@
       ST.blocks.forEach(function(b){ var o=document.createElement("option"); o.value=b.name; o.textContent=b.label; sel.appendChild(o); });
       syncBlockGrid();
     });
-    call({action:"tasks",farm:ST.farm}).then(function(d){
-      ST.tasks=d.tasks||[];
-      var sel=el("f-task");
-      sel.innerHTML='<option value="">— select task —</option>';
-      ST.tasks.forEach(function(t){
-        var o=document.createElement("option");
-        o.value=t.name;
-        o.textContent=t.subject+" · "+fmt(t.remaining_qty)+" "+(t.uom||"")+" / KES "+fmt(t.remaining_cost,0)+" left";
-        if(t.exhausted){ o.disabled=true; o.textContent=t.subject+" · budget used up"; }
-        sel.appendChild(o);
-      });
-      if(d.blocked_reason){
-        sel.innerHTML="";
-        toast(d.blocked_reason);
-      }
-    });
+    loadPlannableTasks();
+    loadBudgets();
     recalc();
   }
 
@@ -695,12 +993,19 @@
     var info=ST.taskInfo;
     var tgt=info?info.daily_target:0;
     var rate=info?info.rate:0;
-    var ppd=0;
-    if(tgt>0 && wd>0){ ppd=Math.ceil(qty/tgt/wd); }
+    // man-days are what the quantity itself is worth in labour: quantity / daily
+    // target. The crew is those man-days spread over the days, rounded up because
+    // people come whole -- so the crew rounding never inflates the man-days.
+    var mandays = (tgt>0) ? (qty/tgt) : 0;
+    var ppd = (mandays>0 && wd>0) ? Math.ceil(mandays/wd) : 0;
     var cost=qty*rate;
     el("o-ppl").textContent = ppd>0?fmt(ppd):"—";
     el("o-ppl-u").textContent = (info?fmt(tgt)+" "+(info.uom||"")+"/day":"crew size");
-    el("o-pd").textContent = ppd>0?fmt(ppd*wd):"—";
+    el("o-pd").textContent = mandays>0?fmt(mandays,2):"—";
+    var mdu=el("o-pd-u");
+    if(mdu) mdu.textContent = (mandays>0 && wd>0)
+      ? (fmt(qty)+" ÷ "+fmt(tgt)+" = "+fmt(mandays,2)+" over "+fmt(wd)+" day"+(wd>1?"s":""))
+      : "quantity ÷ daily target";
     var th=periodHours();
     var hb=el("o-hrs"); if(hb) hb.textContent = th>0?fmt(th):"—";
     var ba=blockArea();
@@ -712,7 +1017,12 @@
     var missing=[];
     if(!ST.farm) missing.push("select a farm");
     if(nBlocks()===0) missing.push("tap at least one block");
-    if(!ST.task) missing.push("select a task");
+    // saying "select a task" when there is nothing selectable sends people looking
+    // for a control that is empty for a reason -- give them the reason
+    if(!ST.task){
+      missing.push(ST.blocked ? "no activities are budgeted for these dates — see the note above the period"
+                              : "select a task");
+    }
     if(qty<=0) missing.push("enter a quantity");
     if(wd<=0) missing.push("set a valid date range");
     var hint=el("f-submit-hint");
@@ -1091,129 +1401,172 @@
     });
   }
 
-  // ── consultant weekly review board ──
-  var WK={inited:false,data:null};
-  function wkMonday(offsetWeeks){
-    var d=new Date(); var wd=(d.getDay()+6)%7;   // Mon=0
-    d.setDate(d.getDate()-wd+7*(offsetWeeks||1)); // default: NEXT Monday
-    function p(n){ return (n<10?"0":"")+n; }
-    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
-  }
-  function initWeekBoard(){
-    if(!WK.inited){
-      WK.inited=true;
-      el("wk-start").value=wkMonday(1);
-      el("wk-load").onclick=loadWeekBoard;
-      el("wk-farm").onchange=loadWeekBoard;
-      el("wk-prev").onclick=function(){ wkShift(-7); };
-      el("wk-next").onclick=function(){ wkShift(7); };
-    }
-    loadWeekBoard();
-  }
-  function wkShift(days){
-    var v=el("wk-start").value; if(!v) return;
-    var d=new Date(v+"T00:00:00"); d.setDate(d.getDate()+days);
-    function p(n){ return (n<10?"0":"")+n; }
-    el("wk-start").value=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
-    loadWeekBoard();
-  }
-  function loadWeekBoard(){
-    var b=el("wk-body"); b.className="loading"; b.innerHTML="Loading week…";
-    call({action:"week_board", farm:el("wk-farm").value, week_start:el("wk-start").value||""}).then(function(d){
-      if(d.error){ b.className=""; b.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
-      WK.data=d; renderWeekBoard();
-    }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
-  }
-  function renderWeekBoard(){
-    var b=el("wk-body"); var d=WK.data; if(!b||!d) return;
-    b.className="";
-    var t=d.totals||{}, plans=d.plans||[], load=d.load||[];
-    var h='';
-    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">';
-    function chip(k,v,u,c){ return '<div style="border:1px solid var(--line);border-radius:12px;padding:8px 14px;background:#fff"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:600">'+k+'</div><div style="font-size:17px;font-weight:700;color:'+(c||"var(--ink)")+'">'+v+'</div>'+(u?'<div style="font-size:9.5px;color:var(--mute)">'+u+'</div>':'')+'</div>'; }
-    h+=chip("Plans", fmt(t.plans), esc(d.farm)+" · week "+esc((d.week||{}).start||""));
-    h+=chip("Budgeted value", "KES "+fmt(t.budget,2), "rate × target across the week");
-    h+=chip("Peak crew / day", fmt(t.peak_crew), "of "+fmt(d.workforce)+" active workers", t.peak_crew>d.workforce?"#b91c1c":"var(--ink)");
-    var st = t.plans && t.approved===t.plans ? "Approved" : (t.returned===t.plans && t.plans ? "Returned" : (t.approved||t.returned ? "Partly decided" : "Awaiting review"));
-    h+=chip("Consultant state", st, fmt(t.approved)+" approved · "+fmt(t.returned)+" returned", st==="Approved"?"#0a7a43":(st==="Returned"?"#b91c1c":"#a06000"));
-    h+='</div>';
-    if(t.peak_crew>d.workforce){
-      h+='<div class="note" style="border-color:#fca5a5;background:#fef2f2;color:#b91c1c;margin-bottom:10px"><b>Over-planned:</b> the peak day asks for '+fmt(t.peak_crew)+' workers but the farm has '+fmt(d.workforce)+' active people.</div>';
-    }
-    if(load.length){
-      var mx=Math.max(d.workforce||0, 1);
-      load.forEach(function(l){ if(l.crew>mx) mx=l.crew; });
-      h+='<div class="sech" style="font-size:10px">Crew needed per day <span style="color:var(--mute);font-weight:500">vs '+fmt(d.workforce)+' active workers (dashed line)</span></div>';
-      h+='<div style="display:flex;gap:8px;align-items:flex-end;height:120px;padding:6px 4px 0;position:relative;margin-bottom:14px">';
-      var wfPct=(d.workforce/mx*100);
-      h+='<div style="position:absolute;left:0;right:0;bottom:'+wfPct.toFixed(1)+'%;border-top:2px dashed #a06000;opacity:.55"></div>';
-      load.forEach(function(l){
-        var pct=Math.max(2,(l.crew/mx*100));
-        var over=l.crew>d.workforce;
-        h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;z-index:1;justify-content:flex-end;height:100%">'+
-           '<div style="font-size:10px;font-weight:700">'+fmt(l.crew)+'</div>'+
-           '<div style="width:70%;max-width:52px;height:'+pct.toFixed(1)+'%;background:'+(over?"#b91c1c":"#2563eb")+';border-radius:6px 6px 0 0;opacity:.8"></div>'+
-           '<div style="font-size:9px;color:var(--mute)">'+esc(l.d.slice(5))+'</div></div>';
+  function loadRates(){
+    var sel=el("rt-task");
+    if(sel && !sel.options.length){
+      sel.innerHTML='<option value="">— select task —</option>';
+      (ST.rateTasks||[]).forEach(function(t){
+        var o=document.createElement("option"); o.value=t.name; o.textContent=t.subject; sel.appendChild(o);
       });
-      h+='</div>';
-    }
-    if(!plans.length){
-      h+='<div class="empty">No plans proposed for this farm-week yet.</div>';
-    } else {
-      h+='<table><thead><tr><th>Plan</th><th>Task</th><th>Blocks</th><th>Period</th><th class="n">Crew/day</th><th class="n">Target</th><th class="n">Rate</th><th class="n">Budget KES</th><th>Requested by</th><th>State</th><th>Consultant</th></tr></thead><tbody>';
-      plans.forEach(function(r){
-        var cs=r.consultant_state==="Approved"?'<span style="color:#0a7a43;font-weight:700">Approved</span>'
-             :(r.consultant_state==="Returned"?'<span style="color:#b91c1c;font-weight:700" title="'+esc(r.consultant_note||"")+'">Returned</span>'
-             :'<span style="color:#a06000">awaiting</span>');
-        h+='<tr><td class="m" style="font-size:10px"><a href="#" data-trace="'+esc(r.name)+'" style="color:var(--blue,#2563eb);text-decoration:none">'+esc(r.name)+'</a></td><td><b>'+esc(r.task||"")+'</b></td>'+
-           '<td style="font-size:10px">'+esc((r.blocks||[]).map(lbl).join(", "))+'</td>'+
-           '<td class="m" style="font-size:10px">'+esc(r.period)+'</td>'+
-           '<td class="n m">'+fmt(r.crew)+'</td><td class="n m">'+fmt(r.target)+' '+esc(r.uom||"")+'</td>'+
-           '<td class="n m">'+fmt(r.rate,4)+'</td><td class="n m">'+fmt(r.budget,2)+'</td>'+
-           '<td style="font-size:10px">'+esc((r.requested_by||"").split("@")[0])+'</td>'+
-           '<td style="font-size:10px">'+esc(r.state||"")+'</td><td>'+cs+'</td></tr>';
-      });
-      h+='</tbody></table>';
-      setTimeout(function(){
-        document.querySelectorAll("[data-trace]").forEach(function(a){
-          a.onclick=function(ev){ ev.preventDefault(); openPlanTrace(a.getAttribute("data-trace")); };
+      sel.onchange=function(){ RT.task=this.value; renderRates(); };
+      var f=el("rt-find");
+      if(f) f.oninput=function(){
+        var q=(this.value||"").toLowerCase();
+        sel.innerHTML='<option value="">— select task —</option>';
+        (ST.rateTasks||[]).forEach(function(t){
+          if(q && (t.subject||"").toLowerCase().indexOf(q)<0 && t.name!==RT.task) return;
+          var o=document.createElement("option"); o.value=t.name; o.textContent=t.subject;
+          if(t.name===RT.task) o.selected=true;
+          sel.appendChild(o);
         });
-      },0);
-      if(d.is_consultant && d.gate_on){
-        h+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px">'+
-           '<button type="button" class="btn solid" id="wk-approve">Approve week · '+fmt(t.plans)+' plans · KES '+fmt(t.budget,0)+'</button>'+
-           '<button type="button" class="btn" id="wk-return" style="color:#b91c1c;border-color:#fca5a5">Return with note</button>'+
-           '<span class="hint" style="font-size:10px">Approving stamps every plan; Farm Managers can then approve them individually. Returning sends the week back with your note on every plan.</span></div>';
-      } else if(d.gate_on){
-        h+='<div class="note" style="margin-top:12px">Only the consultants named in Work Management Settings can decide this week. Farm Managers cannot approve future-week plans until the week is consultant-approved.</div>';
-      }
-    }
-    b.innerHTML=h;
-    var ap=el("wk-approve");
-    if(ap){
-      ap.onclick=function(){
-        if(!window.confirm("Approve "+fmt(t.plans)+" plans for "+d.farm+", week of "+(d.week||{}).start+" — KES "+fmt(t.budget,0)+" budgeted?\n\nFarm Managers can then approve them individually.")) return;
-        ap.disabled=true;
-        call({action:"week_approve", farm:d.farm, week_start:(d.week||{}).start}).then(function(r){
-          if(r.error){ toast("Error: "+r.error); ap.disabled=false; return; }
-          toast(fmt(r.decided)+" plans consultant-approved");
-          loadWeekBoard();
-        }).catch(function(){ toast("Failed"); ap.disabled=false; });
       };
     }
-    var rt=el("wk-return");
-    if(rt){
-      rt.onclick=function(){
-        var note=window.prompt("Why is this week being returned? (required — goes on every plan)");
-        if(!note || !note.trim()) return;
-        rt.disabled=true;
-        call({action:"week_return", farm:d.farm, week_start:(d.week||{}).start, note:note.trim()}).then(function(r){
-          if(r.error){ toast("Error: "+r.error); rt.disabled=false; return; }
-          toast(fmt(r.decided)+" plans returned with your note");
-          loadWeekBoard();
-        }).catch(function(){ toast("Failed"); rt.disabled=false; });
+    renderRates();
+  }
+
+  var RT = { task:null, mode:null, preview:null };
+
+  function renderRates(){
+    var box=el("rt-body");
+    if(!RT.task){ box.innerHTML='<div class="empty">Pick a task to see its rate history.</div>'; return; }
+    box.innerHTML='<div class="loading">Loading…</div>';
+    call({action:"periods", task:RT.task}, "wm_rates").then(function(d){
+      var ps=d.periods||[], tm=d.task_master||{};
+      var h='<div class="rt-cur"><b>'+esc(RT.task)+'</b> — now '+fmt(tm.custom_rate,6)+
+            ' per '+esc(tm.custom_uom||"—")+', target '+fmt(tm.custom_daily_target)+'/day</div>';
+      h+='<div class="rt-acts">'+
+         '<button type="button" class="btn sm solid" id="rt-new">New rate from a date</button>'+
+         '<button type="button" class="btn sm" id="rt-fix">Correct a period</button>'+
+         '<button type="button" class="btn sm" id="rt-unit">Change the unit</button></div>';
+      h+='<div id="rt-panel"></div>';
+      h+='<div class="mpf-tablewrap"><table><thead><tr><th>Period</th><th>From</th><th>To</th>'+
+         '<th class="n">Rate</th><th>Unit</th><th class="n">Target</th><th>Source</th></tr></thead><tbody>';
+      ps.forEach(function(p){
+        h+='<tr><td class="m" style="font-size:10px">'+esc(p.name)+'</td>'+
+           '<td class="m">'+esc(p.valid_from)+'</td><td class="m">'+esc(p.valid_to||"open")+'</td>'+
+           '<td class="n m">'+fmt(p.rate,6)+'</td><td>'+esc(p.uom||"")+'</td>'+
+           '<td class="n m">'+fmt(p.daily_target)+'</td>'+
+           '<td style="font-size:10px;color:var(--mute)">'+esc(p.source||"")+'</td></tr>';
+      });
+      box.innerHTML=h+'</tbody></table></div>';
+      RT.periods=ps;
+      el("rt-new").onclick=function(){ ratePanel("new"); };
+      el("rt-fix").onclick=function(){ ratePanel("fix"); };
+      el("rt-unit").onclick=function(){ ratePanel("unit"); };
+    });
+  }
+
+  function ratePanel(mode){
+    var p=el("rt-panel"); RT.mode=mode; RT.preview=null;
+    if(mode==="new"){
+      p.innerHTML='<div class="rt-form"><div class="row">'+
+        '<div><label class="fl">New rate</label><input type="number" step="any" id="rt-r"></div>'+
+        '<div><label class="fl">Effective from</label><input type="date" id="rt-d"></div>'+
+        '<button type="button" class="btn solid" id="rt-go">Create the period</button></div>'+
+        '<div class="note">The rate in force is closed the day before. Nothing already priced changes.</div></div>';
+      el("rt-go").onclick=function(){
+        call({action:"new_rate", task:RT.task, rate:el("rt-r").value,
+              effective_from:el("rt-d").value}, "wm_rates").then(function(d){
+          if(d.error){ toast(d.error); return; }
+          toast("Created "+d.created); renderRates();
+        });
+      };
+    } else if(mode==="fix"){
+      var opts=(RT.periods||[]).map(function(x){
+        return '<option value="'+esc(x.name)+'">'+esc(x.valid_from)+' → '+esc(x.valid_to||"open")+
+               ' · '+fmt(x.rate,6)+'</option>'; }).join("");
+      p.innerHTML='<div class="rt-form"><div class="row">'+
+        '<div><label class="fl">Period to correct</label><select id="rt-p">'+opts+'</select></div>'+
+        '<div><label class="fl">Corrected rate</label><input type="number" step="any" id="rt-r"></div>'+
+        '<button type="button" class="btn" id="rt-go">Show what this changes</button></div>'+
+        '<div class="note">The rate was wrong. Everything priced from this period is re-priced — after you approve the list.</div></div>';
+      el("rt-go").onclick=function(){
+        call({action:"correct_preview", period:el("rt-p").value, rate:el("rt-r").value},
+             "wm_rates").then(function(d){
+          if(d.error){ toast(d.error); return; }
+          RT.preview=d; renderImpact(d);
+        });
+      };
+    } else {
+      p.innerHTML='<div class="rt-form"><div class="row">'+
+        '<div><label class="fl">New unit</label><input type="text" id="rt-u" placeholder="Hour"></div>'+
+        '<div><label class="fl">Daily target</label><input type="number" step="any" id="rt-t"></div>'+
+        '<div><label class="fl">Quantity factor (optional)</label><input type="number" step="any" id="rt-f" placeholder="e.g. 8"></div>'+
+        '<button type="button" class="btn" id="rt-go">Show what this affects</button></div>'+
+        '<div class="note">A quantity in the old unit does not mean the same in the new one. Draft plans are converted only if you give a factor; everything else has to be re-entered.</div></div>';
+      el("rt-go").onclick=function(){
+        call({action:"unit_change_preview", task:RT.task, uom:el("rt-u").value,
+              daily_target:el("rt-t").value}, "wm_rates").then(function(d){
+          if(d.error){ toast(d.error); return; }
+          var a=d.affected||{};
+          el("rt-panel").insertAdjacentHTML("beforeend",
+            '<div class="rt-impact"><h4>What is priced in '+esc(d.old_uom||"the old unit")+'</h4>'+
+            '<div>Master plan lines: <b>'+fmt(a.master_plan_lines)+'</b> · Planner requests: <b>'+
+            fmt(a.planners)+'</b> · Actuals documents: <b>'+fmt(a.actuals)+'</b></div>'+
+            '<div class="note" style="margin-top:8px">New rate would be <b>'+fmt(d.derived_rate,6)+
+            '</b> per '+esc(d.new_uom)+' (daily basis '+fmt(d.daily_basis,2)+' ÷ '+fmt(d.new_target)+').</div>'+
+            '<button type="button" class="btn solid" id="rt-uapply" style="margin-top:10px">Apply the unit change</button></div>');
+          el("rt-uapply").onclick=function(){
+            call({action:"unit_change_apply", task:RT.task, uom:el("rt-u").value,
+                  daily_target:el("rt-t").value, factor:el("rt-f").value||0}, "wm_rates")
+              .then(function(r){
+                if(r.error){ toast(r.error); return; }
+                toast("New period "+r.created+" · "+fmt(r.converted)+" draft lines converted");
+                renderRates();
+              });
+          };
+        });
       };
     }
+  }
+
+  function renderImpact(d){
+    var h='<div class="rt-impact"><h4>Correcting '+esc(d.task)+' · '+fmt(d.old_rate,6)+' → '+
+          fmt(d.new_rate,6)+' for '+esc(d.valid_from)+' → '+esc(d.valid_to||"open")+'</h4>';
+    if((d.master_plans||[]).length){
+      h+='<div style="margin:8px 0 4px"><label><input type="checkbox" id="rt-allmp" checked> '+
+         'Master plan lines ('+fmt(d.master_plans.length)+')</label></div>'+
+         '<div class="mpf-tablewrap"><table><thead><tr><th></th><th>Plan</th><th>Farm</th><th>Status</th>'+
+         '<th class="n">Qty</th><th class="n">Now</th><th class="n">Becomes</th></tr></thead><tbody>';
+      d.master_plans.forEach(function(m){
+        h+='<tr><td><input type="checkbox" class="rt-mp" data-r="'+esc(m.row)+'" checked></td>'+
+           '<td class="m" style="font-size:10px">'+esc(m.plan)+'</td><td>'+esc(m.farm||"")+'</td>'+
+           '<td style="font-size:10px">'+esc(m.state)+'</td><td class="n m">'+fmt(m.qty)+'</td>'+
+           '<td class="n m">'+fmt(m.old_cost,2)+'</td><td class="n m">'+fmt(m.new_cost,2)+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }
+    h+='<div style="margin-top:10px"><label><input type="checkbox" id="rt-pl" checked> Planner requests — '+
+       fmt(d.planners.rows)+' rows, '+fmt(d.planners.old_total,2)+' → '+fmt(d.planners.new_total,2)+'</label></div>'+
+       '<div><label><input type="checkbox" id="rt-ac" checked> Actuals — '+
+       fmt(d.actuals.rows)+' rows, '+fmt(d.actuals.old_total,2)+' → '+fmt(d.actuals.new_total,2)+'</label></div>';
+    if(d.locked && d.locked.rows){
+      h+='<div class="rt-locked"><b>'+fmt(d.locked.rows)+' rows totalling '+fmt(d.locked.total,2)+
+         ' are already paid and will not be changed.</b> Money that has gone to accounts does not move '+
+         'because a rate was corrected afterwards.</div>';
+    }
+    h+='<button type="button" class="btn solid" id="rt-apply" style="margin-top:12px">Apply this correction</button>'+
+       '<span class="hint" style="margin-left:10px">Recorded as a run you can reverse in one step.</span></div>';
+    el("rt-panel").insertAdjacentHTML("beforeend", h);
+    var all=el("rt-allmp");
+    if(all) all.onchange=function(){
+      var on=this.checked;
+      document.querySelectorAll(".rt-mp").forEach(function(c){ c.checked=on; });
+    };
+    el("rt-apply").onclick=function(){
+      var rows=[];
+      document.querySelectorAll(".rt-mp").forEach(function(c){ if(c.checked) rows.push(c.getAttribute("data-r")); });
+      this.disabled=true;
+      call({action:"correct_apply", period:d.period, rate:d.new_rate,
+            plan_rows:JSON.stringify(rows), do_planners:el("rt-pl").checked?1:0,
+            do_actuals:el("rt-ac").checked?1:0}, "wm_rates").then(function(r){
+        if(r.error){ toast(r.error); return; }
+        var msg=r.changed+" rows re-priced · run "+r.run+" · delta "+fmt(r.delta,2);
+        if(r.skipped_plan_rows){ msg += " · "+fmt(r.skipped_plan_rows)+" rows skipped (no longer eligible)"; }
+        toast(msg);
+        renderRates();
+      });
+    };
   }
 
   function boot(){
@@ -1222,7 +1575,11 @@
       ST.roles=roles;
       el("wp-who").textContent=(roles.user||"")+(roles.is_approver?" · Approver":"");
       initNew(meta);
-      buildTabs();
+      call({action:"rate_meta"}, "wm_rates").then(function(d){
+        ST.canRates = !!(d && d.can_edit);
+        ST.rateTasks = (d && d.tasks) || [];
+        buildTabs();
+      }).catch(function(){ ST.canRates=false; buildTabs(); });
     }).catch(function(e){
       el("wp-who").textContent="Load error: "+(e&&e.message?e.message:e);
     });

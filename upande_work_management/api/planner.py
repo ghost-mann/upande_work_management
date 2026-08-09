@@ -32,6 +32,26 @@ def wm_planner(**kwargs):
     SATURDAY_HOURS = 6
     SUNDAY_HOURS = 8
 
+    # WHO MAY DECIDE A PLAN. Approving and rejecting were gated only by the desk
+    # workflow and by what the pending list chose to show -- the endpoint itself
+    # checked nothing, so anyone who could reach it could approve any farm's plan.
+    # This is the same signal `pending` scopes on, so what a person can DO now
+    # matches what they can SEE: a farm-specific role decides that farm, while the
+    # GM, the HR head and System Manager decide anywhere.
+    ap_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+    AP_BYPASS = 1 if (("System Manager" in ap_roles) or ("General Manager" in ap_roles)
+                      or ("HOD HR" in ap_roles) or ("HR Manager Kaitet" in ap_roles)
+                      or frappe.session.user == "Administrator") else 0
+    AP_FARMS = []
+    if "Farm Manager Saboti" in ap_roles:
+        AP_FARMS.append("Saboti")
+    if "Farm Manager Lokitela" in ap_roles:
+        AP_FARMS.append("Lokitela")
+    if "Farm Manager Endebess" in ap_roles:
+        AP_FARMS.append("Endebess")
+    if "Farm Manager Valle" in ap_roles:
+        AP_FARMS.append("Vale")
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -42,17 +62,20 @@ def wm_planner(**kwargs):
 
     elif action == "blocks":
         farm = frappe.form_dict.get("farm")
+        # Every location on the farm. A keyword list used to hide anything whose name
+        # contained Store, Mill, Tank, BIN, Warehouse, Cold Room, Parchment or Diesel,
+        # on the assumption that only field blocks get planned. That hid 41 real places
+        # across the four farms -- General Store Avocado Packhouse among them -- and the
+        # tasks people actually plan there (Cleaners, Store Clerk, Security, Gardener)
+        # exist in the task list. Nothing had ever been recorded at them because the
+        # planner would not offer them, not because no work happens there.
         rows = frappe.db.get_all("Warehouse", filters={"custom_farm":farm,"is_group":0,"disabled":0},
             fields=["name","warehouse_name","custom_area_ha"], order_by="name", limit=500)
         blocks = []
         for r in rows:
             nm = r.warehouse_name or r.name
-            skip = False
-            for kw in BLOCK_EXCLUDE:
-                if kw.lower() in nm.lower():
-                    skip = True
-            if not skip:
-                blocks.append({"name":r.name,"label":nm.replace(" - KL",""),"area":frappe.utils.flt(r.custom_area_ha)})
+            blocks.append({"name":r.name,"label":nm.replace(" - KL",""),
+                           "area":frappe.utils.flt(r.custom_area_ha)})
         out["blocks"] = blocks
 
     elif action == "tasks":
@@ -70,12 +93,53 @@ def wm_planner(**kwargs):
         tasks = []
         if not tk_mp:
             out["master_plan"] = None
-            out["blocked_reason"] = ("No approved master plan covers " + str(tk_from) + " to " +
-                                     str(tk_to) + " for " + str(farm) +
-                                     ". A master plan must be approved before work can be planned.")
+            # "the planner has gone" is what this looks like from the outside, so say what
+            # is actually holding it up: the farm's own plan and where it has got to,
+            # rather than only that nothing is approved
+            tk_any = frappe.db.sql("""
+                SELECT name, workflow_state, period_from, period_to
+                FROM `tabWork Management Master Plan`
+                WHERE farm = %(f)s AND period_from <= %(to)s AND period_to >= %(from)s
+                ORDER BY FIELD(workflow_state,'Approved','Pending GM','Pending Consultant','Draft','Rejected'),
+                         period_from DESC
+                LIMIT 1
+            """, {"f": farm, "from": tk_from, "to": tk_to}, as_dict=True)
+            # a plan the request only PARTLY sits inside is the commonest way to land
+            # here -- a budget running Mon-Sat against a Mon-Sun week -- and saying
+            # "no approved master plan" about a plan that is plainly approved reads as
+            # the system losing it. Name the period and what to do instead.
+            tk_a = tk_any[0] if tk_any else None
+            if tk_a and tk_a.workflow_state == "Approved":
+                tk_why = ("This request runs " + str(tk_from) + " to " + str(tk_to) + ", but " +
+                          tk_a.name + " budgets " + str(farm) + " only from " +
+                          str(tk_a.period_from) + " to " + str(tk_a.period_to) + ". Plan within "
+                          "those dates, or widen the master plan's period to cover them.")
+                out["partial_plan"] = tk_a.name
+                out["partial_from"] = str(tk_a.period_from)
+                out["partial_to"] = str(tk_a.period_to)
+            elif tk_a and tk_a.workflow_state == "Rejected":
+                tk_why = ("No approved master plan covers " + str(tk_from) + " to " + str(tk_to) +
+                          " for " + str(farm) + ". " + tk_a.name + " was rejected. Edit it and "
+                          "submit it again, or raise a new one, then have it approved.")
+            elif tk_a:
+                tk_why = ("No approved master plan covers " + str(tk_from) + " to " + str(tk_to) +
+                          " for " + str(farm) + ". " + tk_a.name + " covers these dates but is "
+                          "still at " + str(tk_a.workflow_state) + ". Planning opens once it is approved.")
+            else:
+                tk_why = ("No approved master plan covers " + str(tk_from) + " to " + str(tk_to) +
+                          " for " + str(farm) + ". Raise a master plan for this period and have "
+                          "it approved.")
+            if tk_a:
+                out["pending_plan"] = tk_a.name
+                out["pending_plan_state"] = tk_a.workflow_state
+            out["blocked_reason"] = tk_why
         else:
             tkm = tk_mp[0]
             out["master_plan"] = tkm.name
+            # the period the budget actually covers, so the screen can offer to snap the
+            # request's dates to it rather than letting someone plan past the ceiling
+            out["period_from"] = str(tkm.period_from)
+            out["period_to"] = str(tkm.period_to)
             out["blocked_reason"] = None
             for ta in frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": tkm.name, "consultant_state": "OK"},
@@ -102,6 +166,26 @@ def wm_planner(**kwargs):
                               "remaining_qty": tk_rq, "remaining_cost": tk_rc,
                               "exhausted": 1 if (tk_rq <= 0.005 or tk_rc <= 0.005) else 0})
         out["tasks"] = tasks
+
+    elif action == "budgets":
+        # Every approved master plan for a farm, so the planner can offer the periods
+        # that may actually be planned instead of the person guessing a date range and
+        # discovering afterwards that no budget covers it.
+        bg_farm = frappe.form_dict.get("farm")
+        if not bg_farm:
+            out["budgets"] = []
+        else:
+            out["budgets"] = frappe.db.sql("""
+                SELECT mp.name, mp.period_from, mp.period_to, mp.total_cost,
+                       (SELECT COUNT(*) FROM `tabWork Management Master Plan Activity` a
+                         WHERE a.parent = mp.name AND a.consultant_state = 'OK') activities
+                FROM `tabWork Management Master Plan` mp
+                WHERE mp.farm = %(f)s AND mp.workflow_state = 'Approved'
+                ORDER BY mp.period_from DESC
+            """, {"f": bg_farm}, as_dict=True)
+            for bg in out["budgets"]:
+                bg["period_from"] = str(bg["period_from"])
+                bg["period_to"] = str(bg["period_to"])
 
     elif action == "compare":
         rows = frappe.db.get_all("Work Management Planner",
@@ -149,6 +233,10 @@ def wm_planner(**kwargs):
             if r.block:
                 blist.append(r.block)
         out["blocks"] = blist
+
+    elif action == "decide_scope":
+        out["can_decide_any"] = AP_BYPASS
+        out["farms"] = AP_FARMS
 
     elif action == "roles":
         roles = frappe.db.get_all("Has Role", filters={"parent":frappe.session.user}, fields=["role"])
@@ -301,7 +389,13 @@ def wm_planner(**kwargs):
                         th = th + WEEKDAY_HOURS
                     cursor = frappe.utils.add_days(cursor, 1)
                     guard = guard + 1
-                d.quantity = qty; d.people_per_day = ppd; d.person_days = ppd * wd
+                # man-days are the labour the QUANTITY represents: quantity / daily target.
+                # Deriving them from the rounded crew instead (ppd * wd) inflated them --
+                # 1000 units at 100/day over 3 days is 10 man-days, not the 12 a crew of
+                # 4 implies. The crew still rounds up, because people come whole.
+                d.quantity = qty
+                d.people_per_day = ppd
+                d.person_days = frappe.utils.flt(qty / tgt, 2) if tgt > 0 else (ppd * wd)
                 d.total_hours = th
                 d.total_cost = qty * rate
                 if not editing:
@@ -322,23 +416,15 @@ def wm_planner(**kwargs):
 
     elif action == "approve":
         nm = frappe.form_dict.get("name")
-        cur_ws = frappe.db.get_value("Work Management Planner", nm, "workflow_state")
-        # CONSULTANT GATE: future-week plans need the week's consultant sign-off
-        gate_ok = 1
-        try:
-            if frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "require_consultant_approval")):
-                pfd = frappe.db.get_value("Work Management Planner", nm, "from_date")
-                if pfd:
-                    today_g = frappe.utils.getdate(frappe.utils.today())
-                    next_monday = frappe.utils.add_days(today_g, 7 - today_g.weekday())
-                    if frappe.utils.getdate(pfd) >= next_monday:
-                        cst = frappe.db.get_value("Work Management Planner", nm, "custom_consultant_state")
-                        if cst != "Approved":
-                            gate_ok = 0
-        except Exception:
-            gate_ok = 1
-        if not gate_ok:
-            out["error"] = "This plan starts in an upcoming week and is awaiting the consultant's weekly sign-off (Weekly review tab)."
+        ap_doc = frappe.db.get_value("Work Management Planner", nm,
+            ["workflow_state", "farm"], as_dict=True)
+        cur_ws = ap_doc.workflow_state if ap_doc else None
+        if not ap_doc:
+            out["error"] = "no such plan: " + str(nm)
+        elif not AP_BYPASS and ap_doc.farm not in AP_FARMS:
+            out["error"] = ("You cannot approve plans for " + str(ap_doc.farm) +
+                            ". A farm manager decides their own farm; the general manager "
+                            "and the HR head decide any farm.")
         elif cur_ws != "Pending Approval":
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
         else:
@@ -350,8 +436,16 @@ def wm_planner(**kwargs):
 
     elif action == "reject":
         nm = frappe.form_dict.get("name")
-        cur_ws = frappe.db.get_value("Work Management Planner", nm, "workflow_state")
-        if cur_ws != "Pending Approval":
+        rj_doc = frappe.db.get_value("Work Management Planner", nm,
+            ["workflow_state", "farm"], as_dict=True)
+        cur_ws = rj_doc.workflow_state if rj_doc else None
+        if not rj_doc:
+            out["error"] = "no such plan: " + str(nm)
+        elif not AP_BYPASS and rj_doc.farm not in AP_FARMS:
+            out["error"] = ("You cannot reject plans for " + str(rj_doc.farm) +
+                            ". A farm manager decides their own farm; the general manager "
+                            "and the HR head decide any farm.")
+        elif cur_ws != "Pending Approval":
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
         else:
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", "Rejected", update_modified=False)
@@ -386,7 +480,6 @@ def wm_planner(**kwargs):
             ["name","farm","block_section","task","quantity","from_date","to_date",
              "workflow_state","uom","daily_target","rate","total_cost","people_per_day",
              "person_days","requested_by","request_date","approved_by","approval_date",
-             "custom_consultant_state","custom_consultant_by","custom_consultant_note",
              "fulfilled_qty","remaining_qty","fulfilment_pct","custom_close_state"], as_dict=True)
         if not pl:
             out["error"] = "no such plan: " + str(tr)
@@ -404,10 +497,6 @@ def wm_planner(**kwargs):
             # the approval chain, in the order it actually happens
             chain = []
             chain.append({"step": "Requested", "who": pl.requested_by, "when": str(pl.request_date or "")})
-            if pl.custom_consultant_state:
-                chain.append({"step": "Consultant " + str(pl.custom_consultant_state),
-                              "who": pl.custom_consultant_by, "when": "",
-                              "note": pl.custom_consultant_note})
             chain.append({"step": "Farm Manager approved" if pl.approved_by else "Farm Manager approval",
                           "who": pl.approved_by, "when": str(pl.approval_date or "")})
             out["chain"] = chain
@@ -479,158 +568,6 @@ def wm_planner(**kwargs):
                 "crew_assigned": len(crew),
                 "workers_paid": len(worked),
             }
-
-    elif action == "week_board":
-        # CONSULTANT WEEKLY BOARD: all of one farm's plans starting in a chosen
-        # week, with crew-load per day vs the farm's active workforce, budgets
-        # and consultant state. week_start should be a Monday.
-        wfarm = frappe.form_dict.get("farm")
-        wstart = frappe.form_dict.get("week_start")
-        if not wstart:
-            tdy = frappe.utils.getdate(frappe.utils.today())
-            wstart = str(frappe.utils.add_days(tdy, 7 - tdy.weekday()))
-        wend = str(frappe.utils.add_days(wstart, 6))
-        if not wfarm:
-            out["error"] = "farm is required"
-        else:
-            plans = frappe.db.sql("""
-                SELECT name, task, block_section, from_date, to_date, people_per_day,
-                       quantity, uom, rate, total_cost, workflow_state, requested_by,
-                       custom_consultant_state, custom_consultant_by, custom_consultant_at,
-                       custom_consultant_note, custom_close_state
-                FROM `tabWork Management Planner`
-                WHERE farm = %s AND from_date <= %s AND from_date >= %s
-                  AND workflow_state != 'Rejected'
-                ORDER BY from_date, task
-            """, (wfarm, wend, wstart), as_dict=True)
-            pnames = [r.name for r in plans]
-            blocks_map = {}
-            if pnames:
-                for r in frappe.db.sql("""
-                    SELECT parent, block FROM `tabWork Planner Block` WHERE parent IN %s
-                """, (tuple(pnames),), as_dict=True):
-                    bl = blocks_map.get(r.parent)
-                    if bl is None:
-                        bl = []
-                        blocks_map[r.parent] = bl
-                    if r.block:
-                        bl.append(r.block)
-            days = []
-            cur_d = wstart
-            g = 0
-            while cur_d <= wend and g < 8:
-                days.append(cur_d)
-                cur_d = str(frappe.utils.add_days(cur_d, 1))
-                g = g + 1
-            load = {}
-            for dd in days:
-                load[dd] = 0
-            tot_budget = 0
-            tot_target_v = 0
-            rows_b = []
-            for r in plans:
-                bl = []
-                if r.block_section:
-                    bl.append(r.block_section)
-                for b in blocks_map.get(r.name, []):
-                    if b not in bl:
-                        bl.append(b)
-                for dd in days:
-                    if str(r.from_date) <= dd <= str(r.to_date):
-                        load[dd] = load[dd] + frappe.utils.cint(r.people_per_day)
-                tot_budget = tot_budget + frappe.utils.flt(r.total_cost)
-                rows_b.append({"name": r.name, "task": r.task, "blocks": bl,
-                               "period": str(r.from_date) + " → " + str(r.to_date),
-                               "from_date": str(r.from_date), "to_date": str(r.to_date),
-                               "crew": frappe.utils.cint(r.people_per_day),
-                               "target": frappe.utils.flt(r.quantity), "uom": r.uom,
-                               "rate": frappe.utils.flt(r.rate),
-                               "budget": frappe.utils.flt(r.total_cost),
-                               "state": r.workflow_state,
-                               "requested_by": r.requested_by,
-                               "consultant_state": r.custom_consultant_state,
-                               "consultant_by": r.custom_consultant_by,
-                               "consultant_note": r.custom_consultant_note})
-            wf_row = frappe.db.sql("""
-                SELECT COUNT(*) n FROM `tabEmployee`
-                WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) = %s
-            """, (wfarm,), as_dict=True)
-            workforce = frappe.utils.cint(wf_row[0].n) if wf_row else 0
-            clist = []
-            gate_on = 0
-            try:
-                gate_on = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "require_consultant_approval"))
-                raw = frappe.db.get_single_value("Work Management Settings", "consultant_users") or ""
-                for c in raw.replace("\n", ",").split(","):
-                    cv = c.strip().lower()
-                    if cv:
-                        clist.append(cv)
-            except Exception:
-                pass
-            roles_w = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-            is_consultant = (frappe.session.user.lower() in clist) or ("System Manager" in roles_w)
-            out["week"] = {"start": wstart, "end": wend}
-            out["farm"] = wfarm
-            out["plans"] = rows_b
-            out["load"] = [{"d": dd, "crew": load[dd]} for dd in days]
-            out["workforce"] = workforce
-            out["totals"] = {"plans": len(rows_b), "budget": tot_budget,
-                             "peak_crew": max([load[dd] for dd in days]) if days else 0,
-                             "approved": len([x for x in rows_b if x["consultant_state"] == "Approved"]),
-                             "returned": len([x for x in rows_b if x["consultant_state"] == "Returned"])}
-            out["is_consultant"] = 1 if is_consultant else 0
-            out["gate_on"] = gate_on
-
-    elif action == "week_approve" or action == "week_return":
-        # consultant decision on a farm-week: stamp every plan in the package
-        wfarm = frappe.form_dict.get("farm")
-        wstart = frappe.form_dict.get("week_start")
-        wnote = (frappe.form_dict.get("note") or "").strip()
-        approving = (action == "week_approve")
-        err = None
-        if not wfarm or not wstart:
-            err = "farm and week_start are required"
-        if not err and not approving and not wnote:
-            err = "A note is required when returning a week"
-        clist = []
-        try:
-            raw = frappe.db.get_single_value("Work Management Settings", "consultant_users") or ""
-            for c in raw.replace("\n", ",").split(","):
-                cv = c.strip().lower()
-                if cv:
-                    clist.append(cv)
-        except Exception:
-            pass
-        roles_w = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        if not err and frappe.session.user.lower() not in clist and "System Manager" not in roles_w:
-            err = "Only the consultants named in Work Management Settings can decide a weekly package"
-        if err:
-            out["error"] = err
-        else:
-            wend = str(frappe.utils.add_days(wstart, 6))
-            plans = frappe.db.get_all("Work Management Planner",
-                filters={"farm": wfarm, "from_date": ["between", [wstart, wend]],
-                         "workflow_state": ["!=", "Rejected"]},
-                pluck="name", limit=300)
-            newstate = "Approved" if approving else "Returned"
-            wnow = frappe.utils.now()
-            for pn in plans:
-                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_state", newstate, update_modified=False)
-                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_by", frappe.session.user, update_modified=False)
-                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_at", wnow, update_modified=False)
-                frappe.db.set_value("Work Management Planner", pn, "custom_consultant_note", wnote, update_modified=False)
-            frappe.db.commit()
-            for pn in plans:
-                try:
-                    frappe.get_doc("Work Management Planner", pn).add_comment("Comment",
-                        ("Consultant approved" if approving else "Consultant returned") +
-                        " (week " + wstart + ", " + wfarm + ") by " + frappe.session.user +
-                        (": " + wnote if wnote else ""))
-                except Exception:
-                    pass
-            out["decided"] = len(plans)
-            out["state"] = newstate
-
 
     else:
         out["error"] = "unknown action: " + str(action)
