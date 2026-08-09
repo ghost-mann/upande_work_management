@@ -59,7 +59,16 @@ def wm_masterplan(**kwargs):
         cv = cu.strip().lower()
         if cv:
             mp_cons.append(cv)
-    IS_CONSULTANT = 1 if (frappe.session.user.lower() in mp_cons or "System Manager" in mp_roles) else 0
+    # named in Settings, as opposed to IS_CONSULTANT below which also sweeps in every
+    # System Manager so an administrator can exercise the review path
+    MP_LISTED_CONSULTANT = 1 if frappe.session.user.lower() in mp_cons else 0
+    IS_CONSULTANT = 1 if (MP_LISTED_CONSULTANT or "System Manager" in mp_roles) else 0
+
+    # RAISING a master plan is the farm managers', the HR head's and the GM's alone.
+    # A consultant reviews plans and may correct one in place, but does not author the
+    # budget they are asked to check -- so being named as a consultant in Settings
+    # withholds creation even from someone whose roles would otherwise allow it.
+    CAN_CREATE = 1 if (CAN_EDIT and not MP_LISTED_CONSULTANT) else 0
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -67,6 +76,7 @@ def wm_masterplan(**kwargs):
     if action == "meta":
         out["user"] = frappe.session.user
         out["can_edit"] = CAN_EDIT
+        out["can_create"] = CAN_CREATE
         out["can_gm_approve"] = CAN_GM
         out["is_consultant"] = IS_CONSULTANT
         out["farms"] = [f.name for f in frappe.db.get_all("Farm", fields=["name"], order_by="name")]
@@ -74,6 +84,32 @@ def wm_masterplan(**kwargs):
             SELECT workflow_state st, COUNT(*) n
             FROM `tabWork Management Master Plan` GROUP BY workflow_state
         """, as_dict=True)
+
+    elif action == "period_free":
+        # Does this farm already have a budget over these dates? The form asks the
+        # moment a farm and period are chosen, so a clash is known before any
+        # activity is entered rather than at save.
+        pf_farm = frappe.form_dict.get("farm")
+        pf_from = frappe.form_dict.get("period_from")
+        pf_to = frappe.form_dict.get("period_to")
+        pf_me = frappe.form_dict.get("name") or ""
+        if not (pf_farm and pf_from and pf_to):
+            out["free"] = 1
+        else:
+            pf_c = frappe.db.sql("""
+                SELECT name, period_from, period_to, workflow_state
+                FROM `tabWork Management Master Plan`
+                WHERE farm = %(f)s AND name != %(me)s
+                  AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND period_from <= %(to)s AND period_to >= %(from)s
+                LIMIT 1
+            """, {"f": pf_farm, "me": pf_me, "to": pf_to, "from": pf_from}, as_dict=True)
+            out["free"] = 0 if pf_c else 1
+            if pf_c:
+                out["clash"] = pf_c[0].name
+                out["clash_from"] = str(pf_c[0].period_from)
+                out["clash_to"] = str(pf_c[0].period_to)
+                out["clash_state"] = pf_c[0].workflow_state
 
     elif action == "list":
         mp_farm = frappe.form_dict.get("farm")
@@ -83,6 +119,8 @@ def wm_masterplan(**kwargs):
             mp_filters["farm"] = mp_farm
         if mp_state:
             mp_filters["workflow_state"] = mp_state
+        out["can_gm_approve"] = CAN_GM
+        out["can_decide"] = 1 if (IS_CONSULTANT or CAN_GM) else 0
         out["plans"] = frappe.db.get_all("Work Management Master Plan",
             filters=mp_filters,
             fields=["name", "farm", "period_from", "period_to", "workflow_state",
@@ -123,21 +161,56 @@ def wm_masterplan(**kwargs):
                     if not dr_live:
                         continue
                     dr_r = frappe.utils.flt(dr_live[0].rate, 6)
-                    if abs(dr_r - frappe.utils.flt(da.get("rate"), 6)) > 0.0000005:
+                    dr_uom = frappe.db.get_value("Task", da.get("task"), "custom_uom")
+                    if (dr_uom or "") != (da.get("uom") or ""):
+                        # a rate per Hour cannot be compared with a rate per Day: the
+                        # quantity has to change too, and only a person can say by how
+                        # much. Report the change, never the arithmetic across it.
                         dr.append({"row": da.get("name"), "task": da.get("task"),
+                                   "kind": "unit",
+                                   "budget_rate": frappe.utils.flt(da.get("rate"), 6),
+                                   "live_rate": dr_r,
+                                   "budget_uom": da.get("uom"),
+                                   "live_uom": dr_uom})
+                    elif abs(dr_r - frappe.utils.flt(da.get("rate"), 6)) > 0.0000005:
+                        dr.append({"row": da.get("name"), "task": da.get("task"),
+                                   "kind": "rate",
                                    "budget_rate": frappe.utils.flt(da.get("rate"), 6),
                                    "live_rate": dr_r,
                                    "cost_at_live_rate": frappe.utils.flt(
                                        frappe.utils.flt(da.get("work_qty")) * dr_r, 2)})
                 out["rate_drift"] = dr
-                out["can_edit"] = 1 if (CAN_EDIT and mp.workflow_state in ("Draft", "Rejected")) else 0
-                out["can_decide"] = 1 if (IS_CONSULTANT and mp.workflow_state == "Pending Consultant") else 0
+                out["can_edit"] = 1 if (
+                    (CAN_EDIT and mp.workflow_state in ("Draft", "Rejected"))
+                    or (IS_CONSULTANT and mp.workflow_state == "Pending Consultant")
+                    or (CAN_GM and mp.workflow_state == "Pending GM")) else 0
+                out["edit_is_review"] = 1 if (mp.workflow_state in ("Pending Consultant", "Pending GM")) else 0
+                out["can_decide"] = 1 if ((IS_CONSULTANT or CAN_GM) and mp.workflow_state == "Pending Consultant") else 0
+                gs_pending = len([a for a in out["activities"] if a.consultant_state == "Pending"])
+                gs_edit = len([a for a in out["activities"] if a.consultant_state == "Edit work"])
+                gs_ok = len([a for a in out["activities"] if a.consultant_state == "OK"])
+                out["undecided_lines"] = gs_pending
+                out["edited_lines"] = gs_edit
+                out["ok_lines"] = gs_ok
+                out["can_send_to_gm"] = 1 if ((IS_CONSULTANT or CAN_GM)
+                                              and mp.workflow_state == "Pending Consultant"
+                                              and not gs_edit
+                                              and (gs_ok or gs_pending)) else 0
+                out["deciding_as_standin"] = 1 if (CAN_GM and not MP_LISTED_CONSULTANT
+                                                   and mp.workflow_state == "Pending Consultant") else 0
                 out["can_gm_approve"] = 1 if (CAN_GM and mp.workflow_state == "Pending GM") else 0
 
     elif action == "save":
-        if not CAN_EDIT:
-            out["error"] = ("Only a farm manager, the HR head or the general manager can "
-                            "raise or edit a master plan.")
+        # Who may edit depends on where the plan has got to:
+        #   Draft / Rejected   -- the raiser's roles (farm manager, HR head, GM)
+        #   Pending Consultant -- the consultants, correcting it in place
+        #   Pending GM         -- the GM, correcting it in place
+        # A reviewer's edit does NOT send the plan back to Draft: the raiser is not
+        # asked to re-submit, and the previous figures are kept on every line that
+        # changed so the correction stays visible.
+        if not (CAN_EDIT or IS_CONSULTANT or CAN_GM):
+            out["error"] = ("Only a farm manager, the HR head, the general manager or a "
+                            "consultant can raise or edit a master plan.")
         else:
             sv_name = frappe.form_dict.get("name")
             sv_farm = frappe.form_dict.get("farm")
@@ -153,23 +226,62 @@ def wm_masterplan(**kwargs):
                 sv_err = "Period To cannot be before Period From"
             elif not sv_rows:
                 sv_err = "A master plan needs at least one activity"
+            sv_state = None
+            sv_review = 0
             if not sv_err and sv_name:
                 sv_state = frappe.db.get_value("Work Management Master Plan", sv_name, "workflow_state")
-                if sv_state not in ("Draft", "Rejected"):
-                    sv_err = "Only a Draft or Rejected master plan can be edited (state: " + str(sv_state) + ")"
-            # one budget in force per farm per day, or the ceiling is ambiguous
+                if sv_state in ("Draft", "Rejected"):
+                    if not CAN_EDIT:
+                        sv_err = ("Only a farm manager, the HR head or the general manager can "
+                                  "edit a plan that is back with its raiser (state: " + str(sv_state) + ")")
+                elif sv_state == "Pending Consultant":
+                    if IS_CONSULTANT:
+                        sv_review = 1
+                    else:
+                        sv_err = ("This plan is with the consultants. Only a consultant can "
+                                  "edit it while it is under review.")
+                elif sv_state == "Pending GM":
+                    if CAN_GM:
+                        sv_review = 1
+                    else:
+                        sv_err = ("This plan is with the general manager. Only the GM can "
+                                  "edit it at this stage.")
+                else:
+                    sv_err = "An " + str(sv_state).lower() + " master plan can no longer be edited"
+            elif not sv_err and not sv_name and not CAN_CREATE:
+                if MP_LISTED_CONSULTANT:
+                    sv_err = ("Consultants review master plans, they do not raise them. "
+                              "Ask a farm manager, the HR head or the general manager to "
+                              "create it, and it will come to you for review.")
+                else:
+                    sv_err = ("Only a farm manager, the HR head or the general manager can "
+                              "raise a new master plan.")
+            # ONE PLAN PER FARM PER PERIOD, and it is refused here -- at the moment of
+            # writing -- rather than at approval. Checking only against Approved plans
+            # let several people raise competing budgets for the same dates, take them
+            # all through review, and lose all but one at the GM's desk. Every plan that
+            # is not Rejected holds its period: a farm's budget for a stretch of days is
+            # one cumulative document, and a second one for the same days cannot exist.
             if not sv_err:
                 sv_clash = frappe.db.sql("""
-                    SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
+                    SELECT name, period_from, period_to, workflow_state
+                    FROM `tabWork Management Master Plan`
                     WHERE farm = %(f)s AND name != %(me)s
-                      AND workflow_state = 'Approved'
+                      AND IFNULL(workflow_state,'') != 'Rejected'
                       AND period_from <= %(to)s AND period_to >= %(from)s
                     LIMIT 1
                 """, {"f": sv_farm, "me": sv_name or "", "to": sv_to, "from": sv_from}, as_dict=True)
                 if sv_clash:
-                    sv_err = ("An approved master plan already covers those dates for " + str(sv_farm) +
-                              ": " + sv_clash[0].name + " (" + str(sv_clash[0].period_from) +
-                              " to " + str(sv_clash[0].period_to) + ")")
+                    sv_c = sv_clash[0]
+                    sv_err = (str(sv_farm) + " already has a master plan covering those dates: " +
+                              sv_c.name + " (" + str(sv_c.period_from) + " to " +
+                              str(sv_c.period_to) + ", " + str(sv_c.workflow_state) + "). " +
+                              "A farm has one budget per period — put this work on " + sv_c.name +
+                              " instead of raising a second plan, or choose dates outside it.")
+                    out["clash"] = sv_c.name
+                    out["clash_from"] = str(sv_c.period_from)
+                    out["clash_to"] = str(sv_c.period_to)
+                    out["clash_state"] = sv_c.workflow_state
             # one line per activity
             if not sv_err:
                 sv_seen = {}
@@ -190,7 +302,9 @@ def wm_masterplan(**kwargs):
                     # rebuilt from scratch below
                     for sx in frappe.db.get_all("Work Management Master Plan Activity",
                             filters={"parent": sv_name},
-                            fields=["task", "original_qty", "original_cost", "remarks"]):
+                            fields=["task", "original_qty", "original_cost", "remarks",
+                                    "work_qty", "cost", "consultant_state",
+                                    "consultant_by", "consultant_on"]):
                         sv_snap[sx.task] = sx
                 if sv_name:
                     d = frappe.get_doc("Work Management Master Plan", sv_name)
@@ -208,6 +322,7 @@ def wm_masterplan(**kwargs):
                                 or frappe.defaults.get_user_default("Company")
                 sv_md = 0
                 sv_cost = 0
+                sv_changed = []
                 for sr in sv_rows:
                     ti = frappe.db.get_value("Task", sr.get("task"), ["custom_uom"], as_dict=True)
                     # the rate in force when the budget starts, then frozen on the line
@@ -228,14 +343,30 @@ def wm_masterplan(**kwargs):
                     row.uom = ti.custom_uom if ti else None
                     row.rate = sv_rate
                     row.cost = frappe.utils.flt(sv_qty * sv_rate, 2)
-                    row.consultant_state = "Pending"
                     sv_prev = sv_snap.get(sr.get("task"))
+                    if sv_review and sv_prev:
+                        # a reviewer correcting in place: the decisions already taken on
+                        # the other lines must survive, or a plan edited at Pending GM
+                        # would have no OK line left and could never be approved
+                        row.consultant_state = sv_prev.consultant_state or "Pending"
+                        row.consultant_by = sv_prev.consultant_by
+                        row.consultant_on = sv_prev.consultant_on
+                    else:
+                        # the raiser changed the plan, so every line is up for decision again
+                        row.consultant_state = "Pending"
                     if sv_prev and frappe.utils.flt(sv_prev.original_qty):
                         # the ORIGINAL values, so never overwritten once set -- this
                         # composes with decide_line's own "if not flt(original_qty)" guard
                         row.original_qty = frappe.utils.flt(sv_prev.original_qty)
                         row.original_cost = frappe.utils.flt(sv_prev.original_cost)
+                    elif sv_review and sv_prev and abs(sv_qty - frappe.utils.flt(sv_prev.work_qty)) > 0.0000005:
+                        # first time a reviewer moves this line: keep what was asked for
+                        row.original_qty = frappe.utils.flt(sv_prev.work_qty)
+                        row.original_cost = frappe.utils.flt(sv_prev.cost)
                     row.remarks = sr.get("remarks") or (sv_prev.remarks if sv_prev else None)
+                    if sv_review and sv_prev and abs(sv_qty - frappe.utils.flt(sv_prev.work_qty)) > 0.0000005:
+                        sv_changed.append(str(sr.get("task")) + " " +
+                                          str(frappe.utils.flt(sv_prev.work_qty)) + " to " + str(sv_qty))
                     sv_md = sv_md + frappe.utils.flt(sr.get("man_days"))
                     sv_cost = sv_cost + frappe.utils.flt(sv_qty * sv_rate, 2)
                 d.total_activities = len(d.activities)
@@ -243,8 +374,16 @@ def wm_masterplan(**kwargs):
                 d.total_cost = sv_cost
                 d.flags.ignore_permissions = True
                 d.save(ignore_permissions=True)
+                if sv_review and sv_changed:
+                    # the raiser is never asked to re-submit a reviewer's correction, so
+                    # the change has to be legible on the document itself
+                    frappe.get_doc("Work Management Master Plan", d.name).add_comment(
+                        "Comment", "Corrected during review by " + str(frappe.session.user) +
+                        " (" + str(sv_state) + "): " + "; ".join(sv_changed))
                 frappe.db.commit()
                 out["name"] = d.name
+                out["reviewed_in_place"] = sv_review
+                out["changed"] = sv_changed
                 out["totals"] = {"activities": d.total_activities,
                                  "man_days": d.total_man_days, "cost": d.total_cost}
 
@@ -269,8 +408,13 @@ def wm_masterplan(**kwargs):
         dl_state = frappe.form_dict.get("state")
         dl_remark = frappe.form_dict.get("remarks")
         dl_qty = frappe.form_dict.get("work_qty")
-        if not IS_CONSULTANT:
-            out["error"] = "Only a consultant named in Work Management Settings can decide these lines."
+        # the GM stands in when a consultant is not available -- a plan must not sit
+        # unapprovable because the person who reviews it is away. The GM then approves
+        # the document as well, so the stand-in is recorded on the line and on the
+        # document rather than being invisible.
+        if not (IS_CONSULTANT or CAN_GM):
+            out["error"] = ("Only a consultant named in Work Management Settings, or the "
+                            "general manager standing in for one, can decide these lines.")
         elif dl_state not in ("OK", "Edit work", "Rejected"):
             out["error"] = "state must be OK, Edit work or Rejected"
         else:
@@ -282,6 +426,7 @@ def wm_masterplan(**kwargs):
             elif frappe.db.get_value("Work Management Master Plan", dl.parent, "workflow_state") != "Pending Consultant":
                 out["error"] = "This master plan is not awaiting consultant review."
             else:
+                dl_standin = 1 if (CAN_GM and not MP_LISTED_CONSULTANT) else 0
                 dl_set = {"consultant_state": dl_state,
                           "consultant_by": frappe.session.user,
                           "consultant_on": frappe.utils.now()}
@@ -317,11 +462,220 @@ def wm_masterplan(**kwargs):
                     frappe.db.set_value("Work Management Master Plan", dl.parent,
                                         "workflow_state", "Pending GM")
                     out["moved_to"] = "Pending GM"
+                if dl_standin:
+                    frappe.get_doc("Work Management Master Plan", dl.parent).add_comment(
+                        "Comment", "Line decided by the general manager (" + str(frappe.session.user) +
+                        ") standing in for a consultant: " + str(dl.task) + " marked " + str(dl_state) + ".")
                 frappe.db.commit()
                 out["row"] = dl_row
                 out["state"] = dl_state
                 out["pending_lines"] = dl_pending
                 out["edited_lines"] = dl_edit
+
+    elif action == "decide_bulk":
+        # Tick several lines and settle them in one go. Edit work is deliberately not
+        # offered here: it rewrites a line's quantity, which is a per-line number and
+        # cannot be applied to a selection.
+        db_rows = json.loads(frappe.form_dict.get("rows") or "[]")
+        db_state = frappe.form_dict.get("state")
+        db_remark = frappe.form_dict.get("remarks")
+        if not (IS_CONSULTANT or CAN_GM):
+            out["error"] = ("Only a consultant named in Work Management Settings, or the "
+                            "general manager standing in for one, can decide these lines.")
+        elif db_state not in ("OK", "Rejected"):
+            out["error"] = "state must be OK or Rejected"
+        elif not db_rows:
+            out["error"] = "Tick the lines you want to decide."
+        else:
+            db_parent = None
+            db_done = 0
+            for db_r in db_rows:
+                db_l = frappe.db.get_value("Work Management Master Plan Activity", db_r,
+                    ["name", "parent"], as_dict=True)
+                if not db_l:
+                    continue
+                if db_parent is None:
+                    db_parent = db_l.parent
+                if db_l.parent != db_parent:
+                    continue
+                db_set = {"consultant_state": db_state,
+                          "consultant_by": frappe.session.user,
+                          "consultant_on": frappe.utils.now()}
+                if db_remark:
+                    db_set["remarks"] = db_remark
+                frappe.db.set_value("Work Management Master Plan Activity", db_r, db_set)
+                db_done = db_done + 1
+            if not db_parent:
+                out["error"] = "none of those lines exist"
+            elif frappe.db.get_value("Work Management Master Plan", db_parent, "workflow_state") != "Pending Consultant":
+                frappe.db.rollback()
+                out["error"] = "This master plan is not awaiting consultant review."
+            else:
+                db_all = frappe.db.sql("""
+                    SELECT consultant_state FROM `tabWork Management Master Plan Activity`
+                    WHERE parent = %(p)s
+                """, {"p": db_parent}, as_dict=True)
+                db_pending = len([x for x in db_all if x.consultant_state == "Pending"])
+                db_edit = len([x for x in db_all if x.consultant_state == "Edit work"])
+                if db_edit:
+                    frappe.db.set_value("Work Management Master Plan", db_parent, "workflow_state", "Draft")
+                    out["moved_to"] = "Draft"
+                elif not db_pending:
+                    frappe.db.set_value("Work Management Master Plan", db_parent, "workflow_state", "Pending GM")
+                    out["moved_to"] = "Pending GM"
+                frappe.db.commit()
+                out["decided"] = db_done
+                out["state"] = db_state
+                out["pending_lines"] = db_pending
+
+    elif action == "return_to_consultant":
+        # The GM pushing a plan back for another look. Without this the only way back
+        # from Pending GM was Rejected, which sends it all the way to the raiser.
+        rc_name = frappe.form_dict.get("name")
+        rc_state = frappe.db.get_value("Work Management Master Plan", rc_name, "workflow_state")
+        if not CAN_GM:
+            out["error"] = "Only the general manager can send a plan back to the consultants."
+        elif not rc_state:
+            out["error"] = "no such master plan: " + str(rc_name)
+        elif rc_state != "Pending GM":
+            out["error"] = "Only a plan awaiting the GM can be sent back (state: " + str(rc_state) + ")"
+        else:
+            frappe.db.set_value("Work Management Master Plan", rc_name,
+                                "workflow_state", "Pending Consultant")
+            frappe.get_doc("Work Management Master Plan", rc_name).add_comment(
+                "Comment", "Sent back to the consultants by " + str(frappe.session.user) + ".")
+            frappe.db.commit()
+            out["name"] = rc_name
+            out["workflow_state"] = "Pending Consultant"
+
+    elif action == "plans_bulk":
+        # Whole plans, several at a time, from the master plan list. Each plan is
+        # checked on its own merits and reported on its own line -- one plan being
+        # in the wrong state never silently drops the rest.
+        pb_names = json.loads(frappe.form_dict.get("names") or "[]")
+        pb_op = frappe.form_dict.get("op")
+        if pb_op not in ("send_to_gm", "approve", "reject"):
+            out["error"] = "op must be send_to_gm, approve or reject"
+        elif not pb_names:
+            out["error"] = "Tick the plans you want to act on."
+        else:
+            pb_done = []
+            pb_failed = []
+            for pb_n in pb_names:
+                pb_st = frappe.db.get_value("Work Management Master Plan", pb_n, "workflow_state")
+                if not pb_st:
+                    pb_failed.append({"name": pb_n, "why": "no such master plan"})
+                elif pb_op == "approve":
+                    if not CAN_GM:
+                        pb_failed.append({"name": pb_n, "why": "only the general manager can approve"})
+                    elif pb_st != "Pending GM":
+                        pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not awaiting the GM"})
+                    else:
+                        pb_ok = frappe.db.sql("""
+                            SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity`
+                            WHERE parent = %(p)s AND consultant_state != 'Rejected'
+                        """, {"p": pb_n}, as_dict=True)[0].n
+                        pb_me = frappe.db.get_value("Work Management Master Plan", pb_n,
+                            ["farm", "period_from", "period_to"], as_dict=True)
+                        pb_clash = frappe.db.sql("""
+                            SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
+                            WHERE farm = %(f)s AND name != %(me)s AND workflow_state = 'Approved'
+                              AND period_from <= %(to)s AND period_to >= %(from)s
+                            LIMIT 1
+                        """, {"f": pb_me.farm, "me": pb_n,
+                              "to": pb_me.period_to, "from": pb_me.period_from}, as_dict=True)
+                        if not pb_ok:
+                            pb_failed.append({"name": pb_n, "why": "every line was rejected"})
+                        elif pb_clash:
+                            # the same invariant gm_approve enforces: one budget in force per
+                            # farm per day, or which ceiling applies is anyone's guess
+                            pb_failed.append({"name": pb_n, "why": "overlaps approved " + pb_clash[0].name +
+                                              " (" + str(pb_clash[0].period_from) + " to " +
+                                              str(pb_clash[0].period_to) + ")"})
+                        else:
+                            frappe.db.set_value("Work Management Master Plan", pb_n, {
+                                "workflow_state": "Approved",
+                                "gm_approved_by": frappe.session.user,
+                                "gm_approved_on": frappe.utils.now()})
+                            pb_done.append(pb_n)
+                elif pb_op == "reject":
+                    if not (CAN_GM or IS_CONSULTANT):
+                        pb_failed.append({"name": pb_n, "why": "not yours to reject"})
+                    elif pb_st not in ("Pending Consultant", "Pending GM"):
+                        pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not under review"})
+                    else:
+                        frappe.db.set_value("Work Management Master Plan", pb_n, "workflow_state", "Rejected")
+                        pb_done.append(pb_n)
+                else:
+                    if not (IS_CONSULTANT or CAN_GM):
+                        pb_failed.append({"name": pb_n, "why": "not yours to send on"})
+                    elif pb_st != "Pending Consultant":
+                        pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not with the consultants"})
+                    else:
+                        for pb_p in frappe.db.get_all("Work Management Master Plan Activity",
+                                filters={"parent": pb_n, "consultant_state": "Pending"}, pluck="name"):
+                            frappe.db.set_value("Work Management Master Plan Activity", pb_p,
+                                {"consultant_state": "OK", "consultant_by": frappe.session.user,
+                                 "consultant_on": frappe.utils.now()})
+                        frappe.db.set_value("Work Management Master Plan", pb_n,
+                                            "workflow_state", "Pending GM")
+                        pb_done.append(pb_n)
+            frappe.db.commit()
+            out["op"] = pb_op
+            out["done"] = pb_done
+            out["failed"] = pb_failed
+
+    elif action == "send_to_gm":
+        # The document advances to Pending GM on its own when the last line is decided,
+        # but that leaves no way to move a plan whose lines are already settled -- and
+        # nothing to press when someone expects the workflow's own Send to GM step.
+        # Same people who may decide the lines may send it on.
+        sg_name = frappe.form_dict.get("name")
+        sg_state = frappe.db.get_value("Work Management Master Plan", sg_name, "workflow_state")
+        if not (IS_CONSULTANT or CAN_GM):
+            out["error"] = ("Only a consultant named in Work Management Settings, or the "
+                            "general manager standing in for one, can send this plan to the GM.")
+        elif not sg_state:
+            out["error"] = "no such master plan: " + str(sg_name)
+        elif sg_state != "Pending Consultant":
+            out["error"] = "Only a plan awaiting consultant review can be sent to the GM (state: " + str(sg_state) + ")"
+        else:
+            sg_rows = frappe.db.sql("""
+                SELECT consultant_state, task FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s
+            """, {"p": sg_name}, as_dict=True)
+            sg_pending = [x.task for x in sg_rows if x.consultant_state == "Pending"]
+            sg_edit = [x.task for x in sg_rows if x.consultant_state == "Edit work"]
+            sg_ok = len([x for x in sg_rows if x.consultant_state == "OK"])
+            if sg_edit:
+                out["error"] = ("These lines are marked Edit work, so the plan goes back to its "
+                                "raiser rather than to the GM: " + ", ".join(sg_edit))
+            elif not sg_rows:
+                out["error"] = "This plan has no activities."
+            elif not sg_ok and not sg_pending:
+                out["error"] = "Every line was rejected, so there is nothing for the GM to approve."
+            else:
+                # a line nobody flagged is a line nobody objected to -- it goes forward as
+                # OK rather than blocking the plan. The GM gives the final approval, so
+                # this is accepted-without-comment, not approved-by-nobody: it is stamped
+                # with who sent it and recorded on the plan.
+                if sg_pending:
+                    for sg_p in frappe.db.get_all("Work Management Master Plan Activity",
+                            filters={"parent": sg_name, "consultant_state": "Pending"}, pluck="name"):
+                        frappe.db.set_value("Work Management Master Plan Activity", sg_p,
+                            {"consultant_state": "OK", "consultant_by": frappe.session.user,
+                             "consultant_on": frappe.utils.now()})
+                    frappe.get_doc("Work Management Master Plan", sg_name).add_comment(
+                        "Comment", str(len(sg_pending)) + " line(s) went to the GM without an "
+                        "individual decision, accepted by " + str(frappe.session.user) + ": " +
+                        ", ".join(sg_pending))
+                frappe.db.set_value("Work Management Master Plan", sg_name,
+                                    "workflow_state", "Pending GM")
+                frappe.db.commit()
+                out["name"] = sg_name
+                out["workflow_state"] = "Pending GM"
+                out["accepted_without_decision"] = len(sg_pending)
+                out["plannable_activities"] = sg_ok + len(sg_pending)
 
     elif action == "gm_approve":
         ga_name = frappe.form_dict.get("name")
@@ -492,8 +846,11 @@ def wm_masterplan(**kwargs):
                     ORDER BY valid_from DESC LIMIT 1
                 """, {"t": pt.name, "d": pt_from}, as_dict=True)
                 pt_rate = frappe.utils.flt(pt_rp[0].rate, 6) if pt_rp else frappe.utils.flt(pt.custom_rate, 6)
+                pt_ti = frappe.db.get_value("Task", pt.name,
+                    ["subject", "custom_uom", "custom_rate", "custom_daily_target"], as_dict=True)
                 pt_out.append({"name": pt.name, "subject": pt.subject,
-                               "uom": pt.custom_uom, "rate": pt_rate})
+                               "uom": pt.custom_uom, "rate": pt_rate,
+                               "daily_target": frappe.utils.flt(pt_ti.custom_daily_target, 6) if pt_ti else 0})
             out["tasks"] = pt_out
 
     else:
