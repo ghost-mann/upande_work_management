@@ -1465,9 +1465,11 @@
         '<button type="button" class="btn solid" id="rt-go">Create the period</button></div>'+
         '<div class="note">The rate in force is closed the day before. Nothing already priced changes.</div></div>';
       el("rt-go").onclick=function(){
+        this.disabled=true;
+        var btn=this;
         call({action:"new_rate", task:RT.task, rate:el("rt-r").value,
               effective_from:el("rt-d").value}, "wm_rates").then(function(d){
-          if(d.error){ toast(d.error); return; }
+          if(d.error){ toast(d.error); btn.disabled=false; return; }
           toast("Created "+d.created); renderRates();
         });
       };
@@ -1507,10 +1509,12 @@
             '</b> per '+esc(d.new_uom)+' (daily basis '+fmt(d.daily_basis,2)+' ÷ '+fmt(d.new_target)+').</div>'+
             '<button type="button" class="btn solid" id="rt-uapply" style="margin-top:10px">Apply the unit change</button></div>');
           el("rt-uapply").onclick=function(){
+            this.disabled=true;
+            var btn=this;
             call({action:"unit_change_apply", task:RT.task, uom:el("rt-u").value,
                   daily_target:el("rt-t").value, factor:el("rt-f").value||0}, "wm_rates")
               .then(function(r){
-                if(r.error){ toast(r.error); return; }
+                if(r.error){ toast(r.error); btn.disabled=false; return; }
                 toast("New period "+r.created+" · "+fmt(r.converted)+" draft lines converted");
                 renderRates();
               });
@@ -1557,10 +1561,11 @@
       var rows=[];
       document.querySelectorAll(".rt-mp").forEach(function(c){ if(c.checked) rows.push(c.getAttribute("data-r")); });
       this.disabled=true;
+      var btn=this;
       call({action:"correct_apply", period:d.period, rate:d.new_rate,
             plan_rows:JSON.stringify(rows), do_planners:el("rt-pl").checked?1:0,
             do_actuals:el("rt-ac").checked?1:0}, "wm_rates").then(function(r){
-        if(r.error){ toast(r.error); return; }
+        if(r.error){ toast(r.error); btn.disabled=false; return; }
         var msg=r.changed+" rows re-priced · run "+r.run+" · delta "+fmt(r.delta,2);
         if(r.skipped_plan_rows){ msg += " · "+fmt(r.skipped_plan_rows)+" rows skipped (no longer eligible)"; }
         toast(msg);
