@@ -2967,6 +2967,78 @@ def wm_dashboard(**kwargs):
         out["person"] = kpwho
         out["window"] = {"from": kpfrom, "to": kpto}
 
+    elif action == "budget_meters":
+        # HOW MUCH ROOM IS LEFT, ESTATE-WIDE. The planner answers this one activity at
+        # a time, at the moment someone is already typing a request. A budget quietly
+        # running out is a thing you want to see before then, so the dashboard reports
+        # every farm's live master plan the same way: each activity has two ceilings, a
+        # quantity of work and an amount of money, and either can be the one that stops
+        # the next request.
+        bm_on = frappe.form_dict.get("on_date") or frappe.utils.today()
+        bm_farms = []
+        for bm_f in FARMS:
+            bm_hit = frappe.db.sql("""
+                SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
+                WHERE farm = %(f)s AND workflow_state = 'Approved'
+                  AND period_from <= %(d)s AND period_to >= %(d)s
+                ORDER BY period_from DESC LIMIT 1
+            """, {"f": bm_f, "d": bm_on}, as_dict=True)
+            if not bm_hit:
+                bm_pend = frappe.db.sql("""
+                    SELECT name, workflow_state, period_from, period_to
+                    FROM `tabWork Management Master Plan`
+                    WHERE farm = %(f)s AND workflow_state NOT IN ('Approved','Rejected')
+                      AND period_to >= %(d)s
+                    ORDER BY period_from LIMIT 1
+                """, {"f": bm_f, "d": bm_on}, as_dict=True)
+                bm_farms.append({"farm": bm_f, "master_plan": None, "activities": [],
+                                 "pending_plan": bm_pend[0].name if bm_pend else None,
+                                 "pending_state": bm_pend[0].workflow_state if bm_pend else None,
+                                 "pending_from": str(bm_pend[0].period_from) if bm_pend else None,
+                                 "pending_to": str(bm_pend[0].period_to) if bm_pend else None})
+                continue
+            bm_p = bm_hit[0]
+            # one grouped read per farm rather than one per activity: every live
+            # request inside the plan's period, whatever state it is short of Rejected
+            bm_used = {}
+            for bm_u in frappe.db.sql("""
+                SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                FROM `tabWork Management Planner`
+                WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                GROUP BY task
+            """, {"f": bm_f, "pfrom": bm_p.period_from, "pto": bm_p.period_to}, as_dict=True):
+                bm_used[bm_u.task] = bm_u
+            # only money rolls up to the farm: quantities are in different units --
+            # trees, hours, kilos -- and adding them would produce a number that
+            # looks like a total and means nothing
+            bm_acts = []
+            bm_tc = 0.0
+            bm_pc = 0.0
+            for bm_a in frappe.db.get_all("Work Management Master Plan Activity",
+                    filters={"parent": bm_p.name, "consultant_state": "OK"},
+                    fields=["name", "task", "uom", "work_qty", "cost"], order_by="idx"):
+                bm_d = bm_used.get(bm_a.task)
+                bm_dq = frappe.utils.flt(bm_d.q) if bm_d else 0
+                bm_dc = frappe.utils.flt(bm_d.c) if bm_d else 0
+                bm_bq = frappe.utils.flt(bm_a.work_qty)
+                bm_bc = frappe.utils.flt(bm_a.cost, 2)
+                bm_tc = bm_tc + bm_bc
+                bm_pc = bm_pc + bm_dc
+                bm_acts.append({"row": bm_a.name, "task": bm_a.task, "uom": bm_a.uom,
+                                "work_qty": bm_bq, "cost": bm_bc,
+                                "planned_qty": bm_dq, "planned_cost": frappe.utils.flt(bm_dc, 2),
+                                "remaining_qty": bm_bq - bm_dq,
+                                "remaining_cost": frappe.utils.flt(bm_bc - bm_dc, 2)})
+            bm_farms.append({"farm": bm_f, "master_plan": bm_p.name,
+                             "period_from": str(bm_p.period_from), "period_to": str(bm_p.period_to),
+                             "budget_cost": frappe.utils.flt(bm_tc, 2),
+                             "planned_cost": frappe.utils.flt(bm_pc, 2),
+                             "remaining_cost": frappe.utils.flt(bm_tc - bm_pc, 2),
+                             "activities": bm_acts})
+        out["on_date"] = str(bm_on)
+        out["farms"] = bm_farms
+
     else:
         out["error"] = "unknown action: " + str(action)
 
