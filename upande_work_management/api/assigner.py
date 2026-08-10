@@ -32,6 +32,42 @@ def wm_assigner(**kwargs):
     SATURDAY_HOURS = 6
     SUNDAY_HOURS = 8
 
+    # WHO COUNTS AS A TASK WORKER
+    # The same settings-driven test wm_payment uses, so the people this screen will
+    # let you assign are exactly the people payment will later pay. Matching on
+    # employment_type alone -- as this script used to -- disagreed with payment the
+    # moment anyone configured a designation or a category instead, and produced
+    # assignments whose work could never be paid.
+    # An employee qualifies if ANY of the three configured lists matches.
+    TW_FIELDS = [
+        ("employment_type", frappe.db.get_single_value("Work Management Settings", "tw_employment_types")),
+        ("designation", frappe.db.get_single_value("Work Management Settings", "tw_designations")),
+        ("custom_category", frappe.db.get_single_value("Work Management Settings", "tw_categories")),
+    ]
+    TW_CLAUSES = []
+    for tw_col, tw_raw in TW_FIELDS:
+        tw_vals = []
+        # the Settings fields are multi-line boxes, so people list one value per line
+        # as readily as they comma-separate them. Accept either: a newline that
+        # survived into a value used to fail the character check below and take the
+        # WHOLE list with it, silently, which stopped 315 task workers being payable.
+        for tw_v in str(tw_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
+            tw_c = tw_v.strip()
+            # values come from Settings and land in SQL, so allow only the shapes a
+            # job title can actually take and drop anything else outright
+            tw_ok = 1
+            for tw_ch in tw_c:
+                if not (tw_ch.isalnum() or tw_ch in " -_/&().'"):
+                    tw_ok = 0
+            if tw_c and tw_ok:
+                tw_vals.append("'" + tw_c.replace("'", "''") + "'")
+        if tw_vals:
+            TW_CLAUSES.append("e." + tw_col + " IN (" + ", ".join(tw_vals) + ")")
+    if not TW_CLAUSES:
+        # never leave the gate wide open if Settings is blank or unusable
+        TW_CLAUSES = ["e.employment_type = 'Task Worker'"]
+    TW_MATCH = "(" + " OR ".join(TW_CLAUSES) + ")"
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -670,9 +706,11 @@ def wm_assigner(**kwargs):
             for r in busyrows:
                 busy_map[r.emp] = 1
         cands = []
-        for emp in frappe.db.get_all("Employee",
-                filters={"status": "Active", "custom_farm": farm, "employment_type": "Task Worker"},
-                fields=["name", "employee_name"], order_by="employee_name", limit=1000):
+        for emp in frappe.db.sql("""
+                SELECT e.name, e.employee_name FROM `tabEmployee` e
+                WHERE e.status = 'Active' AND e.custom_farm = %(f)s AND """ + TW_MATCH + """
+                ORDER BY e.employee_name LIMIT 1000
+            """, {"f": farm}, as_dict=True):
             if not already_map.get(emp.name) and not busy_map.get(emp.name):
                 cands.append(emp)
         out["candidates"] = cands
@@ -699,8 +737,13 @@ def wm_assigner(**kwargs):
                     err = "Replacement is already on this plan"
             # verify replacement is a Task Worker
             rep_type = frappe.db.get_value("Employee", replacement, "employment_type")
-            if rep_type != "Task Worker":
-                err = "Replacement must be a Task Worker"
+            rep_ok = frappe.db.sql("""
+                SELECT e.name FROM `tabEmployee` e WHERE e.name = %(n)s AND """ + TW_MATCH + """
+                LIMIT 1
+            """, {"n": replacement}, as_dict=True)
+            if not rep_ok:
+                err = ("Replacement is not a task worker under the current Work Management "
+                       "Settings, so their work could never be paid through this system.")
         if not err:
             # cross-assignment overlap guard: replacement must not be Active elsewhere over this period
             rdates = frappe.db.get_value("Work Management Assigner", nm, ["from_date", "to_date"], as_dict=True)
@@ -745,7 +788,7 @@ def wm_assigner(**kwargs):
                 child.idx = next_idx
                 child.employee = replacement
                 child.employee_name = rep_name
-                child.employment_type = "Task Worker"
+                child.employment_type = rep_type
                 child.status = "Active"
                 child.start_date = start_date
                 child.count_in_payroll = 1

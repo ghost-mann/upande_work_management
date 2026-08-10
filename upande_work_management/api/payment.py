@@ -48,7 +48,11 @@ def wm_payment(**kwargs):
     TW_CLAUSES = []
     for tw_col, tw_raw in TW_FIELDS:
         tw_vals = []
-        for tw_v in str(tw_raw or "").split(","):
+        # the Settings fields are multi-line boxes, so people list one value per line
+        # as readily as they comma-separate them. Accept either: a newline that
+        # survived into a value used to fail the character check below and take the
+        # WHOLE list with it, silently, which stopped 315 task workers being payable.
+        for tw_v in str(tw_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
             tw_c = tw_v.strip()
             # values come from Settings and land in SQL, so allow only the shapes a
             # job title can actually take and drop anything else outright
@@ -1321,6 +1325,7 @@ def wm_payment(**kwargs):
                     out["error"] = "No unpaid confirmed earnings for this worker in the window"
             else:
                 out["created"] = []
+                out["skipped"] = []
                 wq_from = frappe.form_dict.get("from_date")
                 wq_to = frappe.form_dict.get("to_date")
                 for wk in wk_ready:
@@ -1369,6 +1374,54 @@ def wm_payment(**kwargs):
                     if not agg or total_owed <= 0:
                         continue
                     else:
+                        # Payroll preconditions, checked BEFORE the payment is written.
+                        # Mirrors hrms Additional Salary.validate(). If ERPNext could not
+                        # raise the Additional Salary for this worker, no payment is created
+                        # either: the work stays unpaid and unreferenced, so it is picked up
+                        # on the next send once the underlying data is fixed. This keeps the
+                        # payment count and the Additional Salary count identical.
+                        wm_pay_on = dto
+                        wm_guard = 0
+                        while frappe.utils.getdate(wm_pay_on).weekday() != wk_pay_idx and wm_guard < 7:
+                            wm_pay_on = frappe.utils.add_days(wm_pay_on, 1)
+                            wm_guard = wm_guard + 1
+                        wm_emp = frappe.db.get_value("Employee", emp,
+                            ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
+                        wm_block = None
+                        if wm_emp and wm_emp.status == "Inactive":
+                            wm_block = "employee is Inactive"
+                        elif wm_emp and wm_emp.relieving_date and str(wm_pay_on) > str(wm_emp.relieving_date):
+                            wm_block = ("pay date " + str(wm_pay_on) + " is after the relieving date "
+                                        + str(wm_emp.relieving_date))
+                        elif wm_emp and wm_emp.date_of_joining and str(wm_pay_on) < str(wm_emp.date_of_joining):
+                            wm_block = ("pay date " + str(wm_pay_on) + " is before the joining date "
+                                        + str(wm_emp.date_of_joining))
+                        else:
+                            wm_ssa = frappe.db.sql("""
+                                SELECT name FROM `tabSalary Structure Assignment`
+                                WHERE employee = %(e)s AND docstatus = 1 AND from_date <= %(d)s LIMIT 1
+                            """, {"e": emp, "d": wm_pay_on}, as_dict=True)
+                            if not wm_ssa:
+                                wm_later = frappe.db.sql("""
+                                    SELECT MIN(from_date) d FROM `tabSalary Structure Assignment`
+                                    WHERE employee = %(e)s AND docstatus = 1
+                                """, {"e": emp}, as_dict=True)
+                                if wm_later and wm_later[0].d:
+                                    wm_block = ("salary structure starts " + str(wm_later[0].d)
+                                                + ", after the pay date " + str(wm_pay_on))
+                                else:
+                                    wm_block = "no submitted Salary Structure Assignment"
+                        if wm_block:
+                            out["skipped"].append({
+                                "employee": emp,
+                                "employee_name": (wm_emp.employee_name if wm_emp else None) or agg[0].nm or emp,
+                                "week_from": str(dfrom),
+                                "week_to": str(dto),
+                                "pay_date": str(wm_pay_on),
+                                "amount": frappe.utils.flt(total_owed),
+                                "reason": wm_block,
+                            })
+                            continue
                         ename = agg[0].nm or frappe.db.get_value("Employee", emp, "employee_name") or emp
                         d = frappe.new_doc("Work Management Payment")
                         d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()

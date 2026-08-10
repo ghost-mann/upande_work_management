@@ -213,6 +213,59 @@ def wm_planner(**kwargs):
                     "workflow_state","uom","daily_target","rate","working_days"],
             order_by="request_date desc", limit=200)
 
+        # WHAT APPROVING THIS LEAVES. An approver could see the request but not the
+        # ceiling it draws on, so "is there room for this?" was unanswerable without
+        # opening the master plan in another tab. Remaining here already counts this
+        # request -- Pending Approval holds budget the same way Approved does -- so
+        # these figures read as "with this request counted", and rejecting returns them.
+        pb_plan = {}   # farm|from|to -> the approved plan covering it, or None
+        pb_act = {}    # plan -> task -> the budget line
+        pb_use = {}    # plan -> task -> what every live request has drawn
+        for pr in out["pending"]:
+            pb_key = str(pr.get("farm")) + "|" + str(pr.get("from_date")) + "|" + str(pr.get("to_date"))
+            if pb_key not in pb_plan:
+                pb_hit = frappe.db.sql("""
+                    SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
+                    WHERE farm = %(f)s AND workflow_state = 'Approved'
+                      AND period_from <= %(a)s AND period_to >= %(b)s
+                    ORDER BY period_from DESC LIMIT 1
+                """, {"f": pr.get("farm"), "a": pr.get("from_date"), "b": pr.get("to_date")},
+                    as_dict=True)
+                pb_plan[pb_key] = pb_hit[0] if pb_hit else None
+            pb_mp = pb_plan[pb_key]
+            pr["budget_plan"] = pb_mp.name if pb_mp else None
+            if not pb_mp:
+                continue
+            if pb_mp.name not in pb_act:
+                pb_rows = {}
+                for pb_a in frappe.db.get_all("Work Management Master Plan Activity",
+                        filters={"parent": pb_mp.name, "consultant_state": "OK"},
+                        fields=["task", "uom", "work_qty", "cost"]):
+                    pb_rows[pb_a.task] = pb_a
+                pb_act[pb_mp.name] = pb_rows
+                pb_seen = {}
+                for pb_u in frappe.db.sql("""
+                    SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                    FROM `tabWork Management Planner`
+                    WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
+                      AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                    GROUP BY task
+                """, {"f": pr.get("farm"), "pfrom": pb_mp.period_from, "pto": pb_mp.period_to},
+                    as_dict=True):
+                    pb_seen[pb_u.task] = pb_u
+                pb_use[pb_mp.name] = pb_seen
+            pb_line = pb_act[pb_mp.name].get(pr.get("task"))
+            if not pb_line:
+                continue
+            pb_drawn = pb_use[pb_mp.name].get(pr.get("task"))
+            pb_dq = frappe.utils.flt(pb_drawn.q) if pb_drawn else 0
+            pb_dc = frappe.utils.flt(pb_drawn.c) if pb_drawn else 0
+            pr["budget_uom"] = pb_line.uom
+            pr["budget_qty"] = frappe.utils.flt(pb_line.work_qty)
+            pr["budget_cost"] = frappe.utils.flt(pb_line.cost, 2)
+            pr["budget_remaining_qty"] = frappe.utils.flt(pb_line.work_qty) - pb_dq
+            pr["budget_remaining_cost"] = frappe.utils.flt(frappe.utils.flt(pb_line.cost) - pb_dc, 2)
+
     elif action == "my_requests":
         out["requests"] = frappe.db.get_all("Work Management Planner",
             filters={"requested_by":frappe.session.user},
@@ -457,7 +510,7 @@ def wm_planner(**kwargs):
     elif action == "plan_detail":
         nm = frappe.form_dict.get("plan")
         p = frappe.db.get_value("Work Management Planner", nm,
-            ["name","farm","block_section","task","quantity","from_date","to_date",
+            ["name","farm","block_section","task","quantity","total_cost","from_date","to_date",
              "workflow_state","uom","daily_target","rate"], as_dict=True)
         blist = []
         if p and p.block_section:

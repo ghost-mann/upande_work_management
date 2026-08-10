@@ -37,6 +37,119 @@
   function blockLabel(name){ for(var i=0;i<ST.blocks.length;i++){ if(ST.blocks[i].name===name) return ST.blocks[i].label; } return lbl(name); }
   function blockArea(){ var t=0; for(var i=0;i<ST.blocks.length;i++){ var b=ST.blocks[i]; if(ST.picked[b.name]){ t+=(b.area||0); } } return t; }
   function shortUser(u){ return (u||"").split("@")[0]; }
+  function num(v){ v=Number(v); return isNaN(v)?0:v; }
+
+  // ── budget gauge ─────────────────────────────────────────────────────────
+  // A master plan activity has two ceilings: a quantity of work and an amount of
+  // money. Either can refuse the next request, so the bar fills to whichever has
+  // less room left -- the one that stops you first -- and names it.
+  //
+  // The two normally track each other, because cost is quantity times a rate. The
+  // hairline tick marks the slack ceiling, so it is invisible until the two come
+  // apart, and they only come apart when work has been priced at a rate other than
+  // the one it was budgeted at. A visible tick is therefore rate drift, on screen.
+  //
+  //   qty_total/qty_left    budgeted and remaining quantity    uom  its unit
+  //   cost_total/cost_left  the same in money
+  //   draw_qty/draw_cost    what a request being typed would take (hatched)
+  //   size  "sm" bar only, for table rows | "md" | "lg"    label  optional title row
+  //   cap   force the caption on or off; small gauges are silent by default
+  var GG_DIVERGE = 0.02;   // below two points the ceilings have not really parted
+  function ggCalc(o){
+    var bq=num(o.qty_total), bc=num(o.cost_total);
+    var hasQ = bq>0 && o.qty_left!=null && !isNaN(o.qty_left);
+    var hasC = bc>0 && o.cost_left!=null && !isNaN(o.cost_left);
+    if(!hasQ && !hasC) return null;
+    var lq=hasQ?Number(o.qty_left):null, lc=hasC?Number(o.cost_left):null;
+    var aq=hasQ?(lq-num(o.draw_qty)):null, ac=hasC?(lc-num(o.draw_cost)):null;
+    var fqNow=hasQ?(lq/bq):null, fcNow=hasC?(lc/bc):null;
+    var fqA=hasQ?(aq/bq):null, fcA=hasC?(ac/bc):null;
+    var qBinds = hasQ && (!hasC || fqA<=fcA);
+    var fA = qBinds?fqA:fcA, fNow = qBinds?fqNow:fcNow;
+    var oth = (hasQ&&hasC) ? (qBinds?fcA:fqA) : null;
+    var clamp=function(x){ return Math.max(0,Math.min(1,x)); };
+    var parted = oth!=null && Math.abs(oth-fA)>GG_DIVERGE;
+    // A unit trails its number and a currency leads it. An amount below zero is not
+    // "minus 718 left", it is 718 overspent -- true of the slack ceiling as much as
+    // the binding one.
+    var amt=function(v, isQty){
+      return isQty ? (fmt(v)+" "+(o.uom||"")).replace(/\s+$/,"") : ("KES "+fmt(v,0));
+    };
+    var say=function(v, isQty){
+      return amt(Math.abs(v), isQty) + (v<0 ? " over budget" : " left");
+    };
+    var st = fA<0 ? "over" : (fA<0.15 ? "last" : (fA<0.5 ? "tight" : "clear"));
+    var cap = '<b>'+esc(qBinds ? say(aq,true) : say(ac,false))+'</b>';
+    if(hasQ && hasC)
+      cap += ' &middot; <span class="gg-alt">'+esc(qBinds ? say(ac,false) : say(aq,true))+'</span>';
+    // the unit or currency is written once per line, on whichever end it belongs:
+    // "11,000 of 13,000 Nos left" / "KES 8,522 of 10,062 left"
+    var line=function(label, v, tot, isQty){
+      var bare=function(x){ return isQty ? fmt(x) : fmt(x,0); };
+      if(v<0) return label+": "+amt(Math.abs(v),isQty)+" over a "+bare(tot)+" budget.";
+      return label+": "+(isQty ? (bare(v)+" of "+amt(tot,true))
+                               : (amt(v,false)+" of "+bare(tot)))+" left.";
+    };
+    return {
+      pA: clamp(fA), pNow: clamp(fNow), pOth: oth==null?null:clamp(oth),
+      state: st, cap: cap, parted: parted,
+      title: [hasQ ? line("Quantity", aq, bq, true) : null,
+              hasC ? line("Money", ac, bc, false) : null,
+              (hasQ&&hasC) ? ((qBinds?"Quantity":"Money")+" runs out first.") : null,
+              parted ? ("The two ceilings have drifted apart, so this work has been "+
+                        "priced at a different rate than it was budgeted at.") : null
+             ].filter(Boolean).join(" ")
+    };
+  }
+  function gauge(o){
+    var g=ggCalc(o); if(!g) return "";
+    var size = o.size || "md";
+    var showCap = (o.cap!=null) ? !!o.cap : (size!=="sm");
+    // md/lg animate once from full to the true figure -- the bar being drawn down
+    // is what the number means. Table rows stay still; forty of them moving is noise.
+    var anim = (size!=="sm");
+    var h='<span class="gg gg-'+size+' '+g.state+'" title="'+esc(g.title)+'">';
+    if(o.label) h+='<span class="gg-name">'+esc(o.label)+
+      '<span class="gg-pct">'+Math.round(g.pA*100)+'%</span></span>';
+    h+='<span class="gg-track">'+
+       '<span class="gg-fill" style="width:'+(anim?100:(g.pA*100))+'%"'+
+         (anim?(' data-w="'+(g.pA*100)+'"'):'')+'></span>'+
+       '<span class="gg-draw" style="left:'+(g.pA*100)+'%;width:'+
+         (Math.max(0,g.pNow-g.pA)*100)+'%"></span>'+
+       '<span class="gg-slack" style="left:'+((g.pOth==null?0:g.pOth)*100)+'%;display:'+
+         (g.parted?"block":"none")+'"></span>'+
+       '</span>';
+    if(showCap) h+='<span class="gg-cap">'+g.cap+'</span>';
+    return h+'</span>';
+  }
+  // Repoint a gauge already on screen instead of rebuilding it. Rebuilding drops
+  // the element, and with it the CSS transition -- so the bar would jump on every
+  // keystroke rather than draining as the quantity is typed.
+  function ggApply(node, o){
+    if(!node) return;
+    var g=ggCalc(o); if(!g) return;
+    node.className = node.className.replace(/\b(clear|tight|last|over)\b/g,"").replace(/\s+/g," ").trim()+" "+g.state;
+    node.setAttribute("title", g.title);
+    var pct=node.querySelector(".gg-pct");
+    if(pct) pct.textContent=Math.round(g.pA*100)+"%";
+    var fill=node.querySelector(".gg-fill");
+    if(fill){ fill.removeAttribute("data-w"); fill.style.width=(g.pA*100)+"%"; }
+    var draw=node.querySelector(".gg-draw");
+    if(draw){ draw.style.left=(g.pA*100)+"%"; draw.style.width=(Math.max(0,g.pNow-g.pA)*100)+"%"; }
+    var tick=node.querySelector(".gg-slack");
+    if(tick){ tick.style.left=((g.pOth==null?0:g.pOth)*100)+"%"; tick.style.display=g.parted?"block":"none"; }
+    var cap=node.querySelector(".gg-cap");
+    if(cap) cap.innerHTML=g.cap;
+  }
+  // run the fill animation for any gauges just written into `root`
+  function ggPaint(root){
+    if(!root) return;
+    var bars=root.querySelectorAll(".gg-fill[data-w]");
+    if(!bars.length) return;
+    requestAnimationFrame(function(){
+      bars.forEach(function(b){ b.style.width=b.getAttribute("data-w")+"%"; b.removeAttribute("data-w"); });
+    });
+  }
   // ---- shared list filter bar (search / farm / status / date range) ----
   function fbar(rows, opts){
     var farms={}; rows.forEach(function(r){ if(r.farm) farms[r.farm]=1; });
@@ -321,6 +434,11 @@
           '<div><span class="fk">Man days</span><span class="fv">'+fmt(mpTotMd)+'</span></div>'+
           '<div><span class="fk">Budgeted</span><span class="fv">KES '+fmt(mpTotCost,2)+'</span></div>'+
           '<div><span class="fk">Still available</span><span class="fv">KES '+fmt(mpTotLeft,2)+'</span></div>'+
+        '</div>'+
+        // the whole plan's money in one bar. Quantities are not added up here:
+        // trees, hours and kilos do not share a total.
+        '<div style="margin-top:13px">'+
+          gauge({size:"md", cost_total:mpTotCost, cost_left:mpTotLeft}) +
         '</div></div>';
       // hiding these is only a convenience -- every rule they call is re-checked
       // and re-reported by the server, never trusted from these flags alone
@@ -393,8 +511,10 @@
            '<td class="n m">'+fmt(a.days)+'</td><td class="n m">'+fmt(a.work_qty)+'</td>'+
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
            '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
-           '<td class="n m">'+fmt(a.remaining_qty)+
-           (exhausted?' <span class="mpd-used">used up</span>':'')+'</td>'+
+           '<td class="n m" style="min-width:132px">'+fmt(a.remaining_qty)+
+           (exhausted?' <span class="mpd-used">used up</span>':'')+
+           gauge({size:"sm", uom:a.uom, qty_total:a.work_qty, qty_left:a.remaining_qty,
+                  cost_total:a.cost, cost_left:a.remaining_cost})+'</td>'+
            '<td style="font-size:10px">'+esc(a.remarks||"")+
            (a.original_qty?('<span class="mpd-was">was '+fmt(a.original_qty)+'</span>'):'')+'</td>'+
 '</tr>';
@@ -403,6 +523,7 @@
       });
       h+='</tbody></table></div>';
       box.innerHTML=h;
+      ggPaint(box);
       var mpBack=el("mp-back");
       if(mpBack) mpBack.onclick=loadMasterPlans;
       var mpSendGm=el("mp-sendgm");
@@ -803,6 +924,7 @@
       ST.tasks=d.tasks||[];
       ST.lastTasks=d;
       ST.blocked = d.blocked_reason || null;
+      ST.ggFor=undefined;   // figures are new, so the panel is rebuilt not patched
       var keep=sel.value;
       sel.innerHTML='<option value="">'+
         (d.blocked_reason ? "— nothing can be planned for these dates —" : "— select task —")+
@@ -818,6 +940,85 @@
       renderPeriodBar(d);
       recalc();
     });
+  }
+
+  // Every activity this farm may still plan, with the chosen one sized up and
+  // showing what the quantity being typed would take out of it. The cap the
+  // server enforces at submit is computed from these same figures, so the bar
+  // can never promise room that the refusal then denies.
+  // the activity the panel is currently built around, and what a request would
+  // take out of it: the quantity being typed, less whatever an edited request
+  // already holds, since that part is counted in "left" and is not a new draw
+  function budgetDraw(){
+    var list=ST.tasks||[], sel=null;
+    for(var i=0;i<list.length;i++){ if(list[i].name===ST.task){ sel=list[i]; break; } }
+    if(!sel) return null;
+    var qty=parseFloat(el("f-qty").value)||0;
+    var offQ=0, offC=0;
+    if(ST.editingPlan && ST.editTask===sel.name){ offQ=num(ST.editQty); offC=num(ST.editCost); }
+    return {task:sel, draw_qty:qty-offQ, draw_cost:qty*num(sel.rate)-offC, qty:qty};
+  }
+
+  function renderBudgetPanel(){
+    var box=el("f-gauge"); if(!box) return;
+    var list=ST.tasks||[];
+    if(!list.length){ box.innerHTML=""; ST.ggFor=undefined; return; }
+    var d=budgetDraw();
+    var h='';
+    if(d){
+      h+='<div id="f-ggmain">'+
+         gauge({label:d.task.subject, size:"lg", uom:d.task.uom,
+                qty_total:d.task.work_qty, qty_left:d.task.remaining_qty,
+                cost_total:d.task.budget_cost, cost_left:d.task.remaining_cost,
+                draw_qty:d.draw_qty, draw_cost:d.draw_cost})+'</div>'+
+         '<div class="ggp-over" id="f-ggover" style="display:none"></div>';
+    } else {
+      h+='<div class="ggp-lead">Budget left &mdash; pick what you are planning</div>';
+    }
+    h+='<div class="ggp-list">';
+    list.forEach(function(t){
+      h+='<button type="button" class="ggp-row'+(d&&d.task.name===t.name?" on":"")+'"'+
+         (t.exhausted?' disabled':'')+' data-gt="'+esc(t.name)+'">'+
+         gauge({label:t.subject, size:"sm", uom:t.uom,
+                qty_total:t.work_qty, qty_left:t.remaining_qty,
+                cost_total:t.budget_cost, cost_left:t.remaining_cost})+
+         '</button>';
+    });
+    box.innerHTML='<div class="ggp">'+h+'</div></div>';   // closes .ggp-list, then .ggp
+    box.querySelectorAll("[data-gt]").forEach(function(b){
+      b.onclick=function(){
+        var s=el("f-task"); s.value=b.getAttribute("data-gt"); onTask.call(s);
+      };
+    });
+    ST.ggFor = d ? d.task.name : null;
+    ggPaint(box);
+    updateBudgetDraw();
+  }
+
+  // Typing a quantity only moves one bar, so patch it in place -- the width
+  // transition then reads as the budget draining, which is what it is.
+  function updateBudgetDraw(){
+    var box=el("f-gauge"); if(!box) return;
+    var d=budgetDraw();
+    // rebuild only when the panel is showing something else -- renderBudgetPanel
+    // sets ggFor before calling back here, so this cannot bounce between the two
+    if(ST.ggFor !== (d?d.task.name:null)){ renderBudgetPanel(); return; }
+    if(!d) return;
+    var main=el("f-ggmain");
+    if(main) ggApply(main.querySelector(".gg"), {
+      uom:d.task.uom, qty_total:d.task.work_qty, qty_left:d.task.remaining_qty,
+      cost_total:d.task.budget_cost, cost_left:d.task.remaining_cost,
+      draw_qty:d.draw_qty, draw_cost:d.draw_cost});
+    var warn=el("f-ggover");
+    if(warn){
+      var overQ = num(d.task.remaining_qty)-d.draw_qty < 0;
+      var overC = num(d.task.remaining_cost)-d.draw_cost < 0;
+      if(d.qty>0 && (overQ||overC)){
+        warn.style.display="block";
+        warn.innerHTML='The budget does not have room for this much. Lower the quantity, '+
+          'or have '+esc(d.task.subject)+' raised in the master plan before submitting.';
+      } else { warn.style.display="none"; warn.innerHTML=""; }
+    }
   }
 
   // every budget the farm has, so a period is chosen from what exists rather than
@@ -1030,6 +1231,7 @@
       if(missing.length){ hint.style.display="block"; hint.innerHTML="To submit: "+missing.join(" · "); }
       else { hint.style.display="none"; hint.innerHTML=""; }
     }
+    updateBudgetDraw();
   }
 
   function loadCompare(){
@@ -1066,7 +1268,7 @@
   }
 
   function clearEdit(){
-    ST.editingPlan=null;
+    ST.editingPlan=null; ST.editTask=null; ST.editQty=0; ST.editCost=0;
     var b=el("f-editbanner"); if(b){ b.style.display="none"; b.innerHTML=""; }
     var sb=el("b-submit"); if(sb) sb.textContent="Submit for Approval";
     var db=el("b-draft"); if(db) db.textContent="Save Draft";
@@ -1079,6 +1281,8 @@
       if(!p.editable){ toast("You can’t edit this plan ("+p.workflow_state+")"); return; }
       showTab("new");
       ST.editingPlan=p.name;
+      // this request already holds budget, so the gauge must draw only the change
+      ST.editTask=p.task; ST.editQty=num(p.quantity); ST.editCost=num(p.total_cost);
       var fs=el("f-farm"); fs.value=p.farm; ST.farm=p.farm;
       ST.picked={}; ST.task=null; ST.taskInfo=null;
       el("f-blockgrid").innerHTML="<div class='note'>Loading blocks…</div>";
@@ -1235,6 +1439,20 @@
       renderAppr();
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load: '+esc(e&&e.message?e.message:e)+'</div>'; });
   }
+  // What the master plan has left once this request is counted. A request awaiting
+  // approval already holds its budget -- rejecting it hands the budget back -- so
+  // these figures are what approving leaves behind, not what is free before it.
+  function apprBudget(r){
+    if(!r.budget_plan)
+      return '<span class="gg-alt" style="font-size:10.5px">No approved master plan covers these dates</span>';
+    if(r.budget_qty==null)
+      return '<span class="gg-alt" style="font-size:10.5px">'+esc(r.task)+' is not budgeted in '+
+             esc(r.budget_plan)+'</span>';
+    return gauge({size:"sm", cap:true, uom:r.budget_uom,
+                  qty_total:r.budget_qty, qty_left:r.budget_remaining_qty,
+                  cost_total:r.budget_cost, cost_left:r.budget_remaining_cost});
+  }
+
   function renderAppr(){
     var b=el("appr-body"); if(!b) return;
     var all=ST._apprRows||[];
@@ -1247,10 +1465,10 @@
               hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.requested_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Period</th><th>By</th><th>Action</th></tr></thead><tbody>';
+      var h='<table><thead><tr><th>Ref</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r, i){
-        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td><td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
-        h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="12" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
+        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td><td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+        h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="13" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
       wireReqExpand(body, rows);
@@ -1453,6 +1671,9 @@
       el("rt-new").onclick=function(){ ratePanel("new"); };
       el("rt-fix").onclick=function(){ ratePanel("fix"); };
       el("rt-unit").onclick=function(){ ratePanel("unit"); };
+    }).catch(function(e){
+      box.innerHTML='<div class="empty">Could not load the rate history: '+
+        esc(e&&e.message?e.message:e)+'</div>';
     });
   }
 
@@ -1471,6 +1692,9 @@
               effective_from:el("rt-d").value}, "wm_rates").then(function(d){
           if(d.error){ toast(d.error); btn.disabled=false; return; }
           toast("Created "+d.created); renderRates();
+        }).catch(function(e){
+          toast("Could not create the period: "+(e&&e.message?e.message:e));
+          btn.disabled=false;
         });
       };
     } else if(mode==="fix"){
@@ -1517,6 +1741,9 @@
                 if(r.error){ toast(r.error); btn.disabled=false; return; }
                 toast("New period "+r.created+" · "+fmt(r.converted)+" draft lines converted");
                 renderRates();
+              }).catch(function(e){
+                toast("Could not apply the unit change: "+(e&&e.message?e.message:e));
+                btn.disabled=false;
               });
           };
         });
@@ -1544,6 +1771,11 @@
        fmt(d.planners.rows)+' rows, '+fmt(d.planners.old_total,2)+' → '+fmt(d.planners.new_total,2)+'</label></div>'+
        '<div><label><input type="checkbox" id="rt-ac" checked> Actuals — '+
        fmt(d.actuals.rows)+' rows, '+fmt(d.actuals.old_total,2)+' → '+fmt(d.actuals.new_total,2)+'</label></div>';
+    if(d.skipped_uom_mismatch){
+      h+='<div class="rt-locked"><b>'+fmt(d.skipped_uom_mismatch)+' rows are recorded in a different unit '+
+         'from this period\'s '+esc(d.uom||"unit")+' and will not be re-priced.</b> A quantity in one unit '+
+         'cannot be priced from a rate in another — those rows have to be re-entered.</div>';
+    }
     if(d.locked && d.locked.rows){
       h+='<div class="rt-locked"><b>'+fmt(d.locked.rows)+' rows totalling '+fmt(d.locked.total,2)+
          ' are already paid and will not be changed.</b> Money that has gone to accounts does not move '+
@@ -1563,13 +1795,18 @@
       this.disabled=true;
       var btn=this;
       call({action:"correct_apply", period:d.period, rate:d.new_rate,
+            expect_old_rate:d.old_rate,
             plan_rows:JSON.stringify(rows), do_planners:el("rt-pl").checked?1:0,
             do_actuals:el("rt-ac").checked?1:0}, "wm_rates").then(function(r){
         if(r.error){ toast(r.error); btn.disabled=false; return; }
         var msg=r.changed+" rows re-priced · run "+r.run+" · delta "+fmt(r.delta,2);
         if(r.skipped_plan_rows){ msg += " · "+fmt(r.skipped_plan_rows)+" rows skipped (no longer eligible)"; }
+        if(r.skipped_uom_mismatch){ msg += " · "+fmt(r.skipped_uom_mismatch)+" left alone (unit no longer matches)"; }
         toast(msg);
         renderRates();
+      }).catch(function(e){
+        toast("Could not apply the correction: "+(e&&e.message?e.message:e));
+        btn.disabled=false;
       });
     };
   }

@@ -62,6 +62,146 @@
   function toast(m){ var t=el("wm-toast"); if(!t) return; t.textContent=m; t.classList.add("show"); setTimeout(function(){t.classList.remove("show");},2000); }
   function kpi(k,v,u){ return '<div class="kpi"><div class="k">'+k+'</div><div class="v">'+v+'</div><div class="u">'+(u||"")+'</div></div>'; }
   function dpct(a,b){ a=a||0; b=b||0; if(b<=0) return "—"; return Math.round(a/b*100)+"%"; }
+  function num(v){ v=Number(v); return isNaN(v)?0:v; }
+
+  // ── budget gauge ─────────────────────────────────────────────────────────
+  // Same component as the planner page (see the .gg block in this page's CSS).
+  // A master plan activity has two ceilings, a quantity of work and an amount of
+  // money; the bar fills to whichever has less room left, because that is the one
+  // that refuses the next request, and the tick marks where the other one sits.
+  var GG_DIVERGE = 0.02;   // below two points the ceilings have not really parted
+  function ggCalc(o){
+    var bq=num(o.qty_total), bc=num(o.cost_total);
+    var hasQ = bq>0 && o.qty_left!=null && !isNaN(o.qty_left);
+    var hasC = bc>0 && o.cost_left!=null && !isNaN(o.cost_left);
+    if(!hasQ && !hasC) return null;
+    var lq=hasQ?Number(o.qty_left):null, lc=hasC?Number(o.cost_left):null;
+    var aq=hasQ?(lq-num(o.draw_qty)):null, ac=hasC?(lc-num(o.draw_cost)):null;
+    var fqNow=hasQ?(lq/bq):null, fcNow=hasC?(lc/bc):null;
+    var fqA=hasQ?(aq/bq):null, fcA=hasC?(ac/bc):null;
+    var qBinds = hasQ && (!hasC || fqA<=fcA);
+    var fA = qBinds?fqA:fcA, fNow = qBinds?fqNow:fcNow;
+    var oth = (hasQ&&hasC) ? (qBinds?fcA:fqA) : null;
+    var clamp=function(x){ return Math.max(0,Math.min(1,x)); };
+    var parted = oth!=null && Math.abs(oth-fA)>GG_DIVERGE;
+    // A unit trails its number and a currency leads it. An amount below zero is not
+    // "minus 718 left", it is 718 overspent -- true of the slack ceiling as much as
+    // the binding one.
+    var amt=function(v, isQty){
+      return isQty ? (fmt(v)+" "+(o.uom||"")).replace(/\s+$/,"") : ("KES "+fmt(v,0));
+    };
+    var say=function(v, isQty){
+      return amt(Math.abs(v), isQty) + (v<0 ? " over budget" : " left");
+    };
+    var st = fA<0 ? "over" : (fA<0.15 ? "last" : (fA<0.5 ? "tight" : "clear"));
+    var cap = '<b>'+esc(qBinds ? say(aq,true) : say(ac,false))+'</b>';
+    if(hasQ && hasC)
+      cap += ' &middot; <span class="gg-alt">'+esc(qBinds ? say(ac,false) : say(aq,true))+'</span>';
+    // the unit or currency is written once per line, on whichever end it belongs:
+    // "11,000 of 13,000 Nos left" / "KES 8,522 of 10,062 left"
+    var line=function(label, v, tot, isQty){
+      var bare=function(x){ return isQty ? fmt(x) : fmt(x,0); };
+      if(v<0) return label+": "+amt(Math.abs(v),isQty)+" over a "+bare(tot)+" budget.";
+      return label+": "+(isQty ? (bare(v)+" of "+amt(tot,true))
+                               : (amt(v,false)+" of "+bare(tot)))+" left.";
+    };
+    return {
+      pA: clamp(fA), pNow: clamp(fNow), pOth: oth==null?null:clamp(oth),
+      state: st, cap: cap, parted: parted,
+      title: [hasQ ? line("Quantity", aq, bq, true) : null,
+              hasC ? line("Money", ac, bc, false) : null,
+              (hasQ&&hasC) ? ((qBinds?"Quantity":"Money")+" runs out first.") : null,
+              parted ? ("The two ceilings have drifted apart, so this work has been "+
+                        "priced at a different rate than it was budgeted at.") : null
+             ].filter(Boolean).join(" ")
+    };
+  }
+  function gauge(o){
+    var g=ggCalc(o); if(!g) return "";
+    var size = o.size || "md";
+    var showCap = (o.cap!=null) ? !!o.cap : (size!=="sm");
+    // md/lg animate once from full to the true figure -- the bar being drawn down
+    // is what the number means. Table rows stay still; forty of them moving is noise.
+    var anim = (size!=="sm");
+    var h='<span class="gg gg-'+size+' '+g.state+'" title="'+esc(g.title)+'">';
+    if(o.label) h+='<span class="gg-name">'+esc(o.label)+
+      '<span class="gg-pct">'+Math.round(g.pA*100)+'%</span></span>';
+    h+='<span class="gg-track">'+
+       '<span class="gg-fill" style="width:'+(anim?100:(g.pA*100))+'%"'+
+         (anim?(' data-w="'+(g.pA*100)+'"'):'')+'></span>'+
+       '<span class="gg-draw" style="left:'+(g.pA*100)+'%;width:'+
+         (Math.max(0,g.pNow-g.pA)*100)+'%"></span>'+
+       '<span class="gg-slack" style="left:'+((g.pOth==null?0:g.pOth)*100)+'%;display:'+
+         (g.parted?"block":"none")+'"></span>'+
+       '</span>';
+    if(showCap) h+='<span class="gg-cap">'+g.cap+'</span>';
+    return h+'</span>';
+  }
+  function ggPaint(root){
+    if(!root) return;
+    var bars=root.querySelectorAll(".gg-fill[data-w]");
+    if(!bars.length) return;
+    requestAnimationFrame(function(){
+      bars.forEach(function(b){ b.style.width=b.getAttribute("data-w")+"%"; b.removeAttribute("data-w"); });
+    });
+  }
+
+  // Budget headroom, farm by farm: the live master plan's money overall, then the
+  // handful of activities closest to running out. A farm with no approved plan
+  // cannot be planned at all, which is worth saying rather than leaving blank.
+  function budgetMeters(){
+    var box=el("wm-budget"); if(!box) return;
+    call({action:"budget_meters"}).then(function(d){
+      var farms=d.farms||[];
+      if(!farms.length){ box.innerHTML='<div class="empty">No farms configured.</div>'; return; }
+      var h='<div class="bmg">';
+      farms.forEach(function(f){
+        h+='<div class="bm-card"><div class="bm-farm">'+esc(f.farm)+'</div>';
+        if(!f.master_plan){
+          h+='<div class="bm-meta">No budget covers today</div>'+
+             '<div class="bm-none"><b>Nothing can be planned here yet.</b>'+
+             (f.pending_plan
+               ? (esc(f.pending_plan)+' covers '+esc(f.pending_from)+' &rarr; '+esc(f.pending_to)+
+                  ' but is still at '+esc(f.pending_state)+'. Planning opens when it is approved.')
+               : 'Raise a master plan for '+esc(f.farm)+' from the planner, and have the GM approve it.')+
+             '</div></div>';
+          return;
+        }
+        h+='<div class="bm-meta">'+esc(f.master_plan)+' &middot; '+esc(f.period_from)+
+           ' &rarr; '+esc(f.period_to)+' &middot; '+fmt((f.activities||[]).length)+' activit'+
+           ((f.activities||[]).length===1?'y':'ies')+'</div>'+
+           gauge({size:"lg", cost_total:f.budget_cost, cost_left:f.remaining_cost,
+                  label:"Money on this plan"});
+        // sort by whichever ceiling is tighter -- the same rule the bar uses
+        var acts=(f.activities||[]).slice();
+        var room=function(a){
+          var r=[];
+          if(num(a.work_qty)>0) r.push(num(a.remaining_qty)/num(a.work_qty));
+          if(num(a.cost)>0) r.push(num(a.remaining_cost)/num(a.cost));
+          return r.length?Math.min.apply(null,r):1;
+        };
+        acts.sort(function(a,b){ return room(a)-room(b); });
+        if(acts.length){
+          h+='<div class="bm-tight"><div class="bm-lead">Closest to running out</div>';
+          acts.slice(0,5).forEach(function(a){
+            h+=gauge({size:"sm", cap:true, label:a.task, uom:a.uom,
+                      qty_total:a.work_qty, qty_left:a.remaining_qty,
+                      cost_total:a.cost, cost_left:a.remaining_cost});
+          });
+          if(acts.length>5)
+            h+='<div class="bm-none" style="margin-top:8px">'+fmt(acts.length-5)+
+               ' more activit'+(acts.length-5===1?'y':'ies')+' on this plan have more room.</div>';
+          h+='</div>';
+        }
+        h+='</div>';
+      });
+      box.innerHTML=h+'</div>';
+      ggPaint(box);
+    }).catch(function(){
+      box.innerHTML='<div class="empty">Could not load budget figures.</div>';
+    });
+  }
+
   function stageCard(title, color, rows){
     var body=rows.map(function(r){ return '<div class="sc-row"><span class="sc-k">'+r[0]+'</span><span class="sc-v">'+r[1]+'</span></div>'; }).join("");
     return '<div class="stagecard" style="border-top:3px solid '+color+'">'+
@@ -140,6 +280,11 @@
         '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
         '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
       '</div>'+
+      // ===== how much of each farm's approved budget is still free =====
+      '<div class="sech">Budget left to plan</div>'+
+      '<div class="card"><div class="hd"><h3>What each farm&rsquo;s approved plan still has</h3>'+
+        '<div class="cap">live master plans &middot; a request is capped by both the quantity and the money</div></div>'+
+        '<div class="bd" id="wm-budget"><div class="loading">Reading budgets&hellip;</div></div></div>'+
       // ===== per-farm worker + value summary strip =====
       '<div class="sech">Workers &amp; value per farm</div>'+
       '<div class="card"><div class="bd" id="wm-farmstrip">'+farmStrip(farms)+'</div></div>'+
@@ -301,6 +446,7 @@
           '<div id="wm-q-body" style="max-height:420px;overflow:auto;margin-top:10px"></div>'+
         '</div></div>';
     comboInit(D);
+    budgetMeters();
     initCharts();
     initQueues(D);
     initTimeline();

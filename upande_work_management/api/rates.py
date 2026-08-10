@@ -854,6 +854,24 @@ def wm_rates(**kwargs):
                         # since, restoring old_amount here would drag it to a stale
                         # figure -- skip and count it instead of reversing silently.
                         if ln.ref_doctype == "Work Actuals Employee":
+                            # A row that has been PAID since the run cannot be put back:
+                            # correct_apply would refuse to touch it today, and writing the
+                            # old amount here would leave the Work Payment Line holding the
+                            # corrected figure while the row it was raised from holds the
+                            # old one. Same untouchable test correct_apply uses -- paid, or
+                            # carrying a payment_ref to a payment that is not Cancelled.
+                            rv_lock = frappe.db.sql("""
+                                SELECT COUNT(*) n
+                                FROM `tabWork Actuals Employee` we
+                                LEFT JOIN `tabWork Management Payment` p ON p.name = we.payment_ref
+                                WHERE we.name = %(r)s
+                                  AND (IFNULL(we.paid,0) = 1
+                                       OR (IFNULL(we.payment_ref,'') != '' AND p.name IS NOT NULL
+                                           AND IFNULL(p.workflow_state,'') != 'Cancelled'))
+                            """, {"r": ln.ref_name}, as_dict=True)
+                            if rv_lock and frappe.utils.cint(rv_lock[0].n):
+                                rv_skipped = rv_skipped + 1
+                                continue
                             rv_cur = frappe.db.get_value("Work Actuals Employee", ln.ref_name, "amount")
                             if rv_cur is None:
                                 continue
@@ -1070,7 +1088,7 @@ def wm_rates(**kwargs):
         cp_period = frappe.form_dict.get("period")
         cp_rate = frappe.utils.flt(frappe.form_dict.get("rate"), 6)
         cp_p = frappe.db.get_value("Work Task Rate", cp_period,
-            ["name", "task", "rate", "valid_from", "valid_to"], as_dict=True)
+            ["name", "task", "rate", "uom", "valid_from", "valid_to"], as_dict=True)
         if not CAN_RATE:
             out["error"] = ("Only the general manager, the HR head or a System Manager "
                             "can change a rate.")
@@ -1081,34 +1099,55 @@ def wm_rates(**kwargs):
         else:
             cp_to = cp_p.valid_to or "2999-12-31"
             cp_args = {"t": cp_p.task, "f": str(cp_p.valid_from), "e": str(cp_to)}
+            # a row recorded in a DIFFERENT unit from the one this period is priced
+            # in cannot be re-priced from it: a quantity in Hours multiplied by a
+            # rate per Day is not money. Correcting a period that predates a unit
+            # change meets exactly that, so those rows are counted and left alone --
+            # the same refusal the master plan's drift warning and recalc already make.
+            cp_uargs = {"t": cp_p.task, "f": str(cp_p.valid_from), "e": str(cp_to),
+                        "u": cp_p.uom or ""}
             out["period"] = cp_p.name
             out["task"] = cp_p.task
             out["old_rate"] = frappe.utils.flt(cp_p.rate, 6)
             out["new_rate"] = cp_rate
+            out["uom"] = cp_p.uom
             out["valid_from"] = str(cp_p.valid_from)
             out["valid_to"] = str(cp_p.valid_to) if cp_p.valid_to else None
+            cp_uom_skipped = 0
 
             # master plan lines whose budget period starts inside the corrected window
-            out["master_plans"] = frappe.db.sql("""
+            cp_mp = []
+            for cm in frappe.db.sql("""
                 SELECT a.name row, a.parent plan, a.task, a.work_qty qty, a.cost old_cost,
-                       mp.farm, mp.workflow_state state
+                       a.uom uom, mp.farm, mp.workflow_state state
                 FROM `tabWork Management Master Plan Activity` a
                 INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
                 WHERE a.task = %(t)s AND IFNULL(mp.workflow_state,'') != 'Rejected'
                   AND mp.period_from <= %(e)s AND mp.period_to >= %(f)s
                 ORDER BY mp.period_from DESC
-            """, cp_args, as_dict=True)
-            for cm in out["master_plans"]:
+            """, cp_args, as_dict=True):
+                if (cm.uom or "") != (cp_p.uom or ""):
+                    cp_uom_skipped = cp_uom_skipped + 1
+                    continue
                 cm["new_cost"] = frappe.utils.flt(frappe.utils.flt(cm.qty) * cp_rate, 2)
+                cp_mp.append(cm)
+            out["master_plans"] = cp_mp
 
-            # planner requests overlapping the window
+            # planner requests overlapping the window, in the period's own unit
             cp_pl = frappe.db.sql("""
                 SELECT COUNT(*) n, COALESCE(SUM(total_cost),0) old_total,
                        COALESCE(SUM(quantity),0) qty
                 FROM `tabWork Management Planner`
                 WHERE task = %(t)s AND IFNULL(workflow_state,'') != 'Rejected'
                   AND from_date <= %(e)s AND to_date >= %(f)s
-            """, cp_args, as_dict=True)[0]
+                  AND IFNULL(uom,'') = %(u)s
+            """, cp_uargs, as_dict=True)[0]
+            cp_uom_skipped = cp_uom_skipped + frappe.utils.cint(frappe.db.sql("""
+                SELECT COUNT(*) n FROM `tabWork Management Planner`
+                WHERE task = %(t)s AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date <= %(e)s AND to_date >= %(f)s
+                  AND IFNULL(uom,'') != %(u)s
+            """, cp_uargs, as_dict=True)[0].n)
             out["planners"] = {"rows": frappe.utils.cint(cp_pl.n),
                                "old_total": frappe.utils.flt(cp_pl.old_total, 2),
                                "new_total": frappe.utils.flt(frappe.utils.flt(cp_pl.qty) * cp_rate, 2)}
@@ -1142,6 +1181,10 @@ def wm_rates(**kwargs):
             """, cp_args, as_dict=True)[0]
             out["locked"] = {"rows": frappe.utils.cint(cp_lk.n),
                              "total": frappe.utils.flt(cp_lk.total, 2)}
+            # Work Actuals Employee carries no unit of its own: a day-row is measured
+            # in whatever unit was in force on its work_date, which is this period's,
+            # so only the plan and planner rows -- which snapshot a uom -- can drift.
+            out["skipped_uom_mismatch"] = cp_uom_skipped
 
     # ==================================================================
     # CORRECT APPLY — do exactly what correct_preview promised, and record it
@@ -1159,8 +1202,14 @@ def wm_rates(**kwargs):
         ca_rows = json.loads(frappe.form_dict.get("plan_rows") or "[]")
         ca_do_pl = frappe.utils.cint(frappe.form_dict.get("do_planners"))
         ca_do_ac = frappe.utils.cint(frappe.form_dict.get("do_actuals"))
+        # The rate correct_preview saw. Optional -- absent means no check, so an
+        # older caller still works -- but when it is sent and the period no longer
+        # holds it, someone else has corrected this period (or the form was posted
+        # twice) and the old_rate this run would record is already a corrected
+        # figure, leaving the run un-reversible to the true original.
+        ca_expect = frappe.form_dict.get("expect_old_rate")
         ca_p = frappe.db.get_value("Work Task Rate", ca_period,
-            ["name", "task", "rate", "valid_from", "valid_to"], as_dict=True)
+            ["name", "task", "rate", "uom", "valid_from", "valid_to"], as_dict=True)
         if not CAN_RATE:
             out["error"] = ("Only the general manager, the HR head or a System Manager "
                             "can change a rate.")
@@ -1168,9 +1217,17 @@ def wm_rates(**kwargs):
             out["error"] = "no such rate period: " + str(ca_period)
         elif ca_rate <= 0:
             out["error"] = "rate must be greater than zero"
+        elif str(ca_expect or "").strip() != "" and \
+                frappe.utils.flt(ca_expect, 6) != frappe.utils.flt(ca_p.rate, 6):
+            out["error"] = ("This period now holds " + str(frappe.utils.flt(ca_p.rate, 6)) +
+                            ", not the " + str(frappe.utils.flt(ca_expect, 6)) +
+                            " the impact list was built from — someone has changed it since. "
+                            "Show what this changes again and check the new list.")
         else:
             ca_to = ca_p.valid_to or "2999-12-31"
             ca_args = {"t": ca_p.task, "f": str(ca_p.valid_from), "e": str(ca_to)}
+            ca_uargs = {"t": ca_p.task, "f": str(ca_p.valid_from), "e": str(ca_to),
+                        "u": ca_p.uom or ""}
             ca_run = frappe.new_doc("Work Rate Recalc Run")
             ca_run.status = "Applied"
             ca_run.from_date = ca_p.valid_from
@@ -1182,6 +1239,7 @@ def wm_rates(**kwargs):
             ca_new = 0
             ca_n = 0
             ca_skipped_rows = 0
+            ca_skipped_uom = 0
 
             for ca_r in ca_rows:
                 # A row is only priced here if it still qualifies under the SAME
@@ -1191,7 +1249,7 @@ def wm_rates(**kwargs):
                 # must not silently re-price it.
                 ca_qargs = {"t": ca_p.task, "f": ca_args["f"], "e": ca_args["e"], "r": ca_r}
                 ca_a_rows = frappe.db.sql("""
-                    SELECT a.name, a.parent, a.task, a.work_qty, a.cost
+                    SELECT a.name, a.parent, a.task, a.work_qty, a.cost, a.uom
                     FROM `tabWork Management Master Plan Activity` a
                     INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
                     WHERE a.name = %(r)s AND a.task = %(t)s
@@ -1202,6 +1260,11 @@ def wm_rates(**kwargs):
                     ca_skipped_rows = ca_skipped_rows + 1
                     continue
                 ca_a = ca_a_rows[0]
+                # a quantity in a different unit cannot be priced from this period's
+                # rate -- see correct_preview, which leaves the same rows off the list
+                if (ca_a.uom or "") != (ca_p.uom or ""):
+                    ca_skipped_uom = ca_skipped_uom + 1
+                    continue
                 ca_nc = frappe.utils.flt(frappe.utils.flt(ca_a.work_qty) * ca_rate, 2)
                 ln = ca_run.append("lines", {})
                 ln.ref_doctype = "Work Management Master Plan Activity"
@@ -1219,11 +1282,18 @@ def wm_rates(**kwargs):
                 ca_n = ca_n + 1
 
             if ca_do_pl:
+                ca_skipped_uom = ca_skipped_uom + frappe.utils.cint(frappe.db.sql("""
+                    SELECT COUNT(*) n FROM `tabWork Management Planner`
+                    WHERE task = %(t)s AND IFNULL(workflow_state,'') != 'Rejected'
+                      AND from_date <= %(e)s AND to_date >= %(f)s
+                      AND IFNULL(uom,'') != %(u)s
+                """, ca_uargs, as_dict=True)[0].n)
                 for ca_pl in frappe.db.sql("""
                     SELECT name, quantity, total_cost FROM `tabWork Management Planner`
                     WHERE task = %(t)s AND IFNULL(workflow_state,'') != 'Rejected'
                       AND from_date <= %(e)s AND to_date >= %(f)s
-                """, ca_args, as_dict=True):
+                      AND IFNULL(uom,'') = %(u)s
+                """, ca_uargs, as_dict=True):
                     ca_nc = frappe.utils.flt(frappe.utils.flt(ca_pl.quantity) * ca_rate, 2)
                     ln = ca_run.append("lines", {})
                     ln.ref_doctype = "Work Management Planner"
@@ -1299,10 +1369,10 @@ def wm_rates(**kwargs):
                 frappe.db.set_value("Task", ca_p.task, "custom_rate", ca_rate)
 
             ca_run.rows_changed = ca_n
-            ca_run.rows_skipped = ca_skipped_rows
+            ca_run.rows_skipped = ca_skipped_rows + ca_skipped_uom
             ca_run.old_total = ca_old
             ca_run.new_total = ca_new
-            ca_run.delta = ca_new - ca_old
+            ca_run.delta = frappe.utils.flt(ca_new - ca_old, 2)
             ca_run.summary = ("Corrected " + str(ca_p.task) + " from " +
                               str(frappe.utils.flt(ca_p.rate, 6)) + " to " + str(ca_rate) +
                               " for " + str(ca_p.valid_from) + " to " +
@@ -1314,6 +1384,7 @@ def wm_rates(**kwargs):
             out["changed"] = ca_n
             out["delta"] = ca_run.delta
             out["skipped_plan_rows"] = ca_skipped_rows
+            out["skipped_uom_mismatch"] = ca_skipped_uom
             out["parents_resummed"] = len(ca_ac_parents)
 
     # ==================================================================
@@ -1349,7 +1420,7 @@ def wm_rates(**kwargs):
                 "master_plan_lines": frappe.db.sql("""
                     SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity` a
                     INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
-                    WHERE a.task = %(t)s AND mp.workflow_state != 'Rejected'
+                    WHERE a.task = %(t)s AND IFNULL(mp.workflow_state,'') != 'Rejected'
                 """, {"t": uc_task}, as_dict=True)[0].n,
                 "planners": frappe.db.sql("""
                     SELECT COUNT(*) n FROM `tabWork Management Planner`
@@ -1406,10 +1477,20 @@ def wm_rates(**kwargs):
                 if ua_cur:
                     frappe.db.set_value("Work Task Rate", ua_cur[0].name, "valid_to",
                                         frappe.utils.add_days(ua_today, -1))
+                # new_rate already guards this: a task can legitimately hold a
+                # future-dated period (a rate card signed in advance). Opening a
+                # second open-ended period would overlap it from its start date on,
+                # so cap this one the day before whatever starts next. Only when
+                # nothing starts later may it stay open.
+                ua_next = frappe.db.sql("""
+                    SELECT name, valid_from FROM `tabWork Task Rate`
+                    WHERE task = %(t)s AND valid_from > %(d)s
+                    ORDER BY valid_from ASC LIMIT 1
+                """, {"t": ua_task, "d": ua_today}, as_dict=True)
                 ua_doc = frappe.new_doc("Work Task Rate")
                 ua_doc.task = ua_task
                 ua_doc.valid_from = ua_today
-                ua_doc.valid_to = None
+                ua_doc.valid_to = frappe.utils.add_days(ua_next[0].valid_from, -1) if ua_next else None
                 ua_doc.rate = ua_rate
                 ua_doc.uom = ua_uom
                 ua_doc.daily_target = ua_tgt
