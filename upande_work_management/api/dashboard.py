@@ -3009,12 +3009,27 @@ def wm_dashboard(**kwargs):
                 GROUP BY task
             """, {"f": bm_f, "pfrom": bm_p.period_from, "pto": bm_p.period_to}, as_dict=True):
                 bm_used[bm_u.task] = bm_u
+            # WHAT HAS ACTUALLY BEEN DELIVERED. Planned answers "can more be requested";
+            # a week that is properly planned on the Monday has nothing left to request,
+            # which says nothing at all about how the week is going. Confirmed actuals
+            # answer that. Same overlap rule as above, so the two sit on one bar.
+            bm_done = {}
+            for bm_n in frappe.db.sql("""
+                SELECT task, COALESCE(SUM(total_actual_qty),0) q,
+                       COALESCE(SUM(total_payment),0) c
+                FROM `tabWork Management Actuals`
+                WHERE farm = %(f)s AND workflow_state = 'CONFIRMED'
+                  AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                GROUP BY task
+            """, {"f": bm_f, "pfrom": bm_p.period_from, "pto": bm_p.period_to}, as_dict=True):
+                bm_done[bm_n.task] = bm_n
             # only money rolls up to the farm: quantities are in different units --
             # trees, hours, kilos -- and adding them would produce a number that
             # looks like a total and means nothing
             bm_acts = []
             bm_tc = 0.0
             bm_pc = 0.0
+            bm_nc = 0.0
             for bm_a in frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": bm_p.name, "consultant_state": "OK"},
                     fields=["name", "task", "uom", "work_qty", "cost"], order_by="idx"):
@@ -3023,17 +3038,23 @@ def wm_dashboard(**kwargs):
                 bm_dc = frappe.utils.flt(bm_d.c) if bm_d else 0
                 bm_bq = frappe.utils.flt(bm_a.work_qty)
                 bm_bc = frappe.utils.flt(bm_a.cost, 2)
+                bm_n = bm_done.get(bm_a.task)
+                bm_nq = frappe.utils.flt(bm_n.q) if bm_n else 0
+                bm_ncost = frappe.utils.flt(bm_n.c, 2) if bm_n else 0
                 bm_tc = bm_tc + bm_bc
                 bm_pc = bm_pc + bm_dc
+                bm_nc = bm_nc + bm_ncost
                 bm_acts.append({"row": bm_a.name, "task": bm_a.task, "uom": bm_a.uom,
                                 "work_qty": bm_bq, "cost": bm_bc,
                                 "planned_qty": bm_dq, "planned_cost": frappe.utils.flt(bm_dc, 2),
                                 "remaining_qty": bm_bq - bm_dq,
-                                "remaining_cost": frappe.utils.flt(bm_bc - bm_dc, 2)})
+                                "remaining_cost": frappe.utils.flt(bm_bc - bm_dc, 2),
+                                "done_qty": bm_nq, "done_cost": bm_ncost})
             bm_farms.append({"farm": bm_f, "master_plan": bm_p.name,
                              "period_from": str(bm_p.period_from), "period_to": str(bm_p.period_to),
                              "budget_cost": frappe.utils.flt(bm_tc, 2),
                              "planned_cost": frappe.utils.flt(bm_pc, 2),
+                             "done_cost": frappe.utils.flt(bm_nc, 2),
                              "remaining_cost": frappe.utils.flt(bm_tc - bm_pc, 2),
                              "activities": bm_acts})
         out["on_date"] = str(bm_on)

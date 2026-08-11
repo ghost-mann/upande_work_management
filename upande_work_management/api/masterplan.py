@@ -761,6 +761,21 @@ def wm_masterplan(**kwargs):
                 hd_acts = frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": hd.name, "consultant_state": "OK"},
                     fields=["name", "task", "uom", "rate", "work_qty", "cost"], order_by="idx")
+                # WHAT HAS ACTUALLY BEEN DELIVERED. Planned and remaining answer "can more
+                # be requested"; on a Monday with the week properly planned that is zero,
+                # which says nothing about how the week is going. Confirmed actuals answer
+                # the other question. One grouped read, same overlap rule as the planner
+                # consumption above so the two figures are comparable.
+                hd_done = {}
+                for hd_d in frappe.db.sql("""
+                    SELECT task, COALESCE(SUM(total_actual_qty),0) q,
+                           COALESCE(SUM(total_payment),0) c
+                    FROM `tabWork Management Actuals`
+                    WHERE farm = %(f)s AND workflow_state = 'CONFIRMED'
+                      AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                    GROUP BY task
+                """, {"f": hd_farm, "pfrom": hd.period_from, "pto": hd.period_to}, as_dict=True):
+                    hd_done[hd_d.task] = hd_d
                 hd_out = []
                 for ha in hd_acts:
                     hd_used = frappe.db.sql("""
@@ -783,12 +798,15 @@ def wm_masterplan(**kwargs):
                         "planned_qty": hd_pq, "planned_cost": hd_pc,
                         "remaining_qty": hd_rq, "remaining_cost": hd_rc,
                     }, update_modified=False)
+                    hd_dn = hd_done.get(ha.task)
                     hd_out.append({"row": ha.name, "task": ha.task, "uom": ha.uom,
                                    "rate": frappe.utils.flt(ha.rate, 6),
                                    "work_qty": frappe.utils.flt(ha.work_qty),
                                    "cost": frappe.utils.flt(ha.cost),
                                    "planned_qty": hd_pq, "planned_cost": hd_pc,
                                    "remaining_qty": hd_rq, "remaining_cost": hd_rc,
+                                   "done_qty": frappe.utils.flt(hd_dn.q) if hd_dn else 0,
+                                   "done_cost": frappe.utils.flt(hd_dn.c, 2) if hd_dn else 0,
                                    "exhausted": 1 if (hd_rq <= TOLERANCE or hd_rc <= TOLERANCE) else 0})
                 frappe.db.commit()
                 out["activities"] = hd_out

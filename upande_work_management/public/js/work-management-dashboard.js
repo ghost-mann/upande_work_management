@@ -70,7 +70,45 @@
   // money; the bar fills to whichever has less room left, because that is the one
   // that refuses the next request, and the tick marks where the other one sits.
   var GG_DIVERGE = 0.02;   // below two points the ceilings have not really parted
+  var GG_STATES = /\b(clear|tight|last|over|done|going|idle)\b/g;
+
+  // Budget -> planned -> done. The solid fill is delivered work; the hatched band
+  // beyond it is committed but not yet done; the empty tail is not yet planned.
+  function ggDelivery(o){
+    var isQty = num(o.qty_total)>0;
+    var tot  = isQty ? num(o.qty_total)   : num(o.cost_total);
+    if(tot<=0) return null;
+    var plan = isQty ? num(o.qty_planned) : num(o.cost_planned);
+    var done = isQty ? num(o.qty_done)    : num(o.cost_done);
+    var rem  = tot-plan;
+    var tol  = Math.max(Math.abs(tot)*0.0005, 0.005);
+    var clamp=function(x){ return Math.max(0,Math.min(1,x)); };
+    var amt=function(v){
+      return isQty ? (fmt(v)+" "+(o.uom||"")).replace(/\s+$/,"") : ("KES "+fmt(v,0));
+    };
+    var bare=function(v){ return isQty ? fmt(v) : fmt(v,0); };
+    // over-planning is the one thing here that is genuinely wrong, so it is the one
+    // thing that goes red. Everything else is just a week in progress.
+    var st = rem < -tol ? "over"
+           : (plan>tol && done>=plan-tol ? "done" : (done>tol ? "going" : "idle"));
+    var tail = rem >  tol ? (bare(rem)+" left to plan")
+             : (rem < -tol ? (bare(-rem)+" over budget") : "fully committed");
+    return {
+      pA: clamp(done/tot), pNow: clamp(plan/tot), pOth: null, parted: false,
+      state: st, right: amt(tot),
+      cap: '<b>'+esc(done>tol ? (bare(done)+" done") : "not started")+'</b>'+
+           ' &middot; <span class="gg-alt">'+esc(bare(plan))+' planned</span>'+
+           ' &middot; <span class="gg-alt">'+esc(tail)+'</span>',
+      title: amt(done)+" delivered and confirmed, out of "+bare(plan)+" planned "+
+             "against a "+bare(tot)+" budget. "+
+             (rem < -tol ? ("Planning is "+bare(-rem)+" over the budget.")
+                         : (rem > tol ? (bare(rem)+" of the budget is still unplanned.")
+                                      : "The budget is fully committed."))
+    };
+  }
+
   function ggCalc(o){
+    if(o.mode==="delivery") return ggDelivery(o);
     var bq=num(o.qty_total), bc=num(o.cost_total);
     var hasQ = bq>0 && o.qty_left!=null && !isNaN(o.qty_left);
     var hasC = bc>0 && o.cost_left!=null && !isNaN(o.cost_left);
@@ -107,7 +145,7 @@
     };
     return {
       pA: clamp(fA), pNow: clamp(fNow), pOth: oth==null?null:clamp(oth),
-      state: st, cap: cap, parted: parted,
+      state: st, cap: cap, parted: parted, right: Math.round(clamp(fA)*100)+"%",
       title: [hasQ ? line("Quantity", aq, bq, true) : null,
               hasC ? line("Money", ac, bc, false) : null,
               (hasQ&&hasC) ? ((qBinds?"Quantity":"Money")+" runs out first.") : null,
@@ -125,7 +163,7 @@
     var anim = (size!=="sm");
     var h='<span class="gg gg-'+size+' '+g.state+'" title="'+esc(g.title)+'">';
     if(o.label) h+='<span class="gg-name">'+esc(o.label)+
-      '<span class="gg-pct">'+Math.round(g.pA*100)+'%</span></span>';
+      '<span class="gg-pct">'+esc(g.right)+'</span></span>';
     h+='<span class="gg-track">'+
        '<span class="gg-fill" style="width:'+(anim?100:(g.pA*100))+'%"'+
          (anim?(' data-w="'+(g.pA*100)+'"'):'')+'></span>'+
@@ -170,27 +208,28 @@
         h+='<div class="bm-meta">'+esc(f.master_plan)+' &middot; '+esc(f.period_from)+
            ' &rarr; '+esc(f.period_to)+' &middot; '+fmt((f.activities||[]).length)+' activit'+
            ((f.activities||[]).length===1?'y':'ies')+'</div>'+
-           gauge({size:"lg", cost_total:f.budget_cost, cost_left:f.remaining_cost,
-                  label:"Money on this plan"});
-        // sort by whichever ceiling is tighter -- the same rule the bar uses
+           gauge({size:"lg", mode:"delivery", label:"Money on this plan",
+                  cost_total:f.budget_cost, cost_planned:f.planned_cost,
+                  cost_done:f.done_cost});
+        // over-planned lines first -- those are the ones actually wrong -- then the
+        // least delivered, which is what "how is the week going" really asks
         var acts=(f.activities||[]).slice();
-        var room=function(a){
-          var r=[];
-          if(num(a.work_qty)>0) r.push(num(a.remaining_qty)/num(a.work_qty));
-          if(num(a.cost)>0) r.push(num(a.remaining_cost)/num(a.cost));
-          return r.length?Math.min.apply(null,r):1;
+        var progress=function(a){
+          var t=num(a.work_qty); if(t<=0) return 1;
+          if(num(a.planned_qty)-t > t*0.0005) return -1;   // over-planned, show first
+          return num(a.done_qty)/t;
         };
-        acts.sort(function(a,b){ return room(a)-room(b); });
+        acts.sort(function(a,b){ return progress(a)-progress(b); });
         if(acts.length){
-          h+='<div class="bm-tight"><div class="bm-lead">Closest to running out</div>';
+          h+='<div class="bm-tight"><div class="bm-lead">Furthest from done</div>';
           acts.slice(0,5).forEach(function(a){
-            h+=gauge({size:"sm", cap:true, label:a.task, uom:a.uom,
-                      qty_total:a.work_qty, qty_left:a.remaining_qty,
-                      cost_total:a.cost, cost_left:a.remaining_cost});
+            h+=gauge({size:"sm", cap:true, mode:"delivery", label:a.task, uom:a.uom,
+                      qty_total:a.work_qty, qty_planned:a.planned_qty,
+                      qty_done:a.done_qty});
           });
           if(acts.length>5)
             h+='<div class="bm-none" style="margin-top:8px">'+fmt(acts.length-5)+
-               ' more activit'+(acts.length-5===1?'y':'ies')+' on this plan have more room.</div>';
+               ' more activit'+(acts.length-5===1?'y':'ies')+' on this plan are further along.</div>';
           h+='</div>';
         }
         h+='</div>';
@@ -281,9 +320,9 @@
         '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
       '</div>'+
       // ===== how much of each farm's approved budget is still free =====
-      '<div class="sech">Budget left to plan</div>'+
-      '<div class="card"><div class="hd"><h3>What each farm&rsquo;s approved plan still has</h3>'+
-        '<div class="cap">live master plans &middot; a request is capped by both the quantity and the money</div></div>'+
+      '<div class="sech">Budget &amp; delivery</div>'+
+      '<div class="card"><div class="hd"><h3>How each farm&rsquo;s approved plan is going</h3>'+
+        '<div class="cap">live master plans &middot; budgeted, then planned, then delivered</div></div>'+
         '<div class="bd" id="wm-budget"><div class="loading">Reading budgets&hellip;</div></div></div>'+
       // ===== per-farm worker + value summary strip =====
       '<div class="sech">Workers &amp; value per farm</div>'+
