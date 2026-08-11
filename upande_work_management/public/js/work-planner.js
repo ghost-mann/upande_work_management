@@ -40,22 +40,66 @@
   function num(v){ v=Number(v); return isNaN(v)?0:v; }
 
   // ── budget gauge ─────────────────────────────────────────────────────────
-  // A master plan activity has two ceilings: a quantity of work and an amount of
-  // money. Either can refuse the next request, so the bar fills to whichever has
-  // less room left -- the one that stops you first -- and names it.
+  // Two questions, two modes, because answering one with the other misleads.
   //
-  // The two normally track each other, because cost is quantity times a rate. The
-  // hairline tick marks the slack ceiling, so it is invisible until the two come
-  // apart, and they only come apart when work has been priced at a rate other than
-  // the one it was budgeted at. A visible tick is therefore rate drift, on screen.
+  // HEADROOM (default) -- "can I plan more?". An activity has two ceilings, a
+  // quantity of work and an amount of money; the bar fills to whichever has less
+  // room left, since that is the one that refuses the next request, and names it.
+  // The hairline tick marks the slack ceiling. The two normally track each other
+  // exactly, because cost is quantity times a rate, so the tick is invisible until
+  // they come apart -- and they only come apart when work has been priced at a rate
+  // other than the one it was budgeted at. A visible tick is rate drift, on screen.
+  //
+  // DELIVERY (mode:"delivery") -- "how is the week going?". Budget, then planned,
+  // then done. These must not be coloured like headroom: a week properly planned on
+  // the Monday has no headroom left at all, and nothing whatever is wrong with it.
   //
   //   qty_total/qty_left    budgeted and remaining quantity    uom  its unit
   //   cost_total/cost_left  the same in money
   //   draw_qty/draw_cost    what a request being typed would take (hatched)
+  //   qty_planned/qty_done  delivery mode; cost_planned/cost_done for money
   //   size  "sm" bar only, for table rows | "md" | "lg"    label  optional title row
   //   cap   force the caption on or off; small gauges are silent by default
   var GG_DIVERGE = 0.02;   // below two points the ceilings have not really parted
+  var GG_STATES = /\b(clear|tight|last|over|done|going|idle)\b/g;
+
+  // Budget -> planned -> done. The solid fill is delivered work; the hatched band
+  // beyond it is committed but not yet done; the empty tail is not yet planned.
+  function ggDelivery(o){
+    var isQty = num(o.qty_total)>0;
+    var tot  = isQty ? num(o.qty_total)   : num(o.cost_total);
+    if(tot<=0) return null;
+    var plan = isQty ? num(o.qty_planned) : num(o.cost_planned);
+    var done = isQty ? num(o.qty_done)    : num(o.cost_done);
+    var rem  = tot-plan;
+    var tol  = Math.max(Math.abs(tot)*0.0005, 0.005);
+    var clamp=function(x){ return Math.max(0,Math.min(1,x)); };
+    var amt=function(v){
+      return isQty ? (fmt(v)+" "+(o.uom||"")).replace(/\s+$/,"") : ("KES "+fmt(v,0));
+    };
+    var bare=function(v){ return isQty ? fmt(v) : fmt(v,0); };
+    // over-planning is the one thing here that is genuinely wrong, so it is the one
+    // thing that goes red. Everything else is just a week in progress.
+    var st = rem < -tol ? "over"
+           : (plan>tol && done>=plan-tol ? "done" : (done>tol ? "going" : "idle"));
+    var tail = rem >  tol ? (bare(rem)+" left to plan")
+             : (rem < -tol ? (bare(-rem)+" over budget") : "fully committed");
+    return {
+      pA: clamp(done/tot), pNow: clamp(plan/tot), pOth: null, parted: false,
+      state: st, right: amt(tot),
+      cap: '<b>'+esc(done>tol ? (bare(done)+" done") : "not started")+'</b>'+
+           ' &middot; <span class="gg-alt">'+esc(bare(plan))+' planned</span>'+
+           ' &middot; <span class="gg-alt">'+esc(tail)+'</span>',
+      title: amt(done)+" delivered and confirmed, out of "+bare(plan)+" planned "+
+             "against a "+bare(tot)+" budget. "+
+             (rem < -tol ? ("Planning is "+bare(-rem)+" over the budget.")
+                         : (rem > tol ? (bare(rem)+" of the budget is still unplanned.")
+                                      : "The budget is fully committed."))
+    };
+  }
+
   function ggCalc(o){
+    if(o.mode==="delivery") return ggDelivery(o);
     var bq=num(o.qty_total), bc=num(o.cost_total);
     var hasQ = bq>0 && o.qty_left!=null && !isNaN(o.qty_left);
     var hasC = bc>0 && o.cost_left!=null && !isNaN(o.cost_left);
@@ -92,7 +136,7 @@
     };
     return {
       pA: clamp(fA), pNow: clamp(fNow), pOth: oth==null?null:clamp(oth),
-      state: st, cap: cap, parted: parted,
+      state: st, cap: cap, parted: parted, right: Math.round(clamp(fA)*100)+"%",
       title: [hasQ ? line("Quantity", aq, bq, true) : null,
               hasC ? line("Money", ac, bc, false) : null,
               (hasQ&&hasC) ? ((qBinds?"Quantity":"Money")+" runs out first.") : null,
@@ -110,7 +154,7 @@
     var anim = (size!=="sm");
     var h='<span class="gg gg-'+size+' '+g.state+'" title="'+esc(g.title)+'">';
     if(o.label) h+='<span class="gg-name">'+esc(o.label)+
-      '<span class="gg-pct">'+Math.round(g.pA*100)+'%</span></span>';
+      '<span class="gg-pct">'+esc(g.right)+'</span></span>';
     h+='<span class="gg-track">'+
        '<span class="gg-fill" style="width:'+(anim?100:(g.pA*100))+'%"'+
          (anim?(' data-w="'+(g.pA*100)+'"'):'')+'></span>'+
@@ -128,10 +172,10 @@
   function ggApply(node, o){
     if(!node) return;
     var g=ggCalc(o); if(!g) return;
-    node.className = node.className.replace(/\b(clear|tight|last|over)\b/g,"").replace(/\s+/g," ").trim()+" "+g.state;
+    node.className = node.className.replace(GG_STATES,"").replace(/\s+/g," ").trim()+" "+g.state;
     node.setAttribute("title", g.title);
     var pct=node.querySelector(".gg-pct");
-    if(pct) pct.textContent=Math.round(g.pA*100)+"%";
+    if(pct) pct.textContent=g.right;
     var fill=node.querySelector(".gg-fill");
     if(fill){ fill.removeAttribute("data-w"); fill.style.width=(g.pA*100)+"%"; }
     var draw=node.querySelector(".gg-draw");
@@ -415,10 +459,11 @@
     }).then(function(res){
       if(!res) return;
       var p=res.p, acts=res.acts;
-      var mpTotQty=0, mpTotCost=0, mpTotMd=0, mpTotLeft=0;
+      var mpTotQty=0, mpTotCost=0, mpTotMd=0, mpTotLeft=0, mpTotPlan=0, mpTotDone=0;
       acts.forEach(function(a){
         mpTotQty+=(a.work_qty||0); mpTotCost+=(a.cost||0); mpTotMd+=(a.man_days||0);
         mpTotLeft+=(a.remaining_cost!=null?a.remaining_cost:0);
+        mpTotPlan+=(a.planned_cost||0); mpTotDone+=(a.done_cost||0);
       });
       var h='<button type="button" class="mpd-back" id="mp-back">&larr; All master plans</button>'+
         '<div class="mpd-head"><div class="mpd-top">'+
@@ -434,11 +479,13 @@
           '<div><span class="fk">Man days</span><span class="fv">'+fmt(mpTotMd)+'</span></div>'+
           '<div><span class="fk">Budgeted</span><span class="fv">KES '+fmt(mpTotCost,2)+'</span></div>'+
           '<div><span class="fk">Still available</span><span class="fv">KES '+fmt(mpTotLeft,2)+'</span></div>'+
+          '<div><span class="fk">Delivered</span><span class="fv">KES '+fmt(mpTotDone,2)+'</span></div>'+
         '</div>'+
-        // the whole plan's money in one bar. Quantities are not added up here:
-        // trees, hours and kilos do not share a total.
+        // the whole plan's money as one delivery bar: budgeted, committed, done.
+        // Quantities are not added up here -- trees, hours and kilos share no total.
         '<div style="margin-top:13px">'+
-          gauge({size:"md", cost_total:mpTotCost, cost_left:mpTotLeft}) +
+          gauge({size:"md", mode:"delivery", label:"Money on this plan",
+                 cost_total:mpTotCost, cost_planned:mpTotPlan, cost_done:mpTotDone}) +
         '</div></div>';
       // hiding these is only a convenience -- every rule they call is re-checked
       // and re-reported by the server, never trusted from these flags alone
@@ -500,10 +547,10 @@
         h+='</ul></div>';
       }
       h+='<div class="note" style="margin-bottom:8px">Click an activity to see which plans are drawing on its budget — including stale drafts still holding it.</div>';
-      var mpColspan = 10;
+      var mpColspan = 11;
       h+='<div class="mpf-tablewrap"><table><thead><tr><th>Activity</th><th class="n">Man days</th><th class="n">Days</th>'+
          '<th class="n">Work</th><th>Unit</th><th class="n">Rate</th><th class="n">Cost</th>'+
-         '<th class="n">Planned</th><th class="n">Left</th><th>Remarks</th></tr></thead><tbody>';
+         '<th class="n">Planned</th><th class="n">Left</th><th>Progress</th><th>Remarks</th></tr></thead><tbody>';
       acts.forEach(function(a,i){
         var exhausted = (a.remaining_qty!=null && a.remaining_qty<=0.005) ||
                         (a.remaining_cost!=null && a.remaining_cost<=0.005);
@@ -511,10 +558,13 @@
            '<td class="n m">'+fmt(a.days)+'</td><td class="n m">'+fmt(a.work_qty)+'</td>'+
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
            '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
-           '<td class="n m" style="min-width:132px">'+fmt(a.remaining_qty)+
-           (exhausted?' <span class="mpd-used">used up</span>':'')+
-           gauge({size:"sm", uom:a.uom, qty_total:a.work_qty, qty_left:a.remaining_qty,
-                  cost_total:a.cost, cost_left:a.remaining_cost})+'</td>'+
+           '<td class="n m">'+fmt(a.remaining_qty)+
+           (exhausted?' <span class="mpd-used">used up</span>':'')+'</td>'+
+           // the bar answers "how is this going", not "can more be planned" -- the
+           // Planned and Left columns beside it already answer that one
+           '<td style="min-width:168px">'+
+           gauge({size:"sm", cap:true, mode:"delivery", uom:a.uom,
+                  qty_total:a.work_qty, qty_planned:a.planned_qty, qty_done:a.done_qty})+'</td>'+
            '<td style="font-size:10px">'+esc(a.remarks||"")+
            (a.original_qty?('<span class="mpd-was">was '+fmt(a.original_qty)+'</span>'):'')+'</td>'+
 '</tr>';

@@ -36,6 +36,57 @@
 #wmp .card .hd h3{font-size:12.5px;font-weight:700;margin:0}
 #wmp .card .hd .cap{font-size:10.5px;color:var(--mute)}
 #wmp .card .bd{padding:14px 16px;overflow-x:auto}
+/* ── budget gauge ──────────────────────────────────────────────────────────
+   Shared with the planner page. An activity has two ceilings -- a quantity of
+   work and an amount of money -- and either can be the one that stops the next
+   request. The fill is whichever has less room left; the hairline tick marks
+   where the other sits, so the slack between them is visible, not inferred. */
+#wmp .gg{display:block;min-width:110px;--gg:var(--green)}
+#wmp .gg.tight{--gg:var(--amber)}
+#wmp .gg.last{--gg:var(--red)}
+#wmp .gg.over{--gg:var(--red)}
+/* delivery states. Only over-planning is wrong, so only it is red; a week that is
+   planned but not yet worked is simply a week that has not happened yet. */
+#wmp .gg.done{--gg:var(--green)}
+#wmp .gg.going{--gg:var(--blue)}
+#wmp .gg.idle{--gg:#94a3b8}
+#wmp .gg-track{position:relative;height:7px;border-radius:999px;background:var(--faint);
+  box-shadow:inset 0 0 0 1px rgba(15,23,42,.06);overflow:hidden}
+#wmp .gg-fill{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:var(--gg);
+  transition:width .26s cubic-bezier(.2,.7,.3,1)}
+#wmp .gg-draw{position:absolute;top:0;bottom:0;opacity:.5;
+  background:repeating-linear-gradient(115deg,var(--gg) 0 3px,transparent 3px 6px)}
+#wmp .gg-slack{position:absolute;top:-2px;bottom:-2px;width:1.5px;background:rgba(15,23,42,.34)}
+/* an overrun is not "a redder version of nearly empty" -- it is a different
+   thing, so it gets a texture nothing else in the module uses */
+#wmp .gg.over .gg-track{background:repeating-linear-gradient(45deg,#fee2e2 0 4px,#fecaca 4px 8px);
+  box-shadow:inset 0 0 0 1px #fca5a5}
+#wmp .gg-cap{display:block;margin-top:4px;font-size:10.5px;color:var(--mute);
+  font-variant-numeric:tabular-nums;line-height:1.35}
+#wmp .gg-cap b{color:var(--ink);font-weight:700}
+#wmp .gg.over .gg-cap b{color:var(--red)}
+#wmp .gg-alt{color:#94a3b8}
+#wmp .gg-sm .gg-track{height:4px}
+#wmp .gg-sm .gg-cap{font-size:10px;margin-top:3px}
+#wmp .gg-lg .gg-track{height:11px}
+#wmp .gg-lg .gg-cap{font-size:11.5px;margin-top:6px}
+#wmp .gg-name{display:block;font-size:11.5px;font-weight:600;margin-bottom:5px}
+#wmp .gg-name .gg-pct{float:right;font-weight:700;color:var(--gg);font-variant-numeric:tabular-nums}
+@media(prefers-reduced-motion:reduce){#wmp .gg-fill{transition:none}}
+/* one card per farm: the plan's money overall, then the activities closest to
+   running out -- the ones a planner is about to be refused on */
+#wmp .bmg{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}
+#wmp .bm-card{border:1px solid var(--line);border-radius:var(--r);background:#fff;
+  box-shadow:var(--sh);padding:15px 16px}
+#wmp .bm-farm{font-size:13px;font-weight:700;letter-spacing:-.01em}
+#wmp .bm-meta{font-size:10.5px;color:var(--mute);margin:2px 0 12px}
+#wmp .bm-tight{margin-top:14px;padding-top:12px;border-top:1px solid var(--faint)}
+#wmp .bm-tight .bm-lead{font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--mute);font-weight:700;margin-bottom:9px}
+#wmp .bm-tight .gg{margin-bottom:9px}
+#wmp .bm-tight .gg:last-child{margin-bottom:0}
+#wmp .bm-none{font-size:11.5px;color:var(--mute);line-height:1.5}
+#wmp .bm-none b{color:var(--ink);display:block;font-size:12.5px;margin-bottom:3px}
 #wmp table{width:100%;border-collapse:collapse;font-size:12px}
 #wmp th{text-align:left;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:600;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 #wmp th.n,#wmp td.n{text-align:right}
