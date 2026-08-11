@@ -2618,6 +2618,12 @@
     var rb=el("wm-refresh"); if(rb) rb.onclick=function(){ load(); toast("Refreshed"); };
     load();
   }
-  if(typeof frappe==="undefined"){ var b=el("wm-body"); if(b) b.innerHTML='<div class="err">Open inside Frappe (logged in).</div>'; }
-  else { if(el("wm-body")) boot(); else document.addEventListener("DOMContentLoaded", boot); }
+  // No window.frappe check here. This page reads only -- every call is a
+  // cookie-authenticated GET with no CSRF token to fetch -- and the route already
+  // refuses Guest server-side. The old guard ran the instant the script loaded,
+  // which on the app's portal route is before frappe's web bundle has defined
+  // window.frappe, so it blanked the whole dashboard and told the reader to open a
+  // page they already had open. Nothing else on these pages hit this: the write
+  // pages read frappe.csrf_token on click, long after the bundle has landed.
+  if(el("wm-body")) boot(); else document.addEventListener("DOMContentLoaded", boot);
 })();
