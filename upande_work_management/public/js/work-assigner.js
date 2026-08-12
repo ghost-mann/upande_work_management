@@ -808,10 +808,10 @@
     }).catch(function(e){ el("wa-who").textContent="Could not load."; });
   }
 
-  if(typeof frappe==="undefined"){
-    var w=document.getElementById("wa-who"); if(w) w.textContent="Open inside Frappe (logged in).";
-  } else {
-    if(document.getElementById("a-plan")) boot();
-    else document.addEventListener("DOMContentLoaded", boot);
-  }
+  // No window.frappe check before booting -- see the note on the same line in
+  // work-planner.js. The token is read on click, not now, and Guest is refused
+  // server-side; guarding here only blanked the page when this script beat
+  // Frappe's web bundle, which is what happens on the app's portal route.
+  if(document.getElementById("a-plan")) boot();
+  else document.addEventListener("DOMContentLoaded", boot);
 })();

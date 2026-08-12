@@ -1876,7 +1876,11 @@
       el("wp-who").textContent="Load error: "+(e&&e.message?e.message:e);
     });
   }
-  if(typeof frappe==="undefined"){
-    document.getElementById("wp-who").textContent="Open this inside Frappe (logged in).";
-  } else { boot(); }
+  // No window.frappe check before booting. This page never reads the global at load
+  // time -- the CSRF token is fetched on click, long after Frappe's web bundle has
+  // landed -- and the route already refuses Guest server-side. Checking here only
+  // meant that when the script happened to run before the bundle, as it does on the
+  // app's portal route, the page gave up and told the reader to open a page they
+  // already had open.
+  boot();
 })();
