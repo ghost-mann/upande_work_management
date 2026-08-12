@@ -1074,6 +1074,8 @@
       initEnter(); buildTabs();
     }).catch(function(e){ el("ac-who").textContent="Could not load."; });
   }
-  if(typeof frappe==="undefined"){ var w=el("ac-who"); if(w) w.textContent="Open inside Frappe."; }
-  else { if(el("ac-asg")) boot(); else document.addEventListener("DOMContentLoaded", boot); }
+  // No window.frappe check before booting -- see the note in work-planner.js. csrf()
+  // above already falls back to frappe.boot and then to the meta tag, so this page
+  // works whether or not the global has appeared yet.
+  if(el("ac-asg")) boot(); else document.addEventListener("DOMContentLoaded", boot);
 })();
