@@ -36,57 +36,67 @@
 #wmp .card .hd h3{font-size:12.5px;font-weight:700;margin:0}
 #wmp .card .hd .cap{font-size:10.5px;color:var(--mute)}
 #wmp .card .bd{padding:14px 16px;overflow-x:auto}
-/* ── budget gauge ──────────────────────────────────────────────────────────
-   Shared with the planner page. An activity has two ceilings -- a quantity of
-   work and an amount of money -- and either can be the one that stops the next
-   request. The fill is whichever has less room left; the hairline tick marks
-   where the other sits, so the slack between them is visible, not inferred. */
-#wmp .gg{display:block;min-width:110px;--gg:var(--green)}
-#wmp .gg.tight{--gg:var(--amber)}
-#wmp .gg.last{--gg:var(--red)}
-#wmp .gg.over{--gg:var(--red)}
-/* delivery states. Only over-planning is wrong, so only it is red; a week that is
-   planned but not yet worked is simply a week that has not happened yet. */
-#wmp .gg.done{--gg:var(--green)}
-#wmp .gg.going{--gg:var(--blue)}
-#wmp .gg.idle{--gg:#94a3b8}
-#wmp .gg-track{position:relative;height:7px;border-radius:999px;background:var(--faint);
+/* ── activity table ────────────────────────────────────────────────────────
+   One row per budget line across every farm, so "which activities are behind"
+   is a sort rather than four cards held in your head. Two series only, and they
+   are validated: requested #2563eb against delivered #0a7a43 clear every check
+   including CVD separation. The planned value is NOT a third series -- it is the
+   reference both are measured against, so it is a recessive grey tick, never a
+   competing colour. State is always written as a word: the amber and red status
+   tokens sit ~13 ΔE apart in normal vision, too close to carry meaning alone. */
+#wmp .at-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+#wmp .at-bar label{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:700;display:block;margin-bottom:4px}
+#wmp .at-bar input,#wmp .at-bar select{font-family:inherit;font-size:12px;border:1px solid var(--line);padding:7px 10px;border-radius:var(--rs);background:#fff;color:var(--ink)}
+#wmp .at-bar input:focus,#wmp .at-bar select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+#wmp .at-bar .at-find{min-width:190px}
+#wmp .at-bar .at-right{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end}
+#wmp .at-bar button{font-family:inherit;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;background:#fff;color:var(--mute);border:1px solid var(--line);padding:8px 13px;border-radius:var(--rs);cursor:pointer}
+#wmp .at-bar button:hover{border-color:var(--ink);color:var(--ink)}
+#wmp .at-bar button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+#wmp .at-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:10.5px;color:var(--mute);margin-bottom:10px}
+#wmp .at-legend i{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
+#wmp .at-legend .ref{width:2px;height:13px;border-radius:0;background:#6b7280}
+#wmp table.at{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+#wmp table.at th{position:sticky;top:0;background:#fff;z-index:2;cursor:pointer;white-space:nowrap;
+  border-bottom:1px solid var(--line);padding:8px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:700;text-align:left}
+#wmp table.at th.n{text-align:right}
+#wmp table.at th:hover{color:var(--ink)}
+#wmp table.at th .ar{opacity:.45;font-size:8px;margin-left:3px}
+#wmp table.at td{padding:7px 8px;border-bottom:1px solid var(--faint);white-space:nowrap;vertical-align:middle}
+#wmp table.at td.n{text-align:right;font-variant-numeric:tabular-nums}
+#wmp table.at tr.at-row{cursor:pointer}
+#wmp table.at tr.at-row:hover td{background:var(--wash)}
+#wmp table.at tr.at-row.on td{background:#eff6ff}
+#wmp table.at tfoot td{border-top:1px solid var(--line);border-bottom:none;font-weight:700;
+  font-variant-numeric:tabular-nums;padding:9px 8px;background:var(--wash)}
+/* the in-row meter: requested behind, delivered in front, planned as the tick.
+   A 2px surface gap separates the two fills rather than a stroke around them. */
+#wmp .atm{position:relative;height:9px;border-radius:3px;background:var(--faint);min-width:96px;
   box-shadow:inset 0 0 0 1px rgba(15,23,42,.06);overflow:hidden}
-#wmp .gg-fill{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:var(--gg);
-  transition:width .26s cubic-bezier(.2,.7,.3,1)}
-#wmp .gg-draw{position:absolute;top:0;bottom:0;opacity:.5;
-  background:repeating-linear-gradient(115deg,var(--gg) 0 3px,transparent 3px 6px)}
-#wmp .gg-slack{position:absolute;top:-2px;bottom:-2px;width:1.5px;background:rgba(15,23,42,.34)}
-/* an overrun is not "a redder version of nearly empty" -- it is a different
-   thing, so it gets a texture nothing else in the module uses */
-#wmp .gg.over .gg-track{background:repeating-linear-gradient(45deg,#fee2e2 0 4px,#fecaca 4px 8px);
-  box-shadow:inset 0 0 0 1px #fca5a5}
-#wmp .gg-cap{display:block;margin-top:4px;font-size:10.5px;color:var(--mute);
-  font-variant-numeric:tabular-nums;line-height:1.35}
-#wmp .gg-cap b{color:var(--ink);font-weight:700}
-#wmp .gg.over .gg-cap b{color:var(--red)}
-#wmp .gg-alt{color:#94a3b8}
-#wmp .gg-sm .gg-track{height:4px}
-#wmp .gg-sm .gg-cap{font-size:10px;margin-top:3px}
-#wmp .gg-lg .gg-track{height:11px}
-#wmp .gg-lg .gg-cap{font-size:11.5px;margin-top:6px}
-#wmp .gg-name{display:block;font-size:11.5px;font-weight:600;margin-bottom:5px}
-#wmp .gg-name .gg-pct{float:right;font-weight:700;color:var(--gg);font-variant-numeric:tabular-nums}
-@media(prefers-reduced-motion:reduce){#wmp .gg-fill{transition:none}}
-/* one card per farm: the plan's money overall, then the activities closest to
-   running out -- the ones a planner is about to be refused on */
-#wmp .bmg{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}
-#wmp .bm-card{border:1px solid var(--line);border-radius:var(--r);background:#fff;
-  box-shadow:var(--sh);padding:15px 16px}
-#wmp .bm-farm{font-size:13px;font-weight:700;letter-spacing:-.01em}
-#wmp .bm-meta{font-size:10.5px;color:var(--mute);margin:2px 0 12px}
-#wmp .bm-tight{margin-top:14px;padding-top:12px;border-top:1px solid var(--faint)}
-#wmp .bm-tight .bm-lead{font-size:9px;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--mute);font-weight:700;margin-bottom:9px}
-#wmp .bm-tight .gg{margin-bottom:9px}
-#wmp .bm-tight .gg:last-child{margin-bottom:0}
-#wmp .bm-none{font-size:11.5px;color:var(--mute);line-height:1.5}
-#wmp .bm-none b{color:var(--ink);display:block;font-size:12.5px;margin-bottom:3px}
+#wmp .atm .req{position:absolute;left:0;top:0;bottom:0;background:#2563eb;opacity:.28;border-radius:3px 0 0 3px}
+#wmp .atm .done{position:absolute;left:0;top:0;bottom:0;background:#0a7a43;border-radius:3px 0 0 3px;
+  box-shadow:2px 0 0 0 #fff}
+#wmp .atm .over{position:absolute;top:0;bottom:0;background:#b91c1c;opacity:.75}
+#wmp .atm .ref{position:absolute;top:-2px;bottom:-2px;width:2px;background:#6b7280}
+#wmp .at-state{font-size:8.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  padding:2px 8px;border-radius:999px;border:1px solid;white-space:nowrap}
+#wmp .at-state.delivered{color:#065f46;background:#ecfdf5;border-color:#a7f3d0}
+#wmp .at-state.underway{color:#1d4ed8;background:#eff6ff;border-color:#bfdbfe}
+#wmp .at-state.planned{color:#3f3f46;background:var(--wash);border-color:var(--line)}
+#wmp .at-state.untouched{color:#94a3b8;background:#fff;border-color:var(--line)}
+#wmp .at-state.over{color:#991b1b;background:#fef2f2;border-color:#fecaca}
+/* the per-task panel the table opens */
+#wmp .atp{background:var(--wash);border-top:1px solid var(--line);padding:16px 18px}
+#wmp .atp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+#wmp .atp-h{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-bottom:10px}
+#wmp .atp-cap{font-size:10.5px;color:var(--mute);margin-top:7px;line-height:1.5}
+#wmp .atp-cap b{color:var(--ink)}
+#wmp .atp svg{display:block;overflow:visible}
+#wmp .atp svg text{font-family:inherit;fill:var(--mute);font-size:9.5px}
+#wmp .atp svg text.v{fill:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+#wmp .atp svg .grid{stroke:var(--faint);stroke-width:1}
+#wmp .atp svg .axis{stroke:var(--line);stroke-width:1}
+#wmp .at-empty{padding:26px 14px;text-align:center;color:var(--mute);font-size:12px}
 /* ── plan completion ───────────────────────────────────────────────────────
    Three numbers get confused constantly: what a plan was PLANNED for, what was
    REQUESTED against it, and what was SPENT delivering it. A plan can be fully

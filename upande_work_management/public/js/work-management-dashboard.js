@@ -64,181 +64,298 @@
   function dpct(a,b){ a=a||0; b=b||0; if(b<=0) return "—"; return Math.round(a/b*100)+"%"; }
   function num(v){ v=Number(v); return isNaN(v)?0:v; }
 
-  // ── budget gauge ─────────────────────────────────────────────────────────
-  // Same component as the planner page (see the .gg block in this page's CSS).
-  // A master plan activity has two ceilings, a quantity of work and an amount of
-  // money; the bar fills to whichever has less room left, because that is the one
-  // that refuses the next request, and the tick marks where the other one sits.
-  var GG_DIVERGE = 0.02;   // below two points the ceilings have not really parted
-  var GG_STATES = /\b(clear|tight|last|over|done|going|idle)\b/g;
+  // ── activity table ───────────────────────────────────────────────────────
+  // Every budget line in the range, one row each, across all farms. This replaces
+  // per-farm cards that could only be read a farm at a time, so "which activities
+  // are behind" meant scanning four of them and holding the result in your head.
+  //
+  // TWO SERIES, and only two: requested and delivered. The planned value is not a
+  // third -- it is the reference the other two are measured against, so it is a
+  // recessive grey tick rather than a competing colour. #2563eb and #0a7a43 clear
+  // every colour check including CVD separation (worst adjacent dE 26.3 deutan).
+  // State is always written as a word beside its colour: the amber and red tokens
+  // this module uses sit ~13 dE apart in NORMAL vision, far too close to be
+  // trusted to carry meaning by themselves.
+  var AT = { rows:[], from:null, to:null, farm:"", state:"", q:"", sort:"completion", dir:1, open:null, loading:false };
+  var AT_REQ = "#2563eb", AT_DONE = "#0a7a43", AT_REF = "#6b7280", AT_OVER = "#b91c1c";
 
-  // Budget -> planned -> done. The solid fill is delivered work; the hatched band
-  // beyond it is committed but not yet done; the empty tail is not yet planned.
-  function ggDelivery(o){
-    var isQty = num(o.qty_total)>0;
-    var tot  = isQty ? num(o.qty_total)   : num(o.cost_total);
-    if(tot<=0) return null;
-    var plan = isQty ? num(o.qty_planned) : num(o.cost_planned);
-    var done = isQty ? num(o.qty_done)    : num(o.cost_done);
-    var rem  = tot-plan;
-    var tol  = Math.max(Math.abs(tot)*0.0005, 0.005);
-    var clamp=function(x){ return Math.max(0,Math.min(1,x)); };
-    var amt=function(v){
-      return isQty ? (fmt(v)+" "+(o.uom||"")).replace(/\s+$/,"") : ("KES "+fmt(v,0));
-    };
-    var bare=function(v){ return isQty ? fmt(v) : fmt(v,0); };
-    // over-planning is the one thing here that is genuinely wrong, so it is the one
-    // thing that goes red. Everything else is just a week in progress.
-    var st = rem < -tol ? "over"
-           : (plan>tol && done>=plan-tol ? "done" : (done>tol ? "going" : "idle"));
-    var tail = rem >  tol ? (bare(rem)+" left to plan")
-             : (rem < -tol ? (bare(-rem)+" over budget") : "fully committed");
-    return {
-      pA: clamp(done/tot), pNow: clamp(plan/tot), pOth: null, parted: false,
-      state: st, right: amt(tot),
-      cap: '<b>'+esc(done>tol ? (bare(done)+" done") : "not started")+'</b>'+
-           ' &middot; <span class="gg-alt">'+esc(bare(plan))+' planned</span>'+
-           ' &middot; <span class="gg-alt">'+esc(tail)+'</span>',
-      title: amt(done)+" delivered and confirmed, out of "+bare(plan)+" planned "+
-             "against a "+bare(tot)+" budget. "+
-             (rem < -tol ? ("Planning is "+bare(-rem)+" over the budget.")
-                         : (rem > tol ? (bare(rem)+" of the budget is still unplanned.")
-                                      : "The budget is fully committed."))
-    };
-  }
-
-  function ggCalc(o){
-    if(o.mode==="delivery") return ggDelivery(o);
-    var bq=num(o.qty_total), bc=num(o.cost_total);
-    var hasQ = bq>0 && o.qty_left!=null && !isNaN(o.qty_left);
-    var hasC = bc>0 && o.cost_left!=null && !isNaN(o.cost_left);
-    if(!hasQ && !hasC) return null;
-    var lq=hasQ?Number(o.qty_left):null, lc=hasC?Number(o.cost_left):null;
-    var aq=hasQ?(lq-num(o.draw_qty)):null, ac=hasC?(lc-num(o.draw_cost)):null;
-    var fqNow=hasQ?(lq/bq):null, fcNow=hasC?(lc/bc):null;
-    var fqA=hasQ?(aq/bq):null, fcA=hasC?(ac/bc):null;
-    var qBinds = hasQ && (!hasC || fqA<=fcA);
-    var fA = qBinds?fqA:fcA, fNow = qBinds?fqNow:fcNow;
-    var oth = (hasQ&&hasC) ? (qBinds?fcA:fqA) : null;
-    var clamp=function(x){ return Math.max(0,Math.min(1,x)); };
-    var parted = oth!=null && Math.abs(oth-fA)>GG_DIVERGE;
-    // A unit trails its number and a currency leads it. An amount below zero is not
-    // "minus 718 left", it is 718 overspent -- true of the slack ceiling as much as
-    // the binding one.
-    var amt=function(v, isQty){
-      return isQty ? (fmt(v)+" "+(o.uom||"")).replace(/\s+$/,"") : ("KES "+fmt(v,0));
-    };
-    var say=function(v, isQty){
-      return amt(Math.abs(v), isQty) + (v<0 ? " over budget" : " left");
-    };
-    var st = fA<0 ? "over" : (fA<0.15 ? "last" : (fA<0.5 ? "tight" : "clear"));
-    var cap = '<b>'+esc(qBinds ? say(aq,true) : say(ac,false))+'</b>';
-    if(hasQ && hasC)
-      cap += ' &middot; <span class="gg-alt">'+esc(qBinds ? say(ac,false) : say(aq,true))+'</span>';
-    // the unit or currency is written once per line, on whichever end it belongs:
-    // "11,000 of 13,000 Nos left" / "KES 8,522 of 10,062 left"
-    var line=function(label, v, tot, isQty){
-      var bare=function(x){ return isQty ? fmt(x) : fmt(x,0); };
-      if(v<0) return label+": "+amt(Math.abs(v),isQty)+" over a "+bare(tot)+" budget.";
-      return label+": "+(isQty ? (bare(v)+" of "+amt(tot,true))
-                               : (amt(v,false)+" of "+bare(tot)))+" left.";
-    };
-    return {
-      pA: clamp(fA), pNow: clamp(fNow), pOth: oth==null?null:clamp(oth),
-      state: st, cap: cap, parted: parted, right: Math.round(clamp(fA)*100)+"%",
-      title: [hasQ ? line("Quantity", aq, bq, true) : null,
-              hasC ? line("Money", ac, bc, false) : null,
-              (hasQ&&hasC) ? ((qBinds?"Quantity":"Money")+" runs out first.") : null,
-              parted ? ("The two ceilings have drifted apart, so this work has been "+
-                        "priced at a different rate than the plan used.") : null
-             ].filter(Boolean).join(" ")
-    };
-  }
-  function gauge(o){
-    var g=ggCalc(o); if(!g) return "";
-    var size = o.size || "md";
-    var showCap = (o.cap!=null) ? !!o.cap : (size!=="sm");
-    // md/lg animate once from full to the true figure -- the bar being drawn down
-    // is what the number means. Table rows stay still; forty of them moving is noise.
-    var anim = (size!=="sm");
-    var h='<span class="gg gg-'+size+' '+g.state+'" title="'+esc(g.title)+'">';
-    if(o.label) h+='<span class="gg-name">'+esc(o.label)+
-      '<span class="gg-pct">'+esc(g.right)+'</span></span>';
-    h+='<span class="gg-track">'+
-       '<span class="gg-fill" style="width:'+(anim?100:(g.pA*100))+'%"'+
-         (anim?(' data-w="'+(g.pA*100)+'"'):'')+'></span>'+
-       '<span class="gg-draw" style="left:'+(g.pA*100)+'%;width:'+
-         (Math.max(0,g.pNow-g.pA)*100)+'%"></span>'+
-       '<span class="gg-slack" style="left:'+((g.pOth==null?0:g.pOth)*100)+'%;display:'+
-         (g.parted?"block":"none")+'"></span>'+
-       '</span>';
-    if(showCap) h+='<span class="gg-cap">'+g.cap+'</span>';
-    return h+'</span>';
-  }
-  function ggPaint(root){
-    if(!root) return;
-    var bars=root.querySelectorAll(".gg-fill[data-w]");
-    if(!bars.length) return;
-    requestAnimationFrame(function(){
-      bars.forEach(function(b){ b.style.width=b.getAttribute("data-w")+"%"; b.removeAttribute("data-w"); });
-    });
-  }
-
-  // Budget headroom, farm by farm: the live master plan's money overall, then the
-  // handful of activities closest to running out. A farm with no approved plan
-  // cannot be planned at all, which is worth saying rather than leaving blank.
-  function budgetMeters(){
-    var box=el("wm-budget"); if(!box) return;
-    call({action:"budget_meters"}).then(function(d){
-      var farms=d.farms||[];
-      if(!farms.length){ box.innerHTML='<div class="empty">No farms configured.</div>'; return; }
-      var h='<div class="bmg">';
-      farms.forEach(function(f){
-        h+='<div class="bm-card"><div class="bm-farm">'+esc(f.farm)+'</div>';
-        if(!f.master_plan){
-          h+='<div class="bm-meta">No budget covers today</div>'+
-             '<div class="bm-none"><b>Nothing can be planned here yet.</b>'+
-             (f.pending_plan
-               ? (esc(f.pending_plan)+' covers '+esc(f.pending_from)+' &rarr; '+esc(f.pending_to)+
-                  ' but is still at '+esc(f.pending_state)+'. Planning opens when it is approved.')
-               : 'Raise a master plan for '+esc(f.farm)+' from the planner, and have the GM approve it.')+
-             '</div></div>';
-          return;
-        }
-        h+='<div class="bm-meta">'+esc(f.master_plan)+' &middot; '+esc(f.period_from)+
-           ' &rarr; '+esc(f.period_to)+' &middot; '+fmt((f.activities||[]).length)+' activit'+
-           ((f.activities||[]).length===1?'y':'ies')+'</div>'+
-           gauge({size:"lg", mode:"delivery", label:"Planned value on this plan",
-                  cost_total:f.budget_cost, cost_planned:f.planned_cost,
-                  cost_done:f.done_cost});
-        // over-planned lines first -- those are the ones actually wrong -- then the
-        // least delivered, which is what "how is the week going" really asks
-        var acts=(f.activities||[]).slice();
-        var progress=function(a){
-          var t=num(a.work_qty); if(t<=0) return 1;
-          if(num(a.planned_qty)-t > t*0.0005) return -1;   // over-planned, show first
-          return num(a.done_qty)/t;
-        };
-        acts.sort(function(a,b){ return progress(a)-progress(b); });
-        if(acts.length){
-          h+='<div class="bm-tight"><div class="bm-lead">Furthest from done</div>';
-          acts.slice(0,5).forEach(function(a){
-            h+=gauge({size:"sm", cap:true, mode:"delivery", label:a.task, uom:a.uom,
-                      qty_total:a.work_qty, qty_planned:a.planned_qty,
-                      qty_done:a.done_qty});
-          });
-          if(acts.length>5)
-            h+='<div class="bm-none" style="margin-top:8px">'+fmt(acts.length-5)+
-               ' more activit'+(acts.length-5===1?'y':'ies')+' on this plan are further along.</div>';
-          h+='</div>';
-        }
-        h+='</div>';
-      });
-      box.innerHTML=h+'</div>';
-      ggPaint(box);
+  function activityTable(){
+    var box=el("wm-acts"); if(!box) return;
+    var args={action:"activity_table"};
+    if(AT.from) args.from_date=AT.from;
+    if(AT.to) args.to_date=AT.to;
+    if(AT.farm) args.farm=AT.farm;
+    // hold the previous render rather than flashing a skeleton on refetch
+    var prev=box.querySelector(".at-wrap");
+    if(prev) prev.style.opacity=".45";
+    AT.loading=true;
+    call(args).then(function(d){
+      AT.loading=false;
+      AT.rows=d.rows||[];
+      if(!AT.from) AT.from=d.from_date;
+      if(!AT.to) AT.to=d.to_date;
+      atRender();
     }).catch(function(){
-      box.innerHTML='<div class="empty">Could not load budget figures.</div>';
+      AT.loading=false;
+      box.innerHTML='<div class="at-empty">Could not load activities.</div>';
     });
+  }
+
+  function atFiltered(){
+    var q=(AT.q||"").toLowerCase();
+    return AT.rows.filter(function(r){
+      if(AT.state && r.state!==AT.state) return false;
+      if(q && (r.task+" "+r.farm+" "+r.plan).toLowerCase().indexOf(q)<0) return false;
+      return true;
+    }).sort(function(a,b){
+      var k=AT.sort, x=a[k], y=b[k];
+      if(typeof x==="string") return AT.dir*String(x).localeCompare(String(y));
+      return AT.dir*((x||0)-(y||0));
+    });
+  }
+
+  function atRender(){
+    var box=el("wm-acts"); if(!box) return;
+    var rows=atFiltered();
+    var h=atControls();
+    h+='<div class="at-legend">'+
+       '<span><i style="background:'+AT_DONE+'"></i>Delivered</span>'+
+       '<span><i style="background:'+AT_REQ+';opacity:.28"></i>Requested</span>'+
+       '<span><i class="ref"></i>Planned value (the ceiling both are measured against)</span>'+
+       '<span><i style="background:'+AT_OVER+';opacity:.75"></i>Requested past the plan</span>'+
+       '</div>';
+    if(!rows.length){
+      box.innerHTML=h+'<div class="at-empty">No activity matches these filters. '+
+        'Widen the dates, clear the search, or pick another farm.</div>';
+      atWire(box); return;
+    }
+    var col=function(k,lbl,n){
+      return '<th class="'+(n?'n':'')+'" data-sk="'+k+'">'+lbl+
+             (AT.sort===k?('<span class="ar">'+(AT.dir>0?'▲':'▼')+'</span>'):'')+'</th>';
+    };
+    h+='<div class="at-wrap" style="max-height:520px;overflow:auto">'+
+       '<table class="at"><thead><tr>'+
+       col("farm","Farm")+col("task","Activity")+col("plan","Plan")+
+       col("planned_qty","Planned",1)+col("requested_qty","Requested",1)+col("done_qty","Delivered",1)+
+       '<th>Unit</th>'+col("left_qty","Qty left",1)+
+       col("planned_cost","Planned value",1)+col("left_cost","Value left",1)+
+       '<th style="min-width:110px">Progress</th>'+col("completion","Done",1)+col("state","State")+
+       '</tr></thead><tbody>';
+    var tp=0,tr=0,td=0,tpc=0,tlc=0;
+    rows.forEach(function(r,i){
+      tp+=r.planned_qty; tr+=r.requested_qty; td+=r.done_qty;
+      tpc+=r.planned_cost; tlc+=r.left_cost;
+      var open=AT.open===r.row;
+      h+='<tr class="at-row'+(open?' on':'')+'" data-r="'+esc(r.row)+'">'+
+         '<td>'+esc(r.farm)+'</td>'+
+         '<td><b>'+esc(r.task)+'</b></td>'+
+         '<td style="font-size:10.5px;color:var(--mute)">'+esc(r.plan)+'<br>'+esc(r.period_from)+' → '+esc(r.period_to)+'</td>'+
+         '<td class="n">'+fmt(r.planned_qty)+'</td>'+
+         '<td class="n">'+fmt(r.requested_qty)+'</td>'+
+         '<td class="n">'+fmt(r.done_qty)+'</td>'+
+         '<td style="font-size:10.5px;color:var(--mute)">'+esc(r.uom||"")+'</td>'+
+         '<td class="n"'+(r.left_qty<0?' style="color:'+AT_OVER+'"':'')+'>'+fmt(r.left_qty)+'</td>'+
+         '<td class="n">'+money(r.planned_cost)+'</td>'+
+         '<td class="n"'+(r.left_cost<0?' style="color:'+AT_OVER+'"':'')+'>'+money(r.left_cost)+'</td>'+
+         '<td>'+atMeter(r)+'</td>'+
+         '<td class="n">'+fmt(r.completion,0)+'%</td>'+
+         '<td><span class="at-state '+r.state.replace(" ","")+'">'+esc(r.state)+'</span></td></tr>';
+      h+='<tr class="at-panel" data-p="'+esc(r.row)+'" style="display:'+(open?'':'none')+'">'+
+         '<td colspan="13" style="padding:0"><div class="atp" data-body="'+esc(r.row)+'"></div></td></tr>';
+    });
+    h+='</tbody><tfoot><tr><td colspan="3">'+fmt(rows.length)+' activities</td>'+
+       '<td class="n">'+fmt(tp)+'</td><td class="n">'+fmt(tr)+'</td><td class="n">'+fmt(td)+'</td>'+
+       '<td style="font-size:10px;color:var(--mute)">mixed</td><td class="n">'+fmt(tp-tr)+'</td>'+
+       '<td class="n">'+money(tpc)+'</td><td class="n">'+money(tlc)+'</td>'+
+       '<td colspan="3"></td></tr></tfoot></table></div>';
+    box.innerHTML=h;
+    atWire(box);
+    if(AT.open) atOpen(AT.open);
+  }
+
+  function atControls(){
+    var st=function(k,lbl){ return '<button type="button" data-ats="'+k+'"'+(AT.state===k?' class="on"':'')+'>'+lbl+'</button>'; };
+    return '<div class="at-bar">'+
+      '<div><label>From</label><input type="date" id="at-from" value="'+esc(AT.from||"")+'"></div>'+
+      '<div><label>To</label><input type="date" id="at-to" value="'+esc(AT.to||"")+'"></div>'+
+      '<div><label>Farm</label><select id="at-farm">'+
+        ['','Saboti','Lokitela','Vale','Endebess'].map(function(f){
+          return '<option value="'+esc(f)+'"'+(AT.farm===f?' selected':'')+'>'+(f||'All farms')+'</option>';
+        }).join('')+'</select></div>'+
+      '<div><label>Find</label><input class="at-find" id="at-q" placeholder="Activity, farm or plan…" value="'+esc(AT.q||"")+'"></div>'+
+      '<div class="at-right"><div>'+st("","All")+st("over","Over")+st("under way","Under way")+
+        st("planned","Planned")+st("delivered","Delivered")+st("untouched","Untouched")+'</div></div>'+
+    '</div>';
+  }
+
+  // requested behind, delivered in front, planned as the tick. Both fills are
+  // scaled to the larger of planned and requested, so an over-request runs past
+  // the tick instead of being silently clipped to it.
+  function atMeter(r){
+    var base=Math.max(r.planned_qty, r.requested_qty, 1);
+    var req=Math.min(100, r.requested_qty/base*100);
+    var done=Math.min(100, r.done_qty/base*100);
+    var ref=Math.min(100, r.planned_qty/base*100);
+    var over=r.requested_qty>r.planned_qty+0.005;
+    return '<div class="atm" title="'+esc(
+        "Planned "+fmt(r.planned_qty)+" "+(r.uom||"")+
+        " · requested "+fmt(r.requested_qty)+
+        " · delivered "+fmt(r.done_qty)+" ("+fmt(r.completion,0)+"%)")+'">'+
+      '<span class="req" style="width:'+req+'%"></span>'+
+      (over?'<span class="over" style="left:'+ref+'%;width:'+(req-ref)+'%"></span>':'')+
+      '<span class="done" style="width:'+done+'%"></span>'+
+      '<span class="ref" style="left:'+ref+'%"></span></div>';
+  }
+
+  function atWire(box){
+    var go=function(){ AT.open=null; activityTable(); };
+    var f=el("at-from"), t=el("at-to"), fm=el("at-farm"), q=el("at-q");
+    if(f) f.onchange=function(){ AT.from=f.value; go(); };
+    if(t) t.onchange=function(){ AT.to=t.value; go(); };
+    if(fm) fm.onchange=function(){ AT.farm=fm.value; go(); };
+    if(q) q.oninput=function(){ AT.q=q.value; atRender(); };
+    box.querySelectorAll("[data-ats]").forEach(function(b){
+      b.onclick=function(){ AT.state=b.getAttribute("data-ats"); atRender(); };
+    });
+    box.querySelectorAll("th[data-sk]").forEach(function(th){
+      th.onclick=function(){
+        var k=th.getAttribute("data-sk");
+        if(AT.sort===k) AT.dir=-AT.dir; else { AT.sort=k; AT.dir=(k==="farm"||k==="task"||k==="plan"||k==="state")?1:-1; }
+        atRender();
+      };
+    });
+    box.querySelectorAll("tr.at-row").forEach(function(tr){
+      tr.onclick=function(){
+        var id=tr.getAttribute("data-r");
+        AT.open = (AT.open===id) ? null : id;
+        box.querySelectorAll(".at-panel").forEach(function(p){ p.style.display="none"; });
+        box.querySelectorAll("tr.at-row").forEach(function(x){ x.classList.remove("on"); });
+        if(AT.open){ tr.classList.add("on"); atOpen(AT.open); }
+      };
+    });
+  }
+
+  function atOpen(id){
+    var box=el("wm-acts"); if(!box) return;
+    var panel=box.querySelector('.at-panel[data-p="'+id+'"]');
+    var body=box.querySelector('.atp[data-body="'+id+'"]');
+    if(!panel||!body) return;
+    panel.style.display="";
+    var r=null;
+    AT.rows.forEach(function(x){ if(x.row===id) r=x; });
+    if(!r) return;
+    body.innerHTML='<div class="loading">Loading…</div>';
+    call({action:"activity_series", row:id}).then(function(d){
+      body.innerHTML=atPanel(r, d);
+    }).catch(function(){ body.innerHTML='<div class="at-empty">Could not load this activity.</div>'; });
+  }
+
+  // Quantity and money are DIFFERENT SCALES and never share a pair of axes -- two
+  // y-scales on one plot invent a relationship that is not in the data. They get
+  // one small chart each, and delivery over time gets a third on its own axis.
+  function atPanel(r, d){
+    var days=(d.days||[]), reqs=(d.requests||[]);
+    var h='<div class="atp-grid">';
+    h+='<div><div class="atp-h">Quantity &middot; '+esc(r.uom||"units")+'</div>'+
+       atCompare([{k:"Requested",v:r.requested_qty,c:AT_REQ,o:.28},
+                  {k:"Delivered",v:r.done_qty,c:AT_DONE,o:1}], r.planned_qty, function(v){ return fmt(v); })+
+       '<div class="atp-cap">The rule is the planned value, <b>'+fmt(r.planned_qty)+' '+esc(r.uom||"")+
+       '</b>. '+(r.left_qty<0?('Requested <b>'+fmt(-r.left_qty)+'</b> past it.')
+                             :('<b>'+fmt(r.left_qty)+'</b> still unrequested.'))+'</div></div>';
+    h+='<div><div class="atp-h">Value &middot; KES</div>'+
+       atCompare([{k:"Requested",v:r.requested_cost,c:AT_REQ,o:.28},
+                  {k:"Delivered",v:r.done_cost,c:AT_DONE,o:1}], r.planned_cost, function(v){ return money(v); })+
+       '<div class="atp-cap">Planned value <b>'+money(r.planned_cost)+'</b>. '+
+       (r.left_cost<0?('Requested <b>'+money(-r.left_cost)+'</b> past it.')
+                     :('<b>'+money(r.left_cost)+'</b> still unrequested.'))+'</div></div>';
+    h+='<div><div class="atp-h">Delivered per day &middot; confirmed only</div>'+
+       atDays(days, r)+
+       '<div class="atp-cap">'+(days.length
+         ? ('Confirmed on <b>'+fmt(days.length)+'</b> day'+(days.length===1?'':'s')+
+            ' between '+esc(d.period.from)+' and '+esc(d.period.to)+'.')
+         : 'Nothing confirmed in this period yet.')+'</div></div>';
+    h+='</div>';
+    if(reqs.length){
+      h+='<div class="atp-h" style="margin-top:16px">The requests behind it</div>'+
+         '<table class="at" style="font-size:11px"><thead><tr><th>Request</th><th>Block</th><th>Period</th>'+
+         '<th class="n">Qty</th><th class="n">Value</th><th>State</th></tr></thead><tbody>';
+      reqs.forEach(function(x){
+        h+='<tr><td>'+esc(x.name)+'</td><td>'+esc(lbl(x.block_section))+'</td>'+
+           '<td>'+esc(x.from_date)+' → '+esc(x.to_date)+'</td>'+
+           '<td class="n">'+fmt(x.quantity)+'</td><td class="n">'+money(x.total_cost)+'</td>'+
+           '<td>'+esc(x.workflow_state||"")+'</td></tr>';
+      });
+      h+='</tbody></table>';
+    }
+    return h;
+  }
+
+  // Two horizontal bars against a reference rule. Bars are 18px (under the 24px
+  // cap), 4px rounded at the data end and square at the baseline, with a 2px
+  // surface gap between them. Values are direct-labelled at the bar end -- two
+  // marks, so labelling both is selective, not a number on every point.
+  function atCompare(series, ref, fmtv){
+    // LABEL_SPACE is reserved, not borrowed: the value sits outside the bar end, so
+    // the plot has to stop short of the edge by enough to hold it. Letting the bar
+    // use the full width pushed "166,500" past the viewBox on the longest rows.
+    var W=360, BH=18, GAP=12, PAD=96, TOP=6, LABEL_SPACE=64;
+    var PLOT=W-PAD-LABEL_SPACE;
+    var H=TOP+series.length*(BH+GAP);
+    var max=Math.max(ref, series[0].v, series[1].v, 1);
+    var x=function(v){ return Math.max(0,(v/max)*PLOT); };
+    var s='<svg viewBox="0 0 '+W+' '+(H+8)+'" width="100%" height="'+(H+8)+'" role="img">';
+    series.forEach(function(sr,i){
+      var y=TOP+i*(BH+GAP), w=x(sr.v);
+      s+='<text x="0" y="'+(y+BH/2+3.5)+'">'+esc(sr.k)+'</text>';
+      s+='<rect x="'+PAD+'" y="'+y+'" width="'+PLOT+'" height="'+BH+'" rx="3" fill="#eef2f6"/>';
+      if(w>0.5)
+        s+='<path d="'+barPath(PAD,y,w,BH,4)+'" fill="'+sr.c+'" fill-opacity="'+sr.o+'"><title>'+
+           esc(sr.k+": "+fmtv(sr.v))+'</title></path>';
+      s+='<text class="v" x="'+(PAD+Math.max(w,0)+6)+'" y="'+(y+BH/2+3.5)+'">'+esc(fmtv(sr.v))+'</text>';
+    });
+    // the reference rule: planned value, recessive, labelled once
+    var rx=PAD+x(ref);
+    s+='<line class="axis" x1="'+rx+'" y1="0" x2="'+rx+'" y2="'+H+'" stroke="'+AT_REF+'" stroke-width="2"/>';
+    s+='</svg>';
+    return s;
+  }
+  // square at the baseline, 4px rounded at the data end
+  function barPath(x,y,w,h,r){
+    r=Math.min(r, w);
+    return "M"+x+","+y+" H"+(x+w-r)+" a"+r+","+r+" 0 0 1 "+r+","+r+
+           " V"+(y+h-r)+" a"+r+","+r+" 0 0 1 "+(-r)+","+r+" H"+x+" Z";
+  }
+
+  function atDays(days, r){
+    var W=300, H=104, L=6, B=20, T=6;
+    if(!days.length)
+      return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'"><text x="0" y="'+(H/2)+'">No confirmed work yet</text></svg>';
+    var max=0; days.forEach(function(d){ if(d.q>max) max=d.q; });
+    if(max<=0) max=1;
+    var iw=W-L-8, ih=H-B-T;
+    var slot=iw/days.length, bw=Math.min(24, slot-4);
+    var s='<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" role="img">';
+    [0,0.5,1].forEach(function(f){
+      var y=T+ih-f*ih;
+      s+='<line class="grid" x1="'+L+'" y1="'+y+'" x2="'+(L+iw)+'" y2="'+y+'"/>';
+    });
+    days.forEach(function(d,i){
+      var bh=Math.max(1,(d.q/max)*ih), x=L+slot*i+(slot-bw)/2, y=T+ih-bh;
+      s+='<path d="'+barPathUp(x,y,bw,bh,4)+'" fill="'+AT_DONE+'"><title>'+
+         esc(String(d.d).slice(5)+": "+fmt(d.q)+" "+(r.uom||"")+" · KES "+fmt(d.c,0))+'</title></path>';
+      if(days.length<=8)
+        s+='<text x="'+(x+bw/2)+'" y="'+(H-7)+'" text-anchor="middle">'+esc(String(d.d).slice(5))+'</text>';
+    });
+    s+='<line class="axis" x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'"/>';
+    s+='<text class="v" x="'+L+'" y="'+(T+7)+'">'+esc(fmt(max))+'</text>';
+    s+='</svg>';
+    return s;
+  }
+  // column: square at the baseline, 4px rounded at the top (the data end)
+  function barPathUp(x,y,w,h,r){
+    r=Math.min(r, h, w/2);
+    return "M"+x+","+(y+h)+" V"+(y+r)+" a"+r+","+r+" 0 0 1 "+r+","+(-r)+
+           " H"+(x+w-r)+" a"+r+","+r+" 0 0 1 "+r+","+r+" V"+(y+h)+" Z";
   }
 
   // ── completion, plan by plan, week by week ───────────────────────────────
@@ -437,11 +554,11 @@
         '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
         '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
       '</div>'+
-      // ===== how much of each farm's approved plan is still free =====
+      // ===== every budget line, one table =====
       '<div class="sech">Planned value &amp; delivery</div>'+
-      '<div class="card"><div class="hd"><h3>How each farm&rsquo;s approved plan is going</h3>'+
-        '<div class="cap">live master plans &middot; planned value, then requested, then delivered</div></div>'+
-        '<div class="bd" id="wm-budget"><div class="loading">Reading plans&hellip;</div></div></div>'+
+      '<div class="card"><div class="hd"><h3>Every activity, planned against delivered</h3>'+
+        '<div class="cap">one row per budget line &middot; filter and sort across farms &middot; click a row for its charts</div></div>'+
+        '<div class="bd" id="wm-acts"><div class="loading">Reading activities&hellip;</div></div></div>'+
       // ===== how much of each plan actually happened =====
       '<div class="sech">Plan completion &mdash; planned, requested, delivered</div>'+
       '<div class="card"><div class="hd"><h3>How much of each master plan actually happened</h3>'+
@@ -608,7 +725,7 @@
           '<div id="wm-q-body" style="max-height:420px;overflow:auto;margin-top:10px"></div>'+
         '</div></div>';
     comboInit(D);
-    budgetMeters();
+    activityTable();
     planCompletion();
     initCharts();
     initQueues(D);
