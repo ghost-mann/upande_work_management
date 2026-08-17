@@ -438,14 +438,19 @@ def wm_masterplan(**kwargs):
                         sv_pc = frappe.utils.flt(sv_use.c)
                         sv_to_q = frappe.utils.flt((sv_new.get(sv_t) or {}).get("q"))
                         sv_to_c = frappe.utils.flt((sv_new.get(sv_t) or {}).get("c"))
+                        # "%.2f" %, not "{}".format(): RestrictedPython refuses `format`
+                        # by name, so the .format() calls that used to be here raised
+                        # "format is an unsafe attribute" and took the whole endpoint down
+                        # with them -- on the one path that only runs when an approved
+                        # plan is actually being cut, which is why it went unnoticed.
                         if sv_to_q < sv_pq - TOLERANCE:
                             sv_cut = (str(sv_t) + " is already planned at " +
-                                      "{0:,.2f}".format(sv_pq) + " and cannot be cut to " +
-                                      "{0:,.2f}".format(sv_to_q) + ".")
+                                      ("%.2f" % sv_pq) + " and cannot be cut to " +
+                                      ("%.2f" % sv_to_q) + ".")
                         elif sv_to_c < sv_pc - TOLERANCE:
                             sv_cut = (str(sv_t) + " already has KES " +
-                                      "{0:,.2f}".format(sv_pc) + " planned against it and "
-                                      "cannot be cut to KES " + "{0:,.2f}".format(sv_to_c) + ".")
+                                      ("%.2f" % sv_pc) + " planned against it and "
+                                      "cannot be cut to KES " + ("%.2f" % sv_to_c) + ".")
                         if sv_cut:
                             sv_hold = frappe.db.sql("""
                                 SELECT name FROM `tabWork Management Planner`
