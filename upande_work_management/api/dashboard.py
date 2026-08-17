@@ -3083,54 +3083,6 @@ def wm_dashboard(**kwargs):
         out["from_date"] = str(pc_from)
         out["to_date"] = str(pc_to)
 
-    elif action == "stale_actuals":
-        # WORK RECORDED AND NEVER SENT. A Draft actual is the working document for its
-        # period: it collects each day's cells and goes in when the period's target is
-        # met. While the period runs that is exactly right, and those Drafts are not
-        # interesting. Once the period has ENDED, a Draft is work somebody did that no
-        # screen shows, no approver sees and nobody gets paid for -- and there is
-        # currently nowhere at all that says so.
-        sa_on = frappe.form_dict.get("on_date") or frappe.utils.today()
-        sa_rows = []
-        sa_farm = {}
-        for sa in frappe.db.sql("""
-            SELECT name, farm, task, from_date, to_date, total_actual_qty,
-                   custom_balance_qty, entered_by, modified, planner_request
-            FROM `tabWork Management Actuals`
-            WHERE workflow_state = 'Draft' AND to_date < %(d)s
-            ORDER BY to_date
-        """, {"d": sa_on}, as_dict=True):
-            sa_rec = frappe.utils.flt(sa.total_actual_qty)
-            sa_owed = frappe.utils.flt(sa.custom_balance_qty)
-            sa_over = frappe.utils.date_diff(sa_on, sa.to_date)
-            sa_rows.append({
-                "name": sa.name, "farm": sa.farm, "task": sa.task,
-                "from_date": str(sa.from_date), "to_date": str(sa.to_date),
-                "recorded": sa_rec, "owed": sa_owed if sa_owed > 0 else 0,
-                "days_over": sa_over, "entered_by": sa.entered_by,
-                "last_touched": str(sa.modified)[:10],
-                "planner_request": sa.planner_request,
-                # the ones already at target need nothing but a click, which is worth
-                # saying separately from the ones that need a decision
-                "target_met": 1 if sa_owed <= 0.0001 else 0,
-            })
-            if sa.farm not in sa_farm:
-                sa_farm[sa.farm] = {"farm": sa.farm, "count": 0, "recorded": 0,
-                                    "owed": 0, "ready": 0, "oldest_days": 0}
-            sa_f = sa_farm[sa.farm]
-            sa_f["count"] = sa_f["count"] + 1
-            sa_f["recorded"] = sa_f["recorded"] + sa_rec
-            sa_f["owed"] = sa_f["owed"] + (sa_owed if sa_owed > 0 else 0)
-            if sa_owed <= 0.0001:
-                sa_f["ready"] = sa_f["ready"] + 1
-            if sa_over > sa_f["oldest_days"]:
-                sa_f["oldest_days"] = sa_over
-        out["rows"] = sa_rows
-        out["farms"] = sorted(sa_farm.values(), key=lambda x: -x["count"])
-        out["total"] = len(sa_rows)
-        out["ready"] = len([r for r in sa_rows if r["target_met"]])
-        out["on_date"] = str(sa_on)
-
     elif action == "budget_meters":
         # HOW MUCH ROOM IS LEFT, ESTATE-WIDE. The planner answers this one activity at
         # a time, at the moment someone is already typing a request. A budget quietly

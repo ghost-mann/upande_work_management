@@ -241,11 +241,6 @@
     });
   }
 
-  // Work recorded and never sent. While a period is running its Draft actual is
-  // simply the working document -- days get added to it until the target is met --
-  // so only Drafts whose period has ENDED appear here. Those are work somebody did
-  // that no approver sees and nobody is paid for, and nothing else on any screen
-  // says they exist.
   // ── completion, plan by plan, week by week ───────────────────────────────
   // Three figures that get used interchangeably and mean different things: what a
   // plan was PLANNED for, what was REQUESTED against it, and what was SPENT
@@ -364,52 +359,6 @@
   function todayISO(){ return new Date().toISOString().slice(0,10); }
   function todayMinus(n){ var d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
 
-  function unsubmittedActuals(){
-    var box=el("wm-unsub"); if(!box) return;
-    call({action:"stale_actuals"}).then(function(d){
-      var rows=d.rows||[];
-      if(!rows.length){
-        box.innerHTML='<div class="empty">Nothing recorded is waiting to be sent. '+
-          'Every finished period has had its actuals submitted.</div>';
-        return;
-      }
-      var h='<div class="ua-farms">';
-      (d.farms||[]).forEach(function(f){
-        h+='<div class="ua-farm"><b>'+esc(f.farm)+' &middot; '+fmt(f.count)+'</b>'+
-           '<span>'+fmt(f.recorded)+' recorded</span>'+
-           '<span>'+(f.ready?(fmt(f.ready)+' ready to send'):'all need a decision')+'</span>'+
-           '<span>oldest '+fmt(f.oldest_days)+' days</span></div>';
-      });
-      h+='</div>';
-      h+='<div class="explain" style="margin-bottom:10px"><b>What this is:</b> '+
-         '<span>An actual stays a draft while its period runs, collecting each day&rsquo;s work. '+
-         'These periods have <b>ended</b> and the work was never sent, so it has not been '+
-         'approved and nobody has been paid for it.</span>'+
-         '<span><b>Ready to send</b> &mdash; the recorded work already meets the request target. '+
-         'It needs one click.</span>'+
-         '<span><b>Short</b> &mdash; less was done than planned. Either record the rest, or close '+
-         'the request early with a reason.</span></div>';
-      h+='<table><thead><tr><th>Age</th><th>Actual</th><th>Farm</th><th>Task</th>'+
-         '<th>Period ended</th><th class="n">Recorded</th><th class="n">Short by</th>'+
-         '<th>Entered by</th><th></th></tr></thead><tbody>';
-      rows.forEach(function(r){
-        var cls = r.days_over>=30 ? "hot" : (r.days_over>=14 ? "warm" : "");
-        h+='<tr><td><span class="ua-age '+cls+'">'+fmt(r.days_over)+'d</span></td>'+
-           '<td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td>'+
-           '<td>'+esc(r.task||"")+'</td><td>'+esc(r.to_date)+'</td>'+
-           '<td class="n m">'+fmt(r.recorded)+'</td>'+
-           '<td class="n m">'+(r.target_met?'&mdash;':fmt(r.owed))+'</td>'+
-           '<td>'+esc((r.entered_by||"").split("@")[0])+'</td>'+
-           '<td>'+(r.target_met?'<span class="ua-ready">ready to send</span>'
-                               :'<span class="ua-short">short</span>')+
-           ' '+deskLink("Work Management Actuals", r.name)+'</td></tr>';
-      });
-      box.innerHTML=h+'</tbody></table>';
-    }).catch(function(){
-      box.innerHTML='<div class="empty">Could not load unsubmitted actuals.</div>';
-    });
-  }
-
   function stageCard(title, color, rows){
     var body=rows.map(function(r){ return '<div class="sc-row"><span class="sc-k">'+r[0]+'</span><span class="sc-v">'+r[1]+'</span></div>'; }).join("");
     return '<div class="stagecard" style="border-top:3px solid '+color+'">'+
@@ -498,11 +447,6 @@
       '<div class="card"><div class="hd"><h3>How much of each master plan actually happened</h3>'+
         '<div class="cap">by the week the plan starts &middot; filter by date range and farm</div></div>'+
         '<div class="bd" id="wm-plancomp"><div class="loading">Measuring completion&hellip;</div></div></div>'+
-      // ===== work recorded but never sent =====
-      '<div class="sech">Recorded but never sent</div>'+
-      '<div class="card"><div class="hd"><h3>Actuals still sitting in draft after their period ended</h3>'+
-        '<div class="cap">work already done &middot; not approved, not paid</div></div>'+
-        '<div class="bd" id="wm-unsub"><div class="loading">Looking for unsent work&hellip;</div></div></div>'+
       // ===== per-farm worker + value summary strip =====
       '<div class="sech">Workers &amp; value per farm</div>'+
       '<div class="card"><div class="bd" id="wm-farmstrip">'+farmStrip(farms)+'</div></div>'+
@@ -665,7 +609,6 @@
         '</div></div>';
     comboInit(D);
     budgetMeters();
-    unsubmittedActuals();
     planCompletion();
     initCharts();
     initQueues(D);
