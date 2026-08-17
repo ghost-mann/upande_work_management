@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .DS_Store
 node_modules/
+
+# Report exports. These carry staff emails, names and pay figures, and this repo
+# is public -- git history would keep them permanently, in every fork and clone.
+# Generate them into the working tree and keep them there.
+*.xlsx
