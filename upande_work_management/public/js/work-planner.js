@@ -980,8 +980,14 @@
     call(args, "wm_masterplan").then(function(d){
       if(d.error){ toast(d.error); saveBtn.disabled=false; submitBtn.disabled=false; return; }
       var savedName=d.name;
-      if(!submitAfter){
-        toast("Draft saved: "+savedName);
+      // a correction to a plan under review, or to an approved one, is not a draft
+      // -- saying "Draft saved" about it suggested the plan had been sent backwards
+      var wasCorrection = d.reviewed_in_place || d.edited_after_approval;
+      if(!submitAfter || wasCorrection){
+        toast(wasCorrection
+          ? (savedName+" corrected"+(d.edited_after_approval?" (approved plan updated)":
+             " — still with its reviewers"))
+          : ("Draft saved: "+savedName));
         mpCloseForm();
         if(typeof MPF.onSaved==="function") MPF.onSaved(savedName);
         return;
@@ -998,6 +1004,7 @@
     var dlg=el("mp-formdialog"); if(!dlg) return;
     MPF.editing=existingName||null;
     MPF.rows=[]; MPF.catalog=[]; MPF.filter=""; MPF.clash=null; MPF.seedTouch=false;
+    MPF.state=null;   // the workflow state of the plan being edited, once known
     MPF.onSaved=onSaved||loadMasterPlans;
     dlg.innerHTML=mpFormShell();
     dlg.style.display="flex";
@@ -1037,10 +1044,31 @@
       findBox.onkeydown=function(ev){ if(ev.key==="Escape"){ this.value=""; MPF.filter=""; mpRenderRows(); } };
     }
     var saveBtn=el("mpf-save"), submitBtn=el("mpf-submit");
+    // SUBMITTING IS ONLY THE RAISER'S MOVE, AND ONLY FROM DRAFT OR REJECTED.
+    // A consultant or the GM correcting a plan already under review is editing it
+    // in place -- the server keeps the workflow state exactly where it is and does
+    // not send it back to the raiser. Offering "save & submit" there produced a
+    // save followed by a refusal ("only a Draft or Rejected master plan can be
+    // submitted"), which read as the correction having failed when it had saved.
+    var mpCanSubmit=function(){
+      return !MPF.editing || MPF.state==="Draft" || MPF.state==="Rejected";
+    };
+    var mpShapeButtons=function(){
+      if(mpCanSubmit()){
+        submitBtn.style.display="";
+        saveBtn.textContent="Save draft";
+        return;
+      }
+      submitBtn.style.display="none";
+      saveBtn.textContent = (MPF.state==="Approved") ? "Save correction" : "Save correction for review";
+      saveBtn.title = (MPF.state==="Approved")
+        ? "This plan is approved. The correction is written straight to it."
+        : "This plan is with its reviewers. The correction is saved in place and it stays at "+MPF.state+".";
+    };
     var mpSaveState=function(){
       var bad=!!MPF.clash;
       saveBtn.disabled=bad; submitBtn.disabled=bad;
-      saveBtn.title = bad ? "This period already has a master plan" : "";
+      saveBtn.title = bad ? "This period already has a master plan" : (saveBtn.title||"");
     };
     saveBtn.onclick=function(){ mpDoSave(false, saveBtn, submitBtn); };
     submitBtn.onclick=function(){ mpDoSave(true, saveBtn, submitBtn); };
@@ -1049,6 +1077,11 @@
       call({action:"get", name:existingName}, "wm_masterplan").then(function(d){
         if(d.error){ toast(d.error); shut(); return; }
         var p=d.plan;
+        MPF.state=p.workflow_state;
+        mpShapeButtons();
+        el("mpf-title").textContent =
+          mpCanSubmit() ? ("Edit "+existingName)
+                        : ("Correct "+existingName+" · "+(p.workflow_state||""));
         fs.value=p.farm;
         el("mpf-from").value=isodate(p.period_from);
         el("mpf-to").value=isodate(p.period_to);
