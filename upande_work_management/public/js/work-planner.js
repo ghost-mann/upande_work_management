@@ -2,6 +2,33 @@
   var API = "/api/method/wm_planner";
   var ST = { farm:null, picked:{}, task:null, taskInfo:null, tasks:[], blocks:[], roles:null };
 
+  // Frappe answers a validation failure with HTTP 417 and puts the reason in the
+  // body -- as _server_messages, or exception, or exc_type. Throwing "HTTP 417" and
+  // letting the caller print "Could not save" discarded exactly the sentence the
+  // person needed, and left every refusal looking like the same anonymous failure.
+  function serverMessage(body, status){
+    var j=null;
+    try{ j=JSON.parse(body); }catch(e){}
+    if(j){
+      var msgs=[];
+      try{
+        (JSON.parse(j._server_messages||"[]")).forEach(function(m){
+          var o=null; try{ o=JSON.parse(m); }catch(e2){ o={message:m}; }
+          if(o && o.message) msgs.push(String(o.message));
+        });
+      }catch(e3){}
+      if(msgs.length) return msgs.join(" ").replace(/<[^>]+>/g,"").trim();
+      if(j.message && typeof j.message==="string") return j.message;
+      if(j.exception) return String(j.exception).replace(/^[\w.]+Error:\s*/,"").trim();
+      if(j.exc_type) return String(j.exc_type);
+    }
+    return "The server refused it (HTTP "+status+")";
+  }
+  function readOr(r){
+    if(r.ok) return r.json();
+    return r.text().then(function(t){ throw new Error(serverMessage(t, r.status)); });
+  }
+
   function call(args, method){
     var ep = "/api/method/" + (method || "wm_planner");
     var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1,
@@ -13,15 +40,13 @@
     if(!isWrite){
       return fetch(ep + "?" + p.toString(), {
         method: "GET", headers: { "Accept": "application/json" }, credentials: "same-origin"
-      }).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-        .then(function(j){ return j.message || {}; });
+      }).then(readOr).then(function(j){ return j.message || {}; });
     }
     return fetch(ep, {
       method: "POST",
       headers: { "Content-Type":"application/x-www-form-urlencoded", "X-Frappe-CSRF-Token":token, "Accept":"application/json" },
       body: p.toString(), credentials: "same-origin"
-    }).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-      .then(function(j){ return j.message || {}; });
+    }).then(readOr).then(function(j){ return j.message || {}; });
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function fmtRate(n){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{maximumFractionDigits:4}); }
@@ -245,7 +270,7 @@
       method:"POST",
       headers:{ "Content-Type":"application/x-www-form-urlencoded", "X-Frappe-CSRF-Token":token, "Accept":"application/json" },
       body:p.toString(), credentials:"same-origin"
-    }).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(function(j){ return j.message||{}; });
+    }).then(readOr).then(function(j){ return j.message||{}; });
   }
   function openCloseDialog(plan, onDone){
     var isGm = ST.roles && ST.roles.is_gm;
@@ -997,8 +1022,10 @@
         toast(savedName+" saved and submitted for review");
         mpCloseForm();
         if(typeof MPF.onSaved==="function") MPF.onSaved(savedName);
-      }).catch(function(){ toast("Saved as Draft, but the submit call failed"); saveBtn.disabled=false; submitBtn.disabled=false; });
-    }).catch(function(){ toast("Could not save"); saveBtn.disabled=false; submitBtn.disabled=false; });
+      }).catch(function(e){ toast("Saved, but the submit failed: "+(e&&e.message?e.message:"unknown"));
+                            saveBtn.disabled=false; submitBtn.disabled=false; });
+    }).catch(function(e){ toast(e && e.message ? e.message : "Could not save");
+                          saveBtn.disabled=false; submitBtn.disabled=false; });
   }
   function mpOpenForm(existingName, onSaved){
     var dlg=el("mp-formdialog"); if(!dlg) return;
@@ -1666,7 +1693,7 @@
       if(d.error){ toast("Error: "+d.error); return; }
       toast(name+" → "+d.workflow_state);
       loadAppr();
-    }).catch(function(e){ toast("Action failed"); });
+    }).catch(function(e){ toast(e && e.message ? e.message : "Action failed"); });
   }
 
 
