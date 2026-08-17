@@ -2967,6 +2967,122 @@ def wm_dashboard(**kwargs):
         out["person"] = kpwho
         out["window"] = {"from": kpfrom, "to": kpto}
 
+    elif action == "plan_completion":
+        # EVERY MASTER PLAN IN A DATE RANGE, AND HOW MUCH OF IT ACTUALLY HAPPENED.
+        # Three numbers describe a plan and they are routinely confused: what was
+        # PLANNED for (the plan's own value), what was REQUESTED against it, and what
+        # was SPENT delivering it. A plan can be fully requested and nothing done, or
+        # under-requested and fully delivered; only holding the three apart says which.
+        pc_from = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -56)
+        pc_to = frappe.form_dict.get("to_date") or frappe.utils.today()
+        pc_farm = frappe.form_dict.get("farm") or ""
+        pc_args = {"a": pc_from, "b": pc_to}
+        pc_where = ""
+        if pc_farm:
+            pc_where = " AND farm = %(fm)s"
+            pc_args["fm"] = pc_farm
+        pc_out = []
+        for pc in frappe.db.sql("""
+            SELECT name, farm, period_from, period_to, workflow_state, total_cost, total_man_days
+            FROM `tabWork Management Master Plan`
+            WHERE period_from <= %(b)s AND period_to >= %(a)s""" + pc_where + """
+            ORDER BY period_from DESC, farm
+        """, pc_args, as_dict=True):
+            # WHICH TASKS THE PLAN ACTUALLY BUDGETS. Requested is counted only over
+            # these, so it is comparable with the plan's own value; work requested for a
+            # task the plan does not carry is real and is reported separately rather
+            # than folded in, where it would make requested exceed planned for a reason
+            # that has nothing to do with over-requesting.
+            pc_tasks = frappe.db.get_all("Work Management Master Plan Activity",
+                filters={"parent": pc.name, "consultant_state": "OK"}, pluck="task") or ["__none__"]
+            # planned value is the plan's own figure; requested is what the planner drew
+            # against it; spent is confirmed actuals -- all over the SAME contained
+            # requests, the rule the planner enforces when a request is raised
+            pc_req = frappe.db.sql("""
+                SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c, COUNT(*) n
+                FROM `tabWork Management Planner`
+                WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                  AND task IN %(tk)s
+            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
+                  "tk": pc_tasks}, as_dict=True)[0]
+            pc_off = frappe.db.sql("""
+                SELECT COALESCE(SUM(total_cost),0) c, COUNT(*) n
+                FROM `tabWork Management Planner`
+                WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                  AND task NOT IN %(tk)s
+            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
+                  "tk": pc_tasks}, as_dict=True)[0]
+            pc_act = frappe.db.sql("""
+                SELECT COALESCE(SUM(ac.total_actual_qty),0) q,
+                       COALESCE(SUM(ac.total_payment),0) c, COUNT(*) n
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                  AND pr.task IN %(tk)s
+                  AND ac.workflow_state = 'CONFIRMED'
+            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
+                  "tk": pc_tasks}, as_dict=True)[0]
+            pc_paid = frappe.db.sql("""
+                SELECT COALESCE(SUM(we.amount),0) c
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                  AND pr.task IN %(tk)s
+                  AND IFNULL(we.paid,0) = 1
+            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
+                  "tk": pc_tasks}, as_dict=True)[0]
+            # quantity completion is summed per activity so a line delivered twice over
+            # cannot mask one never started -- each line contributes at most its own share
+            pc_pq = 0.0
+            pc_dq = 0.0
+            for pc_a in frappe.db.get_all("Work Management Master Plan Activity",
+                    filters={"parent": pc.name, "consultant_state": "OK"},
+                    fields=["task", "work_qty"]):
+                pc_bq = frappe.utils.flt(pc_a.work_qty)
+                if pc_bq <= 0:
+                    continue
+                pc_ad = frappe.db.sql("""
+                    SELECT COALESCE(SUM(ac.total_actual_qty),0) q
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                    INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                    WHERE pr.farm = %(f)s AND pr.task = %(t)s
+                      AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                      AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                      AND ac.workflow_state = 'CONFIRMED'
+                """, {"f": pc.farm, "t": pc_a.task,
+                      "pfrom": pc.period_from, "pto": pc.period_to}, as_dict=True)[0]
+                pc_dqi = frappe.utils.flt(pc_ad.q)
+                pc_pq = pc_pq + pc_bq
+                pc_dq = pc_dq + (pc_bq if pc_dqi > pc_bq else pc_dqi)
+            pc_val = frappe.utils.flt(pc.total_cost, 2)
+            pc_out.append({
+                "plan": pc.name, "farm": pc.farm, "state": pc.workflow_state,
+                "period_from": str(pc.period_from), "period_to": str(pc.period_to),
+                "week": str(frappe.utils.get_first_day_of_week(pc.period_from)),
+                "planned_value": pc_val,
+                "requested_value": frappe.utils.flt(pc_req.c, 2),
+                "requested_count": frappe.utils.cint(pc_req.n),
+                "earned_value": frappe.utils.flt(pc_act.c, 2),
+                "spent_value": frappe.utils.flt(pc_paid.c, 2),
+                "actuals_count": frappe.utils.cint(pc_act.n),
+                "target_qty": pc_pq, "done_qty": pc_dq,
+                "completion": frappe.utils.flt(pc_dq / pc_pq * 100, 1) if pc_pq > 0 else 0,
+                "requested_pct": frappe.utils.flt(frappe.utils.flt(pc_req.c) / pc_val * 100, 1) if pc_val > 0 else 0,
+                "offplan_value": frappe.utils.flt(pc_off.c, 2),
+                "offplan_count": frappe.utils.cint(pc_off.n),
+            })
+        out["plans"] = pc_out
+        out["from_date"] = str(pc_from)
+        out["to_date"] = str(pc_to)
+
     elif action == "stale_actuals":
         # WORK RECORDED AND NEVER SENT. A Draft actual is the working document for its
         # period: it collects each day's cells and goes in when the period's target is
@@ -3053,7 +3169,7 @@ def wm_dashboard(**kwargs):
                 SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
                 FROM `tabWork Management Planner`
                 WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
-                  AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
                 GROUP BY task
             """, {"f": bm_f, "pfrom": bm_p.period_from, "pto": bm_p.period_to}, as_dict=True):
                 bm_used[bm_u.task] = bm_u
@@ -3061,14 +3177,19 @@ def wm_dashboard(**kwargs):
             # a week that is properly planned on the Monday has nothing left to request,
             # which says nothing at all about how the week is going. Confirmed actuals
             # answer that. Same overlap rule as above, so the two sit on one bar.
+            # reached through the request, so delivered and planned describe one set of
+            # work -- see the same query in wm_masterplan's headroom
             bm_done = {}
             for bm_n in frappe.db.sql("""
-                SELECT task, COALESCE(SUM(total_actual_qty),0) q,
-                       COALESCE(SUM(total_payment),0) c
-                FROM `tabWork Management Actuals`
-                WHERE farm = %(f)s AND workflow_state = 'CONFIRMED'
-                  AND from_date <= %(pto)s AND to_date >= %(pfrom)s
-                GROUP BY task
+                SELECT pr.task task, COALESCE(SUM(ac.total_actual_qty),0) q,
+                       COALESCE(SUM(ac.total_payment),0) c
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                  AND ac.workflow_state = 'CONFIRMED'
+                GROUP BY pr.task
             """, {"f": bm_f, "pfrom": bm_p.period_from, "pto": bm_p.period_to}, as_dict=True):
                 bm_done[bm_n.task] = bm_n
             # only money rolls up to the farm: quantities are in different units --

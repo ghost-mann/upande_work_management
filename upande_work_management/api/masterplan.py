@@ -62,6 +62,20 @@ def wm_masterplan(**kwargs):
     # named in Settings, as opposed to IS_CONSULTANT below which also sweeps in every
     # System Manager so an administrator can exercise the review path
     MP_LISTED_CONSULTANT = 1 if frappe.session.user.lower() in mp_cons else 0
+
+    # WHO MAY CORRECT AN APPROVED PLAN. Named in Settings the same way consultants
+    # are. An empty list means nobody -- this stays off until someone is named -- and
+    # System Manager is deliberately NOT swept in the way IS_CONSULTANT does it: an
+    # administrator who must intervene already has the Desk form, and this list
+    # should mean exactly what it says.
+    mp_post_raw = frappe.db.get_single_value("Work Management Settings",
+                                             "master_plan_post_approval_editors") or ""
+    mp_post = []
+    for pu in str(mp_post_raw).split(","):
+        pv = pu.strip().lower()
+        if pv:
+            mp_post.append(pv)
+    CAN_EDIT_APPROVED = 1 if frappe.session.user.lower() in mp_post else 0
     IS_CONSULTANT = 1 if (MP_LISTED_CONSULTANT or "System Manager" in mp_roles) else 0
 
     # RAISING a master plan is the farm managers', the HR head's and the GM's alone.
@@ -79,6 +93,7 @@ def wm_masterplan(**kwargs):
         out["can_create"] = CAN_CREATE
         out["can_gm_approve"] = CAN_GM
         out["is_consultant"] = IS_CONSULTANT
+        out["can_edit_approved"] = CAN_EDIT_APPROVED
         out["farms"] = [f.name for f in frappe.db.get_all("Farm", fields=["name"], order_by="name")]
         out["counts"] = frappe.db.sql("""
             SELECT workflow_state st, COUNT(*) n
@@ -180,11 +195,17 @@ def wm_masterplan(**kwargs):
                                    "cost_at_live_rate": frappe.utils.flt(
                                        frappe.utils.flt(da.get("work_qty")) * dr_r, 2)})
                 out["rate_drift"] = dr
+                # an approved plan is editable only by the accounts named in Settings,
+                # and the correction runs down the same in-place path a reviewer uses
+                out["edit_after_approval"] = 1 if (
+                    CAN_EDIT_APPROVED and mp.workflow_state == "Approved") else 0
                 out["can_edit"] = 1 if (
                     (CAN_EDIT and mp.workflow_state in ("Draft", "Rejected"))
                     or (IS_CONSULTANT and mp.workflow_state == "Pending Consultant")
-                    or (CAN_GM and mp.workflow_state == "Pending GM")) else 0
-                out["edit_is_review"] = 1 if (mp.workflow_state in ("Pending Consultant", "Pending GM")) else 0
+                    or (CAN_GM and mp.workflow_state == "Pending GM")
+                    or out["edit_after_approval"]) else 0
+                out["edit_is_review"] = 1 if (mp.workflow_state in (
+                    "Pending Consultant", "Pending GM", "Approved")) else 0
                 out["can_decide"] = 1 if ((IS_CONSULTANT or CAN_GM) and mp.workflow_state == "Pending Consultant") else 0
                 gs_pending = len([a for a in out["activities"] if a.consultant_state == "Pending"])
                 gs_edit = len([a for a in out["activities"] if a.consultant_state == "Edit work"])
@@ -228,6 +249,7 @@ def wm_masterplan(**kwargs):
                 sv_err = "A master plan needs at least one activity"
             sv_state = None
             sv_review = 0
+            sv_post = 0
             if not sv_err and sv_name:
                 sv_state = frappe.db.get_value("Work Management Master Plan", sv_name, "workflow_state")
                 if sv_state in ("Draft", "Rejected"):
@@ -246,6 +268,16 @@ def wm_masterplan(**kwargs):
                     else:
                         sv_err = ("This plan is with the general manager. Only the GM can "
                                   "edit it at this stage.")
+                elif sv_state == "Approved":
+                    if CAN_EDIT_APPROVED:
+                        # the GM correcting a plan he has already approved. Reuse the
+                        # in-place review path so consultant decisions and the original
+                        # figures survive, and leave workflow_state alone so the planner
+                        # never loses its caps mid-edit.
+                        sv_review = 1
+                        sv_post = 1
+                    else:
+                        sv_err = "An approved master plan can no longer be edited"
                 else:
                     sv_err = "An " + str(sv_state).lower() + " master plan can no longer be edited"
             elif not sv_err and not sv_name and not CAN_CREATE:
@@ -306,6 +338,17 @@ def wm_masterplan(**kwargs):
                                     "work_qty", "cost", "consultant_state",
                                     "consultant_by", "consultant_on"]):
                         sv_snap[sx.task] = sx
+                sv_cut = None
+                sv_old = None
+                if sv_post:
+                    sv_old = frappe.db.get_value("Work Management Master Plan", sv_name,
+                        ["farm", "period_from", "period_to"], as_dict=True)
+                    if str(sv_farm) != str(sv_old.farm):
+                        # a different farm is a different budget, and every weekly plan
+                        # holding this one belongs to the farm it was approved for
+                        sv_cut = ("The farm on an approved master plan cannot be "
+                                  "changed: the weekly plans holding this budget belong "
+                                  "to " + str(sv_old.farm) + ".")
                 if sv_name:
                     d = frappe.get_doc("Work Management Master Plan", sv_name)
                     d.set("activities", [])
@@ -320,6 +363,7 @@ def wm_masterplan(**kwargs):
                 if not d.company:
                     d.company = frappe.db.get_single_value("Work Management Settings", "default_company") \
                                 or frappe.defaults.get_user_default("Company")
+                sv_new = {}
                 sv_md = 0
                 sv_cost = 0
                 sv_changed = []
@@ -369,23 +413,97 @@ def wm_masterplan(**kwargs):
                                           str(frappe.utils.flt(sv_prev.work_qty)) + " to " + str(sv_qty))
                     sv_md = sv_md + frappe.utils.flt(sr.get("man_days"))
                     sv_cost = sv_cost + frappe.utils.flt(sv_qty * sv_rate, 2)
-                d.total_activities = len(d.activities)
-                d.total_man_days = sv_md
-                d.total_cost = sv_cost
-                d.flags.ignore_permissions = True
-                d.save(ignore_permissions=True)
-                if sv_review and sv_changed:
-                    # the raiser is never asked to re-submit a reviewer's correction, so
-                    # the change has to be legible on the document itself
-                    frappe.get_doc("Work Management Master Plan", d.name).add_comment(
-                        "Comment", "Corrected during review by " + str(frappe.session.user) +
-                        " (" + str(sv_state) + "): " + "; ".join(sv_changed))
-                frappe.db.commit()
-                out["name"] = d.name
-                out["reviewed_in_place"] = sv_review
-                out["changed"] = sv_changed
-                out["totals"] = {"activities": d.total_activities,
-                                 "man_days": d.total_man_days, "cost": d.total_cost}
+                    sv_new[sr.get("task")] = {"q": sv_qty,
+                                              "c": frappe.utils.flt(sv_qty * sv_rate, 2)}
+                # AN APPROVED LINE IS BUDGET THE PLANNER IS ALREADY SPENDING.
+                # Raising one is always safe; cutting one below what weekly plans
+                # already hold is not -- the planner would start refusing work that was
+                # legitimately planned, pointing at a ceiling rather than at the edit
+                # that moved it. Removing a line is a cut to zero and goes through here
+                # too, and narrowing the period strands rows the same way.
+                # Mirrors check_cut_allowed() in upande_work_management/master_plan.py,
+                # which is unit-tested. Keep the two in step.
+                if sv_post and not sv_cut:
+                    for sv_t in sv_snap:
+                        sv_use = frappe.db.sql("""
+                            SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                            FROM `tabWork Management Planner`
+                            WHERE task = %(t)s AND farm = %(f)s
+                              AND IFNULL(workflow_state,'') != 'Rejected'
+                              AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                        """, {"t": sv_t, "f": sv_farm,
+                              "pfrom": sv_old.period_from, "pto": sv_old.period_to},
+                            as_dict=True)[0]
+                        sv_pq = frappe.utils.flt(sv_use.q)
+                        sv_pc = frappe.utils.flt(sv_use.c)
+                        sv_to_q = frappe.utils.flt((sv_new.get(sv_t) or {}).get("q"))
+                        sv_to_c = frappe.utils.flt((sv_new.get(sv_t) or {}).get("c"))
+                        if sv_to_q < sv_pq - TOLERANCE:
+                            sv_cut = (str(sv_t) + " is already planned at " +
+                                      "{0:,.2f}".format(sv_pq) + " and cannot be cut to " +
+                                      "{0:,.2f}".format(sv_to_q) + ".")
+                        elif sv_to_c < sv_pc - TOLERANCE:
+                            sv_cut = (str(sv_t) + " already has KES " +
+                                      "{0:,.2f}".format(sv_pc) + " planned against it and "
+                                      "cannot be cut to KES " + "{0:,.2f}".format(sv_to_c) + ".")
+                        if sv_cut:
+                            sv_hold = frappe.db.sql("""
+                                SELECT name FROM `tabWork Management Planner`
+                                WHERE task = %(t)s AND farm = %(f)s
+                                  AND IFNULL(workflow_state,'') != 'Rejected'
+                                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                                ORDER BY creation
+                            """, {"t": sv_t, "f": sv_farm,
+                                  "pfrom": sv_old.period_from, "pto": sv_old.period_to},
+                                as_dict=True)
+                            if sv_hold:
+                                sv_cut = sv_cut + " Held by " + ", ".join(
+                                    [x.name for x in sv_hold]) + "."
+                            break
+                    # narrowing the period strands every row that falls outside the new
+                    # window: its budget silently disappears from under it
+                    if not sv_cut and (str(sv_from) > str(sv_old.period_from) or
+                                       str(sv_to) < str(sv_old.period_to)):
+                        sv_lost = frappe.db.sql("""
+                            SELECT name, from_date, to_date FROM `tabWork Management Planner`
+                            WHERE farm = %(f)s AND task IN %(ts)s
+                              AND IFNULL(workflow_state,'') != 'Rejected'
+                              AND from_date <= %(opto)s AND to_date >= %(opfrom)s
+                              AND (from_date > %(pto)s OR to_date < %(pfrom)s)
+                            ORDER BY creation
+                        """, {"f": sv_farm, "ts": tuple(sv_snap.keys()) or ("",),
+                              "opfrom": sv_old.period_from, "opto": sv_old.period_to,
+                              "pfrom": sv_from, "pto": sv_to}, as_dict=True)
+                        if sv_lost:
+                            sv_cut = ("Shortening the period would strand " +
+                                      str(len(sv_lost)) + " weekly plan(s) that hold this "
+                                      "budget: " + ", ".join([x.name for x in sv_lost]) + ".")
+                if sv_cut:
+                    out["error"] = sv_cut
+                else:
+                    d.total_activities = len(d.activities)
+                    d.total_man_days = sv_md
+                    d.total_cost = sv_cost
+                    if sv_post:
+                        d.last_post_approval_edit_by = frappe.session.user
+                        d.last_post_approval_edit_on = frappe.utils.now()
+                    d.flags.ignore_permissions = True
+                    d.save(ignore_permissions=True)
+                    if sv_review and sv_changed:
+                        # the raiser is never asked to re-submit a reviewer's correction, so
+                        # the change has to be legible on the document itself
+                        frappe.get_doc("Work Management Master Plan", d.name).add_comment(
+                            "Comment", ("Edited after approval by " if sv_post else
+                                        "Corrected during review by ") +
+                            str(frappe.session.user) +
+                            " (" + str(sv_state) + "): " + "; ".join(sv_changed))
+                    frappe.db.commit()
+                    out["name"] = d.name
+                    out["reviewed_in_place"] = sv_review
+                    out["edited_after_approval"] = sv_post
+                    out["changed"] = sv_changed
+                    out["totals"] = {"activities": d.total_activities,
+                                     "man_days": d.total_man_days, "cost": d.total_cost}
 
     elif action == "submit_for_review":
         sr_name = frappe.form_dict.get("name")
@@ -766,14 +884,22 @@ def wm_masterplan(**kwargs):
                 # which says nothing about how the week is going. Confirmed actuals answer
                 # the other question. One grouped read, same overlap rule as the planner
                 # consumption above so the two figures are comparable.
+                # Delivered is tied to the SAME requests that count as planned -- reached
+                # through the request rather than matched on dates -- so the two ends of
+                # the bar always describe one set of work. Matching actuals on their own
+                # dates would let a stray actual count against a plan whose request does
+                # not, and the bar would show delivery of work nobody planned here.
                 hd_done = {}
                 for hd_d in frappe.db.sql("""
-                    SELECT task, COALESCE(SUM(total_actual_qty),0) q,
-                           COALESCE(SUM(total_payment),0) c
-                    FROM `tabWork Management Actuals`
-                    WHERE farm = %(f)s AND workflow_state = 'CONFIRMED'
-                      AND from_date <= %(pto)s AND to_date >= %(pfrom)s
-                    GROUP BY task
+                    SELECT pr.task task, COALESCE(SUM(ac.total_actual_qty),0) q,
+                           COALESCE(SUM(ac.total_payment),0) c
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                    INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                    WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                      AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                      AND ac.workflow_state = 'CONFIRMED'
+                    GROUP BY pr.task
                 """, {"f": hd_farm, "pfrom": hd.period_from, "pto": hd.period_to}, as_dict=True):
                     hd_done[hd_d.task] = hd_d
                 hd_out = []
@@ -783,7 +909,7 @@ def wm_masterplan(**kwargs):
                         FROM `tabWork Management Planner`
                         WHERE task = %(t)s AND farm = %(f)s
                           AND IFNULL(workflow_state,'') != 'Rejected'
-                          AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                          AND from_date >= %(pfrom)s AND to_date <= %(pto)s
                     """, {"t": ha.task, "f": hd_farm,
                           "pfrom": hd.period_from, "pto": hd.period_to}, as_dict=True)[0]
                     hd_pq = frappe.utils.flt(hd_used.q)
@@ -810,6 +936,21 @@ def wm_masterplan(**kwargs):
                                    "exhausted": 1 if (hd_rq <= TOLERANCE or hd_rc <= TOLERANCE) else 0})
                 frappe.db.commit()
                 out["activities"] = hd_out
+                # REQUESTS THAT STRADDLE THE PERIOD. A request counts against the plan it
+                # sits wholly inside, which is the rule the planner enforces when one is
+                # raised. Older requests predate that rule and can run across a boundary;
+                # they used to be charged IN FULL to every period they touched, so a
+                # month-long request emptied two weekly budgets at once and a plan that
+                # had not started read as used up. They are not counted here -- but they
+                # are real work in these dates, so they are reported rather than dropped.
+                out["spanning"] = frappe.db.sql("""
+                    SELECT name, task, quantity, total_cost, from_date, to_date, workflow_state
+                    FROM `tabWork Management Planner`
+                    WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
+                      AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                      AND NOT (from_date >= %(pfrom)s AND to_date <= %(pto)s)
+                    ORDER BY from_date
+                """, {"f": hd_farm, "pfrom": hd.period_from, "pto": hd.period_to}, as_dict=True)
 
     elif action == "consumers":
         # Which plans are holding a line's budget. Without this, "why can't I plan
@@ -829,11 +970,77 @@ def wm_masterplan(**kwargs):
                 FROM `tabWork Management Planner`
                 WHERE task = %(t)s AND farm = %(f)s
                   AND IFNULL(workflow_state,'') != 'Rejected'
-                  AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
                 ORDER BY creation
             """, {"t": cs.task, "f": cs_mp.farm,
                   "pfrom": cs_mp.period_from, "pto": cs_mp.period_to}, as_dict=True)
             out["stale_drafts"] = [p.name for p in out["plans"] if p.workflow_state == "Draft"]
+
+            # THE WHOLE CHAIN, NOT JUST THE FIRST LINK. A budget line is only the start
+            # of the story: it is requested, then crewed, then worked, then paid, and
+            # until now the master plan could show only the requests. Each stage is
+            # attached to the request it came from, so one activity opens into the
+            # pipeline that actually delivered it.
+            for cs_p in out["plans"]:
+                cs_p["assignments"] = frappe.db.sql("""
+                    SELECT name, from_date, to_date, assigned_count, planned_people,
+                           workflow_state, block_section
+                    FROM `tabWork Management Assigner`
+                    WHERE planner_request = %(p)s ORDER BY from_date, creation
+                """, {"p": cs_p.name}, as_dict=True)
+                cs_p["actuals"] = frappe.db.sql("""
+                    SELECT ac.name, ac.assignment, ac.from_date, ac.to_date,
+                           ac.total_actual_qty, ac.total_payment, ac.actual_people,
+                           ac.payroll_people, ac.workflow_state, ac.entered_by,
+                           ac.custom_closed_early, ac.custom_balance_qty
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                    WHERE asg.planner_request = %(p)s
+                    ORDER BY ac.from_date, ac.creation
+                """, {"p": cs_p.name}, as_dict=True)
+                # money that has actually left the business, as opposed to money earned
+                cs_pd = frappe.db.sql("""
+                    SELECT COALESCE(SUM(we.amount),0) paid, COUNT(DISTINCT we.employee) people
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                    WHERE asg.planner_request = %(p)s AND IFNULL(we.paid,0) = 1
+                """, {"p": cs_p.name}, as_dict=True)
+                cs_p["paid_amount"] = frappe.utils.flt(cs_pd[0].paid, 2) if cs_pd else 0
+                cs_p["paid_people"] = frappe.utils.cint(cs_pd[0].people) if cs_pd else 0
+                cs_p["done_qty"] = 0
+                cs_p["done_cost"] = 0
+                cs_p["recorded_qty"] = 0
+                for cs_a in cs_p["actuals"]:
+                    cs_p["recorded_qty"] = cs_p["recorded_qty"] + frappe.utils.flt(cs_a.total_actual_qty)
+                    if cs_a.workflow_state == "CONFIRMED":
+                        cs_p["done_qty"] = cs_p["done_qty"] + frappe.utils.flt(cs_a.total_actual_qty)
+                        cs_p["done_cost"] = cs_p["done_cost"] + frappe.utils.flt(cs_a.total_payment)
+
+            # the line's own roll-up across every stage, so the header can state the
+            # pipeline in one row without the client re-adding it
+            cs_stage = {"requested_qty": 0, "requested_cost": 0, "assignments": 0,
+                        "assigned_people": 0, "actuals": 0, "recorded_qty": 0,
+                        "done_qty": 0, "done_cost": 0, "paid_amount": 0, "paid_people": 0,
+                        "drafts": 0, "awaiting_actuals": 0}
+            for cs_p in out["plans"]:
+                cs_stage["requested_qty"] = cs_stage["requested_qty"] + frappe.utils.flt(cs_p.quantity)
+                cs_stage["requested_cost"] = cs_stage["requested_cost"] + frappe.utils.flt(cs_p.total_cost)
+                cs_stage["assignments"] = cs_stage["assignments"] + len(cs_p["assignments"])
+                for cs_g in cs_p["assignments"]:
+                    cs_stage["assigned_people"] = cs_stage["assigned_people"] + frappe.utils.cint(cs_g.assigned_count)
+                cs_stage["actuals"] = cs_stage["actuals"] + len(cs_p["actuals"])
+                cs_stage["recorded_qty"] = cs_stage["recorded_qty"] + cs_p["recorded_qty"]
+                cs_stage["done_qty"] = cs_stage["done_qty"] + cs_p["done_qty"]
+                cs_stage["done_cost"] = cs_stage["done_cost"] + cs_p["done_cost"]
+                cs_stage["paid_amount"] = cs_stage["paid_amount"] + cs_p["paid_amount"]
+                cs_stage["paid_people"] = cs_stage["paid_people"] + cs_p["paid_people"]
+                for cs_a in cs_p["actuals"]:
+                    if cs_a.workflow_state == "Draft":
+                        cs_stage["drafts"] = cs_stage["drafts"] + 1
+                if not cs_p["actuals"]:
+                    cs_stage["awaiting_actuals"] = cs_stage["awaiting_actuals"] + len(cs_p["assignments"])
+            out["stages"] = cs_stage
 
     elif action == "pickable_tasks":
         # Every task the farm's project could put on a master plan, with the rate

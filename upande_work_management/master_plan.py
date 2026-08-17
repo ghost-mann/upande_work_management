@@ -57,3 +57,38 @@ def check_plan_allowed(work_qty, cost, planned_qty, planned_cost, new_qty, new_c
 			"this plan costs {2:,.2f}.".format(h["remaining_cost"], float(cost or 0), new_cost)
 		)
 	return True, None
+
+
+def check_cut_allowed(new_qty, new_cost, planned_qty, planned_cost, task=None):
+	"""May an approved line be moved down to ``new_qty`` / ``new_cost``?
+
+	An approved line is not a number on a form, it is budget the weekly planner
+	has already been spending against. Raising it is always safe. Lowering it
+	below what is already committed is not: the planner would start refusing
+	work that was legitimately planned, with an error pointing at a ceiling
+	rather than at the edit that moved it.
+
+	Removing a line entirely is a cut to zero and goes through here too.
+
+	Returns ``(allowed, reason)``. The reason names the task and both figures,
+	because "you cannot do that" tells whoever hit it nothing about what to do
+	next.
+	"""
+	new_qty = float(new_qty or 0)
+	new_cost = float(new_cost or 0)
+	planned_qty = float(planned_qty or 0)
+	planned_cost = float(planned_cost or 0)
+	what = str(task) if task else "This activity"
+
+	if new_qty < planned_qty - TOLERANCE:
+		return False, (
+			"{0} is already planned at {1:,.2f} and cannot be cut to {2:,.2f}.".format(
+				what, planned_qty, new_qty
+			)
+		)
+	if new_cost < planned_cost - TOLERANCE:
+		return False, (
+			"{0} already has KES {1:,.2f} planned against it and cannot be cut "
+			"to KES {2:,.2f}.".format(what, planned_cost, new_cost)
+		)
+	return True, None

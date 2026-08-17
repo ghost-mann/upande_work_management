@@ -177,6 +177,48 @@
 #wpp .ggp-row:disabled:hover{background:none}
 #wpp .ggp-over{margin-top:10px;padding:9px 13px;border:1px solid #fecaca;background:#fef2f2;
   border-radius:var(--rs);font-size:11.5px;color:#7f1d1d;line-height:1.45}
+/* ── activity pipeline ─────────────────────────────────────────────────────
+   One budget line, traced through every stage that delivers it. The rail's
+   three quantity stages share one scale, so the step down from stage to stage
+   IS the attrition -- where work stops being work. Crew and money are counted
+   in their own units and deliberately get no bar: drawing one would invite a
+   comparison that means nothing. */
+#wpp .mpp{padding:16px 18px}
+#wpp .mpp-rail{display:flex;gap:0;flex-wrap:wrap;border:1px solid var(--line);
+  border-radius:var(--r);background:#fff;box-shadow:var(--sh);overflow:hidden;margin-bottom:14px}
+#wpp .mpp-st{flex:1;min-width:132px;padding:12px 14px;border-right:1px solid var(--faint);position:relative}
+#wpp .mpp-st:last-child{border-right:none}
+#wpp .mpp-st::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--sc)}
+#wpp .mpp-st .sk{font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:700}
+#wpp .mpp-st .sv{font-size:17px;font-weight:700;letter-spacing:-.02em;margin-top:5px;
+  font-variant-numeric:tabular-nums;line-height:1.15}
+#wpp .mpp-st .su{font-size:10px;color:var(--mute);margin-top:2px}
+#wpp .mpp-st .sb{height:5px;border-radius:999px;background:var(--faint);margin-top:8px;overflow:hidden}
+#wpp .mpp-st .sb i{display:block;height:100%;border-radius:999px;background:var(--sc)}
+#wpp .mpp-st.void .sv{color:#cbd5e1}
+/* the request chain: each request with the crews and records that came off it */
+#wpp .mpp-req{border:1px solid var(--line);border-radius:var(--r);background:#fff;
+  box-shadow:var(--sh);margin-bottom:9px;overflow:hidden}
+#wpp .mpp-reqh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;
+  background:var(--wash);border-bottom:1px solid var(--faint);font-size:11.5px}
+#wpp .mpp-reqh b{font-weight:700}
+#wpp .mpp-reqh .sp{margin-left:auto;color:var(--mute);font-variant-numeric:tabular-nums}
+#wpp .mpp-chain{padding:4px 0}
+#wpp .mpp-link{display:flex;align-items:flex-start;gap:11px;padding:7px 14px 7px 20px;
+  font-size:11px;position:relative}
+#wpp .mpp-link::before{content:"";position:absolute;left:26px;top:0;bottom:0;width:1px;background:var(--line)}
+#wpp .mpp-link:last-child::before{bottom:50%}
+#wpp .mpp-link .dot{width:9px;height:9px;border-radius:50%;background:#fff;flex-shrink:0;
+  margin:4px 0 0 -19px;position:relative;z-index:1;box-shadow:0 0 0 2px var(--dc)}
+#wpp .mpp-link .lk{min-width:74px;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--mute);font-weight:700;padding-top:2px}
+#wpp .mpp-link .lb{flex:1;line-height:1.5}
+#wpp .mpp-link .lb .ref{font-weight:600}
+#wpp .mpp-link .lb .mt{color:var(--mute);font-variant-numeric:tabular-nums}
+#wpp .mpp-none{padding:9px 14px 11px 20px;font-size:11px;color:var(--amber)}
+#wpp .mpp-span{margin:0 0 12px;padding:11px 15px;border:1px solid #fed7aa;background:#fff7ed;
+  border-radius:var(--r);font-size:11.5px;color:#7c2d12;line-height:1.5}
+#wpp .mpp-span b{color:#7c2d12}
 #wpp .sech{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#94a3b8;font-weight:700;margin:22px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--faint)}
 #wpp button.btn{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;background:#fff;border:1px solid var(--line);color:var(--ink);padding:9px 16px;cursor:pointer;margin-top:18px;border-radius:var(--rs);box-shadow:var(--sh);transition:all .12s}
 #wpp button.btn:hover{border-color:var(--ink);transform:translateY(-1px);box-shadow:var(--shm)}
