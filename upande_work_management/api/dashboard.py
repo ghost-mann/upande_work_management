@@ -3083,58 +3083,42 @@ def wm_dashboard(**kwargs):
         out["from_date"] = str(pc_from)
         out["to_date"] = str(pc_to)
 
-    elif action == "budget_meters":
-        # HOW MUCH ROOM IS LEFT, ESTATE-WIDE. The planner answers this one activity at
-        # a time, at the moment someone is already typing a request. A budget quietly
-        # running out is a thing you want to see before then, so the dashboard reports
-        # every farm's live master plan the same way: each activity has two ceilings, a
-        # quantity of work and an amount of money, and either can be the one that stops
-        # the next request.
-        bm_on = frappe.form_dict.get("on_date") or frappe.utils.today()
-        bm_farms = []
-        for bm_f in FARMS:
-            bm_hit = frappe.db.sql("""
-                SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
-                WHERE farm = %(f)s AND workflow_state = 'Approved'
-                  AND period_from <= %(d)s AND period_to >= %(d)s
-                ORDER BY period_from DESC LIMIT 1
-            """, {"f": bm_f, "d": bm_on}, as_dict=True)
-            if not bm_hit:
-                bm_pend = frappe.db.sql("""
-                    SELECT name, workflow_state, period_from, period_to
-                    FROM `tabWork Management Master Plan`
-                    WHERE farm = %(f)s AND workflow_state NOT IN ('Approved','Rejected')
-                      AND period_to >= %(d)s
-                    ORDER BY period_from LIMIT 1
-                """, {"f": bm_f, "d": bm_on}, as_dict=True)
-                bm_farms.append({"farm": bm_f, "master_plan": None, "activities": [],
-                                 "pending_plan": bm_pend[0].name if bm_pend else None,
-                                 "pending_state": bm_pend[0].workflow_state if bm_pend else None,
-                                 "pending_from": str(bm_pend[0].period_from) if bm_pend else None,
-                                 "pending_to": str(bm_pend[0].period_to) if bm_pend else None})
-                continue
-            bm_p = bm_hit[0]
-            # one grouped read per farm rather than one per activity: every live
-            # request inside the plan's period, whatever state it is short of Rejected
-            bm_used = {}
-            for bm_u in frappe.db.sql("""
-                SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+    elif action == "activity_table":
+        # EVERY BUDGET LINE IN A DATE RANGE, ONE ROW EACH. The per-farm cards this
+        # replaces could only be read a farm at a time, so "which activities are behind"
+        # meant scanning four cards and holding them in your head. One flat list sorts
+        # and filters across the estate. Each row carries both measures -- quantity and
+        # money -- because either can be the thing that runs out.
+        at_from = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -28)
+        at_to = frappe.form_dict.get("to_date") or frappe.utils.add_days(frappe.utils.today(), 28)
+        at_farm = frappe.form_dict.get("farm") or ""
+        at_args = {"a": at_from, "b": at_to}
+        at_where = ""
+        if at_farm:
+            at_where = " AND farm = %(fm)s"
+            at_args["fm"] = at_farm
+        at_rows = []
+        for at_p in frappe.db.sql("""
+            SELECT name, farm, period_from, period_to, workflow_state
+            FROM `tabWork Management Master Plan`
+            WHERE period_from <= %(b)s AND period_to >= %(a)s""" + at_where + """
+            ORDER BY period_from DESC, farm
+        """, at_args, as_dict=True):
+            # one grouped read per plan for each of the two stages, rather than one per
+            # line: a range covering several weeks is otherwise hundreds of queries
+            at_req = {}
+            for at_r in frappe.db.sql("""
+                SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c, COUNT(*) n
                 FROM `tabWork Management Planner`
                 WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
                   AND from_date >= %(pfrom)s AND to_date <= %(pto)s
                 GROUP BY task
-            """, {"f": bm_f, "pfrom": bm_p.period_from, "pto": bm_p.period_to}, as_dict=True):
-                bm_used[bm_u.task] = bm_u
-            # WHAT HAS ACTUALLY BEEN DELIVERED. Planned answers "can more be requested";
-            # a week that is properly planned on the Monday has nothing left to request,
-            # which says nothing at all about how the week is going. Confirmed actuals
-            # answer that. Same overlap rule as above, so the two sit on one bar.
-            # reached through the request, so delivered and planned describe one set of
-            # work -- see the same query in wm_masterplan's headroom
-            bm_done = {}
-            for bm_n in frappe.db.sql("""
+            """, {"f": at_p.farm, "pfrom": at_p.period_from, "pto": at_p.period_to}, as_dict=True):
+                at_req[at_r.task] = at_r
+            at_done = {}
+            for at_d in frappe.db.sql("""
                 SELECT pr.task task, COALESCE(SUM(ac.total_actual_qty),0) q,
-                       COALESCE(SUM(ac.total_payment),0) c
+                       COALESCE(SUM(ac.total_payment),0) c, COUNT(*) n
                 FROM `tabWork Management Actuals` ac
                 INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
                 INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
@@ -3142,44 +3126,87 @@ def wm_dashboard(**kwargs):
                   AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
                   AND ac.workflow_state = 'CONFIRMED'
                 GROUP BY pr.task
-            """, {"f": bm_f, "pfrom": bm_p.period_from, "pto": bm_p.period_to}, as_dict=True):
-                bm_done[bm_n.task] = bm_n
-            # only money rolls up to the farm: quantities are in different units --
-            # trees, hours, kilos -- and adding them would produce a number that
-            # looks like a total and means nothing
-            bm_acts = []
-            bm_tc = 0.0
-            bm_pc = 0.0
-            bm_nc = 0.0
-            for bm_a in frappe.db.get_all("Work Management Master Plan Activity",
-                    filters={"parent": bm_p.name, "consultant_state": "OK"},
-                    fields=["name", "task", "uom", "work_qty", "cost"], order_by="idx"):
-                bm_d = bm_used.get(bm_a.task)
-                bm_dq = frappe.utils.flt(bm_d.q) if bm_d else 0
-                bm_dc = frappe.utils.flt(bm_d.c) if bm_d else 0
-                bm_bq = frappe.utils.flt(bm_a.work_qty)
-                bm_bc = frappe.utils.flt(bm_a.cost, 2)
-                bm_n = bm_done.get(bm_a.task)
-                bm_nq = frappe.utils.flt(bm_n.q) if bm_n else 0
-                bm_ncost = frappe.utils.flt(bm_n.c, 2) if bm_n else 0
-                bm_tc = bm_tc + bm_bc
-                bm_pc = bm_pc + bm_dc
-                bm_nc = bm_nc + bm_ncost
-                bm_acts.append({"row": bm_a.name, "task": bm_a.task, "uom": bm_a.uom,
-                                "work_qty": bm_bq, "cost": bm_bc,
-                                "planned_qty": bm_dq, "planned_cost": frappe.utils.flt(bm_dc, 2),
-                                "remaining_qty": bm_bq - bm_dq,
-                                "remaining_cost": frappe.utils.flt(bm_bc - bm_dc, 2),
-                                "done_qty": bm_nq, "done_cost": bm_ncost})
-            bm_farms.append({"farm": bm_f, "master_plan": bm_p.name,
-                             "period_from": str(bm_p.period_from), "period_to": str(bm_p.period_to),
-                             "budget_cost": frappe.utils.flt(bm_tc, 2),
-                             "planned_cost": frappe.utils.flt(bm_pc, 2),
-                             "done_cost": frappe.utils.flt(bm_nc, 2),
-                             "remaining_cost": frappe.utils.flt(bm_tc - bm_pc, 2),
-                             "activities": bm_acts})
-        out["on_date"] = str(bm_on)
-        out["farms"] = bm_farms
+            """, {"f": at_p.farm, "pfrom": at_p.period_from, "pto": at_p.period_to}, as_dict=True):
+                at_done[at_d.task] = at_d
+            for at_a in frappe.db.get_all("Work Management Master Plan Activity",
+                    filters={"parent": at_p.name, "consultant_state": "OK"},
+                    fields=["name", "task", "uom", "rate", "work_qty", "cost"], order_by="idx"):
+                at_r = at_req.get(at_a.task)
+                at_d = at_done.get(at_a.task)
+                at_bq = frappe.utils.flt(at_a.work_qty)
+                at_bc = frappe.utils.flt(at_a.cost, 2)
+                at_rq = frappe.utils.flt(at_r.q) if at_r else 0
+                at_rc = frappe.utils.flt(at_r.c, 2) if at_r else 0
+                at_dq = frappe.utils.flt(at_d.q) if at_d else 0
+                at_dc = frappe.utils.flt(at_d.c, 2) if at_d else 0
+                # state is named, not inferred from a colour: the two are read together
+                # and a colour alone cannot be relied on to carry it
+                if at_rc > at_bc + 0.005 or at_rq > at_bq + 0.005:
+                    at_state = "over"
+                elif at_dq >= at_bq - 0.005 and at_bq > 0:
+                    at_state = "delivered"
+                elif at_dq > 0.005:
+                    at_state = "under way"
+                elif at_rq > 0.005:
+                    at_state = "planned"
+                else:
+                    at_state = "untouched"
+                at_rows.append({
+                    "row": at_a.name, "plan": at_p.name, "farm": at_p.farm,
+                    "plan_state": at_p.workflow_state,
+                    "period_from": str(at_p.period_from), "period_to": str(at_p.period_to),
+                    "task": at_a.task, "uom": at_a.uom, "rate": frappe.utils.flt(at_a.rate, 6),
+                    "planned_qty": at_bq, "planned_cost": at_bc,
+                    "requested_qty": at_rq, "requested_cost": at_rc,
+                    "requests": frappe.utils.cint(at_r.n) if at_r else 0,
+                    "done_qty": at_dq, "done_cost": at_dc,
+                    "actuals": frappe.utils.cint(at_d.n) if at_d else 0,
+                    "left_qty": at_bq - at_rq, "left_cost": frappe.utils.flt(at_bc - at_rc, 2),
+                    "completion": frappe.utils.flt(at_dq / at_bq * 100, 1) if at_bq > 0 else 0,
+                    "requested_pct": frappe.utils.flt(at_rq / at_bq * 100, 1) if at_bq > 0 else 0,
+                    "state": at_state,
+                })
+        out["rows"] = at_rows
+        out["from_date"] = str(at_from)
+        out["to_date"] = str(at_to)
+        out["farms"] = FARMS
+
+    elif action == "activity_series":
+        # One line's confirmed delivery, day by day, for the chart the table opens.
+        # Money and quantity are returned together but are never drawn on one pair of
+        # axes -- two scales on one plot invent a relationship that is not in the data.
+        as_row = frappe.form_dict.get("row")
+        as_a = frappe.db.get_value("Work Management Master Plan Activity", as_row,
+            ["name", "parent", "task", "uom", "work_qty", "cost"], as_dict=True)
+        if not as_a:
+            out["error"] = "no such activity line: " + str(as_row)
+        else:
+            as_p = frappe.db.get_value("Work Management Master Plan", as_a.parent,
+                ["farm", "period_from", "period_to"], as_dict=True)
+            out["line"] = as_a
+            out["period"] = {"from": str(as_p.period_from), "to": str(as_p.period_to)}
+            out["days"] = frappe.db.sql("""
+                SELECT ac.from_date d, COALESCE(SUM(ac.total_actual_qty),0) q,
+                       COALESCE(SUM(ac.total_payment),0) c
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                WHERE pr.farm = %(f)s AND pr.task = %(t)s
+                  AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                  AND ac.workflow_state = 'CONFIRMED'
+                GROUP BY ac.from_date ORDER BY ac.from_date
+            """, {"f": as_p.farm, "t": as_a.task,
+                  "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
+            out["requests"] = frappe.db.sql("""
+                SELECT name, from_date, to_date, quantity, total_cost, workflow_state, block_section
+                FROM `tabWork Management Planner`
+                WHERE farm = %(f)s AND task = %(t)s
+                  AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                ORDER BY from_date
+            """, {"f": as_p.farm, "t": as_a.task,
+                  "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
 
     else:
         out["error"] = "unknown action: " + str(action)
