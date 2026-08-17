@@ -150,7 +150,7 @@
               hasC ? line("Money", ac, bc, false) : null,
               (hasQ&&hasC) ? ((qBinds?"Quantity":"Money")+" runs out first.") : null,
               parted ? ("The two ceilings have drifted apart, so this work has been "+
-                        "priced at a different rate than it was budgeted at.") : null
+                        "priced at a different rate than the plan used.") : null
              ].filter(Boolean).join(" ")
     };
   }
@@ -208,7 +208,7 @@
         h+='<div class="bm-meta">'+esc(f.master_plan)+' &middot; '+esc(f.period_from)+
            ' &rarr; '+esc(f.period_to)+' &middot; '+fmt((f.activities||[]).length)+' activit'+
            ((f.activities||[]).length===1?'y':'ies')+'</div>'+
-           gauge({size:"lg", mode:"delivery", label:"Money on this plan",
+           gauge({size:"lg", mode:"delivery", label:"Planned value on this plan",
                   cost_total:f.budget_cost, cost_planned:f.planned_cost,
                   cost_done:f.done_cost});
         // over-planned lines first -- those are the ones actually wrong -- then the
@@ -246,6 +246,124 @@
   // so only Drafts whose period has ENDED appear here. Those are work somebody did
   // that no approver sees and nobody is paid for, and nothing else on any screen
   // says they exist.
+  // ── completion, plan by plan, week by week ───────────────────────────────
+  // Three figures that get used interchangeably and mean different things: what a
+  // plan was PLANNED for, what was REQUESTED against it, and what was SPENT
+  // delivering it. A plan can be fully requested with nothing done, or barely
+  // requested and fully delivered. One track holds all three -- pale is requested,
+  // solid is delivered, the tick is the planned value both are measured against --
+  // so the relationship is read rather than reconstructed from three columns.
+  var PC = { from:null, to:null, farm:"", quick:"8w" };
+
+  function planCompletion(){
+    var box=el("wm-plancomp"); if(!box) return;
+    var args={action:"plan_completion"};
+    if(PC.from) args.from_date=PC.from;
+    if(PC.to) args.to_date=PC.to;
+    if(PC.farm) args.farm=PC.farm;
+    call(args).then(function(d){
+      var rows=d.plans||[];
+      var h=pcControls(d);
+      if(!rows.length){
+        box.innerHTML=h+'<div class="empty">No master plan covers these dates'+
+          (PC.farm?(' for '+esc(PC.farm)):'')+'. Widen the range, or raise a plan for this period.</div>';
+        pcWire(box); return;
+      }
+      // grouped by the week the plan's period starts in, newest first
+      var byWeek={}, order=[];
+      rows.forEach(function(r){
+        if(!byWeek[r.week]){ byWeek[r.week]=[]; order.push(r.week); }
+        byWeek[r.week].push(r);
+      });
+      order.sort().reverse();
+      order.forEach(function(wk){
+        var list=byWeek[wk];
+        var pv=0, rv=0, ev=0, sv=0;
+        list.forEach(function(r){ pv+=r.planned_value; rv+=r.requested_value; ev+=r.earned_value; sv+=r.spent_value; });
+        h+='<div class="pcwk">Week of '+esc(wk)+' &middot; '+fmt(list.length)+' plan'+
+           (list.length===1?'':'s')+' &middot; planned '+money(pv)+' &middot; requested '+money(rv)+
+           ' &middot; delivered '+money(ev)+'</div>';
+        list.forEach(function(r){ h+=pcRow(r); });
+      });
+      box.innerHTML=h;
+      pcWire(box);
+    }).catch(function(e){
+      box.innerHTML=pcControls({})+'<div class="empty">Could not load completion.</div>';
+      pcWire(box);
+    });
+  }
+
+  function pcControls(d){
+    var q=function(k,lbl){ return '<button type="button" data-pcq="'+k+'"'+(PC.quick===k?' class="on"':'')+'>'+lbl+'</button>'; };
+    return '<div class="pcw">'+
+      '<div><label>From</label><input type="date" id="pc-from" value="'+esc(PC.from||d.from_date||"")+'"></div>'+
+      '<div><label>To</label><input type="date" id="pc-to" value="'+esc(PC.to||d.to_date||"")+'"></div>'+
+      '<div><label>Farm</label><select id="pc-farm">'+
+        ['','Saboti','Lokitela','Vale','Endebess'].map(function(f){
+          return '<option value="'+esc(f)+'"'+(PC.farm===f?' selected':'')+'>'+(f||'All farms')+'</option>';
+        }).join('')+'</select></div>'+
+      '<div><button type="button" id="pc-apply">Apply</button></div>'+
+      '<div class="pcw-quick">'+q("4w","4 weeks")+q("8w","8 weeks")+q("12w","12 weeks")+q("all","All")+'</div>'+
+    '</div>';
+  }
+
+  function pcRow(r){
+    // everything is scaled to the larger of planned and requested, so an
+    // over-request runs past the tick instead of being silently clipped to it
+    var base=Math.max(r.planned_value, r.requested_value, 1);
+    var reqW=Math.min(100, r.requested_value/base*100);
+    var doneW=Math.min(100, r.earned_value/base*100);
+    var planX=Math.min(100, r.planned_value/base*100);
+    var over=r.requested_value>r.planned_value+0.005;
+    var cls=r.completion>=80?"hi":(r.completion>=25?"mid":"lo");
+    return '<div class="pc-row">'+
+      '<div class="pc-id"><b>'+esc(r.plan)+' &middot; '+esc(r.farm)+'</b>'+
+        '<span>'+esc(r.period_from)+' &rarr; '+esc(r.period_to)+' &middot; '+esc(r.state)+'</span>'+
+        '<span>'+fmt(r.requested_count)+' request'+(r.requested_count===1?'':'s')+' &middot; '+
+        fmt(r.actuals_count)+' actual'+(r.actuals_count===1?'':'s')+'</span></div>'+
+      '<div><div class="pc-track">'+
+        '<div class="pc-req" style="width:'+reqW+'%"></div>'+
+        (over?'<div class="pc-over" style="left:'+planX+'%;width:'+(reqW-planX)+'%"></div>':'')+
+        '<div class="pc-done" style="width:'+doneW+'%"></div>'+
+        '<div class="pc-plan" style="left:'+planX+'%"></div>'+
+      '</div><div class="pc-legend">'+
+        '<b>'+money(r.earned_value)+'</b> delivered of '+money(r.requested_value)+' requested'+
+        (over?(' &middot; <b style="color:var(--red)">'+money(r.requested_value-r.planned_value)+
+               ' over the planned value</b>'):(' against '+money(r.planned_value)+' planned'))+
+      (r.offplan_count?('<div class="pc-legend" style="color:var(--amber)">'+
+        fmt(r.offplan_count)+' request'+(r.offplan_count===1?'':'s')+' worth '+money(r.offplan_value)+
+        ' went to tasks this plan does not carry &mdash; not counted above</div>'):'')+
+      '</div></div>'+
+      '<div class="pc-figs">'+
+        '<div class="pc-fig"><i>Planned</i><b>'+money(r.planned_value)+'</b></div>'+
+        '<div class="pc-fig"><i>Requested</i><b>'+money(r.requested_value)+'</b></div>'+
+        '<div class="pc-fig"><i>Spent</i><b>'+money(r.spent_value)+'</b></div>'+
+        '<div class="pc-fig"><i>Complete</i><span class="pc-pct '+cls+'">'+fmt(r.completion,0)+'%</span></div>'+
+      '</div>'+
+    '</div>';
+  }
+
+  function pcWire(box){
+    var ap=el("pc-apply");
+    if(ap) ap.onclick=function(){
+      PC.from=el("pc-from").value; PC.to=el("pc-to").value;
+      PC.farm=el("pc-farm").value; PC.quick=null; planCompletion();
+    };
+    var fs=el("pc-farm");
+    if(fs) fs.onchange=function(){ PC.farm=fs.value; planCompletion(); };
+    box.querySelectorAll("[data-pcq]").forEach(function(b){
+      b.onclick=function(){
+        var k=b.getAttribute("data-pcq");
+        PC.quick=k; PC.to=todayISO();
+        PC.from = k==="all" ? "2020-01-01"
+                : todayMinus(k==="4w"?28:(k==="12w"?84:56));
+        planCompletion();
+      };
+    });
+  }
+  function todayISO(){ return new Date().toISOString().slice(0,10); }
+  function todayMinus(n){ var d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
+
   function unsubmittedActuals(){
     var box=el("wm-unsub"); if(!box) return;
     call({action:"stale_actuals"}).then(function(d){
@@ -370,11 +488,16 @@
         '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
         '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
       '</div>'+
-      // ===== how much of each farm's approved budget is still free =====
-      '<div class="sech">Budget &amp; delivery</div>'+
+      // ===== how much of each farm's approved plan is still free =====
+      '<div class="sech">Planned value &amp; delivery</div>'+
       '<div class="card"><div class="hd"><h3>How each farm&rsquo;s approved plan is going</h3>'+
-        '<div class="cap">live master plans &middot; budgeted, then planned, then delivered</div></div>'+
-        '<div class="bd" id="wm-budget"><div class="loading">Reading budgets&hellip;</div></div></div>'+
+        '<div class="cap">live master plans &middot; planned value, then requested, then delivered</div></div>'+
+        '<div class="bd" id="wm-budget"><div class="loading">Reading plans&hellip;</div></div></div>'+
+      // ===== how much of each plan actually happened =====
+      '<div class="sech">Plan completion &mdash; planned, requested, delivered</div>'+
+      '<div class="card"><div class="hd"><h3>How much of each master plan actually happened</h3>'+
+        '<div class="cap">by the week the plan starts &middot; filter by date range and farm</div></div>'+
+        '<div class="bd" id="wm-plancomp"><div class="loading">Measuring completion&hellip;</div></div></div>'+
       // ===== work recorded but never sent =====
       '<div class="sech">Recorded but never sent</div>'+
       '<div class="card"><div class="hd"><h3>Actuals still sitting in draft after their period ended</h3>'+
@@ -543,6 +666,7 @@
     comboInit(D);
     budgetMeters();
     unsubmittedActuals();
+    planCompletion();
     initCharts();
     initQueues(D);
     initTimeline();
@@ -1282,7 +1406,7 @@
            '</div>'+
            '<div style="font-size:11px;color:#4b5563;margin:6px 0 2px">'+
              'Of the planned <b>'+money(pv)+'</b>, task-workers are paid <b>'+money(twv)+'</b> ('+fmt(p.tw_qty)+' '+esc(p.uom||"")+'). '+
-             'Salaried crew delivered <b>'+fmt(p.salaried_qty)+' '+esc(p.uom||"")+'</b> worth <b>'+money(salv)+'</b> at no piece-rate cost'+(savedPct>0?(' — '+savedPct+'% of the budget covered by salaried labour'):'')+'. '+
+             'Salaried crew delivered <b>'+fmt(p.salaried_qty)+' '+esc(p.uom||"")+'</b> worth <b>'+money(salv)+'</b> at no piece-rate cost'+(savedPct>0?(' — '+savedPct+'% of the planned value covered by salaried labour'):'')+'. '+
              (balv>0?('Remaining <b>'+money(balv)+'</b> ('+fmt(p.balance_qty)+' '+esc(p.uom||"")+') not yet delivered.'):'Target fully delivered.')+
            '</div>';
       }

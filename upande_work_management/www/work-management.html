@@ -91,6 +91,44 @@
    touched for six weeks is not in progress, it is lost -- so age is what is
    emphasised, and the ones needing only a click are separated from the ones
    needing a decision. */
+/* ── plan completion ───────────────────────────────────────────────────────
+   Three numbers get confused constantly: what a plan was PLANNED for, what was
+   REQUESTED against it, and what was SPENT delivering it. A plan can be fully
+   requested with nothing done, or barely requested and fully delivered. They sit
+   on one track so the relationship is read rather than worked out: the pale bar
+   is what was requested, the solid bar is what was delivered, and the tick is the
+   planned value they are both measured against. */
+#wmp .pcw{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+#wmp .pcw label{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:700;display:block;margin-bottom:4px}
+#wmp .pcw input,#wmp .pcw select{font-family:inherit;font-size:12px;border:1px solid var(--line);padding:7px 10px;border-radius:var(--rs);background:#fff;color:var(--ink)}
+#wmp .pcw input:focus,#wmp .pcw select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+#wmp .pcw button{font-family:inherit;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;background:var(--ink);color:#fff;border:1px solid var(--ink);padding:8px 15px;border-radius:var(--rs);cursor:pointer}
+#wmp .pcw .pcw-quick{display:flex;gap:5px;flex-wrap:wrap;margin-left:auto}
+#wmp .pcw .pcw-quick button{background:#fff;color:var(--mute);border-color:var(--line);font-weight:600}
+#wmp .pcw .pcw-quick button:hover{border-color:var(--ink);color:var(--ink)}
+#wmp .pcw .pcw-quick button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+#wmp .pcwk{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#94a3b8;font-weight:700;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--faint)}
+#wmp .pcwk:first-child{margin-top:0}
+#wmp .pc-row{display:grid;grid-template-columns:minmax(150px,1.1fr) minmax(180px,2fr) minmax(190px,1.1fr);
+  gap:14px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r);
+  background:#fff;box-shadow:var(--sh);margin-bottom:8px}
+@media(max-width:820px){#wmp .pc-row{grid-template-columns:1fr}}
+#wmp .pc-id b{font-size:12px;font-weight:700;display:block}
+#wmp .pc-id span{font-size:10.5px;color:var(--mute);display:block;margin-top:2px}
+#wmp .pc-track{position:relative;height:16px;border-radius:5px;background:var(--faint);overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(15,23,42,.06)}
+#wmp .pc-req{position:absolute;left:0;top:0;bottom:0;background:#bfdbfe}
+#wmp .pc-done{position:absolute;left:0;top:0;bottom:0;background:var(--green)}
+#wmp .pc-over{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,#fecaca 0 4px,#fca5a5 4px 8px)}
+#wmp .pc-plan{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}
+#wmp .pc-legend{font-size:10px;color:var(--mute);margin-top:5px;font-variant-numeric:tabular-nums}
+#wmp .pc-legend b{color:var(--ink)}
+#wmp .pc-figs{display:flex;gap:14px;flex-wrap:wrap;justify-content:flex-end}
+#wmp .pc-fig{text-align:right;min-width:74px}
+#wmp .pc-fig i{display:block;font-style:normal;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700}
+#wmp .pc-fig b{display:block;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+#wmp .pc-pct{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+#wmp .pc-pct.hi{color:var(--green)}#wmp .pc-pct.mid{color:var(--amber)}#wmp .pc-pct.lo{color:var(--mute)}
 #wmp .ua-farms{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 #wmp .ua-farm{border:1px solid var(--line);border-radius:var(--rs);padding:9px 13px;background:var(--wash);min-width:150px}
 #wmp .ua-farm b{display:block;font-size:12px;font-weight:700}

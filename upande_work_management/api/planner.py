@@ -149,7 +149,7 @@ def wm_planner(**kwargs):
                     FROM `tabWork Management Planner`
                     WHERE task = %(t)s AND farm = %(f)s
                       AND IFNULL(workflow_state,'') != 'Rejected'
-                      AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                      AND from_date >= %(pfrom)s AND to_date <= %(pto)s
                 """, {"t": ta.task, "f": farm,
                       "pfrom": tkm.period_from, "pto": tkm.period_to}, as_dict=True)[0]
                 tk_rq = frappe.utils.flt(ta.work_qty) - frappe.utils.flt(tk_used.q)
@@ -248,7 +248,7 @@ def wm_planner(**kwargs):
                     SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
                     FROM `tabWork Management Planner`
                     WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
-                      AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                      AND from_date >= %(pfrom)s AND to_date <= %(pto)s
                     GROUP BY task
                 """, {"f": pr.get("farm"), "pfrom": pb_mp.period_from, "pto": pb_mp.period_to},
                     as_dict=True):
@@ -376,7 +376,7 @@ def wm_planner(**kwargs):
                         WHERE task = %(t)s AND farm = %(f)s
                           AND IFNULL(workflow_state,'') != 'Rejected'
                           AND name != %(me)s
-                          AND from_date <= %(pto)s AND to_date >= %(pfrom)s
+                          AND from_date >= %(pfrom)s AND to_date <= %(pto)s
                     """, {"t": task, "f": farm, "me": cap_me,
                           "pfrom": cm.period_from, "pto": cm.period_to}, as_dict=True)[0]
                     cap_rq = frappe.utils.flt(cap_line.work_qty) - frappe.utils.flt(cap_used.q)

@@ -83,7 +83,7 @@
     var st = rem < -tol ? "over"
            : (plan>tol && done>=plan-tol ? "done" : (done>tol ? "going" : "idle"));
     var tail = rem >  tol ? (bare(rem)+" left to plan")
-             : (rem < -tol ? (bare(-rem)+" over budget") : "fully committed");
+             : (rem < -tol ? (bare(-rem)+" over the planned value") : "fully committed");
     return {
       pA: clamp(done/tot), pNow: clamp(plan/tot), pOth: null, parted: false,
       state: st, right: amt(tot),
@@ -92,8 +92,8 @@
            ' &middot; <span class="gg-alt">'+esc(tail)+'</span>',
       title: amt(done)+" delivered and confirmed, out of "+bare(plan)+" planned "+
              "against a "+bare(tot)+" budget. "+
-             (rem < -tol ? ("Planning is "+bare(-rem)+" over the budget.")
-                         : (rem > tol ? (bare(rem)+" of the budget is still unplanned.")
+             (rem < -tol ? ("Planning is "+bare(-rem)+" over the planned value.")
+                         : (rem > tol ? (bare(rem)+" of the planned value is still unplanned.")
                                       : "The budget is fully committed."))
     };
   }
@@ -120,7 +120,7 @@
       return isQty ? (fmt(v)+" "+(o.uom||"")).replace(/\s+$/,"") : ("KES "+fmt(v,0));
     };
     var say=function(v, isQty){
-      return amt(Math.abs(v), isQty) + (v<0 ? " over budget" : " left");
+      return amt(Math.abs(v), isQty) + (v<0 ? " over the planned value" : " left");
     };
     var st = fA<0 ? "over" : (fA<0.15 ? "last" : (fA<0.5 ? "tight" : "clear"));
     var cap = '<b>'+esc(qBinds ? say(aq,true) : say(ac,false))+'</b>';
@@ -130,7 +130,7 @@
     // "11,000 of 13,000 Nos left" / "KES 8,522 of 10,062 left"
     var line=function(label, v, tot, isQty){
       var bare=function(x){ return isQty ? fmt(x) : fmt(x,0); };
-      if(v<0) return label+": "+amt(Math.abs(v),isQty)+" over a "+bare(tot)+" budget.";
+      if(v<0) return label+": "+amt(Math.abs(v),isQty)+" over a planned value of "+bare(tot)+".";
       return label+": "+(isQty ? (bare(v)+" of "+amt(tot,true))
                                : (amt(v,false)+" of "+bare(tot)))+" left.";
     };
@@ -141,7 +141,7 @@
               hasC ? line("Money", ac, bc, false) : null,
               (hasQ&&hasC) ? ((qBinds?"Quantity":"Money")+" runs out first.") : null,
               parted ? ("The two ceilings have drifted apart, so this work has been "+
-                        "priced at a different rate than it was budgeted at.") : null
+                        "priced at a different rate than the plan used.") : null
              ].filter(Boolean).join(" ")
     };
   }
@@ -342,8 +342,8 @@
                   (stage==="Pending GM" && MP.canGm);
       var h='';
       var note={"Pending Consultant":"Waiting on the consultants. Approve sends the plan to the general manager.",
-                "Pending GM":"Waiting on the general manager. Approve puts the budget in force.",
-                "Approved":"In force. These are the budgets the planner caps every request against.",
+                "Pending GM":"Waiting on the general manager. Approve puts the planned value in force.",
+                "Approved":"In force. These are the planned values the planner caps every request against.",
                 "Draft":"Still with whoever raised them — not yet submitted for review.",
                 "Rejected":"Turned down. The raiser can edit one and submit it again."}[stage];
       if(note) h+='<div class="mpd-stagenote">'+esc(note)+'</div>';
@@ -446,12 +446,12 @@
           if(live){ a.planned_qty=live.planned_qty; a.planned_cost=live.planned_cost;
                     a.remaining_qty=live.remaining_qty; a.remaining_cost=live.remaining_cost; }
         });
-        return {p:p, acts:acts, rate_drift:d.rate_drift,
+        return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:hd.spanning||[],
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
                 edited_lines:d.edited_lines, ok_lines:d.ok_lines};
-      }).catch(function(){ return {p:p, acts:acts, rate_drift:d.rate_drift,
+      }).catch(function(){ return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:[],
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
@@ -477,14 +477,14 @@
         '<div class="mpd-figs">'+
           '<div><span class="fk">Activities</span><span class="fv">'+fmt(acts.length)+'</span></div>'+
           '<div><span class="fk">Man days</span><span class="fv">'+fmt(mpTotMd)+'</span></div>'+
-          '<div><span class="fk">Budgeted</span><span class="fv">KES '+fmt(mpTotCost,2)+'</span></div>'+
+          '<div><span class="fk">Planned value</span><span class="fv">KES '+fmt(mpTotCost,2)+'</span></div>'+
           '<div><span class="fk">Still available</span><span class="fv">KES '+fmt(mpTotLeft,2)+'</span></div>'+
           '<div><span class="fk">Delivered</span><span class="fv">KES '+fmt(mpTotDone,2)+'</span></div>'+
         '</div>'+
         // the whole plan's money as one delivery bar: budgeted, committed, done.
         // Quantities are not added up here -- trees, hours and kilos share no total.
         '<div style="margin-top:13px">'+
-          gauge({size:"md", mode:"delivery", label:"Money on this plan",
+          gauge({size:"md", mode:"delivery", label:"Planned value on this plan",
                  cost_total:mpTotCost, cost_planned:mpTotPlan, cost_done:mpTotDone}) +
         '</div></div>';
       // hiding these is only a convenience -- every rule they call is re-checked
@@ -494,8 +494,15 @@
         if(res.can_edit){
           // during review the same button corrects the plan in place; submitting is
           // the raiser's action alone, and the server refuses it in any other state
-          h+='<button type="button" class="btn" id="mp-edit">'+
-             (res.edit_is_review?"Correct this plan":"Edit")+'</button>';
+          h+='<button type="button" class="btn'+(res.edit_after_approval?' solid':'')+'" id="mp-edit">'+
+             (res.edit_after_approval?"Edit approved plan":
+              res.edit_is_review?"Correct this plan":"Edit")+'</button>';
+          if(res.edit_after_approval){
+            // this plan is in force and the planner is capping against it, so say
+            // so before he opens it rather than after he has changed a number
+            h+='<span class="hint">In force — the planner is already spending against '+
+               'these lines. Figures can be raised, but not cut below what is planned.</span>';
+          }
           if(!res.edit_is_review){
             h+='<button type="button" class="btn solid" id="mp-submitrev">Submit for review</button>';
           }
@@ -529,24 +536,39 @@
       if((res.rate_drift||[]).length){
         var anyUnit=res.rate_drift.some(function(x){ return x.kind==="unit"; });
         h+='<div class="mpd-drift">'+
-           '<b>This plan was budgeted at rates that have since changed.</b> '+
-           (anyUnit ? 'Some of it changed unit, which the budget cannot convert on its own:'
+           '<b>This plan was priced at rates that have since changed.</b> '+
+           (anyUnit ? 'Some of it changed unit, which the plan cannot convert on its own:'
                     : 'The money is fixed, so fewer units now fit the same budget:')+
            '<ul style="margin:6px 0 0 16px">';
         res.rate_drift.forEach(function(x){
           if(x.kind==="unit"){
-            h+='<li><b>'+esc(x.task)+' changed unit.</b> Budgeted per '+esc(x.budget_uom||"—")+
+            h+='<li><b>'+esc(x.task)+' changed unit.</b> Priced per '+esc(x.budget_uom||"—")+
                ' at '+fmt(x.budget_rate,6)+'; the task is now priced per '+esc(x.live_uom||"—")+
                ' at '+fmt(x.live_rate,6)+'. The quantity has to be re-entered in the new unit — '+
                'one '+esc(x.budget_uom||"unit")+' is not one '+esc(x.live_uom||"unit")+'.</li>';
           } else {
-            h+='<li>'+esc(x.task)+' — budgeted at '+fmt(x.budget_rate,6)+', now '+fmt(x.live_rate,6)+
+            h+='<li>'+esc(x.task)+' — planned at '+fmt(x.budget_rate,6)+', now '+fmt(x.live_rate,6)+
                ' (same work would cost '+fmt(x.cost_at_live_rate,2)+')</li>';
           }
         });
         h+='</ul></div>';
       }
-      h+='<div class="note" style="margin-bottom:8px">Click an activity to see which plans are drawing on its budget — including stale drafts still holding it.</div>';
+      // requests that cross this period's edge are not counted against it -- say so
+      // here rather than let the figures quietly disagree with the planner's list
+      if((res.spanning||[]).length){
+        h+='<div class="mpp-span"><b>'+fmt(res.spanning.length)+' request'+
+           (res.spanning.length===1?'':'s')+' overlap'+(res.spanning.length===1?'s':'')+
+           ' these dates without sitting inside them, so '+(res.spanning.length===1?'it is':'they are')+
+           ' not counted against this plan.</b> A request belongs to the plan it fits wholly '+
+           'within — the rule the planner applies when one is raised. '+
+           'Older requests can straddle two periods:<ul style="margin:6px 0 0 16px">';
+        res.spanning.forEach(function(x){
+          h+='<li>'+esc(x.name)+' — '+esc(x.task)+', '+fmt(x.quantity)+' over '+
+             esc(x.from_date)+' → '+esc(x.to_date)+' ('+esc(x.workflow_state||'')+')</li>';
+        });
+        h+='</ul></div>';
+      }
+      h+='<div class="note" style="margin-bottom:8px">Click an activity to trace it the whole way down — requested, crewed, recorded, confirmed and paid — including stale drafts still holding the line.</div>';
       var mpColspan = 11;
       h+='<div class="mpf-tablewrap"><table><thead><tr><th>Activity</th><th class="n">Man days</th><th class="n">Days</th>'+
          '<th class="n">Work</th><th>Unit</th><th class="n">Rate</th><th class="n">Cost</th>'+
@@ -559,7 +581,7 @@
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
            '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
            '<td class="n m">'+fmt(a.remaining_qty)+
-           (exhausted?' <span class="mpd-used">used up</span>':'')+'</td>'+
+           (exhausted?' <span class="mpd-used">fully planned</span>':'')+'</td>'+
            // the bar answers "how is this going", not "can more be planned" -- the
            // Planned and Left columns beside it already answer that one
            '<td style="min-width:168px">'+
@@ -628,26 +650,96 @@
           panel.innerHTML='<div class="empty">Loading…</div>';
           call({ action:"consumers", row: acts[i].name }, "wm_masterplan").then(function(cd){
             if(cd.error){ panel.innerHTML='<div class="empty">'+esc(cd.error)+'</div>'; return; }
-            var rows=cd.plans||[], stale=cd.stale_drafts||[];
-            if(!rows.length){ panel.innerHTML='<div class="empty">Nothing is drawing on this line yet.</div>'; return; }
-            var ph='<table><thead><tr><th>Plan</th><th>Block</th><th>Period</th><th class="n">Qty</th>'+
-                   '<th class="n">Cost</th><th>Status</th><th>Requested by</th></tr></thead><tbody>';
-            rows.forEach(function(r){
-              var isStale = stale.indexOf(r.name)>-1;
-              ph+='<tr><td class="m" style="font-size:10px">'+esc(r.name)+'</td>'+
-                  '<td style="font-size:10px">'+esc(lbl(r.block_section))+'</td>'+
-                  '<td class="m" style="font-size:10px">'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+
-                  '<td class="n m">'+fmt(r.quantity)+'</td><td class="n m">'+fmt(r.total_cost,2)+'</td>'+
-                  '<td style="font-size:10px">'+esc(r.workflow_state||"")+
-                  (isStale?' <span style="color:#a06000;font-weight:600">(stale draft — still holding budget)</span>':'')+'</td>'+
-                  '<td style="font-size:10px">'+esc(shortUser(r.requested_by))+'</td></tr>';
-            });
-            ph+='</tbody></table>';
-            panel.innerHTML=ph;
+            panel.innerHTML=pipelinePanel(cd, acts[i]);
           }).catch(function(e){ panel.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
         };
       });
     }).catch(function(e){ box.innerHTML='<div class="empty">Could not open: '+esc(e.message)+'</div>'; });
+  }
+
+  // ── one activity, traced the whole way down ───────────────────────────────
+  // A budget line used to open into a list of the requests drawing on it, which
+  // answered "who is holding this" and nothing else. The work does not stop being
+  // interesting there: it gets crewed, worked, confirmed and paid, and the useful
+  // question is where it stopped. The rail puts the quantity stages on one scale so
+  // the step down between them is the attrition itself; crew and money are counted
+  // in their own units and get no bar, because a bar would invite a comparison
+  // across units that means nothing.
+  function pipelinePanel(cd, act){
+    var rows=cd.plans||[], st=cd.stages||{}, stale=cd.stale_drafts||[];
+    var uom=act.uom||"", target=num(act.work_qty);
+    var pct=function(v){ return target>0 ? Math.max(0,Math.min(100,(num(v)/target)*100)) : 0; };
+    var stage=function(k,v,u,colour,bar,dim){
+      return '<div class="mpp-st'+(dim?' void':'')+'" style="--sc:'+colour+'">'+
+        '<span class="sk">'+esc(k)+'</span>'+
+        '<span class="sv">'+v+'</span>'+
+        '<span class="su">'+esc(u)+'</span>'+
+        (bar==null?'':'<span class="sb"><i style="width:'+bar+'%"></i></span>')+
+      '</div>';
+    };
+    var h='<div class="mpp">';
+    h+='<div class="mpp-rail">'+
+      stage("Planned for", fmt(target), uom, "#6b7280", 100, false)+
+      stage("Requested", fmt(st.requested_qty), uom+" · "+Math.round(pct(st.requested_qty))+"% of plan",
+            "#2563eb", pct(st.requested_qty), !num(st.requested_qty))+
+      stage("Crewed", fmt(st.assigned_people), (st.assignments||0)+" assignment"+((st.assignments===1)?"":"s"),
+            "#7c3aed", null, !num(st.assigned_people))+
+      stage("Confirmed", fmt(st.done_qty), uom+" · "+Math.round(pct(st.done_qty))+"% of plan",
+            "#0a7a43", pct(st.done_qty), !num(st.done_qty))+
+      stage("Paid out", "KES "+fmt(st.paid_amount,0), (st.paid_people||0)+" worker"+((st.paid_people===1)?"":"s")+" paid",
+            "#0f766e", null, !num(st.paid_amount))+
+    '</div>';
+    // name the gap rather than leaving it to be worked out from five figures
+    var notes=[];
+    if(!rows.length) notes.push("Nothing has been requested against this line yet.");
+    else {
+      if(!num(st.assigned_people)) notes.push("Requested, but nobody has been crewed onto it.");
+      else if(!num(st.recorded_qty)) notes.push("Crewed, but no work has been recorded yet.");
+      else if(num(st.done_qty) < num(st.recorded_qty))
+        notes.push(fmt(num(st.recorded_qty)-num(st.done_qty))+" "+uom+" recorded but not yet confirmed"+
+                   (st.drafts?(" — "+fmt(st.drafts)+" actual"+(st.drafts===1?"":"s")+" still in draft"):"")+".");
+      if(st.awaiting_actuals) notes.push(fmt(st.awaiting_actuals)+" assignment"+
+        (st.awaiting_actuals===1?"":"s")+" with nothing recorded against "+(st.awaiting_actuals===1?"it":"them")+".");
+    }
+    if(notes.length) h+='<div class="note" style="margin:-4px 0 12px">'+esc(notes.join(" "))+'</div>';
+    if(!rows.length){ return h+'</div>'; }
+    rows.forEach(function(r){
+      var isStale = stale.indexOf(r.name)>-1;
+      h+='<div class="mpp-req"><div class="mpp-reqh">'+
+         '<b>'+esc(r.name)+'</b>'+
+         '<span>'+esc(lbl(r.block_section))+'</span>'+
+         '<span>'+esc(r.from_date)+' &rarr; '+esc(r.to_date)+'</span>'+
+         stateTag(r.workflow_state)+
+         (isStale?'<span class="mpd-used">stale draft &middot; still holding the line</span>':'')+
+         '<span class="sp">'+fmt(r.quantity)+' '+esc(uom)+' &middot; KES '+fmt(r.total_cost,2)+
+         ' &middot; '+esc(shortUser(r.requested_by))+'</span></div><div class="mpp-chain">';
+      (r.assignments||[]).forEach(function(g){
+        h+='<div class="mpp-link" style="--dc:#7c3aed"><span class="dot"></span>'+
+           '<span class="lk">Crewed</span><span class="lb"><span class="ref">'+esc(g.name)+'</span> '+
+           '<span class="mt">&middot; '+fmt(g.assigned_count)+' of '+fmt(g.planned_people)+' people &middot; '+
+           esc(g.from_date)+' &rarr; '+esc(g.to_date)+' &middot; '+esc(g.workflow_state||"")+'</span></span></div>';
+      });
+      if(!(r.assignments||[]).length)
+        h+='<div class="mpp-none">Not crewed yet — nobody can record work against this request until it is.</div>';
+      (r.actuals||[]).forEach(function(a){
+        var done=a.workflow_state==="CONFIRMED";
+        h+='<div class="mpp-link" style="--dc:'+(done?"#0a7a43":"#a06000")+'"><span class="dot"></span>'+
+           '<span class="lk">'+(done?"Confirmed":"Recorded")+'</span><span class="lb">'+
+           '<span class="ref">'+esc(a.name)+'</span> <span class="mt">&middot; '+fmt(a.total_actual_qty)+' '+esc(uom)+
+           ' &middot; '+fmt(a.actual_people)+' people &middot; KES '+fmt(a.total_payment,2)+
+           ' &middot; '+esc(a.from_date)+' &middot; '+esc(shortUser(a.entered_by))+'</span>'+
+           (done?'':'<br><span class="mt" style="color:var(--amber)">'+esc(a.workflow_state||"Draft")+
+                 (num(a.custom_balance_qty)>0?(' &middot; '+fmt(a.custom_balance_qty)+' '+esc(uom)+
+                  ' short of the request target, so it cannot be sent yet'):' &middot; not yet sent for approval')+
+                 '</span>')+
+           (a.custom_closed_early?'<br><span class="mt">closed early</span>':'')+
+           '</span></div>';
+      });
+      if((r.assignments||[]).length && !(r.actuals||[]).length)
+        h+='<div class="mpp-none">Crewed, but no work recorded against it yet.</div>';
+      h+='</div></div>';
+    });
+    return h+'</div>';
   }
 
   // ── master plan: create / edit form ──────────────────────────────────
@@ -764,7 +856,7 @@
     });
     t.innerHTML='<div><span class="tk">Activities</span><span class="tv">'+fmt(MPF.rows.length)+'</span></div>'+
       '<div><span class="tk">Man days</span><span class="tv">'+fmt(md)+'</span></div>'+
-      '<div><span class="tk">Budgeted</span><span class="tv">KES '+fmt(cost,2)+'</span></div>';
+      '<div><span class="tk">Planned value</span><span class="tv">KES '+fmt(cost,2)+'</span></div>';
   }
   function mpRefreshCatalog(){
     var fs=el("mpf-farm"), fr=el("mpf-from");
@@ -839,7 +931,7 @@
         '<button type="button" class="mpf-add" id="mpf-addrow">+ Add activity</button>'+
         '<div class="mpf-note">Unit, rate and cost come from the server &mdash; the rate is the one in force on '+
           '<b>Period from</b>, and it is frozen onto the line when you save. <b>Work qty</b> and <b>cost</b> are what '+
-          'the budget is enforced against. Man days and days are recorded for reporting and never cap anything.</div>'+
+          'the planned value is enforced against. Man days and days are recorded for reporting and never cap anything.</div>'+
       '</div>'+
       '<div class="mpf-foot">'+
         '<div class="mpf-tot" id="mpf-totals"></div>'+
@@ -983,7 +1075,7 @@
         var o=document.createElement("option");
         o.value=x.name;
         o.textContent=x.subject+" · "+fmt(x.remaining_qty)+" "+(x.uom||"")+" / KES "+fmt(x.remaining_cost,0)+" left";
-        if(x.exhausted){ o.disabled=true; o.textContent=x.subject+" · budget used up"; }
+        if(x.exhausted){ o.disabled=true; o.textContent=x.subject+" · fully planned"; }
         sel.appendChild(o);
       });
       if(keep) sel.value=keep;
@@ -1023,7 +1115,7 @@
                 draw_qty:d.draw_qty, draw_cost:d.draw_cost})+'</div>'+
          '<div class="ggp-over" id="f-ggover" style="display:none"></div>';
     } else {
-      h+='<div class="ggp-lead">Budget left &mdash; pick what you are planning</div>';
+      h+='<div class="ggp-lead">Planned value left &mdash; pick what you are planning</div>';
     }
     h+='<div class="ggp-list">';
     list.forEach(function(t){
@@ -1065,7 +1157,7 @@
       var overC = num(d.task.remaining_cost)-d.draw_cost < 0;
       if(d.qty>0 && (overQ||overC)){
         warn.style.display="block";
-        warn.innerHTML='The budget does not have room for this much. Lower the quantity, '+
+        warn.innerHTML='The plan does not have room for this much. Lower the quantity, '+
           'or have '+esc(d.task.subject)+' raised in the master plan before submitting.';
       } else { warn.style.display="none"; warn.innerHTML=""; }
     }
@@ -1103,9 +1195,9 @@
     var inside = buds.filter(function(b){ return (!f||f>=b.period_from) && (!t||t<=b.period_to); }).length>0;
     bar.className = inside ? "mp-period" : "mp-period out";
     var h = (inside
-      ? "Budget period &mdash; the request must fit inside one:"
+      ? "Plan period &mdash; the request must fit inside one:"
       : "<b>These dates cannot be planned.</b> A request has to sit wholly inside one "+
-        "approved budget, and "+esc(ST.farm||"this farm")+"&rsquo;s budgets are below. "+
+        "approved plan period, and "+esc(ST.farm||"this farm")+"&rsquo;s plans are below. "+
         "Pick one to snap the dates to it:") + "<div class=\"mp-buds\">";
     buds.forEach(function(b){
       var on = (active===b.name) || (b.period_from===f && b.period_to===t);
