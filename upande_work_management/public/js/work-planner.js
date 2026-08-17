@@ -443,8 +443,12 @@
         (hd.activities||[]).forEach(function(x){ byRow[x.row]=x; });
         acts.forEach(function(a){
           var live=byRow[a.name];
+          // done_* are computed, never stored on the line, so "get" cannot return
+          // them -- omitting them here left every Progress cell reading zero, which
+          // renders as "not started" however much work had actually been confirmed
           if(live){ a.planned_qty=live.planned_qty; a.planned_cost=live.planned_cost;
-                    a.remaining_qty=live.remaining_qty; a.remaining_cost=live.remaining_cost; }
+                    a.remaining_qty=live.remaining_qty; a.remaining_cost=live.remaining_cost;
+                    a.done_qty=live.done_qty; a.done_cost=live.done_cost; }
         });
         return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:hd.spanning||[],
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
@@ -585,8 +589,13 @@
            // the bar answers "how is this going", not "can more be planned" -- the
            // Planned and Left columns beside it already answer that one
            '<td style="min-width:168px">'+
-           gauge({size:"sm", cap:true, mode:"delivery", uom:a.uom,
-                  qty_total:a.work_qty, qty_planned:a.planned_qty, qty_done:a.done_qty})+'</td>'+
+           // "not started" is a claim about the work, so it is only made when the
+           // live figures actually arrived. Without them the cell says it has
+           // nothing to report rather than reporting nothing as zero.
+           (a.done_qty==null
+             ? '<span class="gg-alt" style="font-size:10.5px">progress unavailable</span>'
+             : gauge({size:"sm", cap:true, mode:"delivery", uom:a.uom,
+                      qty_total:a.work_qty, qty_planned:a.planned_qty, qty_done:a.done_qty}))+'</td>'+
            '<td style="font-size:10px">'+esc(a.remarks||"")+
            (a.original_qty?('<span class="mpd-was">was '+fmt(a.original_qty)+'</span>'):'')+'</td>'+
 '</tr>';
