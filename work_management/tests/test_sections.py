@@ -111,3 +111,51 @@ class TestSectionSeedNaming(unittest.TestCase):
 
 	def test_an_unknown_abbreviation_is_left_alone(self):
 		self.assertEqual(seed.section_name_for("BLOCK M - KR", "KL"), "BLOCK M - KR")
+
+
+class TestAmbiguousCostCentreName(unittest.TestCase):
+	"""cost_center_name is not scoped to a company, so two companies can share
+	one. Guessing which company a block belongs to would risk binding it to
+	the wrong parent, farm and section -- so ambiguity refuses rather than
+	guesses, same as no match at all."""
+
+	def test_a_single_match_is_used(self):
+		self.assertEqual(seed.unique_cost_centre(["SBT - Saboti - KL"]), "SBT - Saboti - KL")
+
+	def test_two_companies_sharing_a_name_is_refused(self):
+		self.assertIsNone(seed.unique_cost_centre(["SBT - Saboti - KL", "SBT - Saboti - VL"]))
+
+	def test_no_match_is_none(self):
+		self.assertIsNone(seed.unique_cost_centre([]))
+
+
+class TestSectionFarmMismatch(unittest.TestCase):
+	"""Reusing a section by name must not silently move a block onto a
+	different farm than the one that section already carries."""
+
+	def test_a_matching_farm_is_not_a_conflict(self):
+		self.assertFalse(seed.farm_mismatch("Saboti", "Saboti"))
+
+	def test_a_different_farm_is_a_conflict(self):
+		self.assertTrue(seed.farm_mismatch("Saboti", "Vale"))
+
+
+class TestPlannerBlocksQueryIsOrdered(unittest.TestCase):
+	"""`select distinct` with no ordering leaves iteration order up to the
+	database -- both the ambiguity refusal and the farm-mismatch refusal
+	become nondeterministic run to run without one."""
+
+	def test_the_query_orders_its_results(self):
+		self.assertIn("order by", seed.PLANNER_BLOCKS_SQL.lower())
+
+
+class TestSectionSeedSummary(unittest.TestCase):
+	"""Someone reading migrate output should be able to tell 'no grouping
+	existed for this' apart from 'the grouping was ambiguous and I refused to
+	guess' -- the two skip reasons must be named separately, not folded into
+	one number."""
+
+	def test_both_skip_reasons_are_named_separately(self):
+		message = seed.summary_message(created=2, placed=5, ambiguous=3, farm_conflict=1)
+		self.assertIn("3 skipped for an ambiguous cost-centre name", message)
+		self.assertIn("1 skipped for a farm mismatch", message)
