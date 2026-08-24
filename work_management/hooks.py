@@ -63,11 +63,13 @@ after_install = "work_management.install.after_install"
 before_install = "work_management.install.before_install"
 
 # Reseeds the approval stage catalogue and regenerates the five workflows from
-# it, relabels the desk from the taxonomy template, and repairs the desk
+# it, upgrades Work Management Farm.business_unit to a Link once upande_core is
+# installed, relabels the desk from the taxonomy template, and repairs the desk
 # workspace when a same-named one built in the desk has shadowed the one this
 # app ships.
 after_migrate = [
 	"work_management.approvals.after_migrate",
+	"work_management.install.upgrade_business_unit_link",
 	"work_management.taxonomy.apply_labels",
 	"work_management.desk.sync",
 ]

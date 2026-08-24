@@ -50,6 +50,7 @@ def before_install():
 
 def after_install():
 	create_core_custom_fields()
+	upgrade_business_unit_link()
 	seed_approvals()
 	sync_desk_surfaces()
 
@@ -93,6 +94,35 @@ def create_core_custom_fields():
 		create_custom_field(dt, df)
 		print(f"Created custom field {dt}.{fieldname} ({ftype})")
 	frappe.db.commit()
+
+
+def upgrade_business_unit_link():
+	"""Make Work Management Farm.business_unit a Link where the target exists.
+
+	`Business Unit` belongs to upande_core. The field ships as Data so this app
+	installs on a site without it; where the doctype is present, a property
+	setter turns it into a proper link so the existing records are reachable.
+	This mirrors the Link-to-Data degradation create_core_custom_fields() does
+	for the fields on Employee and Warehouse.
+	"""
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	if not frappe.db.exists("DocType", "Business Unit"):
+		return False
+	current = frappe.db.get_value(
+		"Property Setter",
+		{"doc_type": "Work Management Farm", "field_name": "business_unit",
+		 "property": "fieldtype"},
+		"value",
+	)
+	if current == "Link":
+		return True
+	make_property_setter("Work Management Farm", "business_unit", "fieldtype", "Link", "Data",
+		validate_fields_for_doctype=False)
+	make_property_setter("Work Management Farm", "business_unit", "options", "Business Unit", "Text",
+		validate_fields_for_doctype=False)
+	frappe.clear_cache(doctype="Work Management Farm")
+	return True
 
 
 def seed_approvals():
