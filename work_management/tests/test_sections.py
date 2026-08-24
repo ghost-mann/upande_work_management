@@ -217,3 +217,65 @@ class TestRollUp(unittest.TestCase):
 
 	def test_an_empty_input_gives_an_empty_result(self):
 		self.assertEqual(sections.roll_up([], {}), [])
+
+	def test_a_none_amount_is_treated_as_zero_not_an_error(self):
+		"""The real per-block row can carry gl_spend=None (e.g. no GL match) --
+		summing must not raise, and must not corrupt the other blocks' total."""
+		rows = [
+			{"block": "A1", "labour_spend": 100.0, "gl_spend": None, "qty": 10.0, "worker_days": 8.0},
+			{"block": "A2", "labour_spend": 50.0, "gl_spend": 40.0, "qty": 5.0, "worker_days": 4.0},
+		]
+		rolled = {r["key"]: r for r in sections.roll_up(rows, self.MAPPING)}
+		self.assertEqual(rolled["BLOCK A"]["gl_spend"], 40.0)
+
+	def test_a_row_with_no_block_at_all_is_kept_under_unassigned(self):
+		"""mapping.get(row.get("block")) must not raise when 'block' is
+		missing entirely, and a row with nothing to look up is unassigned
+		the same as a row naming a block no section claims."""
+		rows = [{"labour_spend": 5.0, "gl_spend": 0.0, "qty": 1.0, "worker_days": 1.0}]
+		rolled = {r["key"]: r for r in sections.roll_up(rows, self.MAPPING)}
+		self.assertIn(sections.UNASSIGNED, rolled)
+		self.assertEqual(rolled[sections.UNASSIGNED]["labour_spend"], 5.0)
+
+
+import inspect
+
+from work_management.api import dashboard as cost_center_dashboard
+
+
+class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
+	"""Regression guard for a real bug: the cost_center action's group_by
+	branch reassigns `rows` to the (shorter) list of section buckets, and
+	out["totals"]["blocks"] must not be computed from that reassigned `rows`
+	-- it must stay a genuine block count in both toggle positions, not the
+	number of section buckets (Unassigned included).
+
+	The action itself can't be exercised as a pure function: it reads
+	frappe.form_dict, runs frappe.db.sql for the labour/weekly-trend queries,
+	and calls frappe.get_meta -- all of which need a live site, so a real
+	before/after assertion on out["totals"] is not reachable without a
+	disproportionate restructure of a large pre-existing file. What follows
+	is a source-level check instead (the same technique test_page_bootstrap.py
+	already uses on the dashboard JS): it holds the exact ordering invariant
+	whose violation caused the bug -- the true count is captured before the
+	group_by branch can reassign `rows`, and out["totals"] reads that capture
+	rather than re-deriving it from whatever `rows` happens to hold by then.
+	"""
+
+	def setUp(self):
+		self.src = inspect.getsource(cost_center_dashboard.wm_dashboard)
+
+	def test_the_block_count_is_captured_before_the_group_by_branch(self):
+		capture_at = self.src.find("block_count = len(rows)")
+		branch_at = self.src.find('== "section":')
+		self.assertNotEqual(capture_at, -1, "no captured block count found")
+		self.assertNotEqual(branch_at, -1, "no group_by section branch found")
+		self.assertLess(
+			capture_at, branch_at,
+			"block_count must be captured before the group_by branch can "
+			"reassign `rows`, or it silently becomes a section count",
+		)
+
+	def test_totals_blocks_uses_the_capture_not_a_fresh_len_of_rows(self):
+		self.assertIn('"blocks": block_count', self.src)
+		self.assertNotIn('"totals"] = {"labour": tot_labour, "gl": tot_gl, "blocks": len(rows)', self.src)
