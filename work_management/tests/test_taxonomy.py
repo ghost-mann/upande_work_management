@@ -9,7 +9,7 @@ import unittest
 
 import frappe
 
-from work_management import taxonomy
+from work_management import install, taxonomy
 
 
 def settings(**overrides):
@@ -197,6 +197,38 @@ class TestBusinessUnitField(unittest.TestCase):
 
 	def test_it_is_on_the_form(self):
 		self.assertIn("business_unit", self.doc["field_order"])
+
+
+class TestBusinessUnitFieldPlan(unittest.TestCase):
+	"""install.plan_business_unit_field() -- pure, no site, no database.
+
+	Covers both directions of the Data<->Link degradation and the
+	interrupted-write case a partial upgrade can leave behind.
+	"""
+
+	def test_doctype_absent_and_field_already_data_needs_nothing(self):
+		self.assertEqual(install.plan_business_unit_field(False, "Data", None), "noop")
+
+	def test_doctype_present_and_field_already_linked_needs_nothing(self):
+		self.assertEqual(
+			install.plan_business_unit_field(True, "Link", "Business Unit"), "noop"
+		)
+
+	def test_doctype_present_and_field_still_data_is_upgraded(self):
+		self.assertEqual(install.plan_business_unit_field(True, "Data", None), "upgrade")
+
+	def test_an_interrupted_upgrade_is_repaired_not_skipped(self):
+		"""fieldtype flipped to Link but the options write never landed."""
+		self.assertEqual(install.plan_business_unit_field(True, "Link", None), "upgrade")
+
+	def test_doctype_removed_while_field_is_still_linked_is_downgraded(self):
+		self.assertEqual(
+			install.plan_business_unit_field(False, "Link", "Business Unit"), "downgrade"
+		)
+
+	def test_an_interrupted_downgrade_is_also_repaired(self):
+		"""Same half-written state, but the doctype has since disappeared."""
+		self.assertEqual(install.plan_business_unit_field(False, "Link", None), "downgrade")
 
 
 if __name__ == "__main__":
