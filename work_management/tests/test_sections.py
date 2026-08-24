@@ -96,3 +96,18 @@ class TestUnassigned(unittest.TestCase):
 	def test_the_unassigned_bucket_has_a_name(self):
 		"""Blocks with no section are grouped, never dropped from a total."""
 		self.assertTrue(sections.UNASSIGNED)
+
+
+from work_management.patches.v1_0 import seed_sections_from_cost_centres as seed
+
+
+class TestSectionSeedNaming(unittest.TestCase):
+	def test_the_company_suffix_is_dropped_from_a_section_name(self):
+		"""'SBT - Saboti - KL' reads better as 'SBT - Saboti'."""
+		self.assertEqual(seed.section_name_for("SBT - Saboti - KL", "KL"), "SBT - Saboti")
+
+	def test_a_name_without_the_suffix_is_unchanged(self):
+		self.assertEqual(seed.section_name_for("BLOCK M", "KL"), "BLOCK M")
+
+	def test_an_unknown_abbreviation_is_left_alone(self):
+		self.assertEqual(seed.section_name_for("BLOCK M - KR", "KL"), "BLOCK M - KR")
