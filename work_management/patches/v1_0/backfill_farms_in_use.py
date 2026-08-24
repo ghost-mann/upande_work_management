@@ -32,6 +32,7 @@ SOURCES = (
 	("Work Management Master Plan", "farm"),
 	("Work Management Payment", "farm"),
 	("Work Management Planner", "farm"),
+	("Work Management Section", "farm"),
 	("Work Management Stage Approver", "scope"),
 	("Work Payment Line", "farm"),
 	("Work Rate Recalc Run", "farm"),

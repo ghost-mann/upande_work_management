@@ -67,3 +67,32 @@ class TestFarmSourcesStayComplete(unittest.TestCase):
 			if pair[0] not in self.DELIBERATELY_EXCLUDED and pair not in known
 		)
 		self.assertEqual(missing, [], f"SOURCES is missing: {missing}")
+
+
+from work_management import sections
+
+
+class TestOneSectionPerBlock(unittest.TestCase):
+	"""A block counted in two sections doubles its cost in the rollup."""
+
+	def test_no_duplicates_in_a_clean_table(self):
+		rows = [{"block": "A1"}, {"block": "A2"}, {"block": "A3"}]
+		self.assertEqual(sections.duplicate_blocks(rows), [])
+
+	def test_a_block_listed_twice_in_one_section_is_reported(self):
+		rows = [{"block": "A1"}, {"block": "A2"}, {"block": "A1"}]
+		self.assertEqual(sections.duplicate_blocks(rows), ["A1"])
+
+	def test_blank_rows_are_ignored_rather_than_reported(self):
+		rows = [{"block": ""}, {"block": None}, {"block": "A1"}]
+		self.assertEqual(sections.duplicate_blocks(rows), [])
+
+	def test_every_duplicate_is_reported_not_just_the_first(self):
+		rows = [{"block": "A1"}, {"block": "A1"}, {"block": "A2"}, {"block": "A2"}]
+		self.assertEqual(sections.duplicate_blocks(rows), ["A1", "A2"])
+
+
+class TestUnassigned(unittest.TestCase):
+	def test_the_unassigned_bucket_has_a_name(self):
+		"""Blocks with no section are grouped, never dropped from a total."""
+		self.assertTrue(sections.UNASSIGNED)
