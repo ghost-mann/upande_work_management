@@ -96,6 +96,7 @@ def get_config():
 		"hr_head_roles": [],
 		"default_company": _default_company(),
 		"block_exclude": list(DEFAULT_BLOCK_EXCLUDE),
+		"taxonomy": {},
 	}
 
 	try:
@@ -119,6 +120,10 @@ def get_config():
 
 	cfg["farm_approver_role"] = _farm_approver_role(settings, cfg["farms"])
 	cfg["hr_head_roles"] = _stage_roles(settings, "assigner_hr_head", "actuals_hr_head")
+
+	from work_management import taxonomy as _taxonomy
+
+	cfg["taxonomy"] = _taxonomy.resolve(settings)
 	return cfg
 
 

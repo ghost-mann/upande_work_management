@@ -172,5 +172,32 @@ class TestFieldLabelCatalogue(unittest.TestCase):
 		self.assertEqual(rendered[("Work Management Settings", "disc_multi_farm")], "Two Estates, one day")
 
 
+class TestBusinessUnitField(unittest.TestCase):
+	@classmethod
+	def setUpClass(cls):
+		import json
+		import os
+
+		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		path = os.path.join(
+			here, "work_management", "doctype", "work_management_farm",
+			"work_management_farm.json",
+		)
+		with open(path) as handle:
+			cls.doc = json.load(handle)
+		cls.fields = {f["fieldname"]: f for f in cls.doc["fields"]}
+
+	def test_the_farm_carries_a_business_unit(self):
+		self.assertIn("business_unit", self.fields)
+
+	def test_it_ships_as_data_so_a_standalone_install_works(self):
+		"""upande_core owns the Business Unit doctype; it may not be installed."""
+		self.assertEqual(self.fields["business_unit"]["fieldtype"], "Data")
+		self.assertFalse(self.fields["business_unit"].get("options"))
+
+	def test_it_is_on_the_form(self):
+		self.assertIn("business_unit", self.doc["field_order"])
+
+
 if __name__ == "__main__":
 	unittest.main()
