@@ -120,6 +120,25 @@ knows them:
 bench --site <site> execute work_management.seed.kaitet.execute
 ```
 
+### If the workspace, sidebar or app icon do not appear
+
+All three surfaces are derived from `Workspace.module` and `Workspace.app` on a
+single record. Frappe skips a standard JSON when the record already in the
+database has a newer `modified` than the file, so a Work Management workspace
+built in the desk — one filed under Projects, say — silently beats the one this
+app ships, and the surviving record belongs to the wrong app. Nothing reports
+this; the surfaces just are not there.
+
+`work_management.desk.sync` repairs it on install and on every migrate. To run
+it now rather than wait for a migrate:
+
+```bash
+bench --site <site> execute work_management.desk.sync
+```
+
+It re-points the workspace at this app, force-imports the shipped definition and
+rebuilds the desktop icon. A workspace that is already correct is left alone.
+
 ## The user guide
 
 `docs/Work_Management_User_Guide.pdf` is the document to hand people. Part I is

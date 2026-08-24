@@ -51,6 +51,7 @@ def before_install():
 def after_install():
 	create_core_custom_fields()
 	seed_approvals()
+	sync_desk_surfaces()
 
 
 def adopt_existing_custom_doctypes():
@@ -109,3 +110,16 @@ def seed_approvals():
 	frappe.db.commit()
 	for name in built:
 		print(f"Generated workflow: {name}")
+
+
+def sync_desk_surfaces():
+	"""Repair the workspace if a same-named one already shadowed ours.
+
+	Has to run after the app's files have been synced, not in before_install:
+	the import is what gets skipped, so there is nothing to repair until it has
+	had its chance.
+	"""
+	from work_management import desk
+
+	desk.sync()
+	frappe.db.commit()
