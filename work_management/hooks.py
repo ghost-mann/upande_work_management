@@ -63,10 +63,12 @@ after_install = "work_management.install.after_install"
 before_install = "work_management.install.before_install"
 
 # Reseeds the approval stage catalogue and regenerates the five workflows from
-# it, and repairs the desk workspace when a same-named one built in the desk has
-# shadowed the one this app ships.
+# it, relabels the desk from the taxonomy template, and repairs the desk
+# workspace when a same-named one built in the desk has shadowed the one this
+# app ships.
 after_migrate = [
 	"work_management.approvals.after_migrate",
+	"work_management.taxonomy.apply_labels",
 	"work_management.desk.sync",
 ]
 

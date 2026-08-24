@@ -4,7 +4,7 @@
 import frappe
 from frappe.model.document import Document
 
-from work_management import approvals
+from work_management import approvals, taxonomy
 
 
 class WorkManagementSettings(Document):
@@ -23,3 +23,4 @@ class WorkManagementSettings(Document):
 		frappe.clear_cache(doctype="Work Management Settings")
 		approvals.sync_roles(self, previous=self.get_doc_before_save())
 		approvals.build_workflows(self)
+		taxonomy.apply_labels(self)
