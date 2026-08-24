@@ -120,6 +120,23 @@ knows them:
 bench --site <site> execute work_management.seed.kaitet.execute
 ```
 
+## The user guide
+
+`docs/Work_Management_User_Guide.pdf` is the document to hand people. Part I is
+the operations manual for everyone using the system day to day; Part II is the
+setup and administration guide for whoever installs it on a new project.
+
+Rebuild it after changing the approval stage catalogue or the Settings doctype —
+the stage catalogue and the settings reference are generated from the code, so
+they are only correct as of the last build:
+
+```bash
+env/bin/python docs/build_manual.py     # writes the PDF and the DOCX
+```
+
+The words live in `docs/manual_content.py`; `docs/build_manual.py` renders them.
+It needs the bench environment's python for WeasyPrint.
+
 ## Development
 
 The upstream mirror and its sync tooling live in

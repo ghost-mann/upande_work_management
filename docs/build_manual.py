@@ -1,329 +1,356 @@
 #!/usr/bin/env python3
-"""Build docs/Work_Management_Manual.docx — the user-facing operations manual.
+"""Build the Work Management user guide.
 
-Regenerate after feature changes:  python3 scripts/build_manual.py
-The content lives here as structured data so the manual grows with the system.
+    bench/env/bin/python docs/build_manual.py
+
+Writes docs/Work_Management_User_Guide.pdf and docs/Work_Management_Manual.docx
+from the single content source in docs/manual_content.py. Two of the chapters
+are generated from the code they document, so run this after changing the
+approval stage catalogue or the Work Management Settings doctype.
+
+Needs the bench environment's python: WeasyPrint renders the PDF and the
+generated chapters import the app.
 """
+
+import html
 import pathlib
+import sys
 
-from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt, RGBColor
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(ROOT), str(ROOT / "docs")]
 
-ROOT = pathlib.Path(__file__).parent.parent
-OUT = ROOT / "docs" / "Work_Management_Manual.docx"
+import manual_content as content  # noqa: E402
 
-INK = RGBColor(0x0A, 0x0A, 0x0A)
-GOLD = RGBColor(0xA0, 0x60, 0x00)
-MUTE = RGBColor(0x6F, 0x6D, 0x65)
+PDF_OUT = ROOT / "docs" / "Work_Management_User_Guide.pdf"
+DOCX_OUT = ROOT / "docs" / "Work_Management_Manual.docx"
 
-# ── manual content: (kind, text) — kind: h1/h2/h3/p/b (bullet)/n (numbered) ──
-SECTIONS = [
-    ("h1", "Upande Work Management — Operations Manual"),
-    ("p", "This manual explains how to plan, assign, record, audit and pay farm task work "
-          "using the Work Management system, and how the system protects the payroll with "
-          "attendance checks and standing audits. Pages live on your site: /work-management "
-          "(dashboard), /work-planner, /work-assigner, /work-actuals, /work-payment."),
-    ("p", "Sign in with your normal account. The round button at the top-right of every page "
-          "shows who is signed in and is used to log in and out."),
-
-    ("h2", "1. The pipeline at a glance"),
-    ("p", "Every shilling follows the same path: Plan → Assign → Actuals → Confirm → Pay. "
-          "A plan sets the task, blocks, period, daily standard and rate. An assignment puts "
-          "named workers on an approved plan. Actuals record each worker's daily output. "
-          "Confirmations (Farm Manager → HR → General Manager) turn records into payable "
-          "earnings, and Payment reviews and releases the money one worker at a time."),
-
-    ("h2", "2. Planner (/work-planner)"),
-    ("n", "Pick the farm, task, block or blocks, the work period, and the crew size."),
-    ("n", "The daily standard and rate come from the task list (for example 150 Meter/day at "
-          "KES 2.2667 per Meter — rates carry four decimals so a full day comes to exactly KES 340)."),
-    ("n", "Save. The plan starts as PENDING and goes to the farm's approver (Farm Manager)."),
-    ("n", "Approved plans become available to the Assigner. A plan's budget = rate × target quantity."),
-
-    ("h3", "Consultant weekly review (Weekly review tab)"),
-    ("p", "Plans that start in an upcoming week must be signed off by a consultant before the "
-          "Farm Manager can approve them individually. Plans for the current week are exempt, so "
-          "day-to-day operations are never blocked."),
-    ("n", "Open the Weekly review tab on /work-planner, pick the farm and the week (it defaults "
-          "to next Monday; use Prev/Next week to move)."),
-    ("n", "The board shows the whole week as one package: number of plans, total budgeted value "
-          "(rate × target across every plan), peak crew per day against the farm's active "
-          "workforce, and a day-by-day crew-load chart. If any day asks for more workers than "
-          "the farm has, the board flags the week as over-planned."),
-    ("n", "Below the chart, every plan is listed with its task, blocks, period, crew per day, "
-          "target, rate, budget, who requested it, and its consultant status."),
-    ("n", "Consultants decide the week in one action: 'Approve week' stamps every plan as "
-          "consultant-approved and unlocks Farm Manager approval; 'Return with note' sends the "
-          "whole week back — the note is required and is written on every plan for the planner "
-          "to act on."),
-    ("n", "Every decision is stamped on the plans (who, when, note) and logged as a comment, so "
-          "the trail survives on the document."),
-    ("p", "Who can decide: only the users named in Work Management Settings → Consultant users "
-          "(comma-separated emails), plus System Managers. Everyone else sees the board "
-          "read-only. The whole gate can be switched off with the 'Require consultant approval "
-          "for future-week plans' checkbox in Settings."),
-
-    ("h2", "3. Assigner (/work-assigner)"),
-    ("n", "Pick an approved plan; the farm's workers load in the picker."),
-    ("n", "Every worker carries today's presence chip, whatever the work window: P · 06:12 "
-          "(scanned in or marked Present), A today (submitted Absent record — a Present record "
-          "always beats a stale Absent one), ? today (no scan or attendance record yet), or "
-          "'night shift'. Alongside it: off days in the window, leave, absences, and 'assigned "
-          "elsewhere' (a worker on another live assignment for an overlapping period cannot be "
-          "picked — this prevents double allocation and double pay)."),
-    ("n", "A presence bar above the picker shows how many of the farm's workers are in today, "
-          "a key for the chips, an 'only workers who are in' filter and a Refresh scans link. "
-          "The morning-scan block itself still applies only to day-of assignment."),
-    ("n", "Selecting a flagged worker asks for explicit confirmation; submitting re-checks on "
-          "the server and logs every override on the assignment."),
-    ("n", "The General Manager signs off assignments. Mid-job changes use the swap button — "
-          "substitutions record who left, who joined and when."),
-
-    ("h3", "How attendance is checked at assignment"),
-    ("p", "Every worker is screened against attendance before they can be given work. Each "
-          "check is a switch in Work Management Settings (section 10)."),
-    ("b", "Marked Absent — a submitted Absent attendance record blocks the worker for that day. "
-          "A Present, Half Day or WFH record on the same day always wins over a stale Absent "
-          "one, so corrected attendance clears the flag immediately."),
-    ("b", "Approved leave — leave overlapping the work window flags the worker."),
-    ("b", "Weekly offs and holidays — the off-day rule is configurable: flag only when offs "
-          "cover the whole window (default), flag any off day in the window, or ignore offs at "
-          "assignment. Night-shift guards whose off starts the morning after their shift are "
-          "handled by the same rule."),
-    ("b", "Morning presence — when the window includes today, the worker must have scanned in "
-          "(or have a Present record) by the cutoff time (default 09:00). Before the cutoff "
-          "nobody is blocked, so early assigning always works; night shifts are exempt."),
-    ("b", "Assigned elsewhere — a worker already on a live assignment for an overlapping period "
-          "cannot be picked at all; this one has no override because it creates double pay."),
-    ("b", "Overrides — leave, off-day and no-scan conflicts can be pushed through with an "
-          "explicit confirmation; the server re-checks on submit and writes every override on "
-          "the assignment, so the trail is permanent. Recording actuals on a marked-Absent day "
-          "is stricter: only the Farm Manager or GM can confirm it."),
-    ("b", "Missing attendance never blocks anyone — only an explicit record does, so a device "
-          "sync gap cannot stop work from being assigned."),
-
-    ("h2", "4. Actuals (/work-actuals)"),
-    ("n", "Open the assignment; the grid shows one row per worker and one column per day."),
-    ("n", "Every past/today cell carries presence evidence: the check-in time (in 06:52), "
-          "P (marked present, no scan time), A · absent (marked Absent), or ? (no record either "
-          "way — presence unknown). Rest days show a dot, approved leave days are blocked."),
-    ("n", "Enter each worker's daily quantity. Rows are valued at qty × rate to the cent; on "
-          "plans whose implied daily wage is within 1% of KES 340 a full day is valued at "
-          "exactly 340.00."),
-    ("n", "Saving warns when a quantity conflicts with attendance: recording work for a worker "
-          "marked Absent needs the Farm Manager (or GM) to approve; leave/off/no-scan conflicts "
-          "can be overridden by the enterer, and every override is logged on the document. "
-          "Saving also warns when the same worker-day is already recorded for the task in "
-          "another document (double pay)."),
-    ("n", "Submit walks the document through Farm Manager → HR → GM to CONFIRMED. Submission "
-          "unlocks only when the plan target is reached; plans that cannot finish (absentees, "
-          "crop finished early) are closed early via a close request, which the GM approves — "
-          "the close queue shows live done/remaining figures."),
-
-    ("h2", "5. Payment (/work-payment) — workers are paid one at a time"),
-    ("p", "The payment section is worker-centric. Each worker's confirmed earnings are sent "
-          "to accounts as their own payment entry and released. The status ladder per worker "
-          "is: Unpaid → Sent to accounts → Paid. There is no separate review step — sending "
-          "IS the sign-off: the sender's name and time are stamped on every included day-row "
-          "and on the payment entry. The review sheet stays available for checking anyone "
-          "before sending."),
-    ("h3", "5.1 Reviewing a worker"),
-    ("b", "Click any worker to open the review sheet: identity, window KPIs (earned, paid, "
-          "unpaid, days), one card per task with the daily log underneath, a Payments tab, and "
-          "a Discrepancies tab listing that worker's flagged days."),
-    ("b", "Each task card names the full accountability chain: who created the plan, assigned "
-          "the job, captured the actuals, and each approver (FM, HR, GM), plus the task's "
-          "standard (e.g. 300 Tree/day @ KES 1.1333)."),
-    ("b", "Every day row shows presence evidence next to the pay. In Work & days, every "
-          "unpaid day's quantity is directly editable — change as many as needed and press "
-          "the single Save changes button at the bottom (Undo restores the originals). Pay "
-          "recomputes at each row's rate, documents re-sum, and one audit comment per "
-          "document lists every change."),
-    ("b", "Download Excel exports the review as a workbook: a Summary sheet and a Tasks & days "
-          "sheet laid out like the review (one table per task with its day rows and presence)."),
-    ("h3", "5.2 Sending to accounts"),
-    ("b", "Submit & send to accounts creates one payment document for that worker (WMPAY-…) "
-          "holding the period, totals, who sent it and when, and one line per actuals document "
-          "with the task, block, worked period, days, qty, rate, amount and the whole sign-off "
-          "chain. The sender is stamped as reviewer on every included day-row."),
-    ("b", "Bulk: tick several workers (workers with attendance conflicts carry a red flag with "
-          "the day count) and use Send to accounts — each still gets their own entry."),
-    ("h3", "5.3 Awaiting accounts"),
-    ("b", "Accounts releases an entry with Mark paid — every included day row is stamped paid."),
-    ("b", "Return to unpaid withdraws an entry (deletes the reference, clears review stamps) so "
-          "the days can be corrected and re-sent. Bulk return handles many entries at once."),
-
-    ("h2", "6. Time & attendance protection"),
-    ("p", "The pipeline checks workers against attendance before work is given to them or "
-          "recorded for them. Every behaviour is a switch in Work Management Settings."),
-    ("b", "Checks: marked Absent (submitted attendance), approved leave, weekly offs/holidays, "
-          "and morning presence (biometric scan or Present attendance today, with a "
-          "configurable cutoff so early assigning is never blocked; night shifts are exempt)."),
-    ("b", "The off-day rule when assigning is configurable: flag only when offs cover the whole "
-          "window (default), flag any off day, or ignore offs at assignment."),
-    ("b", "Overrides: leave/off/no-scan conflicts can be overridden by the person doing the "
-          "work, always logged. Absent-day actuals need the Farm Manager or GM."),
-    ("b", "Missing attendance never blocks anyone — only an explicit Absent record does, so "
-          "device sync gaps cannot stop work."),
-
-    ("h2", "7. Discrepancies — the standing audit"),
-    ("p", "Payment → Audit → Discrepancies scans every confirmed worker-day in the chosen "
-          "window and groups everything suspicious. Each check has its own settings checkbox; "
-          "rows link to the worker's review sheet and name the documents."),
-    ("b", "Paid on marked-Absent days — a scan time means the attendance record is probably "
-          "wrong; no scan means the entry needs scrutiny. Days whose attendance was corrected "
-          "(a Present record exists alongside an old Absent one) are validated out and never "
-          "flagged."),
-    ("b", "No presence evidence at all — no scan and no attendance record of any kind."),
-    ("b", "Earning while on approved leave — possible double payment."),
-    ("b", "Work on off days / holidays — fine if deliberate overtime."),
-    ("b", "Amount ≠ qty × rate — edited or corrupted values."),
-    ("b", "Two farms, one day — physically doubtful."),
-    ("b", "Entered and approved by the same person — no independent check."),
-    ("b", "Earning after leaving the job — days dated after a worker was released."),
-    ("b", "Paid twice for the same day — the same worker, task and date in two documents; a "
-          "one-click repair keeps the earliest copy and zeroes the rest."),
-    ("b", "Recorded work with no pay — rows valued at zero although the document has a rate; a "
-          "one-click Revalue repairs them at qty × rate."),
-    ("b", "Left the company but still on live assignments — ex-employees still assignable. A "
-          "Clean slate button releases the backlog; the auto-release setting (off by default) "
-          "releases future leavers the moment HR deactivates them. Released workers keep all "
-          "recorded work and pay — release only stops new quantities."),
-
-    ("h2", "8. Dashboard (/work-management)"),
-    ("b", "Activity across the pipeline — stage cards for Planned, Assigned (with active "
-          "employees split into task workers and permanent staff), Actual and Payment."),
-    ("b", "Workers & value per farm — per-farm cards: assigned workers, active employees "
-          "(task/permanent split), awaiting actuals, confirmed, quantities and value."),
-    ("b", "Delivery timeline — planned vs staffed vs delivered per day, with farm and date "
-          "filters and quantity/KES toggle."),
-    ("b", "Field intelligence (beside the timeline) — two tabs: Efficiency (Ha per man-day "
-          "and Cost per Ha, per farm and per task) and Available workers (the number and list "
-          "of employees free to work on any chosen date, filterable by farm). Explained in "
-          "full in the next section."),
-    ("b", "Action queues — everything waiting on someone, one queue at a time."),
-    ("b", "Value flow — weekly planned/assigned/confirmed value and a per-plan table with each "
-          "plan's accountability chain."),
-    ("b", "Pipeline performers — planner and assigner economics, per person, with "
-          "most/least-expensive callouts (judged only on people with real volume, more than "
-          "500 units). Column key: Plans = approved plans created in the window; Target qty = "
-          "the output those plans promised; Actual qty = confirmed output delivered; "
-          "Achieved = Actual ÷ Target (green 90%+, amber 60%+, red below); Budget KES = what "
-          "the plans are worth if fully delivered (rate × target); Spent KES = confirmed pay "
-          "earned on them; Of budget = Spent ÷ Budget — low is NOT automatically savings, "
-          "read it with Achieved (50% spent at 50% achieved just means half the work "
-          "happened); KES/unit = Spent ÷ Actual, what one unit of output cost under this "
-          "person. The Assigners tab uses the same definitions over their assignments, plus "
-          "Workers put on jobs (assignment rows they created — a worker on two assignments "
-          "counts twice). A third tab evaluates Actuals enterers: documents, worker-days, "
-          "value entered, average entry lag and rejections. CLICK ANY NAME for that person's "
-          "full evaluation popup: volume, delivery (achieved %, closed-early rate), money "
-          "(budget vs spent, KES/unit, and a task-adjusted 'vs peers on the same tasks' "
-          "benchmark that removes task-mix unfairness), speed (approval wait / staffing "
-          "speed / entry lag), quality (rejections, substitutions, attendance overrides, "
-          "flagged rows) and the list of their documents."),
-    ("b", "Crew movements — substitution history: who left, who joined, swaps."),
-
-    ("h2", "9. Field intelligence, explained"),
-    ("p", "The Field intelligence card sits beside the Delivery timeline on the dashboard. It "
-          "answers two everyday management questions: 'what does our work actually cost per "
-          "hectare, and how much ground does a worker-day cover?' and 'who is free to work "
-          "today (or any day I pick)?'"),
-    ("h3", "9.1 Efficiency tab"),
-    ("p", "Pick a date window (default: the last 30 days) and press Apply. The table shows, "
-          "per farm and in total:"),
-    ("b", "Area Ha — the hectares of the blocks whose plans had confirmed work in the window. "
-          "Each plan's blocks are counted once for that plan, using the Area (HA) captured on "
-          "the block record (Warehouse). If a block has no area captured, it contributes "
-          "nothing — a dash (—) in the table means areas are missing, and the fix is data "
-          "entry on the block records, not a system fault."),
-    ("b", "Man-days — one worker working one day is one man-day, counted from confirmed "
-          "actuals (a worker on two tasks the same day is still one man-day)."),
-    ("b", "Ha / man-day — Area ÷ man-days: how much ground one worker-day covers. Higher is "
-          "leaner. Compare farms with care: the task mix matters (a farm doing slow detailed "
-          "tasks like handling will always cover fewer hectares per man-day than one doing "
-          "slashing)."),
-    ("b", "Cost KES — the confirmed pay for that work in the window."),
-    ("b", "Cost / Ha — Cost ÷ Area: what a hectare of work cost. This is the number to watch "
-          "over time per farm and per task. When Cost/Ha rises on the same task mix, each "
-          "hectare is consuming more paid work than before. Read it together with Ha/man-day: "
-          "if Cost/Ha rises while Ha/man-day falls, workers are covering less ground per day — "
-          "productivity dropped (denser weeds, harder terrain, crop stage slowing the task, or "
-          "quantities recorded that don't match ground actually covered). If Ha/man-day is "
-          "steady while Cost/Ha rises, the change is in the rates — check the task list."),
-    ("p", "Below the farm table, the same metrics appear per task (top tasks by man-days), "
-          "which is where differences usually explain themselves — compare the same task "
-          "across time, not different tasks against each other."),
-    ("p", "Worked example: Endebess confirmed 7,871 man-days over blocks totalling 1,670 Ha "
-          "at a cost of KES 2.40M → 0.212 Ha per man-day and KES 1,439 per Ha."),
-    ("h3", "9.2 Available workers tab"),
-    ("p", "Pick any date (past, today or future) and optionally a farm. The card shows the "
-          "count and the full name list of AVAILABLE workers — active employees with no live "
-          "assignment covering that date (assignment start and leaving dates are respected). "
-          "For today and past dates, a green P marks workers who scanned in that day, so you "
-          "can see at a glance who is both free AND on the farm. Use the name search to find "
-          "someone specific."),
-    ("p", "This is the assigner's shortlist: when a new plan needs a crew, the Available "
-          "workers list for the start date is exactly who can be picked without a "
-          "double-allocation conflict."),
-
-    ("h2", "10. Work Management Settings — reference"),
-    ("b", "Attendance gates: check attendance (Absent), check approved leaves, check weekly "
-          "offs/holidays, off-day rule when assigning."),
-    ("b", "Morning presence: require a morning scan for day-of assignment, morning scan cutoff "
-          "(default 09:00), check scans when recording actuals."),
-    ("b", "Auto-release inactive employees from assignments (off by default)."),
-    ("b", "Discrepancy checks: one checkbox per check listed in section 7."),
-    ("b", "Consultant weekly review: require consultant approval for future-week plans (on by "
-          "default), consultant users — the comma-separated emails allowed to approve or return "
-          "a farm's week."),
-
-    ("h2", "11. Definitions"),
-    ("b", "Man-day — one worker working one day (a worker on two tasks the same day is one man-day)."),
-    ("b", "Ha / man-day — area of the blocks whose plans were worked, divided by the man-days "
-          "spent on them: how much ground one worker-day covers."),
-    ("b", "Cost / Ha — confirmed pay divided by the area worked: what a hectare of work costs."),
-    ("b", "Available worker — an active employee with no live assignment covering the chosen date."),
-    ("b", "Standard — the plan's daily expectation, e.g. 150 Meter/day @ KES 2.2667."),
-    ("b", "Presence evidence — a biometric check-in time, a Present attendance record, an "
-          "Absent record, or nothing (? — unknown)."),
-]
+INK = "#0a0a0a"
+GOLD = "#a06000"
+GREEN = "#1f6f4a"
+MUTE = "#6f6d65"
+RULE = "#e4e2dc"
+WASH = "#faf9f6"
 
 
-def build():
-    doc = Document()
-    st = doc.styles["Normal"]
-    st.font.name = "Calibri"
-    st.font.size = Pt(10.5)
-    for kind, text in SECTIONS:
-        if kind == "h1":
-            p = doc.add_heading(text, level=0)
-            for r in p.runs:
-                r.font.color.rgb = INK
-            sub = doc.add_paragraph("Kaitet Group · kaitet-group.upande.com · living document — regenerated with the system")
-            sub.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            for r in sub.runs:
-                r.font.color.rgb = MUTE
-                r.font.size = Pt(9)
-        elif kind == "h2":
-            p = doc.add_heading(text, level=1)
-            for r in p.runs:
-                r.font.color.rgb = GOLD
-        elif kind == "h3":
-            p = doc.add_heading(text, level=2)
-            for r in p.runs:
-                r.font.color.rgb = INK
-        elif kind == "b":
-            doc.add_paragraph(text, style="List Bullet")
-        elif kind == "n":
-            doc.add_paragraph(text, style="List Number")
-        else:
-            doc.add_paragraph(text)
-    OUT.parent.mkdir(exist_ok=True)
-    doc.save(OUT)
-    print(f"wrote {OUT} ({OUT.stat().st_size:,} bytes)")
+# ------------------------------------------------------------------ numbering
+
+
+def numbered(blocks):
+	"""Walk the content, attaching a number to every section and subsection.
+
+	Numbers are computed once, here, so the table of contents and the headings
+	can never disagree about them.
+	"""
+	out = []
+	section = subsection = 0
+	for kind, payload in blocks:
+		if kind == "h2":
+			section += 1
+			subsection = 0
+			out.append((kind, payload, str(section), f"s{section}"))
+		elif kind == "h3":
+			subsection += 1
+			label = f"{section}.{subsection}"
+			out.append((kind, payload, label, f"s{section}-{subsection}"))
+		else:
+			out.append((kind, payload, None, None))
+	return out
+
+
+# ----------------------------------------------------------------------- PDF
+
+CSS = f"""
+@page {{
+  size: A4;
+  margin: 20mm 18mm 18mm 18mm;
+  @top-left {{
+    content: "{content.TITLE} · {content.SUBTITLE}";
+    font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+    font-size: 7.5pt; color: {MUTE}; letter-spacing: .06em; text-transform: uppercase;
+    padding-bottom: 3mm;
+  }}
+  @bottom-right {{
+    content: counter(page);
+    font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+    font-size: 8.5pt; color: {MUTE}; padding-top: 4mm;
+  }}
+}}
+@page cover {{ margin: 0; @top-left {{ content: none }} @bottom-right {{ content: none }} }}
+@page frontmatter {{ @bottom-right {{ content: none }} }}
+
+html {{ font-family: "Noto Serif", "DejaVu Serif", Georgia, serif;
+        font-size: 10.2pt; line-height: 1.5; color: {INK}; }}
+body {{ margin: 0; }}
+
+h1, h2, h3, .part-title, .toc h2, th, .kicker, .cover-strap, .cover .sub {{
+  font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+}}
+
+/* ---- cover ---- */
+.cover {{ page: cover; break-after: page; }}
+.cover-band {{ background: {GREEN}; height: 96mm; padding: 34mm 20mm 0 20mm; color: #fff; }}
+.cover-mark {{ margin-bottom: 6mm; }}
+.cover-mark .bar {{ display: inline-block; width: 3.2mm; margin-right: 1.4mm;
+                    background: rgba(255,255,255,.85); border-radius: .8mm;
+                    vertical-align: bottom; }}
+.cover h1 {{ font-size: 34pt; margin: 0 0 2mm 0; font-weight: 700; letter-spacing: -.5pt; }}
+.cover .sub {{ font-size: 16pt; margin: 0; font-weight: 400; opacity: .92; }}
+.cover-body {{ padding: 16mm 20mm 0 20mm; }}
+.cover-strap {{ font-size: 11pt; line-height: 1.55; color: {INK}; max-width: 125mm;
+                margin: 0 0 14mm 0; }}
+.cover-meta {{ font-size: 9pt; color: {MUTE}; border-top: .4mm solid {RULE}; padding-top: 4mm;
+               max-width: 125mm; }}
+.cover-meta b {{ color: {INK}; font-weight: 600; }}
+
+/* ---- contents ---- */
+.toc {{ page: frontmatter; break-after: page; }}
+.toc h2 {{ font-size: 15pt; color: {INK}; margin: 0 0 6mm 0; border: 0; padding: 0; }}
+.toc ol {{ list-style: none; margin: 0; padding: 0; }}
+.toc li {{ margin: 0 0 1.3mm 0; font-size: 10pt; }}
+.toc li.part {{ margin: 5mm 0 2mm 0; font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+                font-size: 8.5pt; letter-spacing: .1em; text-transform: uppercase;
+                color: {GOLD}; }}
+.toc li.sub {{ padding-left: 9mm; font-size: 9.2pt; color: {MUTE}; }}
+.toc a {{ color: inherit; text-decoration: none; }}
+.toc .row {{ display: flex; align-items: baseline; gap: 2mm; }}
+.toc .num {{ color: {MUTE}; min-width: 9mm; }}
+.toc .dots {{ flex: 1; border-bottom: .25mm dotted {RULE}; }}
+.toc a::after {{ content: target-counter(attr(href), page); color: {MUTE}; }}
+
+/* ---- parts and headings ---- */
+.part-page {{ break-before: page; break-after: page; padding-top: 78mm; }}
+.part-rule {{ width: 26mm; height: 1.4mm; background: {GOLD}; margin-bottom: 8mm; }}
+.part-title {{ font-size: 26pt; font-weight: 700; margin: 0; letter-spacing: -.3pt; }}
+
+h2 {{ font-size: 16pt; color: {INK}; margin: 12mm 0 3mm 0; font-weight: 700;
+      break-after: avoid; padding-bottom: 2mm; border-bottom: .35mm solid {RULE}; }}
+h2 .num {{ color: {GOLD}; margin-right: 3mm; }}
+h3 {{ font-size: 11.5pt; color: {GOLD}; margin: 7mm 0 2mm 0; font-weight: 600;
+      break-after: avoid; }}
+h3 .num {{ color: {MUTE}; margin-right: 2.5mm; font-weight: 400; }}
+
+p {{ margin: 0 0 3mm 0; orphans: 2; widows: 2; }}
+ol {{ margin: 0 0 3mm 0; padding-left: 6mm; }}
+li {{ margin: 0 0 1.6mm 0; orphans: 2; widows: 2; }}
+ul {{ list-style: none; margin: 0 0 3mm 0; padding-left: 5mm; }}
+ul > li {{ position: relative; padding-left: 4mm; }}
+ul > li::before {{ content: "\\2014"; position: absolute; left: 0; color: {GOLD}; }}
+
+.note {{ background: {WASH}; border-left: 1mm solid {GOLD}; padding: 3mm 4mm;
+         margin: 4mm 0; font-size: 9.6pt; break-inside: avoid; }}
+.note .kicker {{ display: block; font-size: 7.5pt; letter-spacing: .1em;
+                 text-transform: uppercase; color: {GOLD}; margin-bottom: 1.2mm; }}
+
+table {{ border-collapse: collapse; width: 100%; margin: 3mm 0 5mm 0;
+         font-size: 9.2pt; }}
+thead {{ display: table-header-group; }}
+tr {{ break-inside: avoid; }}
+caption {{ caption-side: top; text-align: left;
+           font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+           font-size: 8pt; letter-spacing: .08em; text-transform: uppercase;
+           color: {MUTE}; padding-bottom: 1.8mm; break-after: avoid; }}
+th {{ text-align: left; font-size: 8pt; letter-spacing: .05em; text-transform: uppercase;
+      color: {MUTE}; font-weight: 600; border-bottom: .4mm solid {INK}; padding: 1.8mm 2.5mm; }}
+td {{ border-bottom: .25mm solid {RULE}; padding: 1.8mm 2.5mm; vertical-align: top; }}
+tbody tr:nth-child(even) {{ background: {WASH}; }}
+"""
+
+
+def cover_html():
+	bars = "".join(
+		f'<span class="bar" style="height:{h}mm"></span>' for h in (5, 8, 11)
+	)
+	return f"""
+<section class="cover">
+  <div class="cover-band">
+    <div class="cover-mark">{bars}</div>
+    <h1>{html.escape(content.TITLE)}</h1>
+    <p class="sub">{html.escape(content.SUBTITLE)}</p>
+  </div>
+  <div class="cover-body">
+    <p class="cover-strap">{html.escape(content.STRAPLINE)}</p>
+    <div class="cover-meta">
+      <b>Part I</b> is for everyone using the system day to day.<br>
+      <b>Part II</b> is for whoever sets it up on a new project.<br><br>
+      A living document — regenerated from the system it describes.
+    </div>
+  </div>
+</section>"""
+
+
+def toc_html(blocks):
+	rows = []
+	for kind, payload, number, anchor in blocks:
+		if kind == "part":
+			rows.append(f'<li class="part">{html.escape(payload)}</li>')
+		elif kind in ("h2", "h3"):
+			cls = "sub" if kind == "h3" else ""
+			rows.append(
+				f'<li class="{cls}"><div class="row">'
+				f'<span class="num">{number}</span>'
+				f"<span>{html.escape(payload)}</span>"
+				f'<span class="dots"></span>'
+				f'<a href="#{anchor}"></a>'
+				f"</div></li>"
+			)
+	return '<section class="toc"><h2>Contents</h2><ol>' + "".join(rows) + "</ol></section>"
+
+
+def table_html(payload):
+	caption, headers, rows = payload
+	head = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+	body = "".join(
+		"<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in row) + "</tr>"
+		for row in rows
+	)
+	return (
+		f"<table><caption>{html.escape(caption)}</caption>"
+		f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+	)
+
+
+def body_html(blocks):
+	out = []
+	pending_list = None
+
+	def close_list():
+		nonlocal pending_list
+		if pending_list:
+			out.append(f"</{pending_list}>")
+			pending_list = None
+
+	def open_list(tag):
+		nonlocal pending_list
+		if pending_list != tag:
+			close_list()
+			out.append(f"<{tag}>")
+			pending_list = tag
+
+	for kind, payload, number, anchor in blocks:
+		if kind in ("b", "n"):
+			open_list("ul" if kind == "b" else "ol")
+			out.append(f"<li>{html.escape(payload)}</li>")
+			continue
+		close_list()
+		if kind == "part":
+			out.append(
+				f'<div class="part-page"><div class="part-rule"></div>'
+				f'<h1 class="part-title">{html.escape(payload)}</h1></div>'
+			)
+		elif kind == "h2":
+			out.append(
+				f'<h2 id="{anchor}"><span class="num">{number}</span>{html.escape(payload)}</h2>'
+			)
+		elif kind == "h3":
+			out.append(
+				f'<h3 id="{anchor}"><span class="num">{number}</span>{html.escape(payload)}</h3>'
+			)
+		elif kind == "note":
+			out.append(
+				f'<div class="note"><span class="kicker">Note</span>{html.escape(payload)}</div>'
+			)
+		elif kind == "table":
+			out.append(table_html(payload))
+		else:
+			out.append(f"<p>{html.escape(payload)}</p>")
+	close_list()
+	return "<article>" + "".join(out) + "</article>"
+
+
+def build_pdf(blocks):
+	from weasyprint import CSS as WeasyCSS
+	from weasyprint import HTML as WeasyHTML
+
+	page = (
+		"<!doctype html><html><head><meta charset='utf-8'>"
+		f"<title>{html.escape(content.TITLE)} — {html.escape(content.SUBTITLE)}</title>"
+		"</head><body>"
+		+ cover_html()
+		+ toc_html(blocks)
+		+ body_html(blocks)
+		+ "</body></html>"
+	)
+	WeasyHTML(string=page, base_url=str(ROOT)).write_pdf(
+		PDF_OUT, stylesheets=[WeasyCSS(string=CSS)]
+	)
+	return PDF_OUT
+
+
+# ---------------------------------------------------------------------- DOCX
+
+
+def build_docx(blocks):
+	from docx import Document
+	from docx.enum.text import WD_ALIGN_PARAGRAPH
+	from docx.shared import Pt, RGBColor
+
+	ink = RGBColor(0x0A, 0x0A, 0x0A)
+	gold = RGBColor(0xA0, 0x60, 0x00)
+	mute = RGBColor(0x6F, 0x6D, 0x65)
+
+	doc = Document()
+	style = doc.styles["Normal"]
+	style.font.name = "Calibri"
+	style.font.size = Pt(10.5)
+
+	heading = doc.add_heading(f"{content.TITLE} — {content.SUBTITLE}", level=0)
+	for run in heading.runs:
+		run.font.color.rgb = ink
+	strap = doc.add_paragraph(content.STRAPLINE)
+	strap.alignment = WD_ALIGN_PARAGRAPH.LEFT
+	for run in strap.runs:
+		run.font.color.rgb = mute
+		run.font.size = Pt(9)
+
+	for kind, payload, number, _anchor in blocks:
+		if kind == "part":
+			para = doc.add_heading(payload, level=1)
+			for run in para.runs:
+				run.font.color.rgb = ink
+		elif kind == "h2":
+			para = doc.add_heading(f"{number}. {payload}", level=2)
+			for run in para.runs:
+				run.font.color.rgb = gold
+		elif kind == "h3":
+			para = doc.add_heading(f"{number} {payload}", level=3)
+			for run in para.runs:
+				run.font.color.rgb = ink
+		elif kind == "b":
+			doc.add_paragraph(payload, style="List Bullet")
+		elif kind == "n":
+			doc.add_paragraph(payload, style="List Number")
+		elif kind == "note":
+			para = doc.add_paragraph(f"Note — {payload}")
+			for run in para.runs:
+				run.font.color.rgb = gold
+				run.font.size = Pt(9.5)
+		elif kind == "table":
+			caption, headers, rows = payload
+			cap = doc.add_paragraph(caption)
+			for run in cap.runs:
+				run.font.color.rgb = mute
+				run.font.size = Pt(8.5)
+			table = doc.add_table(rows=1, cols=len(headers))
+			table.style = "Light Grid Accent 1"
+			for cell, header in zip(table.rows[0].cells, headers):
+				cell.text = str(header)
+			for row in rows:
+				cells = table.add_row().cells
+				for cell, value in zip(cells, row):
+					cell.text = str(value)
+			doc.add_paragraph()
+		else:
+			doc.add_paragraph(payload)
+
+	doc.save(DOCX_OUT)
+	return DOCX_OUT
+
+
+def main():
+	blocks = numbered(content.sections())
+	for path in (build_pdf(blocks), build_docx(blocks)):
+		print(f"wrote {path.relative_to(ROOT)} ({path.stat().st_size:,} bytes)")
 
 
 if __name__ == "__main__":
-    build()
+	main()
