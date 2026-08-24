@@ -1,0 +1,64 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-24 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "stage_label",
+  "scope",
+  "user",
+  "role"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "fieldname": "stage_label",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Stage",
+   "reqd": 1,
+   "options": "Master Plan: Submit\nMaster Plan: Consultant\nMaster Plan: GM\nPlanner: Submit\nPlanner: Farm Approval\nPlanner: Weekly Consultant\nAssigner: Submit\nAssigner: Farm Manager\nAssigner: HR Head\nAssigner: GM\nActuals: Submit\nActuals: Farm Manager\nActuals: HR Head\nActuals: GM\nPayment: Accounts"
+  },
+  {
+   "columns": 2,
+   "fieldname": "scope",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Farm",
+   "options": "Work Management Farm",
+   "description": "Leave empty to let this person act on every farm. Only the farm-scoped stages read it."
+  },
+  {
+   "columns": 3,
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Approver",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "role",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Role override",
+   "options": "Role",
+   "description": "Leave empty to use the stage's role. Set it to keep one farm's approvals separate from another's — a per-farm role is what stops any farm manager approving every farm."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-24 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Stage Approver",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

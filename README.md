@@ -1,7 +1,7 @@
-# Upande Work Management
+# Work Management
 
-A portable Frappe app for farm task-work management — the full pipeline in five
-web pages backed by five API endpoints and a doctype family:
+A portable Frappe app for task-work management — the full pipeline in five web
+pages backed by five API endpoints and a doctype family:
 
 ```
 Plan (Work Management Planner) → Assign (… Assigner) → Capture (… Actuals) → Pay (… Payment)
@@ -16,74 +16,121 @@ Plan (Work Management Planner) → Assign (… Assigner) → Capture (… Actual
 | `/work-payment`    | Payment         | `/api/method/wm_payment`     |
 
 The bare method names are kept via `override_whitelisted_methods`, so the pages
-are byte-compatible with the original Web Page + Server Script implementation
-on kaitet-group.upande.com.
+are byte-compatible with the Web Page + Server Script implementation this app
+was extracted from.
+
+Nothing about any one customer is compiled in. Farms, the company, and who
+approves each step are configuration. A fresh install has no farms and no
+approvers, and the screens say so rather than offering someone else's.
 
 ## What's in the app
 
-- **Doctypes** (module *Work Management*): Work Management Planner / Assigner /
-  Actuals / Payment, children Work Planner Block, Work Assignment Employee,
-  Work Actuals Employee, Work Payment Line, Work Management Task — including
-  all the fields that lived as Custom Fields on live (close-request flow,
-  approval timestamps, qty tracking).
-- **API** (`upande_work_management/api/`): faithful ports of the five live
-  Server Scripts. Same actions, same request/response shapes.
-- **Work Management Settings** (single): farms (name + cost project + approver
-  role), default company, block-exclude keywords. Empty settings = original
-  Kaitet defaults, so behaviour is unchanged out of the box.
-- **Fixtures**: the four approval Workflows, their Workflow States / Actions,
-  and the roles the flow depends on.
+- **Doctypes** (module *Work Management*): Work Management Master Plan /
+  Planner / Assigner / Actuals / Payment, Work Management Farm, Work Task Rate,
+  Work Rate Recalc Run, and their child tables.
+- **API** (`work_management/api/`): ports of the five Server Scripts, generated
+  from the upstream mirror by its `port_app.py`. Edit the mirror script, not
+  these files.
+- **Work Management Settings** (single): the approval stages and their
+  approvers, default company, block-exclude keywords, attendance and
+  discrepancy checks, rates and payroll settings, header logo.
+- **Work Management Farm**: the unit work is planned against — farm, estate,
+  site, division, whatever your project calls it — with its cost project.
+- **Desk surfaces**: a Workspace, a v16 Workspace Sidebar, and an apps-screen
+  entry (`add_to_apps_screen`). The sidebar is v16-only and is simply not read
+  on v15.
+- **Generated workflows**: the five approval workflows are built from the stage
+  configuration by `work_management/approvals.py`, not shipped as fixtures.
 - **Install hooks** (`install.py`):
   - `before_install` *adopts* the doctypes if they already exist on the site as
-    custom doctypes (the kaitet-group case) — flips `custom=0`, points the
-    module at this app, keeps all data.
+    custom doctypes — flips `custom=0`, points the module at this app, keeps all
+    data.
   - `after_install` creates the custom fields needed on core doctypes
     (Employee/Warehouse `custom_farm`, Warehouse `custom_area_ha`,
-    Task `custom_uom` / `custom_daily_target` / `custom_rate`, …). Link fields
-    degrade to Data fields when the link target (e.g. the Kaitet `Farm`
-    doctype) is not on the site.
-- **Frontend**: the original page JS untouched (`public/js/`), re-skinned by
-  `public/css/wm-theme.css` — Upande glass theme (Poppins + Fraunces, ink
-  palette, frosted cards on a warm canvas, per-stage accent hues).
+    Task `custom_uom` / `custom_daily_target` / `custom_rate`, …), then seeds
+    the approval stages and generates the workflows.
+
+## Approvals
+
+Every step of every chain is a row in **Work Management Settings → Approval
+Stages**: the step, the document it belongs to, whether it is on, and the role
+that takes it. **Stage Approvers** names the people, one row each, and saving
+grants them the stage's role.
+
+The workflows are generated from those rows, so they stay ordinary role-based
+Frappe workflows — approvers keep the action buttons, the notifications and the
+awaiting-approval inbox.
+
+- Switching a stage off relinks the chain: with `Assigner: GM` off, HR approval
+  goes straight to Assigned.
+- Submit steps cannot be switched off.
+- On a farm-scoped stage, give each farm its own approver and role override to
+  keep one farm's approvals out of another's reach. Leaving an approver's Farm
+  empty lets them act on every farm. Settings refuses to save a configuration
+  that would leave a farm with nobody to approve its work.
+
+Adding a stage is a change to `CATALOGUE` in `work_management/approvals.py`;
+the next `bench migrate` seeds it and rebuilds the workflows.
 
 ## Install
 
 ```bash
-bench get-app https://github.com/<org>/upande_work_management
-bench --site <site> install-app upande_work_management
+bench get-app https://github.com/<org>/work_management
+bench --site <site> install-app work_management
 bench --site <site> migrate
-bench build --app upande_work_management
+bench build --app work_management
 ```
 
-### Deploying to kaitet-group.upande.com (Frappe Cloud)
-
-1. Push this repo to GitHub and add it to the bench group in the Frappe Cloud
-   dashboard, then deploy + install on the site.
-2. `before_install` adopts the existing custom doctypes automatically — data in
-   `tabWork Management Planner` etc. is preserved.
-3. After verifying the pages, **unpublish/delete the five old Web Page
-   documents** (`work-management-dashboard`, `work-planner`, `work-assigner`,
-   `work-actuals`, `work-payment`) and **disable the five Server Scripts**
-   (Work Management Dashboard / Work Planner / Work Assigner / Work Actuals /
-   Work Payment). The app's `www/` pages and API methods take over the same
-   routes and method names. (Route resolution prefers the Web Page documents,
-   so the app pages only show once the Web Pages are gone.)
+Supports Frappe 15 and 16.
 
 ### Installing on a fresh site
 
-1. Install the app (doctypes, workflows, roles, custom fields are created).
-2. Open **Work Management Settings** and enter your farms (one row each:
-   farm name, cost project, approver role), default company and block-exclude
-   keywords.
-3. Set `custom_farm` on Warehouses (blocks) and Employees (task workers), and
+1. Install the app. Doctypes, roles, custom fields, the approval stages and the
+   workflows are created.
+2. Create a **Work Management Farm** for each unit you plan work against, with
+   its cost project.
+3. Open **Work Management Settings**:
+   - under **Approvals**, set the role for each stage and add the people to
+     Stage Approvers;
+   - set the default company and the block-exclude keywords;
+   - optionally set a header logo.
+4. Set `custom_farm` on Warehouses (blocks) and Employees (task workers), and
    `custom_uom` / `custom_daily_target` / `custom_rate` on Tasks.
-4. Give users the roles: Production Section Head (raise plans), farm approver
-   roles, General Manager, HOD HR, and accounts roles for payment.
+
+### Migrating a site that ran the earlier version
+
+`work_management.patches.v1_0.migrate_farms_and_approvers` runs on migrate and
+carries the old configuration forward: the `WM Farm` rows in Settings become
+Work Management Farm records, and `approver_role` plus `consultant_users`
+become Stage Approver rows. Both source fields stay read-only for one release
+so the patch can read them.
+
+One behaviour change to know about: the workflows this replaced carried an
+unconditional `Farm Manager` transition alongside the per-farm ones, so anyone
+holding the plain role could approve any farm. Once per-farm approvers are
+configured, only they can.
+
+### Site-specific configuration
+
+`work_management/seed/kaitet.py` holds one deployment's own values — farms,
+roles, company, per-farm approvers — and is the only module in the repo that
+knows them:
+
+```bash
+bench --site <site> execute work_management.seed.kaitet.execute
+```
 
 ## Development
 
-Local mirror + sync tooling for the live site lives in
-`~/vscodeProjects/kaitet-work-management` (not part of this repo).
+The upstream mirror and its sync tooling live in
+`~/vscodeProjects/kaitet-work-management` (not part of this repo). Run its
+`port_app.py` after every Server Script change to regenerate `api/*.py`.
+
+Tests need no site and no database:
+
+```bash
+./env/bin/python -m unittest discover -s apps/work_management/work_management/tests -t apps/work_management
+```
 
 #### License
 
