@@ -1,0 +1,106 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:farm_name",
+ "creation": "2026-08-24 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "farm_name",
+  "project",
+  "column_break_main",
+  "disabled",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "farm_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Farm",
+   "reqd": 1,
+   "unique": 1,
+   "description": "The unit of land or operation work is planned against. Whatever your project calls it — farm, estate, site, division — name it here."
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Cost Project",
+   "options": "Project",
+   "description": "Costs recorded for this farm are attributed to this project."
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled",
+   "description": "Hidden from pickers on new documents. Existing documents keep their farm."
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-24 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Farm",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Farm Manager",
+   "select": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HOD HR",
+   "select": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "General Manager",
+   "select": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "select": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "select": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}

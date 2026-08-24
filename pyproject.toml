@@ -1,5 +1,5 @@
 [project]
-name = "upande_work_management"
+name = "work_management"
 authors = [{ name = "Upande Ltd", email = "dev@upande.com" }]
 description = "Farm work management command centre: plan task work, assign crews, capture actuals and run worker payments."
 requires-python = ">=3.10"

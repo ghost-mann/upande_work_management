@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 44" role="img" aria-label="Work Management">
+  <title>Work Management</title>
+  <rect x="0" y="4" width="36" height="36" rx="9" fill="#1f6f4a"/>
+  <rect x="8" y="23" width="4.5" height="9" rx="1.4" fill="#ffffff" opacity="0.55"/>
+  <rect x="15" y="19" width="4.5" height="13" rx="1.4" fill="#ffffff" opacity="0.78"/>
+  <rect x="22" y="14" width="4.5" height="18" rx="1.4" fill="#ffffff"/>
+  <path d="M7.5 14l3 3 6.5-6.5" fill="none" stroke="#8fe3b4" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="48" y="28.5" font-family="system-ui, -apple-system, 'Segoe UI', Inter, sans-serif"
+        font-size="19" font-weight="600" letter-spacing="-0.2" fill="currentColor">Work Management</text>
+</svg>

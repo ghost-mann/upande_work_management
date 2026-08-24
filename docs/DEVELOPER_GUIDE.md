@@ -1,21 +1,26 @@
-# Upande Work Management — Developer Guide
+# Work Management — Developer Guide
 
-Portable Frappe app packaging the Kaitet work-management system: nine custom
-doctypes, five whitelisted API modules, five glass-themed web pages, and the
-workflows/roles as fixtures.
+Portable Frappe app packaging the work-management system: the pipeline doctypes,
+five whitelisted API modules, five glass-themed web pages, its own desk
+surfaces, and approval workflows generated from configuration.
 
 ## Repository layout
 
 ```
-upande_work_management/
+work_management/
 ├── hooks.py                  # override_whitelisted_methods, fixtures, install hooks
 ├── install.py                # adopts pre-existing custom doctypes, creates custom fields
 ├── api/
 │   ├── config.py             # get_config(): farms, projects, company, approver roles
-│   │                         #   from Work Management Settings (Kaitet defaults fallback)
+│   │                         #   from Work Management Farm + Work Management Settings
 │   ├── planner.py assigner.py actuals.py payment.py dashboard.py
 │   │                         # ported 1:1 from the live Server Scripts
+├── approvals.py              # stage catalogue + workflow generator
+├── seed/kaitet.py            # one deployment's own farms, roles and company
+├── patches/v1_0/             # carries old farm/approver config forward
 ├── work_management/doctype/  # WM doctypes (see below)
+├── work_management/workspace/ # the desk workspace
+├── workspace_sidebar/        # the v16 sidebar (not read on v15)
 ├── public/js, public/css     # page JS + wm-theme.css (glass skin)
 └── www/                      # web page shells (Jinja-escaped, boot-shim loader)
 ```
@@ -24,7 +29,7 @@ upande_work_management/
 Each module exposes one whitelisted entry point taking `action` + params via
 `frappe.form_dict`, e.g. `/api/method/wm_payment?action=pay_workers`.
 `hooks.py override_whitelisted_methods` maps the bare names (`wm_payment`,
-`wm_dashboard`, …) so the pages work unchanged from the Kaitet site.
+`wm_dashboard`, …) so the pages work unchanged from the mirror site.
 
 **Porting rule:** the live site runs the same logic as Server Scripts
 (sandbox: no `_`-attrs, `frappe.form_dict` in, `frappe.response["message"]`
@@ -138,7 +143,7 @@ gotcha: variable names starting with `_` are rejected by RestrictedPython.
 
 ## Porting to the app
 
-`kaitet-work-management/port_app.py` regenerates all five `api/*.py` modules
+The mirror's `port_app.py` regenerates all the `api/*.py` modules
 from the mirror server scripts (strips constants, swaps farm-role if-chains
 for the `FARM_APPROVER_ROLE` loop, wraps + indents, `return out`). Edit the
 mirror script, `python3 port_app.py`, never the app module directly.
@@ -154,21 +159,21 @@ page's CSS variables and frosts the surfaces; page roots: `#wmp #wpp #wap #acp
 ## Install / deploy
 
 ```bash
-bench get-app https://github.com/ghost-mann/upande_work_management
-bench --site <site> install-app upande_work_management
+bench get-app https://github.com/ghost-mann/work_management
+bench --site <site> install-app work_management
 ```
 
 `before_install` adopts identically-named custom doctypes already on the site
 (sets `custom=0`, module Work Management); `after_install` creates the custom
 fields (Employee farm, actuals review/payment stamps, …) with a Link→Data
 fallback when a target doctype is missing. Configure farms/roles in
-**Work Management Settings**; blank settings fall back to the Kaitet defaults
+**Work Management Settings** and **Work Management Farm**; blank settings mean no farms
 in `api/config.py`.
 
-## The Kaitet live-site mirror
+## The upstream live-site mirror
 
-The live site (kaitet-group.upande.com) runs this system as Web Pages +
-Server Scripts, mirrored in the `kaitet-work-management` repo:
+The upstream site runs this system as Web Pages + Server Scripts, mirrored in
+the `kaitet-work-management` repo:
 
 ```
 sync.py pull            # refresh local copies from live

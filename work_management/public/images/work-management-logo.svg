@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Work Management">
+  <title>Work Management</title>
+  <rect width="64" height="64" rx="14" fill="#1f6f4a"/>
+  <!-- Three ascending bars: planned, assigned, delivered. -->
+  <rect x="15" y="34" width="7" height="15" rx="2" fill="#ffffff" opacity="0.55"/>
+  <rect x="26" y="27" width="7" height="22" rx="2" fill="#ffffff" opacity="0.78"/>
+  <rect x="37" y="19" width="7" height="30" rx="2" fill="#ffffff"/>
+  <!-- The approval that releases the work. -->
+  <path d="M14 21.5l5 5 11-11" fill="none" stroke="#8fe3b4" stroke-width="3.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,130 @@
+app_name = "work_management"
+app_title = "Work Management"
+app_publisher = "Upande Ltd"
+app_description = (
+	"Work management command centre: plan task work against a budget, assign "
+	"crews, capture actuals and run worker payments."
+)
+app_email = "dev@upande.com"
+app_license = "mit"
+
+# The apps screen entry. Routed at the dashboard rather than the desk
+# workspace, because the dashboard is the front door people are sent to.
+add_to_apps_screen = [
+	{
+		"name": "work_management",
+		"logo": "/assets/work_management/images/work-management-logo.svg",
+		"title": "Work Management",
+		"route": "/work-management",
+		"has_permission": "work_management.api.permission.has_app_permission",
+	}
+]
+
+# The five pages call these bare endpoints (/api/method/wm_planner etc.).
+# Mapping them here keeps the frontend identical to the original Web Pages
+# and lets the app transparently replace the old Server Scripts.
+doc_events = {
+	"Employee": {
+		"on_update": "work_management.api.hr.release_inactive",
+	},
+	# Editing a rate in the Task list records a rate period effective today, so
+	# history writes itself rather than depending on anyone maintaining it.
+	"Task": {
+		"on_update": "work_management.rates.task_on_update",
+	},
+}
+
+override_whitelisted_methods = {
+	"wm_dashboard": "work_management.api.dashboard.wm_dashboard",
+	"wm_planner": "work_management.api.planner.wm_planner",
+	"wm_assigner": "work_management.api.assigner.wm_assigner",
+	"wm_actuals": "work_management.api.actuals.wm_actuals",
+	"wm_payment": "work_management.api.payment.wm_payment",
+	"wm_rates": "work_management.api.rates.wm_rates",
+	"wm_masterplan": "work_management.api.masterplan.wm_masterplan",
+}
+
+scheduler_events = {
+	# Activates any rate period that starts today. Without this a rate card
+	# loaded in advance would never take effect — nothing else fires on its
+	# start date.
+	"daily": [
+		"work_management.rates.sync_active_periods",
+	],
+}
+
+after_install = "work_management.install.after_install"
+before_install = "work_management.install.before_install"
+
+# Reseeds the approval stage catalogue and regenerates the five workflows from
+# it, so adding a stage in code is all it takes to ship one.
+after_migrate = "work_management.approvals.after_migrate"
+
+fixtures = [
+	{
+		"dt": "Workflow State",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Approved",
+					"Assigned",
+					"CONFIRMED",
+					"Draft",
+					"Paid",
+					"Pending Accounts",
+					"Pending Approval",
+					"Pending Consultant",
+					"Pending Farm Manager",
+					"Pending GM",
+					"Pending HR Head",
+					"Rejected",
+					"Unpaid",
+					"Cancelled",
+				],
+			]
+		],
+	},
+	{
+		"dt": "Workflow Action Master",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Approve",
+					"Cancel",
+					"FM Approve",
+					"GM Approve",
+					"HR Approve",
+					"Mark Paid",
+					"Re-submit",
+					"Reject",
+					"Send for Consultant Review",
+					"Send to Accounts",
+					"Send to GM",
+					"Submit for Approval",
+				],
+			]
+		],
+	},
+	{
+		"dt": "Role",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Farm Manager",
+					"General Manager",
+					"HOD HR",
+					"HR Clerk",
+					"Production Section Head",
+				],
+			]
+		],
+	},
+]
+
+website_route_rules = []

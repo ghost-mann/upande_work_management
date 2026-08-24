@@ -1,0 +1,12 @@
+import frappe
+
+from work_management.api.config import header_logo
+
+
+def get_context(context):
+	if frappe.session.user == "Guest":
+		frappe.throw(frappe._("Please login to access Work Management"), frappe.PermissionError)
+	context.no_cache = 1
+	context.title = "Command Centre · Work Management"
+	context.header_logo = header_logo()
+	return context

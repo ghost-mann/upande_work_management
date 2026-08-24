@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-24 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "stage",
+  "stage_label",
+  "document_type",
+  "kind",
+  "enabled",
+  "role"
+ ],
+ "fields": [
+  {
+   "fieldname": "stage",
+   "fieldtype": "Data",
+   "label": "Stage Key",
+   "read_only": 1,
+   "hidden": 1,
+   "description": "Catalogue key. Set by the app, not by hand."
+  },
+  {
+   "columns": 3,
+   "fieldname": "stage_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Stage",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "document_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Document",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "Submit\nApproval\nGate",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "On",
+   "description": "Off drops this stage from the approval chain, and the step before it approves straight through to the next one. Submit stages cannot be switched off."
+  },
+  {
+   "columns": 3,
+   "fieldname": "role",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Role",
+   "options": "Role",
+   "description": "The role allowed to take this step. Approvers listed below are granted it."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-24 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Approval Stage",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}
