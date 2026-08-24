@@ -10,11 +10,31 @@ not, and the ones that do not carry most of the work: the estate overheads and
 the VALE-B series match no cost centre at all. Those are left for someone to
 place deliberately rather than guessed at, and blocks in no section group under
 Unassigned so no total goes missing.
+
+Reading someone else's tree also means reading someone else's ambiguity. A
+`Cost Center`'s `name` carries the company abbreviation ERPNext appends and so
+is unique, but `cost_center_name` does not and is not scoped to a company --
+on a site with more than one company, two of them can genuinely share one. A
+block that only matches by `cost_center_name`, and matches more than one
+Cost Center that way, is left unassigned rather than bound to a guess at which
+company it belongs to. The same refusal applies to reusing an existing
+section: if two companies' trees strip to the same section name, a block is
+only added to that section when the section's farm already matches the
+block's own -- otherwise it would silently move part of one farm's total into
+another's section.
 """
 
 import frappe
 
 from work_management import sections
+
+# `select distinct` with no ordering leaves iteration order up to the
+# database. That does not matter when every block resolves independently, but
+# it does once ambiguity or section reuse is possible -- ordering makes a run
+# reproducible instead of nondeterministic.
+PLANNER_BLOCKS_SQL = """select distinct block_section from `tabWork Management Planner`
+	where ifnull(block_section, '') != ''
+	order by block_section"""
 
 
 def section_name_for(cost_centre, abbr):
@@ -25,17 +45,68 @@ def section_name_for(cost_centre, abbr):
 	return cost_centre
 
 
-def parent_cost_centre(block):
-	"""The group cost centre above this block's own, if the block maps to one."""
+def unique_cost_centre(names):
+	"""The single cost centre among candidates that share one cost_center_name,
+	or None when there isn't exactly one.
+
+	ERPNext appends the company abbreviation to a Cost Center's `name` but not
+	to `cost_center_name`, so two companies can share one. Guessing which
+	company a block belongs to would risk binding it to the wrong parent, the
+	wrong farm, and the wrong section -- so more than one match refuses rather
+	than guesses, the same as no match at all.
+	"""
+	return names[0] if len(names) == 1 else None
+
+
+def farm_mismatch(section_farm, block_farm):
+	"""True when reusing an existing section would move a block onto a farm
+	other than the one that section already carries.
+
+	Two companies' cost-centre trees can strip to the same section name; if
+	the existing section's farm differs from the block's own, appending would
+	silently merge part of one farm's total into another's section.
+	"""
+	return section_farm != block_farm
+
+
+def cost_centre_lookup(block):
+	"""(cost centre docname or None, whether the lookup was ambiguous) for a
+	block name.
+
+	Tried first by docname, which is unique by construction; falls back to
+	cost_center_name, which is not.
+	"""
 	cc = frappe.db.exists("Cost Center", block)
-	if not cc:
-		cc = frappe.db.get_value("Cost Center", {"cost_center_name": block}, "name")
-	if not cc:
-		return None
+	if cc:
+		return cc, False
+	matches = frappe.get_all("Cost Center", filters={"cost_center_name": block}, pluck="name")
+	return unique_cost_centre(matches), len(matches) > 1
+
+
+def _parent_of(cc):
+	"""The group cost centre above `cc`, if any."""
 	parent = frappe.db.get_value("Cost Center", cc, "parent_cost_center")
 	if not parent or not frappe.db.get_value("Cost Center", parent, "is_group"):
 		return None
 	return parent
+
+
+def parent_cost_centre(block):
+	"""The group cost centre above this block's own, if the block maps to one
+	unambiguously."""
+	cc, _ = cost_centre_lookup(block)
+	return _parent_of(cc) if cc else None
+
+
+def summary_message(created, placed, ambiguous, farm_conflict):
+	"""The line printed once seeding finishes, naming both skip reasons
+	separately so migrate output can tell "no grouping existed" apart from
+	"the grouping was ambiguous and this refused to guess"."""
+	return (
+		f"Work Management: seeded {created} section(s) holding {placed} block(s) from the ledger "
+		f"({ambiguous} skipped for an ambiguous cost-centre name, "
+		f"{farm_conflict} skipped for a farm mismatch with an existing section)"
+	)
 
 
 def execute():
@@ -43,15 +114,16 @@ def execute():
 		if not frappe.db.exists("DocType", doctype):
 			return
 
-	blocks = frappe.db.sql(
-		"""select distinct block_section from `tabWork Management Planner`
-		   where ifnull(block_section, '') != ''"""
-	)
-	created = placed = 0
+	blocks = frappe.db.sql(PLANNER_BLOCKS_SQL)
+	created = placed = ambiguous = farm_conflict = 0
 	for (block,) in blocks:
 		if sections.claimed_by(block):
 			continue
-		parent = parent_cost_centre(block)
+		cc, is_ambiguous = cost_centre_lookup(block)
+		if is_ambiguous:
+			ambiguous += 1
+			continue
+		parent = _parent_of(cc) if cc else None
 		if not parent:
 			continue
 		farm = frappe.db.get_value("Warehouse", block, "custom_farm")
@@ -62,6 +134,9 @@ def execute():
 
 		if frappe.db.exists("Work Management Section", name):
 			doc = frappe.get_doc("Work Management Section", name)
+			if farm_mismatch(doc.farm, farm):
+				farm_conflict += 1
+				continue
 		else:
 			doc = frappe.get_doc({
 				"doctype": "Work Management Section", "section_name": name, "farm": farm,
@@ -74,4 +149,4 @@ def execute():
 		placed += 1
 
 	frappe.db.commit()
-	print(f"Work Management: seeded {created} section(s) holding {placed} block(s) from the ledger")
+	print(summary_message(created, placed, ambiguous, farm_conflict))
