@@ -65,7 +65,8 @@
    "fieldname": "default_company",
    "fieldtype": "Link",
    "label": "Default Company",
-   "options": "Company"
+   "options": "Company",
+   "description": "Used on new plans, assignments and payments. Falls back to the site's own default company when empty."
   },
   {
    "description": "Comma-separated keywords. Warehouses whose name contains any of these are hidden from the block picker (e.g. Store, Mill, Tank).",
@@ -151,67 +152,78 @@
    "fieldname": "disc_absent_paid",
    "fieldtype": "Check",
    "label": "Paid on marked-Absent days",
-   "default": "1"
+   "default": "1",
+   "description": "Flags a paid day where attendance says the worker was Absent. Days whose attendance was later corrected are never flagged."
   },
   {
    "fieldname": "disc_ghost_days",
    "fieldtype": "Check",
    "label": "No presence evidence at all (no scan, no attendance)",
-   "default": "1"
+   "default": "1",
+   "description": "Flags a paid day with no biometric scan and no attendance record of any kind."
   },
   {
    "fieldname": "disc_leave_paid",
    "fieldtype": "Check",
    "label": "Earning while on approved leave",
-   "default": "1"
+   "default": "1",
+   "description": "Flags a paid day that falls inside an approved leave application."
   },
   {
    "fieldname": "disc_off_paid",
    "fieldtype": "Check",
    "label": "Work recorded on off days / holidays",
-   "default": "1"
+   "default": "1",
+   "description": "Flags work recorded on a weekly off or a holiday. Legitimate when overtime was deliberate."
   },
   {
    "fieldname": "disc_rate_mismatch",
    "fieldtype": "Check",
    "label": "Amount doesn't match qty × rate",
-   "default": "1"
+   "default": "1",
+   "description": "Flags a row whose amount is not quantity times rate — usually an edited or corrupted value."
   },
   {
    "fieldname": "disc_multi_farm",
    "fieldtype": "Check",
    "label": "Two farms, one day",
-   "default": "1"
+   "default": "1",
+   "description": "Flags a worker paid on two farms for the same day."
   },
   {
    "fieldname": "disc_self_approved",
    "fieldtype": "Check",
    "label": "Entered and approved by the same person",
-   "default": "1"
+   "default": "1",
+   "description": "Flags work entered and approved by the same person, so nothing had an independent check."
   },
   {
    "fieldname": "disc_left_earning",
    "fieldtype": "Check",
    "label": "Earning after leaving the job",
-   "default": "1"
+   "default": "1",
+   "description": "Flags earnings dated after the worker's leaving date."
   },
   {
    "fieldname": "disc_no_pay",
    "fieldtype": "Check",
    "label": "Recorded work with no pay (zero-valued rows)",
-   "default": "1"
+   "default": "1",
+   "description": "Flags rows valued at zero although the document carries a rate. Repairable in one click."
   },
   {
    "fieldname": "disc_dup_day",
    "fieldtype": "Check",
    "label": "Paid twice for the same day (duplicate entries)",
-   "default": "1"
+   "default": "1",
+   "description": "Flags the same worker, task and date recorded in two documents. Repairable in one click, keeping the earliest copy."
   },
   {
    "fieldname": "disc_inactive_assigned",
    "fieldtype": "Check",
    "label": "Left the company but still on live assignments",
-   "default": "1"
+   "default": "1",
+   "description": "Flags employees who have left but are still on live assignments."
   },
   {
    "fieldname": "att_auto_release_inactive",
@@ -304,13 +316,15 @@
    "fieldtype": "Link",
    "label": "Last Run",
    "options": "Work Rate Recalc Run",
-   "read_only": 1
+   "read_only": 1,
+   "description": "The Work Rate Recalc Run document the last recalculation wrote. Set by the system."
   },
   {
    "fieldname": "last_recalc_on",
    "fieldtype": "Datetime",
    "label": "Last Run On",
-   "read_only": 1
+   "read_only": 1,
+   "description": "When the last recalculation ran. Set by the system."
   },
   {
    "fieldname": "column_break_last",
@@ -321,13 +335,15 @@
    "fieldtype": "Link",
    "label": "Last Run By",
    "options": "User",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Who ran the last recalculation. Set by the system."
   },
   {
    "fieldname": "last_recalc_summary",
    "fieldtype": "Small Text",
    "label": "Last Run Summary",
-   "read_only": 1
+   "read_only": 1,
+   "description": "What the last recalculation changed. Set by the system."
   },
   {
    "fieldname": "sb_payroll",
@@ -386,7 +402,8 @@
    "fieldname": "approval_stages",
    "fieldtype": "Table",
    "label": "Approval Stages",
-   "options": "Work Management Approval Stage"
+   "options": "Work Management Approval Stage",
+   "description": "One row per step of every approval chain, seeded on install. The step and its document are fixed; set the role that takes it, and clear On to drop the step and relink the chain around it. Submit steps cannot be switched off."
   },
   {
    "fieldname": "stage_approvers",
