@@ -2228,6 +2228,10 @@ def wm_dashboard(**kwargs):
         if cpu_list:
             mid = len(cpu_list) // 2
             med_cpu = cpu_list[mid] if len(cpu_list) % 2 == 1 else (cpu_list[mid - 1] + cpu_list[mid]) / 2.0
+        # the true block count, captured before group_by (below) can reassign
+        # `rows` to a shorter list of section buckets -- out["totals"]["blocks"]
+        # must stay a block count in both toggle positions.
+        block_count = len(rows)
         # optional Block/Section toggle: re-express the same rows, totalled by
         # section instead of by block. A section marked disabled is hidden from
         # this toggle (see the doctype's own field description), so its blocks
@@ -2251,7 +2255,7 @@ def wm_dashboard(**kwargs):
             ]
         out["blocks"] = rows
         out["farm_totals"] = farm_rows
-        out["totals"] = {"labour": tot_labour, "gl": tot_gl, "blocks": len(rows),
+        out["totals"] = {"labour": tot_labour, "gl": tot_gl, "blocks": block_count,
             "qty": tot_qty, "worker_days": tot_wd,
             "cost_per_unit": (tot_labour / tot_qty) if tot_qty > 0 else None,
             "median_cost_per_unit": med_cpu, "has_gl": 1 if has_gl else 0}
