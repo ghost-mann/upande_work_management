@@ -20,6 +20,8 @@ The repair decision is pure, so it is tested here without a site::
     ./env/bin/python -m unittest work_management.tests.test_desk_sync -v
 """
 
+import contextlib
+import io
 import unittest
 
 from work_management import desk
@@ -186,3 +188,34 @@ class TestShippedDefinitions(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestARebuildStepThatFails(unittest.TestCase):
+	"""A broken desk rebuild step must not take `bench migrate` down with it.
+
+	Frappe 16.27 ships a create_desktop_icons_from_workspace() that raises on
+	every workspace it tries to file, and whose own error handler raises a
+	second time on the way out. That reaches sites through this app's
+	after_migrate hook, so the call has to be survivable.
+	"""
+
+	def test_a_step_that_works_reports_nothing(self):
+		self.assertIsNone(desk.without_aborting_the_migrate(lambda: None, "do the thing"))
+
+	def test_a_step_that_raises_is_reported_not_propagated(self):
+		def boom():
+			raise TypeError("'list' object is not callable")
+
+		# The note is printed and logged on purpose; swallow it so a passing
+		# run stays quiet and a real failure still stands out.
+		noise = io.StringIO()
+		with contextlib.redirect_stdout(noise), contextlib.redirect_stderr(noise):
+			note = desk.without_aborting_the_migrate(boom, "rebuild the desktop icons")
+		self.assertIn("rebuild the desktop icons", note)
+		self.assertIn("TypeError", note)
+		self.assertIn("'list' object is not callable", note)
+
+	def test_the_step_actually_ran(self):
+		calls = []
+		desk.without_aborting_the_migrate(lambda: calls.append(1), "count")
+		self.assertEqual(calls, [1])
