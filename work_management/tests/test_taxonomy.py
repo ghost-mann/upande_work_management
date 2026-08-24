@@ -107,22 +107,28 @@ class TestSettingsTemplate(unittest.TestCase):
 				self.assertTrue((field.get("description") or "").strip(), name)
 
 
+def _shipped_doctypes():
+	"""{doctype name: {fieldname: field dict}} for every DocType JSON the app ships."""
+	import glob
+	import json
+	import os
+
+	here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	shipped = {}
+	for path in glob.glob(os.path.join(here, "work_management", "doctype", "*", "*.json")):
+		with open(path) as handle:
+			doc = json.load(handle)
+		if doc.get("doctype") != "DocType":
+			continue
+		shipped[doc["name"]] = {f["fieldname"]: f for f in doc.get("fields", [])}
+	return shipped
+
+
 class TestFieldLabelCatalogue(unittest.TestCase):
-	"""The 21 level-naming labels, and the one that must not be touched."""
+	"""The 20 level-naming labels, and the one that must not be touched."""
 
 	def test_every_entry_names_a_field_the_app_defines(self):
-		import glob
-		import json
-		import os
-
-		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-		known = {}
-		for path in glob.glob(os.path.join(here, "work_management", "doctype", "*", "*.json")):
-			with open(path) as handle:
-				doc = json.load(handle)
-			if doc.get("doctype") != "DocType":
-				continue
-			known[doc["name"]] = {f["fieldname"] for f in doc.get("fields", [])}
+		known = _shipped_doctypes()
 		for doctype, fieldname, _template in taxonomy.FIELD_LABELS:
 			self.assertIn(doctype, known, doctype)
 			self.assertIn(fieldname, known[doctype], f"{doctype}.{fieldname}")
@@ -140,14 +146,22 @@ class TestFieldLabelCatalogue(unittest.TestCase):
 			self.assertTrue(rendered.strip(), f"{doctype}.{fieldname}")
 
 	def test_the_defaults_reproduce_todays_wording(self):
-		"""An upgraded site must look unchanged until someone edits the template."""
+		"""An upgraded site must look unchanged until someone edits the template.
+
+		Generated against the shipped JSON rather than hardcoded, so it cannot
+		drift out of sync as fields are added to FIELD_LABELS.
+		"""
 		names = taxonomy.resolve(settings())
-		rendered = {
-			(d, f): taxonomy.label_for(t, names) for d, f, t in taxonomy.FIELD_LABELS
-		}
-		self.assertEqual(rendered[("Work Management Planner", "farm")], "Farm")
-		self.assertEqual(rendered[("Work Management Planner", "extra_blocks")], "Additional Blocks")
-		self.assertEqual(rendered[("Work Management Settings", "disc_multi_farm")], "Two Farms, one day")
+		shipped = _shipped_doctypes()
+		mismatches = []
+		for doctype, fieldname, template in taxonomy.FIELD_LABELS:
+			rendered = taxonomy.label_for(template, names)
+			shipped_label = shipped[doctype][fieldname].get("label")
+			if rendered != shipped_label:
+				mismatches.append(
+					f"{doctype}.{fieldname}: rendered {rendered!r} != shipped {shipped_label!r}"
+				)
+		self.assertEqual(mismatches, [], "\n".join(mismatches))
 
 	def test_renaming_the_top_level_reaches_every_farm_label(self):
 		names = taxonomy.resolve(settings(tax_top_singular="Estate", tax_top_plural="Estates"))

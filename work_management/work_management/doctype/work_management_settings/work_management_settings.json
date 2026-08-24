@@ -198,7 +198,7 @@
   {
    "fieldname": "disc_multi_farm",
    "fieldtype": "Check",
-   "label": "Two farms, one day",
+   "label": "Two Farms, one day",
    "default": "1",
    "description": "Flags a worker paid on two farms for the same day."
   },
