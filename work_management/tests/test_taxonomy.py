@@ -70,5 +70,42 @@ class TestLabelTemplates(unittest.TestCase):
 		self.assertEqual(taxonomy.label_for("{nope} here", names), "{nope} here")
 
 
+class TestSettingsTemplate(unittest.TestCase):
+	"""The resolver reads these fields; Settings must actually carry them."""
+
+	@classmethod
+	def setUpClass(cls):
+		import json
+		import os
+
+		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		path = os.path.join(
+			here, "work_management", "doctype", "work_management_settings",
+			"work_management_settings.json",
+		)
+		with open(path) as handle:
+			cls.doc = json.load(handle)
+		cls.fields = {f["fieldname"]: f for f in cls.doc["fields"]}
+
+	def test_every_level_has_a_singular_and_plural_field(self):
+		for level in taxonomy.LEVELS:
+			self.assertIn(f"tax_{level.key}_singular", self.fields, level.key)
+			self.assertIn(f"tax_{level.key}_plural", self.fields, level.key)
+
+	def test_business_unit_has_an_enable_flag(self):
+		self.assertIn("tax_bu_enabled", self.fields)
+		self.assertEqual(self.fields["tax_bu_enabled"]["fieldtype"], "Check")
+
+	def test_the_template_fields_are_on_the_form(self):
+		for level in taxonomy.LEVELS:
+			self.assertIn(f"tax_{level.key}_singular", self.doc["field_order"], level.key)
+
+	def test_every_template_field_is_documented(self):
+		"""The user guide's settings chapter is generated from these."""
+		for name, field in self.fields.items():
+			if name.startswith("tax_"):
+				self.assertTrue((field.get("description") or "").strip(), name)
+
+
 if __name__ == "__main__":
 	unittest.main()

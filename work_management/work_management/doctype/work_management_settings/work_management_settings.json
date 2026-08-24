@@ -11,6 +11,18 @@
   "sb_approvals",
   "approval_stages",
   "stage_approvers",
+  "sb_taxonomy",
+  "tax_bu_enabled",
+  "tax_bu_singular",
+  "tax_bu_plural",
+  "column_break_tax1",
+  "tax_top_singular",
+  "tax_top_plural",
+  "tax_unit_singular",
+  "tax_unit_plural",
+  "column_break_tax2",
+  "tax_section_singular",
+  "tax_section_plural",
   "sb_att",
   "att_block_absent",
   "att_block_leave",
@@ -422,6 +434,75 @@
    "fieldtype": "Attach Image",
    "label": "Header Logo",
    "description": "Shown in the header of the five work screens. Leave empty for the module's own wordmark."
+  },
+  {
+   "fieldname": "sb_taxonomy",
+   "fieldtype": "Section Break",
+   "label": "Taxonomy",
+   "description": "What this installation calls the levels work is organised by. Leave a name empty to use the built-in wording. Changing a name relabels the desk forms and the work screens; it never changes data."
+  },
+  {
+   "fieldname": "tax_bu_enabled",
+   "fieldtype": "Check",
+   "label": "Use a level above the farm",
+   "default": "0",
+   "description": "On: farms belong to a business unit, and reports can group by it."
+  },
+  {
+   "fieldname": "tax_bu_singular",
+   "fieldtype": "Data",
+   "label": "Level above the farm (singular)",
+   "description": "Default: Business Unit."
+  },
+  {
+   "fieldname": "tax_bu_plural",
+   "fieldtype": "Data",
+   "label": "Level above the farm (plural)",
+   "description": "Default: Business Units."
+  },
+  {
+   "fieldname": "column_break_tax1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tax_top_singular",
+   "fieldtype": "Data",
+   "label": "Farm level (singular)",
+   "description": "Default: Farm. Estate, site, division — whatever your project calls it."
+  },
+  {
+   "fieldname": "tax_top_plural",
+   "fieldtype": "Data",
+   "label": "Farm level (plural)",
+   "description": "Default: Farms."
+  },
+  {
+   "fieldname": "tax_unit_singular",
+   "fieldtype": "Data",
+   "label": "Block level (singular)",
+   "description": "Default: Block. The piece of ground work is planned against."
+  },
+  {
+   "fieldname": "tax_unit_plural",
+   "fieldtype": "Data",
+   "label": "Block level (plural)",
+   "description": "Default: Blocks."
+  },
+  {
+   "fieldname": "column_break_tax2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tax_section_singular",
+   "fieldtype": "Data",
+   "label": "Cost grouping (singular)",
+   "description": "Default: Section. Names the grouping the cost-centre view can be switched to, and the toggle that switches it."
+  },
+  {
+   "fieldname": "tax_section_plural",
+   "fieldtype": "Data",
+   "label": "Cost grouping (plural)",
+   "description": "Default: Sections."
   }
  ],
  "idx": 0,
