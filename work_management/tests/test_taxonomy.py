@@ -107,5 +107,56 @@ class TestSettingsTemplate(unittest.TestCase):
 				self.assertTrue((field.get("description") or "").strip(), name)
 
 
+class TestFieldLabelCatalogue(unittest.TestCase):
+	"""The 21 level-naming labels, and the one that must not be touched."""
+
+	def test_every_entry_names_a_field_the_app_defines(self):
+		import glob
+		import json
+		import os
+
+		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		known = {}
+		for path in glob.glob(os.path.join(here, "work_management", "doctype", "*", "*.json")):
+			with open(path) as handle:
+				doc = json.load(handle)
+			if doc.get("doctype") != "DocType":
+				continue
+			known[doc["name"]] = {f["fieldname"] for f in doc.get("fields", [])}
+		for doctype, fieldname, _template in taxonomy.FIELD_LABELS:
+			self.assertIn(doctype, known, doctype)
+			self.assertIn(fieldname, known[doctype], f"{doctype}.{fieldname}")
+
+	def test_the_verb_block_label_is_not_in_the_catalogue(self):
+		"""'Check attendance (block employees marked Absent)' uses block as a verb."""
+		entries = {(d, f) for d, f, _t in taxonomy.FIELD_LABELS}
+		self.assertNotIn(("Work Management Settings", "att_block_absent"), entries)
+
+	def test_every_template_renders_with_the_default_names(self):
+		names = taxonomy.resolve(settings())
+		for doctype, fieldname, template in taxonomy.FIELD_LABELS:
+			rendered = taxonomy.label_for(template, names)
+			self.assertNotIn("{", rendered, f"{doctype}.{fieldname}")
+			self.assertTrue(rendered.strip(), f"{doctype}.{fieldname}")
+
+	def test_the_defaults_reproduce_todays_wording(self):
+		"""An upgraded site must look unchanged until someone edits the template."""
+		names = taxonomy.resolve(settings())
+		rendered = {
+			(d, f): taxonomy.label_for(t, names) for d, f, t in taxonomy.FIELD_LABELS
+		}
+		self.assertEqual(rendered[("Work Management Planner", "farm")], "Farm")
+		self.assertEqual(rendered[("Work Management Planner", "extra_blocks")], "Additional Blocks")
+		self.assertEqual(rendered[("Work Management Settings", "disc_multi_farm")], "Two Farms, one day")
+
+	def test_renaming_the_top_level_reaches_every_farm_label(self):
+		names = taxonomy.resolve(settings(tax_top_singular="Estate", tax_top_plural="Estates"))
+		rendered = {
+			(d, f): taxonomy.label_for(t, names) for d, f, t in taxonomy.FIELD_LABELS
+		}
+		self.assertEqual(rendered[("Work Management Planner", "farm")], "Estate")
+		self.assertEqual(rendered[("Work Management Settings", "disc_multi_farm")], "Two Estates, one day")
+
+
 if __name__ == "__main__":
 	unittest.main()
