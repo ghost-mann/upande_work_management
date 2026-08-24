@@ -1,0 +1,19 @@
+.uwmn{padding:4px 2px;font-family:'Poppins',var(--font-stack),'Inter',sans-serif;}
+.uwmn-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8a8f98;font-weight:600;margin:0 0 10px 2px;}
+.uwmn-title-next{margin-top:18px;}
+.uwmn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px;}
+.uwmn-tile{display:flex;align-items:center;gap:11px;padding:13px 15px;min-height:64px;box-sizing:border-box;border:1px solid var(--border-color,#e2e4e9);border-radius:10px;background:var(--card-bg,#fff);text-decoration:none;color:inherit;transition:box-shadow .18s ease,transform .18s ease;}
+.uwmn-tile:hover{box-shadow:0 2px 6px rgba(0,0,0,.06);transform:translateY(-1px);text-decoration:none;}
+.uwmn-tile:hover .uwmn-lb,.uwmn-tile:hover .uwmn-sub{text-decoration:none;}
+/* The tile that leaves the desk for the command centre carries the brand accent. */
+.uwmn-lead{border-color:rgba(31,111,74,.45);}
+.uwmn-lead:hover{box-shadow:0 2px 10px rgba(31,111,74,.22);}
+.uwmn-ic{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;color:inherit;}
+.uwmn-ic svg{width:18px;height:18px;}
+.uwmn-tx{min-width:0;display:flex;flex-direction:column;flex:1 1 auto;}
+.uwmn-lb{display:block;font-size:13.5px;font-weight:600;line-height:1.2;}
+.uwmn-sub{display:block;font-size:11px;color:#8a8f98;line-height:1.3;margin-top:2px;}
+/* Counts are added by the script and only ever appear once resolved, so a tile
+   never renders a placeholder that turns out to be wrong. */
+.uwmn-n{flex:0 0 auto;font-size:11.5px;font-weight:600;color:#6b7280;background:rgba(10,10,10,.05);border-radius:999px;padding:2px 8px;font-variant-numeric:tabular-nums;}
+.uwmn-hide{display:none !important;}

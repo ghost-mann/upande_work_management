@@ -24,6 +24,8 @@ REPO = os.path.dirname(APP)
 WORKSPACE = os.path.join(
 	APP, "work_management", "workspace", "work_management", "work_management.json"
 )
+WORKSPACE_DIR = os.path.join(APP, "work_management", "workspace")
+NAV_HTML = os.path.join(APP, "custom_html_block", "work_management_navigation.html")
 SIDEBAR = os.path.join(APP, "workspace_sidebar", "work_management.json")
 HOOKS = os.path.join(APP, "hooks.py")
 
@@ -57,6 +59,21 @@ def load(path):
 		return json.load(handle)
 
 
+def all_workspaces():
+	"""Every workspace the app ships: the parent and its children."""
+	out = []
+	for entry in sorted(os.listdir(WORKSPACE_DIR)):
+		path = os.path.join(WORKSPACE_DIR, entry, f"{entry}.json")
+		if os.path.exists(path):
+			out.append(load(path))
+	return out
+
+
+def nav_html():
+	with open(NAV_HTML) as handle:
+		return handle.read()
+
+
 class TestWorkspace(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
@@ -85,13 +102,42 @@ class TestWorkspace(unittest.TestCase):
 			)
 
 	def test_every_linkable_doctype_appears_somewhere(self):
-		"""The whole point of the cards: nothing the app defines is unreachable."""
+		"""Nothing the app defines is unreachable from the desk.
+
+		Reachable means a card on one of the workspaces or a tile on the parent's
+		navigation block -- the parent's whole body is that block, so its records
+		are reached through tiles, not cards.
+		"""
 		linked = {
-			link["link_to"] for link in self.workspace["links"]
+			link["link_to"]
+			for workspace in all_workspaces()
+			for link in workspace["links"]
 			if link["type"] == "Link" and link["link_type"] == "DocType"
 		}
+		tiles = nav_html()
 		linkable = {name for name, is_child in self.doctypes.items() if not is_child}
-		self.assertEqual(linkable - linked, set(), "not reachable from the workspace")
+		unreachable = {
+			name for name in linkable - linked
+			if f'data-count="{name}"' not in tiles
+		}
+		self.assertEqual(unreachable, set(), "not reachable from any desk surface")
+
+	def test_every_shipped_workspace_is_structurally_sound(self):
+		for workspace in all_workspaces():
+			counts, current = {}, None
+			for link in workspace["links"]:
+				if link["type"] == "Card Break":
+					current = link["label"]
+					counts[current] = [link["link_count"], 0]
+				else:
+					counts[current][1] += 1
+			for card, (declared, actual) in counts.items():
+				self.assertEqual(declared, actual, f"{workspace['name']}/{card}")
+			placed = {
+				b["data"]["card_name"]
+				for b in json.loads(workspace["content"]) if b["type"] == "card"
+			}
+			self.assertEqual(set(counts) - placed, set(), workspace["name"])
 
 	def test_card_breaks_count_the_links_that_follow_them(self):
 		counts, current = {}, None
@@ -171,13 +217,28 @@ class TestSidebar(unittest.TestCase):
 				continue
 			self.assertIn(item["url"], SCREENS, item["label"])
 
-	def test_the_workspace_link_names_this_workspace(self):
+	def test_workspace_links_name_workspaces_the_app_ships(self):
+		"""Each section opens with an Overview onto that area's own workspace."""
+		shipped = {workspace["name"] for workspace in all_workspaces()}
 		workspace_items = [
 			item for item in self.sidebar["items"] if item.get("link_type") == "Workspace"
 		]
 		self.assertTrue(workspace_items)
 		for item in workspace_items:
-			self.assertEqual(item["link_to"], load(WORKSPACE)["name"])
+			self.assertIn(item["link_to"], shipped, item["label"])
+
+	def test_the_first_item_is_an_overview_onto_the_parent(self):
+		first = self.sidebar["items"][0]
+		self.assertEqual(first["link_type"], "Workspace")
+		self.assertEqual(first["link_to"], load(WORKSPACE)["name"])
+
+	def test_every_child_workspace_is_reachable_from_the_sidebar(self):
+		linked = {
+			item["link_to"] for item in self.sidebar["items"]
+			if item.get("link_type") == "Workspace"
+		}
+		for workspace in all_workspaces():
+			self.assertIn(workspace["name"], linked, workspace["name"])
 
 	def test_section_breaks_are_followed_by_children(self):
 		items = self.sidebar["items"]

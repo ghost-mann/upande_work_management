@@ -1,0 +1,75 @@
+{
+ "app": "work_management",
+ "charts": [],
+ "creation": "2026-08-24 22:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "users",
+ "indicator_color": "green",
+ "is_hidden": 0,
+ "label": "Work Delivery",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Delivery",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Assignments",
+   "link_count": 0,
+   "link_to": "Work Management Assigner",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Recorded actuals",
+   "link_count": 0,
+   "link_to": "Work Management Actuals",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-08-24 22:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Delivery",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "Work Management",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 3.0,
+ "shortcuts": [
+  {
+   "color": "blue",
+   "doc_view": "",
+   "label": "Assigner",
+   "type": "URL",
+   "url": "/work-assigner"
+  },
+  {
+   "color": "orange",
+   "doc_view": "",
+   "label": "Actuals",
+   "type": "URL",
+   "url": "/work-actuals"
+  }
+ ],
+ "title": "Work Delivery",
+ "content": "[{\"id\": \"h0\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Work Delivery</b></span>\", \"col\": 12}}, {\"id\": \"sc0\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Assigner\", \"col\": 3}}, {\"id\": \"sc1\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Actuals\", \"col\": 3}}, {\"id\": \"spc\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"cd0\", \"type\": \"card\", \"data\": {\"card_name\": \"Delivery\", \"col\": 4}}]"
+}
