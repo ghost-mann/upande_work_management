@@ -57,8 +57,12 @@ after_install = "work_management.install.after_install"
 before_install = "work_management.install.before_install"
 
 # Reseeds the approval stage catalogue and regenerates the five workflows from
-# it, so adding a stage in code is all it takes to ship one.
-after_migrate = "work_management.approvals.after_migrate"
+# it, and repairs the desk workspace when a same-named one built in the desk has
+# shadowed the one this app ships.
+after_migrate = [
+	"work_management.approvals.after_migrate",
+	"work_management.desk.sync",
+]
 
 fixtures = [
 	{
