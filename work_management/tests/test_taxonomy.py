@@ -230,6 +230,12 @@ class TestBusinessUnitFieldPlan(unittest.TestCase):
 		"""Same half-written state, but the doctype has since disappeared."""
 		self.assertEqual(install.plan_business_unit_field(False, "Link", None), "downgrade")
 
+	def test_an_interrupted_downgrade_leaves_options_behind_but_is_still_caught(self):
+		"""fieldtype's Property Setter is gone but options's survived the interruption."""
+		self.assertEqual(
+			install.plan_business_unit_field(False, None, "Business Unit"), "downgrade"
+		)
+
 
 if __name__ == "__main__":
 	unittest.main()
