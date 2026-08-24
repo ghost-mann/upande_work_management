@@ -10,6 +10,12 @@ app_license = "mit"
 
 # The apps screen entry. Routed at the dashboard rather than the desk
 # workspace, because the dashboard is the front door people are sent to.
+# Which workspace the app opens on. Without this, boot.load_desktop_data falls
+# back to the first row of an unordered query over the app's workspaces, which
+# came back alphabetically and opened "Work Delivery" instead of the parent.
+# /app redirects to /desk on v16, so one route serves both versions.
+app_home = "/app/work-management"
+
 add_to_apps_screen = [
 	{
 		"name": "work_management",
@@ -63,6 +69,11 @@ after_migrate = [
 	"work_management.approvals.after_migrate",
 	"work_management.desk.sync",
 ]
+
+# The parent workspace's body is a Custom HTML Block, which is not an importable
+# doctype and so has to be upserted in code. before_migrate, because sync_all()
+# then imports the workspace that references it.
+before_migrate = "work_management.desk.ensure_nav_block"
 
 fixtures = [
 	{

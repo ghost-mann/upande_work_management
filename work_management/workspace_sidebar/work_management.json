@@ -1,6 +1,6 @@
 {
  "app": "work_management",
- "creation": "2026-08-24 00:00:00.000000",
+ "creation": "2026-08-24 22:00:00.000000",
  "docstatus": 0,
  "doctype": "Workspace Sidebar",
  "header_icon": "projects",
@@ -12,7 +12,7 @@
    "icon": "home",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Home",
+   "label": "Overview",
    "link_type": "Workspace",
    "open_in_new_tab": 0,
    "show_arrow": 0,
@@ -87,10 +87,10 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "notepad-text",
+   "icon": "goal",
    "indent": 1,
    "keep_closed": 1,
-   "label": "Records",
+   "label": "Planning",
    "link_type": "DocType",
    "open_in_new_tab": 0,
    "show_arrow": 0,
@@ -99,10 +99,23 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "layout-dashboard",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Overview",
+   "link_type": "Workspace",
+   "open_in_new_tab": 0,
+   "show_arrow": 0,
+   "type": "Link",
+   "link_to": "Work Planning"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "goal",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Master Plan",
+   "label": "Master plans",
    "link_type": "DocType",
    "open_in_new_tab": 0,
    "show_arrow": 0,
@@ -115,12 +128,37 @@
    "icon": "clipboard-list",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Planner requests",
+   "label": "Plan requests",
    "link_type": "DocType",
    "open_in_new_tab": 0,
    "show_arrow": 0,
    "type": "Link",
    "link_to": "Work Management Planner"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "users",
+   "indent": 1,
+   "keep_closed": 1,
+   "label": "Delivery",
+   "link_type": "DocType",
+   "open_in_new_tab": 0,
+   "show_arrow": 0,
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "layout-dashboard",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Overview",
+   "link_type": "Workspace",
+   "open_in_new_tab": 0,
+   "show_arrow": 0,
+   "type": "Link",
+   "link_to": "Work Delivery"
   },
   {
    "child": 1,
@@ -149,6 +187,31 @@
    "link_to": "Work Management Actuals"
   },
   {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "circle-dollar-sign",
+   "indent": 1,
+   "keep_closed": 1,
+   "label": "Payments",
+   "link_type": "DocType",
+   "open_in_new_tab": 0,
+   "show_arrow": 0,
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "layout-dashboard",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Overview",
+   "link_type": "Workspace",
+   "open_in_new_tab": 0,
+   "show_arrow": 0,
+   "type": "Link",
+   "link_to": "Work Payments"
+  },
+  {
    "child": 1,
    "collapsible": 1,
    "icon": "receipt-text",
@@ -160,18 +223,6 @@
    "show_arrow": 0,
    "type": "Link",
    "link_to": "Work Management Payment"
-  },
-  {
-   "child": 0,
-   "collapsible": 1,
-   "icon": "circle-dollar-sign",
-   "indent": 1,
-   "keep_closed": 1,
-   "label": "Rates",
-   "link_type": "DocType",
-   "open_in_new_tab": 0,
-   "show_arrow": 0,
-   "type": "Section Break"
   },
   {
    "child": 1,
@@ -214,6 +265,19 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "layout-dashboard",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Overview",
+   "link_type": "Workspace",
+   "open_in_new_tab": 0,
+   "show_arrow": 0,
+   "type": "Link",
+   "link_to": "Work Management Setup"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "sprout",
    "indent": 0,
    "keep_closed": 0,
@@ -238,7 +302,7 @@
    "link_to": "Task"
   },
   {
-   "child": 0,
+   "child": 1,
    "collapsible": 1,
    "icon": "settings",
    "indent": 0,
@@ -251,7 +315,7 @@
    "link_to": "Work Management Settings"
   }
  ],
- "modified": "2026-08-24 17:30:00.000000",
+ "modified": "2026-08-24 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management",

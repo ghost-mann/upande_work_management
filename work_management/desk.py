@@ -1,6 +1,6 @@
-"""Keep the app's desk surfaces attached to the app.
+"""Keep the app's desk surfaces attached to the app, and in step with its files.
 
-Three surfaces — the workspace, the v16 sidebar and the apps-screen/desktop icon
+Three surfaces — the workspaces, the v16 sidebar and the apps-screen/desktop icon
 — are all derived from two fields on one record: ``Workspace.module`` and
 ``Workspace.app``. Frappe joins ``Workspace.module`` to ``Module Def.app_name``
 to decide which app a workspace belongs to (``frappe/boot.py``,
@@ -22,13 +22,21 @@ the one the app ships. The record survives with ``module: Projects``,
 ``app: erpnext`` and none of the app's cards, and nothing anywhere reports a
 problem.
 
-This module repairs that on install and on every migrate: it re-points a
-mis-attributed workspace at this app and force-imports the shipped definition,
-the same way ``install.adopt_existing_custom_doctypes()`` adopts doctypes that
-were built in the UI before the app existed. A workspace that is already correct
-and populated is left alone, so deliberate customisation survives.
+This module repairs that on install and on every migrate, for every workspace
+the app ships: it re-points a mis-attributed workspace at this app and
+force-imports the shipped definition, the same way
+``install.adopt_existing_custom_doctypes()`` adopts doctypes that were built in
+the UI before the app existed.
+
+It also owns the navigation block. The parent workspace's whole body is a
+``Custom HTML Block`` tile grid, matching the navigation blocks used elsewhere at
+Upande. That cannot ship as a module fixture — ``Custom HTML Block`` is not in
+Frappe's importable doctypes, so ``sync_all()`` walks straight past it — hence
+the upsert in :func:`ensure_nav_block`, wired to ``before_migrate`` so the block
+exists by the time the workspace referencing it is imported.
 """
 
+import json
 import pathlib
 
 import frappe
@@ -37,31 +45,42 @@ APP = "work_management"
 MODULE = "Work Management"
 WORKSPACE = "Work Management"
 SIDEBAR = "Work Management"
+NAV_BLOCK = "Work Management Navigation"
 
 HERE = pathlib.Path(__file__).resolve().parent
-WORKSPACE_JSON = HERE / "work_management" / "workspace" / "work_management" / "work_management.json"
+WORKSPACE_DIR = HERE / "work_management" / "workspace"
+WORKSPACE_JSON = WORKSPACE_DIR / "work_management" / "work_management.json"
 SIDEBAR_JSON = HERE / "workspace_sidebar" / "work_management.json"
+BLOCK_DIR = HERE / "custom_html_block"
+BLOCK_SLUG = "work_management_navigation"
+
+COUNTED = ("links", "shortcuts", "custom_blocks")
 
 
 # ------------------------------------------------------------------ decision
 
 
+def shipped_counts(shipped):
+	"""How much of each child table the shipped definition carries."""
+	return {key: len(shipped.get(key) or []) for key in COUNTED}
+
+
 def shipped_link_count(shipped):
-	"""How many links the shipped workspace defines."""
+	"""Kept for callers that only care about links."""
 	return len(shipped.get("links") or [])
 
 
-def workspace_repair_reason(record, link_count, shipped_links=None):
-	"""Why the workspace needs the shipped definition forced onto it, or None.
+def workspace_repair_reason(record, present, shipped):
+	"""Why a workspace needs the shipped definition forced onto it, or None.
 
 	Pure, so the rule can be tested without a site. Ordered most fundamental
-	first: a wrong module is worth reporting even when the record is also empty.
+	first: a wrong module is worth reporting even when the content is also wrong.
 
-	`shipped_links` closes the other half of the problem. Bumping `modified` in
-	the JSON is the conventional way to make Frappe apply a change, and it is
-	easy to forget, so a workspace carrying a different number of links from the
-	one the app ships is resynced regardless of timestamps. This app owns this
-	workspace; a card it ships is meant to be there.
+	Content is compared against the shipped file rather than against zero. The
+	parent workspace's body is a single custom block and carries no links at all,
+	so "has no links" cannot mean "broken" — only "does not match what the app
+	ships" can. That also means a change to a shipped workspace applies without
+	anyone having to remember to bump `modified` in the JSON.
 	"""
 	if record is None:
 		return "missing"
@@ -69,14 +88,72 @@ def workspace_repair_reason(record, link_count, shipped_links=None):
 		return "module"
 	if record.get("app") != APP:
 		return "app"
-	if not link_count:
-		return "empty"
-	if shipped_links is not None and link_count != shipped_links:
-		return "stale"
+	if (record.get("parent_page") or "") != (shipped.get("parent_page") or ""):
+		return "parent"
+	wanted = shipped_counts(shipped)
+	for key in COUNTED:
+		if present.get(key, 0) != wanted[key]:
+			return "stale"
 	return None
 
 
+# --------------------------------------------------------------- nav block
+
+
+def _block_sources():
+	base = BLOCK_DIR / BLOCK_SLUG
+	out = {}
+	for field, ext in (("html", "html"), ("style", "css"), ("script", "js")):
+		out[field] = (base.with_suffix(f".{ext}")).read_text(encoding="utf-8")
+	return out
+
+
+def ensure_nav_block():
+	"""Create or refresh the navigation block from the app's own files.
+
+	Overwrites every time, deliberately: the files in the app are the source of
+	truth. Anyone editing the block in the UI should expect the next migrate to
+	reset it — edit the files instead.
+	"""
+	if not frappe.db.exists("DocType", "Custom HTML Block"):
+		return None
+	if not (BLOCK_DIR / f"{BLOCK_SLUG}.html").exists():
+		return None
+
+	if frappe.db.exists("Custom HTML Block", NAV_BLOCK):
+		doc = frappe.get_doc("Custom HTML Block", NAV_BLOCK)
+	else:
+		doc = frappe.new_doc("Custom HTML Block")
+		doc.name = NAV_BLOCK
+	doc.update(_block_sources())
+	# Public, and readable by anyone who can reach the workspace. Per-tile role
+	# gating happens in the block's own script; putting roles here instead would
+	# hide the whole grid rather than the one tile that needs hiding.
+	doc.private = 0
+	doc.set("roles", [])
+	doc.save(ignore_permissions=True)
+	frappe.db.commit()
+	return NAV_BLOCK
+
+
 # -------------------------------------------------------------------- repair
+
+
+def workspace_definitions():
+	"""Every workspace this app ships, as (name, path, shipped dict)."""
+	for path in sorted(WORKSPACE_DIR.glob("*/*.json")):
+		shipped = json.loads(path.read_text())
+		if shipped.get("doctype") != "Workspace":
+			continue
+		yield shipped["name"], path, shipped
+
+
+def _present_counts(name):
+	return {
+		"links": frappe.db.count("Workspace Link", {"parent": name}),
+		"shortcuts": frappe.db.count("Workspace Shortcut", {"parent": name}),
+		"custom_blocks": frappe.db.count("Workspace Custom Block", {"parent": name}),
+	}
 
 
 def _force_import(path):
@@ -88,7 +165,7 @@ def _force_import(path):
 	return True
 
 
-def _adopt_workspace():
+def _adopt(name, shipped):
 	"""Point a mis-attributed workspace at this app before re-importing it.
 
 	Without this the import would still land, but anything already keyed off the
@@ -97,25 +174,30 @@ def _adopt_workspace():
 	"""
 	frappe.db.set_value(
 		"Workspace",
-		WORKSPACE,
-		{"module": MODULE, "app": APP},
+		name,
+		{
+			"module": MODULE,
+			"app": APP,
+			"parent_page": shipped.get("parent_page") or "",
+		},
 		update_modified=False,
 	)
 
 
 def _refresh_desktop_icon():
-	"""Rebuild this app's desktop icon from the now-correct workspace.
+	"""Rebuild this app's desktop icons from the now-correct workspaces.
 
 	create_desktop_icons() never revisits an icon that already exists, so a
 	stale one filed under the wrong app has to go first. Only icons pointing at
-	this app's own workspace are touched.
+	this app's own workspaces are touched.
 	"""
 	if not frappe.db.exists("DocType", "Desktop Icon"):
 		return  # v15: the apps screen is built from hooks alone.
 
+	ours = [name for name, _path, _shipped in workspace_definitions()]
 	for name in frappe.get_all(
 		"Desktop Icon",
-		or_filters=[{"link_to": WORKSPACE}, {"label": WORKSPACE}],
+		or_filters=[{"link_to": ["in", ours]}, {"label": ["in", ours]}, {"app": APP}],
 		pluck="name",
 	):
 		frappe.delete_doc("Desktop Icon", name, force=True, ignore_permissions=True)
@@ -125,33 +207,23 @@ def _refresh_desktop_icon():
 	create_desktop_icons()
 
 
-def sync_workspace():
-	"""Make sure the workspace is this app's, and carries what the app ships."""
-	import json
-
-	record = frappe.db.get_value(
-		"Workspace", WORKSPACE, ["name", "module", "app"], as_dict=True
-	)
-	link_count = (
-		frappe.db.count("Workspace Link", {"parent": WORKSPACE}) if record else 0
-	)
-	shipped = json.loads(WORKSPACE_JSON.read_text()) if WORKSPACE_JSON.exists() else None
-	reason = workspace_repair_reason(
-		record, link_count, shipped_links=shipped_link_count(shipped) if shipped else None
-	)
-	if not reason:
-		return None
-
-	if record:
-		_adopt_workspace()
-	if not _force_import(WORKSPACE_JSON):
-		return None
-
-	if shipped and shipped_link_count(shipped):
-		# The import writes the record; re-assert attribution in case the file
-		# is ever exported from a site that had it wrong.
-		_adopt_workspace()
-	return reason
+def sync_workspaces():
+	"""Make every shipped workspace this app's, carrying what the app ships."""
+	repaired = {}
+	for name, path, shipped in workspace_definitions():
+		record = frappe.db.get_value(
+			"Workspace", name, ["name", "module", "app", "parent_page"], as_dict=True
+		)
+		present = _present_counts(name) if record else dict.fromkeys(COUNTED, 0)
+		reason = workspace_repair_reason(record, present, shipped)
+		if not reason:
+			continue
+		if record:
+			_adopt(name, shipped)
+		if _force_import(path):
+			_adopt(name, shipped)
+			repaired[name] = reason
+	return repaired
 
 
 def sync_sidebar():
@@ -164,10 +236,12 @@ def sync_sidebar():
 
 def sync():
 	"""Repair every desk surface. Safe to run repeatedly."""
-	reason = sync_workspace()
+	ensure_nav_block()
+	repaired = sync_workspaces()
 	sync_sidebar()
-	if reason:
+	if repaired:
 		_refresh_desktop_icon()
 		frappe.clear_cache()
-		print(f"Work Management: repaired the desk workspace ({reason})")
-	return reason
+		for name, reason in repaired.items():
+			print(f"Work Management: repaired workspace {name} ({reason})")
+	return repaired

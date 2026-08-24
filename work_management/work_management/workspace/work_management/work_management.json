@@ -1,9 +1,13 @@
 {
  "app": "work_management",
  "charts": [],
- "content": "[{\"id\": \"wmHdrScreens\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Screens</b></span>\", \"col\": 12}}, {\"id\": \"wmScDashboard\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Dashboard\", \"col\": 3}}, {\"id\": \"wmScPlanner\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Planner\", \"col\": 3}}, {\"id\": \"wmScAssigner\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Assigner\", \"col\": 3}}, {\"id\": \"wmScActuals\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Actuals\", \"col\": 3}}, {\"id\": \"wmScPayment\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Payment\", \"col\": 3}}, {\"id\": \"wmSpacer\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"wmHdrRecords\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Records</b></span>\", \"col\": 12}}, {\"id\": \"wmCardPlan\", \"type\": \"card\", \"data\": {\"card_name\": \"Plan & budget\", \"col\": 3}}, {\"id\": \"wmCardDoin\", \"type\": \"card\", \"data\": {\"card_name\": \"Doing the work\", \"col\": 3}}, {\"id\": \"wmCardMone\", \"type\": \"card\", \"data\": {\"card_name\": \"Money\", \"col\": 3}}, {\"id\": \"wmCardSetu\", \"type\": \"card\", \"data\": {\"card_name\": \"Setup\", \"col\": 3}}]",
- "creation": "2026-08-24 00:00:00.000000",
- "custom_blocks": [],
+ "creation": "2026-08-24 22:00:00.000000",
+ "custom_blocks": [
+  {
+   "custom_block_name": "Work Management Navigation",
+   "label": "Work Management Navigation"
+  }
+ ],
  "docstatus": 0,
  "doctype": "Workspace",
  "for_user": "",
@@ -12,151 +16,8 @@
  "indicator_color": "green",
  "is_hidden": 0,
  "label": "Work Management",
- "links": [
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Plan & budget",
-   "link_count": 2,
-   "onboard": 0,
-   "type": "Card Break"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Master Plan",
-   "link_count": 0,
-   "link_to": "Work Management Master Plan",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Planner requests",
-   "link_count": 0,
-   "link_to": "Work Management Planner",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Doing the work",
-   "link_count": 2,
-   "onboard": 0,
-   "type": "Card Break"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Assignments",
-   "link_count": 0,
-   "link_to": "Work Management Assigner",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Actuals",
-   "link_count": 0,
-   "link_to": "Work Management Actuals",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Money",
-   "link_count": 3,
-   "onboard": 0,
-   "type": "Card Break"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Payments",
-   "link_count": 0,
-   "link_to": "Work Management Payment",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Task rates",
-   "link_count": 0,
-   "link_to": "Work Task Rate",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Rate recalculations",
-   "link_count": 0,
-   "link_to": "Work Rate Recalc Run",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Setup",
-   "link_count": 3,
-   "onboard": 0,
-   "type": "Card Break"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Work Management Settings",
-   "link_count": 0,
-   "link_to": "Work Management Settings",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Tasks & rates",
-   "link_count": 0,
-   "link_to": "Task",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Farms",
-   "link_count": 0,
-   "link_to": "Work Management Farm",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  }
- ],
- "modified": "2026-08-24 17:30:00.000000",
+ "links": [],
+ "modified": "2026-08-24 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management",
@@ -166,43 +27,8 @@
  "public": 1,
  "quick_lists": [],
  "roles": [],
- "sequence_id": 90.0,
- "shortcuts": [
-  {
-   "color": "grey",
-   "doc_view": "",
-   "label": "Dashboard",
-   "type": "URL",
-   "url": "/work-management"
-  },
-  {
-   "color": "green",
-   "doc_view": "",
-   "label": "Planner",
-   "type": "URL",
-   "url": "/work-planner"
-  },
-  {
-   "color": "blue",
-   "doc_view": "",
-   "label": "Assigner",
-   "type": "URL",
-   "url": "/work-assigner"
-  },
-  {
-   "color": "orange",
-   "doc_view": "",
-   "label": "Actuals",
-   "type": "URL",
-   "url": "/work-actuals"
-  },
-  {
-   "color": "cyan",
-   "doc_view": "",
-   "label": "Payment",
-   "type": "URL",
-   "url": "/work-payment"
-  }
- ],
- "title": "Work Management"
+ "sequence_id": 1.0,
+ "shortcuts": [],
+ "title": "Work Management",
+ "content": "[{\"id\": \"wmnav\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Work Management Navigation\", \"col\": 12}}]"
 }
