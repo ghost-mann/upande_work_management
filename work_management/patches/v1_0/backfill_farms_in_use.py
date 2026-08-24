@@ -11,6 +11,13 @@ disabled: the link resolves, while get_config(), the pickers and the
 stranded-farm guard still see only the farms this module plans work against.
 That last one matters, because fourteen active farms with approvers configured
 for four would refuse to save Settings.
+
+SOURCES is every Link field the app ships pointing at Work Management Farm,
+plus the two Custom Fields (Employee, Warehouse) that aren't in the app's own
+doctype JSON. test_sections.py walks the shipped JSON and fails loudly, listing
+every gap, if a future field is added there and forgotten here. Scanning a
+superset costs nothing: farms_in_use() skips any doctype or field missing from
+a given site, and execute() skips any farm that already has a record.
 """
 
 import frappe
@@ -19,11 +26,15 @@ import frappe
 SOURCES = (
 	("Employee", "custom_farm"),
 	("Warehouse", "custom_farm"),
-	("Work Management Planner", "farm"),
-	("Work Management Assigner", "farm"),
+	("WM Farm", "farm"),
 	("Work Management Actuals", "farm"),
-	("Work Management Payment", "farm"),
+	("Work Management Assigner", "farm"),
 	("Work Management Master Plan", "farm"),
+	("Work Management Payment", "farm"),
+	("Work Management Planner", "farm"),
+	("Work Management Stage Approver", "scope"),
+	("Work Payment Line", "farm"),
+	("Work Rate Recalc Run", "farm"),
 )
 
 
