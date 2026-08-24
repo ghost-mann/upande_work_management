@@ -657,6 +657,7 @@
             '<select id="cc-farm"><option value="">All farms</option></select>'+
             '<label>From <input type="date" id="cc-from" /></label>'+
             '<label>To <input type="date" id="cc-to" /></label>'+
+            '<select id="cc-group"><option value="block">Group: by block</option><option value="section">Group: by section</option></select>'+
             '<select id="cc-color"><option value="spend">Colour: by spend</option><option value="cpu">Colour: cost per unit</option><option value="farm">Colour: by farm</option></select>'+
             '<button id="cc-clear" class="pex-clear">Clear</button>'+
           '</div>'+
@@ -1820,7 +1821,8 @@
       farm:(el("cc-farm")||{}).value||"",
       from_date:(el("cc-from")||{}).value||"",
       to_date:(el("cc-to")||{}).value||"",
-      q:(el("cc-q")||{}).value||""
+      q:(el("cc-q")||{}).value||"",
+      group_by:(el("cc-group")||{}).value||"block"
     };
   }
   function closeAllExpanded(scope){
@@ -2062,7 +2064,7 @@
   }
   function wireCostCentre(){
     ["cc-q"].forEach(function(id){ var e=el(id); if(e) e.oninput=debounce(loadCostCentre,300); });
-    ["cc-farm","cc-from","cc-to"].forEach(function(id){ var e=el(id); if(e) e.onchange=loadCostCentre; });
+    ["cc-farm","cc-from","cc-to","cc-group"].forEach(function(id){ var e=el(id); if(e) e.onchange=loadCostCentre; });
     var clr=el("cc-clear"); if(clr) clr.onclick=function(){ ["cc-q","cc-from","cc-to"].forEach(function(id){ var e=el(id); if(e) e.value=""; }); var f=el("cc-farm"); if(f) f.value=""; loadCostCentre(); };
     var col=el("cc-color"); if(col) col.onchange=function(){ ccTreemap(CCDATA.blocks, col.value, (CCDATA.totals||{}).labour, (CCDATA.totals||{}).median_cost_per_unit); };
     var tabs=el("cc-tabs");

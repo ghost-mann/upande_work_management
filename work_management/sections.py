@@ -59,3 +59,33 @@ def block_to_section():
 	):
 		mapping[row.block] = row.parent
 	return mapping
+
+
+def roll_up(rows, mapping):
+	"""Total per-block cost-centre rows into per-section rows, biggest spend first.
+
+	Mirrors the shape of the farm-level rollup already in the cost-centre view:
+	sum the same money/quantity fields (labour_spend, gl_spend, qty,
+	worker_days), count the blocks, then derive cost_per_unit guarded on qty
+	being positive. Pure -- no frappe calls -- so the arithmetic is testable
+	without a site.
+
+	A block with no section (mapping.get(block) is falsy) lands under
+	UNASSIGNED rather than being dropped, which is what keeps the section
+	view summing to the same figure as the block view it replaces.
+	"""
+	grouped = {}
+	fields = ("labour_spend", "gl_spend", "qty", "worker_days")
+	for row in rows:
+		key = mapping.get(row.get("block")) or UNASSIGNED
+		bucket = grouped.setdefault(
+			key, {"key": key, "blocks": 0, **{f: 0.0 for f in fields}}
+		)
+		bucket["blocks"] += 1
+		for field in fields:
+			bucket[field] += float(row.get(field) or 0)
+	for bucket in grouped.values():
+		bucket["cost_per_unit"] = (
+			(bucket["labour_spend"] / bucket["qty"]) if bucket["qty"] > 0 else None
+		)
+	return sorted(grouped.values(), key=lambda r: -r["labour_spend"])
