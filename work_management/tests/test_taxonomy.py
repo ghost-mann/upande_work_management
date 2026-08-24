@@ -237,5 +237,49 @@ class TestBusinessUnitFieldPlan(unittest.TestCase):
 		)
 
 
+class TestScreensReadTheTemplate(unittest.TestCase):
+	"""No screen may hardcode a level name in text the user reads.
+
+	Workflow states and roles are exempt: they are matched against the database,
+	and renaming one breaks approvals rather than a label. The allow-list below
+	is the whole point of the test -- it records which strings are identifiers.
+	"""
+
+	import os as _os
+
+	APP = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+
+	# Strings containing a level word that are identifiers, not labels.
+	ALLOWED = (
+		"Pending Farm Manager", "Farm Manager", "Farm Manager Saboti",
+		"Farm Manager Lokitela", "Farm Manager Endebess", "Farm Manager Valle",
+		"Plan approval — Farm Manager", "block employees marked Absent",
+	)
+
+	CONVERTED = ("work-planner.js",)  # extended as each screen is done
+
+	def test_converted_screens_hold_no_bare_level_label(self):
+		import os
+		import re
+
+		pattern = re.compile(r"['\"][^'\"]*\b(Farm|Farms|Block|Blocks)\b[^'\"]*['\"]")
+		# TX(key, fallback)'s second argument is the shipped default wording --
+		# read only if window.WM_TAXONOMY has not loaded, never text a
+		# configured install shows. Blank out whole TX(...) calls before
+		# scanning so that fallback literal isn't mistaken for a hardcoded
+		# label; a stray Farm/Block string anywhere else still trips this.
+		tx_call = re.compile(r"TX\(\s*(['\"])[^'\"]*\1\s*,\s*(['\"])[^'\"]*\2\s*\)")
+		for filename in self.CONVERTED:
+			path = os.path.join(self.APP, "public", "js", filename)
+			with open(path) as handle:
+				src = handle.read()
+			src = tx_call.sub("TX(...)", src)
+			offenders = [
+				m.group(0) for m in pattern.finditer(src)
+				if not any(allowed in m.group(0) for allowed in self.ALLOWED)
+			]
+			self.assertEqual(offenders, [], f"{filename}: {offenders[:5]}")
+
+
 if __name__ == "__main__":
 	unittest.main()

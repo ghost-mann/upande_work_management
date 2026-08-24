@@ -51,6 +51,10 @@
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function fmtRate(n){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{maximumFractionDigits:4}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+  // What this installation calls the levels. Falls back to the shipped wording
+  // so the screen still reads correctly if the template has not loaded.
+  var TXN = (window.WM_TAXONOMY || {});
+  function TX(key, fallback) { return TXN[key] || fallback; }
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function el(id){ return document.getElementById(id); }
   function toast(msg){ var t=el("wp-toast"); t.textContent=msg; t.classList.add("show"); setTimeout(function(){t.classList.remove("show");},2200); }
@@ -224,7 +228,7 @@
     var farms={}; rows.forEach(function(r){ if(r.farm) farms[r.farm]=1; });
     var h='<div class="lfb">'+
       '<input type="text" data-f="q" placeholder="'+esc(opts.ph||"Search…")+'">'+
-      '<select data-f="farm"><option value="">All farms</option>'+Object.keys(farms).sort().map(function(f){ return '<option>'+esc(f)+'</option>'; }).join("")+'</select>';
+      '<select data-f="farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option>'+Object.keys(farms).sort().map(function(f){ return '<option>'+esc(f)+'</option>'; }).join("")+'</select>';
     if(opts.statuses && opts.statuses.length){
       h+='<select data-f="st"><option value="">All statuses</option>'+opts.statuses.map(function(s){ return '<option>'+esc(s)+'</option>'; }).join("")+'</select>';
     }
@@ -288,7 +292,7 @@
         '<div style="padding:16px 18px">'+
           '<div style="font-size:12px;color:#444;margin-bottom:10px">'+esc(desc)+' <span style="color:#777">Plan <b>'+esc(plan)+'</b>.</span></div>'+
           '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">Reason (required)</label>'+
-          '<textarea id="wpc-reason" rows="3" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;width:100%;background:#fff;color:var(--ink);resize:vertical" placeholder="e.g. crop finished early, block cleared ahead of target"></textarea>'+
+          '<textarea id="wpc-reason" rows="3" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;width:100%;background:#fff;color:var(--ink);resize:vertical" placeholder="e.g. crop finished early, '+esc(TX("unit_singular","block").toLowerCase())+' cleared ahead of target"></textarea>'+
         '</div>'+
         '<div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--faint)">'+
           '<button type="button" class="btn" id="wpc-cancel">Cancel</button>'+
@@ -338,7 +342,7 @@
       MP.roles=m;
       var fs=el("mp-farm");
       if(fs && !fs.options.length){
-        var oAll=document.createElement("option"); oAll.value=""; oAll.textContent="All farms"; fs.appendChild(oAll);
+        var oAll=document.createElement("option"); oAll.value=""; oAll.textContent="All "+TX("top_plural","Farms").toLowerCase(); fs.appendChild(oAll);
         (m.farms||[]).forEach(function(f){
           var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o);
         });
@@ -382,7 +386,7 @@
            '</div>';
       }
       h+='<div class="mpf-tablewrap"><table><thead><tr>'+
-        (mpAct?'<th style="width:30px"></th>':'')+'<th>Master plan</th><th>Farm</th><th>Period</th>'+
+        (mpAct?'<th style="width:30px"></th>':'')+'<th>Master plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period</th>'+
         '<th class="n">Activities</th><th class="n">Man days</th><th class="n">Budget KES</th>'+
         '<th>Status</th><th>Raised by</th></tr></thead><tbody>';
       rows.forEach(function(r){
@@ -798,8 +802,9 @@
     });
   }
   function mpTaskOptions(selected){
-    var lbl={nofarm:"— choose a farm first —", loading:"— loading tasks… —",
-             empty:"— no tasks on this farm's project —", error:"— could not load tasks —"}[MPF.catalogState]
+    var top=esc(TX("top_singular","Farm")).toLowerCase();
+    var lbl={nofarm:"— choose a "+top+" first —", loading:"— loading tasks… —",
+             empty:"— no tasks on this "+top+"'s project —", error:"— could not load tasks —"}[MPF.catalogState]
              || "— select task —";
     var h='<option value="">'+lbl+'</option>';
     mpFilteredCatalog(selected).forEach(function(t){
@@ -840,7 +845,7 @@
     tb.innerHTML=MPF.rows.length
       ? MPF.rows.map(mpRowMarkup).join("")
       : '<tr><td colspan="8"><div class="mpf-empty"><b>No activities yet</b>'+
-        'Add the activities this farm may plan in this period, and how much work each may cover.</div></td></tr>';
+        'Add the activities this '+esc(TX("top_singular","Farm")).toLowerCase()+' may plan in this period, and how much work each may cover.</div></td></tr>';
     mpWireRows();
     mpUpdateTotals();
   }
@@ -907,7 +912,7 @@
       mpRenderRows();
     }).catch(function(){
       MPF.catalog=[]; MPF.catalogState="error"; MPF.seedTouch=false; mpRenderRows();
-      toast("Could not load tasks for this farm");
+      toast("Could not load tasks for this "+TX("top_singular","Farm").toLowerCase());
     });
   }
   function mpSeedTouched(){
@@ -931,14 +936,14 @@
         '<div>'+
           '<div class="mpf-eyebrow">Work Management</div>'+
           '<div class="mpf-title" id="mpf-title">New master plan</div>'+
-          '<div class="mpf-sub">One farm, one period. Every activity you list here becomes plannable '+
+          '<div class="mpf-sub">One '+esc(TX("top_singular","Farm")).toLowerCase()+', one period. Every activity you list here becomes plannable '+
             'once the consultants and the GM approve it &mdash; and nothing outside this list can be planned at all.</div>'+
         '</div>'+
         '<button type="button" class="mpf-x" id="mpf-x" title="Close" aria-label="Close">&times;</button>'+
       '</div>'+
       '<div class="mpf-body">'+
         '<div class="mpf-grid">'+
-          '<div><label class="fl" for="mpf-farm">Farm</label><select id="mpf-farm"><option value="">— select farm —</option></select></div>'+
+          '<div><label class="fl" for="mpf-farm">'+esc(TX("top_singular","Farm"))+'</label><select id="mpf-farm"><option value="">— select '+esc(TX("top_singular","Farm")).toLowerCase()+' —</option></select></div>'+
           '<div><label class="fl" for="mpf-from">Period from</label><input type="date" id="mpf-from"></div>'+
           '<div><label class="fl" for="mpf-to">Period to</label><input type="date" id="mpf-to"></div>'+
         '</div>'+
@@ -991,7 +996,7 @@
   function mpDoSave(submitAfter, saveBtn, submitBtn){
     var p=mpCollectPayload();
     var missing=[];
-    if(!p.farm) missing.push("select a farm");
+    if(!p.farm) missing.push("select a "+TX("top_singular","Farm").toLowerCase());
     if(!p.period_from || !p.period_to) missing.push("set the period");
     if(!p.acts.length) missing.push("add at least one activity with a task");
     if(missing.length){ toast("To save: "+missing.join(" · ")); return; }
@@ -1055,7 +1060,7 @@
           bar.style.display="";
           bar.innerHTML='<b>'+esc(fm)+' already has a master plan for these dates.</b> '+
             esc(d.clash)+' covers '+esc(d.clash_from)+' &rarr; '+esc(d.clash_to)+
-            ' ('+esc(d.clash_state)+'). A farm has one budget per period &mdash; put this work on '+
+            ' ('+esc(d.clash_state)+'). A '+esc(TX("top_singular","Farm")).toLowerCase()+' has one budget per period &mdash; put this work on '+
             esc(d.clash)+', or choose dates outside it.';
         }
         mpSaveState();
@@ -1252,8 +1257,8 @@
       // no budget at all for this farm: nothing here can be planned, and saying so
       // plainly beats an empty task list the person is left to interpret
       bar.style.display=""; bar.className="mp-period out"; btn.style.display="none";
-      txt.innerHTML='<b>'+esc(ST.farm||"This farm")+' cannot be planned yet.</b> '+
-        'Work is capped by an approved master plan, and this farm has none'+
+      txt.innerHTML='<b>'+esc(ST.farm||("This "+TX("top_singular","Farm").toLowerCase()))+' cannot be planned yet.</b> '+
+        'Work is capped by an approved master plan, and this '+esc(TX("top_singular","Farm")).toLowerCase()+' has none'+
         (d.pending_plan ? (' &mdash; '+esc(d.pending_plan)+' is still at '+esc(d.pending_plan_state)+
                            ', so planning opens when it is approved.')
                         : '. Someone with the farm manager, HR head or GM role raises one '+
@@ -1266,7 +1271,7 @@
     var h = (inside
       ? "Plan period &mdash; the request must fit inside one:"
       : "<b>These dates cannot be planned.</b> A request has to sit wholly inside one "+
-        "approved plan period, and "+esc(ST.farm||"this farm")+"&rsquo;s plans are below. "+
+        "approved plan period, and "+esc(ST.farm||("this "+TX("top_singular","Farm").toLowerCase()))+"&rsquo;s plans are below. "+
         "Pick one to snap the dates to it:") + "<div class=\"mp-buds\">";
     buds.forEach(function(b){
       var on = (active===b.name) || (b.period_from===f && b.period_to===t);
@@ -1311,7 +1316,7 @@
 
   function initNew(meta){
     var fs=el("f-farm");
-    fs.innerHTML='<option value="">— select farm —</option>';
+    fs.innerHTML='<option value="">— select '+esc(TX("top_singular","Farm")).toLowerCase()+' —</option>';
     meta.farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
     fs.onchange=onFarm;
     el("f-block").onchange=function(){ if(this.value){ ST.picked[this.value]=true; this.value=''; } syncBlockGrid(); recalc(); };
@@ -1336,7 +1341,7 @@
     call({action:"blocks",farm:ST.farm}).then(function(d){
       ST.blocks=d.blocks||[];
       var sel=el("f-block");
-      sel.innerHTML='<option value="">— add a block —</option>';
+      sel.innerHTML='<option value="">— add a '+esc(TX("unit_singular","block")).toLowerCase()+' —</option>';
       ST.blocks.forEach(function(b){ var o=document.createElement("option"); o.value=b.name; o.textContent=b.label; sel.appendChild(o); });
       syncBlockGrid();
     });
@@ -1355,7 +1360,7 @@
       g.appendChild(d);
     });
     var n=nBlocks();
-    el("f-picked").innerHTML = n ? ("<b>"+n+"</b> block"+(n>1?"s":"")+" selected: "+pickedList().map(blockLabel).map(esc).join(", ")) : "";
+    el("f-picked").innerHTML = n ? ("<b>"+n+"</b> "+esc(n>1?TX("unit_plural","blocks"):TX("unit_singular","block")).toLowerCase()+" selected: "+pickedList().map(blockLabel).map(esc).join(", ")) : "";
   }
 
   function onTask(){
@@ -1427,8 +1432,8 @@
     el("b-draft").disabled=!ready;
     el("b-submit").disabled=!ready;
     var missing=[];
-    if(!ST.farm) missing.push("select a farm");
-    if(nBlocks()===0) missing.push("tap at least one block");
+    if(!ST.farm) missing.push("select a "+TX("top_singular","Farm").toLowerCase());
+    if(nBlocks()===0) missing.push("tap at least one "+TX("unit_singular","block").toLowerCase());
     // saying "select a task" when there is nothing selectable sends people looking
     // for a control that is empty for a reason -- give them the reason
     if(!ST.task){
@@ -1454,7 +1459,7 @@
         var L=d.last;
         box.innerHTML="Last approved for "+esc(blockLabel(firstBlock))+" + this task: <b>"+fmt(L.quantity)+"</b> units, <b>"+fmt(L.people_per_day)+"</b> ppl/day, <b>KES "+fmt(L.total_cost)+"</b> ("+esc(L.from_date)+" → "+esc(L.to_date)+").";
       } else {
-        box.innerHTML="No prior approved request for this block + task — this will be the baseline.";
+        box.innerHTML="No prior approved request for this "+esc(TX("unit_singular","block")).toLowerCase()+" + task — this will be the baseline.";
       }
     });
   }
@@ -1470,7 +1475,7 @@
       if(d.error){ toast("Error: "+d.error); recalc(); return; }
       var nb=(d.blocks||[]).length;
       var verb = d.editing ? (submitNow?"Updated & submitted ":"Draft updated ") : (submitNow?"Submitted ":"Draft saved ");
-      toast(verb+d.name+" · "+d.workflow_state+(nb>1?" ("+nb+" blocks)":""));
+      toast(verb+d.name+" · "+d.workflow_state+(nb>1?(" ("+nb+" "+TX("unit_plural","blocks").toLowerCase()+")"):""));
       clearEdit();
       el("f-qty").value=""; ST.task=null; ST.taskInfo=null; ST.picked={}; el("f-task").value=""; el("f-kpi").textContent=""; syncBlockGrid();
       recalc();
@@ -1496,7 +1501,7 @@
       ST.editTask=p.task; ST.editQty=num(p.quantity); ST.editCost=num(p.total_cost);
       var fs=el("f-farm"); fs.value=p.farm; ST.farm=p.farm;
       ST.picked={}; ST.task=null; ST.taskInfo=null;
-      el("f-blockgrid").innerHTML="<div class='note'>Loading blocks…</div>";
+      el("f-blockgrid").innerHTML="<div class='note'>Loading "+TX("unit_plural","blocks").toLowerCase()+"…</div>";
       var pending=2;
       var done=function(){ pending--; if(pending>0) return;
         (p.blocks||[]).forEach(function(b){ ST.picked[b]=true; });
@@ -1516,7 +1521,7 @@
       };
       call({action:"blocks",farm:p.farm}).then(function(bd){
         ST.blocks=bd.blocks||[];
-        var sel=el("f-block"); sel.innerHTML='<option value="">— add a block —</option>';
+        var sel=el("f-block"); sel.innerHTML='<option value="">— add a '+esc(TX("unit_singular","block")).toLowerCase()+' —</option>';
         ST.blocks.forEach(function(b){ var o=document.createElement("option"); o.value=b.name; o.textContent=b.label; sel.appendChild(o); });
         done();
       });
@@ -1545,14 +1550,14 @@
       var fs=ST._farmScope;
       var sts={}; rows.forEach(function(r){ if(r.workflow_state) sts[r.workflow_state]=1; });
       b.className="";
-      b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row to see full details — mandays, hours, and rate breakdown.'+(fs?' Plans on your farm(s) raised by others are included — Draft, Rejected and Pending Approval ones can be edited.':'')+'</div>'
-        + fbar(rows,{dates:true,statuses:Object.keys(sts).sort(),ph:"Search ref, farm, block, task…"});
+      b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row to see full details — mandays, hours, and rate breakdown.'+(fs?(' Plans on your '+esc(TX("top_singular","Farm")).toLowerCase()+'(s) raised by others are included — Draft, Rejected and Pending Approval ones can be edited.'):'')+'</div>'
+        + fbar(rows,{dates:true,statuses:Object.keys(sts).sort(),ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.from_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.requested_by||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th></tr></thead><tbody>';
         var cols=fs?12:11;
         list.forEach(function(r, i){
           h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
@@ -1587,14 +1592,14 @@
     var fs=ST._farmScope;
     var closeLabel=isGm?"Close plan":"Request close";
     b.className="";
-    b.innerHTML='<div class="note" style="margin-bottom:8px">These plans were rejected'+(fs?' (yours and your farm’s)':'')+'. Click a row for full details, <b>Edit &amp; resubmit</b> to adjust and send back — or <b>'+closeLabel+'</b> if the plan should be stopped.</div>'
-      + fbar(all,{dates:true,ph:"Search ref, farm, block, task…"});
+    b.innerHTML='<div class="note" style="margin-bottom:8px">These plans were rejected'+(fs?(' (yours and your '+esc(TX("top_singular","Farm")).toLowerCase()+'’s)'):'')+'. Click a row for full details, <b>Edit &amp; resubmit</b> to adjust and send back — or <b>'+closeLabel+'</b> if the plan should be stopped.</div>'
+      + fbar(all,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
               hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.requested_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th><th></th></tr></thead><tbody>';
+      var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th><th></th></tr></thead><tbody>';
       var cols=fs?11:10;
       rows.forEach(function(r, i){
         h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td>'+
@@ -1670,13 +1675,13 @@
     if(!all.length){ b.className=""; b.innerHTML='<div class="empty">Nothing awaiting approval.</div>'; return; }
     b.className="";
     b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row for full details. Approve, reject — or <b>Edit</b> to adjust the plan yourself; edits send it back through Pending Approval.</div>'
-      + fbar(all,{dates:true,ph:"Search ref, farm, block, task, requested by…"});
+      + fbar(all,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task, requested by…"});
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
               hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.requested_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th><th>Action</th></tr></thead><tbody>';
+      var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r, i){
         h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td><td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
         h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="13" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
@@ -1968,7 +1973,7 @@
     if((d.master_plans||[]).length){
       h+='<div style="margin:8px 0 4px"><label><input type="checkbox" id="rt-allmp" checked> '+
          'Master plan lines ('+fmt(d.master_plans.length)+')</label></div>'+
-         '<div class="mpf-tablewrap"><table><thead><tr><th></th><th>Plan</th><th>Farm</th><th>Status</th>'+
+         '<div class="mpf-tablewrap"><table><thead><tr><th></th><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Status</th>'+
          '<th class="n">Qty</th><th class="n">Now</th><th class="n">Becomes</th></tr></thead><tbody>';
       d.master_plans.forEach(function(m){
         h+='<tr><td><input type="checkbox" class="rt-mp" data-r="'+esc(m.row)+'" checked></td>'+
