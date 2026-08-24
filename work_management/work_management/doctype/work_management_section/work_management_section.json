@@ -1,0 +1,62 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:section_name",
+ "creation": "2026-08-24 23:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": ["section_name", "farm", "column_break_main", "disabled", "blocks"],
+ "fields": [
+  {
+   "fieldname": "section_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Section",
+   "reqd": 1,
+   "unique": 1,
+   "description": "A grouping of blocks, used to total cost by section instead of by block."
+  },
+  {
+   "fieldname": "farm",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Farm",
+   "options": "Work Management Farm",
+   "reqd": 1
+  },
+  {"fieldname": "column_break_main", "fieldtype": "Column Break"},
+  {
+   "default": "0",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled",
+   "description": "Hidden from the cost-centre toggle. Past totals are unaffected."
+  },
+  {
+   "fieldname": "blocks",
+   "fieldtype": "Table",
+   "label": "Blocks",
+   "options": "Work Management Section Block",
+   "description": "The blocks whose cost this section totals. A block belongs to one section only."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-24 23:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Section",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "read": 1,
+   "report": 1, "role": "System Manager", "share": 1, "write": 1},
+  {"read": 1, "report": 1, "role": "Farm Manager", "select": 1},
+  {"read": 1, "report": 1, "role": "General Manager", "select": 1},
+  {"read": 1, "report": 1, "role": "Accounts User", "select": 1}
+ ],
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}
