@@ -113,7 +113,8 @@ def plan_business_unit_field(doctype_present, current_fieldtype, current_options
 	absent doctype always wins and puts the field back to Data.
 	"""
 	if not doctype_present:
-		return "downgrade" if current_fieldtype == "Link" else "noop"
+		linked = current_fieldtype == "Link" or current_options == "Business Unit"
+		return "downgrade" if linked else "noop"
 	if current_fieldtype == "Link" and current_options == "Business Unit":
 		return "noop"
 	return "upgrade"
