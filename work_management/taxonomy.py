@@ -91,6 +91,52 @@ FIELD_LABELS = (
 )
 
 
+def shipped_labels():
+	"""{doctype: {fieldname: label}} as the app's own JSON ships them.
+
+	Read from the files rather than from frappe.get_meta, which returns the
+	label a Property Setter has already overwritten -- comparing against that
+	is what made every setter look necessary.
+	"""
+	import glob
+	import json
+	import os
+
+	here = os.path.dirname(os.path.abspath(__file__))
+	shipped = {}
+	for path in glob.glob(os.path.join(here, "work_management", "doctype", "*", "*.json")):
+		with open(path) as handle:
+			doc = json.load(handle)
+		if doc.get("doctype") != "DocType":
+			continue
+		shipped[doc["name"]] = {
+			f["fieldname"]: f.get("label") for f in doc.get("fields", [])
+		}
+	return shipped
+
+
+def plan_labels(names, shipped):
+	"""{(doctype, fieldname): label or None} -- None meaning "leave the JSON".
+
+	A rendered label equal to the shipped one needs no Property Setter at all.
+	Writing one anyway left a site that renamed nothing carrying one record per
+	catalogued field, each saying exactly what the JSON says, and left clearing
+	a name with the old setter still standing instead of the original label.
+
+	A field the shipped map does not carry is left out entirely rather than
+	planned as None: a site mid-migrate has fields the catalogue names and the
+	JSON has not reached yet, and "remove its setter" is not the same as
+	"nothing to say about it".
+	"""
+	plan = {}
+	for doctype, fieldname, template in FIELD_LABELS:
+		if fieldname not in shipped.get(doctype, {}):
+			continue
+		label = label_for(template, names)
+		plan[(doctype, fieldname)] = None if label == shipped[doctype][fieldname] else label
+	return plan
+
+
 def business_unit_hidden(names):
 	"""1 while the level above the farm is switched off, 0 once it is on.
 
@@ -137,37 +183,43 @@ def apply_business_unit_visibility(settings=None):
 
 
 def apply_labels(settings=None):
-	"""Write a Property Setter for each level-naming label. Idempotent.
+	"""Bring the level-naming labels into line with the template. Idempotent.
 
 	Property Setters rather than edits to the shipped JSON, so the app's files
 	stay the same on every site and clearing the template puts the original
-	labels back.
+	labels back -- which means removing the setter, not writing the original
+	label into one. A site that renamed nothing therefore ends up carrying no
+	setters at all.
+
+	Returns (written, removed).
 	"""
 	import frappe
 	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
 	if settings is None:
 		settings = frappe.get_cached_doc("Work Management Settings")
-	names = resolve(settings)
+	plan = plan_labels(resolve(settings), shipped_labels())
 
-	written = 0
-	for doctype, fieldname, template in FIELD_LABELS:
+	written = removed = 0
+	for (doctype, fieldname), label in plan.items():
 		if not frappe.db.exists("DocType", doctype):
 			continue
-		label = label_for(template, names)
-		current = frappe.db.get_value(
-			"Property Setter",
-			{"doc_type": doctype, "field_name": fieldname, "property": "label"},
-			"value",
-		)
-		if current == label:
+		filters = {"doc_type": doctype, "field_name": fieldname, "property": "label"}
+		existing = frappe.db.get_value("Property Setter", filters, ["name", "value"], as_dict=True)
+		if label is None:
+			if not existing:
+				continue
+			frappe.delete_doc("Property Setter", existing.name, force=True, ignore_permissions=True)
+			removed += 1
+			continue
+		if existing and existing.value == label:
 			continue
 		make_property_setter(doctype, fieldname, "label", label, "Data",
 			validate_fields_for_doctype=False)
 		written += 1
-	if written:
+	if written or removed:
 		frappe.clear_cache()
-	return written
+	return written, removed
 
 
 def clear_labels():
