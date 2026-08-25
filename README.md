@@ -36,8 +36,9 @@ approvers, and the screens say so rather than offering someone else's.
   discrepancy checks, rates and payroll settings, header logo.
 - **Work Management Farm**: the unit work is planned against — farm, estate,
   site, division, whatever your project calls it — with its cost project.
-  Optionally belongs to a **Business Unit**, a level above the farm that
-  reports can group by.
+  Optionally belongs to a **Business Unit**, a level above the farm, switched
+  on and named in Settings. It records which unit a farm belongs to; no report
+  groups by it yet.
 - **Work Management Section**: an optional grouping of blocks (Warehouses),
   used only to let the dashboard's cost-centre view be read by section
   instead of block by block. A block belongs to at most one section.
@@ -84,7 +85,8 @@ is configuration, not code: set it once in **Work Management Settings →
 Taxonomy** and every desk label, screen and column heading follows.
 
 - **Farm** and **Block** are always present; a level above the farm
-  (**Business Unit** by default) is optional and off until switched on.
+  (**Business Unit** by default) is optional, off until switched on, and its
+  field stays off the farm form until then.
 - Leaving a name blank falls back to the shipped wording rather than
   rendering an empty label.
 - Renaming writes Property Setters (`work_management/taxonomy.py`), so the

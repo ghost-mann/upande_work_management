@@ -91,6 +91,51 @@ FIELD_LABELS = (
 )
 
 
+def business_unit_hidden(names):
+	"""1 while the level above the farm is switched off, 0 once it is on.
+
+	Naming the level is not the same as having one, so this reads the enable
+	flag alone: a project can type "Division" into the template and still not
+	be organised into divisions.
+	"""
+	return 0 if names.get("bu_enabled") else 1
+
+
+def apply_business_unit_visibility(settings=None):
+	"""Show or hide Work Management Farm.business_unit, per the enable flag.
+
+	The field ships hidden, because the level ships off. Turning the level on
+	writes a Property Setter that reveals it; turning it back off deletes that
+	setter rather than writing hidden=1 over a field that is hidden already --
+	a project that never uses the level ends up carrying nothing.
+
+	Returns what it did: "shown", "hidden", or None when nothing changed.
+	"""
+	import frappe
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	if not frappe.db.exists("DocType", "Work Management Farm"):
+		return None
+	if settings is None:
+		settings = frappe.get_cached_doc("Work Management Settings")
+	filters = {"doc_type": "Work Management Farm", "field_name": "business_unit",
+		"property": "hidden"}
+	existing = frappe.db.get_value("Property Setter", filters, "name")
+
+	if business_unit_hidden(resolve(settings)):
+		if not existing:
+			return None
+		frappe.delete_doc("Property Setter", existing, force=True, ignore_permissions=True)
+		frappe.clear_cache(doctype="Work Management Farm")
+		return "hidden"
+	if existing and frappe.db.get_value("Property Setter", existing, "value") in ("0", 0):
+		return None
+	make_property_setter("Work Management Farm", "business_unit", "hidden", 0, "Check",
+		validate_fields_for_doctype=False)
+	frappe.clear_cache(doctype="Work Management Farm")
+	return "shown"
+
+
 def apply_labels(settings=None):
 	"""Write a Property Setter for each level-naming label. Idempotent.
 
@@ -126,10 +171,19 @@ def apply_labels(settings=None):
 
 
 def clear_labels():
-	"""Remove the labels this module wrote, restoring the shipped wording."""
+	"""Remove what this module wrote, restoring the shipped wording and the
+	shipped visibility of the level above the farm."""
 	import frappe
 
 	removed = 0
+	for name in frappe.get_all(
+		"Property Setter",
+		filters={"doc_type": "Work Management Farm", "field_name": "business_unit",
+			"property": "hidden"},
+		pluck="name",
+	):
+		frappe.delete_doc("Property Setter", name, force=True, ignore_permissions=True)
+		removed += 1
 	for doctype, fieldname, _template in FIELD_LABELS:
 		for name in frappe.get_all(
 			"Property Setter",
