@@ -65,7 +65,7 @@
   }
   function farmOptions(selected){
     return [""].concat(FARM_LIST).map(function(f){
-      return '<option value="'+esc(f)+'"'+(selected===f?' selected':'')+'>'+(f||("All "+TX("top_plural","Farms").toLowerCase()))+'</option>';
+      return '<option value="'+esc(f)+'"'+(selected===f?' selected':'')+'>'+(f||("All "+esc(TX("top_plural","Farms")).toLowerCase()))+'</option>';
     }).join("");
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
@@ -145,7 +145,7 @@
        '</div>';
     if(!rows.length){
       box.innerHTML=h+'<div class="at-empty">No activity matches these filters. '+
-        'Widen the dates, clear the search, or pick another '+TX("top_singular","Farm").toLowerCase()+'.</div>';
+        'Widen the dates, clear the search, or pick another '+esc(TX("top_singular","Farm")).toLowerCase()+'.</div>';
       atWire(box); return;
     }
     var col=function(k,lbl,n){
@@ -199,7 +199,7 @@
       '<div><label>To</label><input type="date" id="at-to" value="'+esc(AT.to||"")+'"></div>'+
       '<div><label>'+esc(TX("top_singular","Farm"))+'</label><select id="at-farm">'+
         farmOptions(AT.farm)+'</select></div>'+
-      '<div><label>Find</label><input class="at-find" id="at-q" placeholder="Activity, '+TX("top_singular","Farm").toLowerCase()+' or plan…" value="'+esc(AT.q||"")+'"></div>'+
+      '<div><label>Find</label><input class="at-find" id="at-q" placeholder="Activity, '+esc(TX("top_singular","Farm")).toLowerCase()+' or plan…" value="'+esc(AT.q||"")+'"></div>'+
       '<div class="at-right"><div>'+st("","All")+st("over","Over")+st("under way","Under way")+
         st("planned","Planned")+st("delivered","Delivered")+st("untouched","Untouched")+'</div></div>'+
     '</div>';
@@ -497,7 +497,7 @@
       '<div class="sc-h" style="color:'+color+'">'+title+'</div>'+body+'</div>';
   }
   function farmStrip(rows){
-    if(!rows.length) return '<div class="empty">No '+TX("top_singular","Farm").toLowerCase()+' data.</div>';
+    if(!rows.length) return '<div class="empty">No '+esc(TX("top_singular","Farm")).toLowerCase()+' data.</div>';
     var h='<div class="fstrip">';
     rows.forEach(function(r){
       h+='<div class="fs-card">'+
@@ -523,7 +523,7 @@
       Array(6).join(0).split("0").map(function(){return '<div class="kpi"><div class="sk sk-kpi"></div></div>';}).join("")+
       '</div>'+
       '<div class="sech">Pipeline</div><div class="card"><div class="bd"><div class="sk sk-bar"></div></div></div>'+
-      '<div class="sech">Per-'+TX("top_singular","Farm").toLowerCase()+'</div><div class="card"><div class="bd"><div class="sk sk-bar"></div></div></div>';
+      '<div class="sech">Per-'+esc(TX("top_singular","Farm")).toLowerCase()+'</div><div class="card"><div class="bd"><div class="sk sk-bar"></div></div></div>';
   }
 
   function render(D){
@@ -565,22 +565,22 @@
         '<span><b>Sum of daily crews</b> — every plan’s people-per-day added up. It counts slots across plans, so it is normally far larger than the number of people you employ (that is why it can exceed your workforce).</span>'+
         '<span><b>Planned value</b> — target output × rate across approved plans: what the planned work is worth when fully delivered.</span>'+
         '<span><b>Assigned workers</b> — distinct people actually put on jobs (each counted once).</span>'+
-        '<span><b>Active employees</b> — everyone active on the four '+TX("top_plural","Farms").toLowerCase()+' right now, split into task workers (paid per output) and permanent/salaried staff.</span>'+
+        '<span><b>Active employees</b> — everyone active on the four '+esc(TX("top_plural","Farms")).toLowerCase()+' right now, split into task workers (paid per output) and permanent/salaried staff.</span>'+
         '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
         '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
       '</div>'+
       // ===== every budget line, one table =====
       '<div class="sech">Planned value &amp; delivery</div>'+
       '<div class="card"><div class="hd"><h3>Every activity, planned against delivered</h3>'+
-        '<div class="cap">one row per budget line &middot; filter and sort across '+TX("top_plural","Farms").toLowerCase()+' &middot; click a row for its charts</div></div>'+
+        '<div class="cap">one row per budget line &middot; filter and sort across '+esc(TX("top_plural","Farms")).toLowerCase()+' &middot; click a row for its charts</div></div>'+
         '<div class="bd" id="wm-acts"><div class="loading">Reading activities&hellip;</div></div></div>'+
       // ===== how much of each plan actually happened =====
       '<div class="sech">Plan completion &mdash; planned, requested, delivered</div>'+
       '<div class="card"><div class="hd"><h3>How much of each master plan actually happened</h3>'+
-        '<div class="cap">by the week the plan starts &middot; filter by date range and '+TX("top_singular","Farm").toLowerCase()+'</div></div>'+
+        '<div class="cap">by the week the plan starts &middot; filter by date range and '+esc(TX("top_singular","Farm")).toLowerCase()+'</div></div>'+
         '<div class="bd" id="wm-plancomp"><div class="loading">Measuring completion&hellip;</div></div></div>'+
       // ===== per-farm worker + value summary strip =====
-      '<div class="sech">Workers &amp; value per '+TX("top_singular","Farm").toLowerCase()+'</div>'+
+      '<div class="sech">Workers &amp; value per '+esc(TX("top_singular","Farm")).toLowerCase()+'</div>'+
       '<div class="card"><div class="bd" id="wm-farmstrip">'+farmStrip(farms)+'</div></div>'+
       // ===== approval speed: how long each sign-off step takes =====
       '<div class="sech">Pipeline performers &mdash; planners &amp; assigners</div>'+
@@ -599,7 +599,7 @@
         '<div class="bd"><div id="wm-an-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div><div id="wm-an-body" style="min-height:180px;color:var(--mute)">Loading charts…</div></div></div>'+
       // ===== pipeline + per-farm comparison (one card, pill tabs) =====
       '<div class="sech">Pipeline &mdash; plan &rarr; assign &rarr; confirm &rarr; pay</div>'+
-      '<div class="card"><div class="hd"><h3>Pipeline &amp; per-'+TX("top_singular","Farm").toLowerCase()+' comparison</h3><div class="cap">switch views · every number in one scrollable table</div></div>'+
+      '<div class="card"><div class="hd"><h3>Pipeline &amp; per-'+esc(TX("top_singular","Farm")).toLowerCase()+' comparison</h3><div class="cap">switch views · every number in one scrollable table</div></div>'+
         '<div class="bd">'+
           '<div class="subtabs" id="wm-combo-tabs">'+
             '<button type="button" class="subtab on" data-ct="funnel">Pipeline</button>'+
@@ -620,7 +620,7 @@
             '<button data-ps="payments">Payments</button>'+
           '</div>'+
           '<div class="pex-filters" id="pex-filters">'+
-            '<input id="pex-q" placeholder="Search name / task / '+TX("unit_singular","Block").toLowerCase()+'…" />'+
+            '<input id="pex-q" placeholder="Search name / task / '+esc(TX("unit_singular","Block")).toLowerCase()+'…" />'+
             '<select id="pex-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
             '<select id="pex-state"><option value="">All states</option></select>'+
             '<select id="pex-life"><option value="">All status</option><option value="planned">Planned</option><option value="assigned">Assigned</option><option value="done">Done</option><option value="paid">Paid</option><option value="closed">Closed</option></select>'+
@@ -640,7 +640,7 @@
           '<div class="pex-tabs" id="cb-tabs">'+
             '<button data-cg="task" class="on">By activity</button>'+
             '<button data-cg="worker">By worker</button>'+
-            '<button data-cg="farm">By '+TX("top_singular","Farm").toLowerCase()+'</button>'+
+            '<button data-cg="farm">By '+esc(TX("top_singular","Farm")).toLowerCase()+'</button>'+
           '</div>'+
           '<div class="pex-filters" id="cb-filters">'+
             '<input id="cb-q" placeholder="Search…" />'+
@@ -654,23 +654,23 @@
           '<div id="cb-list" style="max-height:420px;overflow:auto;border-top:1px solid #eee">Loading&hellip;</div>'+
         '</div></div>'+
       // ===== COST CENTRE (BLOCK): which block consumes the most money =====
-      '<div class="sech">Cost centres &mdash; spend by '+TX("unit_singular","Block").toLowerCase()+'</div>'+
-      '<div class="card"><div class="hd"><h3>'+esc(TX("unit_singular","Block"))+' cost centres</h3><div class="cap">running labour cost per '+TX("unit_singular","Block").toLowerCase()+' beside GL cost-centre actuals &middot; boxes sized by spend &middot; click a '+TX("unit_singular","Block").toLowerCase()+' for its full breakdown</div></div>'+
+      '<div class="sech">Cost centres &mdash; spend by '+esc(TX("unit_singular","Block")).toLowerCase()+'</div>'+
+      '<div class="card"><div class="hd"><h3>'+esc(TX("unit_singular","Block"))+' cost centres</h3><div class="cap">running labour cost per '+esc(TX("unit_singular","Block")).toLowerCase()+' beside GL cost-centre actuals &middot; boxes sized by spend &middot; click a '+esc(TX("unit_singular","Block")).toLowerCase()+' for its full breakdown</div></div>'+
         '<div class="bd">'+
           '<div class="pex-filters" id="cc-filters">'+
-            '<input id="cc-q" placeholder="Search '+TX("unit_singular","Block").toLowerCase()+'…" />'+
+            '<input id="cc-q" placeholder="Search '+esc(TX("unit_singular","Block")).toLowerCase()+'…" />'+
             '<select id="cc-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
             '<label>From <input type="date" id="cc-from" /></label>'+
             '<label>To <input type="date" id="cc-to" /></label>'+
-            '<select id="cc-group"><option value="block">Group: by '+TX("unit_singular","Block").toLowerCase()+'</option><option value="section">Group: by '+TX("section_singular","Section").toLowerCase()+'</option></select>'+
-            '<select id="cc-color"><option value="spend">Colour: by spend</option><option value="cpu">Colour: cost per unit</option><option value="farm">Colour: by '+TX("top_singular","Farm").toLowerCase()+'</option></select>'+
+            '<select id="cc-group"><option value="block">Group: by '+esc(TX("unit_singular","Block")).toLowerCase()+'</option><option value="section">Group: by '+esc(TX("section_singular","Section")).toLowerCase()+'</option></select>'+
+            '<select id="cc-color"><option value="spend">Colour: by spend</option><option value="cpu">Colour: cost per unit</option><option value="farm">Colour: by '+esc(TX("top_singular","Farm")).toLowerCase()+'</option></select>'+
             '<button id="cc-clear" class="pex-clear">Clear</button>'+
           '</div>'+
           '<div id="cc-totals" class="cb-totals"></div>'+
           '<div id="cc-treemap" style="margin:4px 0 14px"></div>'+
           '<div id="cc-tabs" class="pex-tabs" style="margin-bottom:6px">'+
-            '<button data-ccview="block" class="on">By '+TX("unit_singular","Block").toLowerCase()+'</button>'+
-            '<button data-ccview="farm">By '+TX("top_singular","Farm").toLowerCase()+'</button>'+
+            '<button data-ccview="block" class="on">By '+esc(TX("unit_singular","Block")).toLowerCase()+'</button>'+
+            '<button data-ccview="farm">By '+esc(TX("top_singular","Farm")).toLowerCase()+'</button>'+
           '</div>'+
           '<div id="cc-list" style="max-height:520px;overflow:auto;border-top:1px solid #eee">Loading&hellip;</div>'+
         '</div></div>'+
@@ -709,7 +709,7 @@
           '</div>'+
           '<div id="wm-tl-chart" style="min-height:240px"><div class="empty">Loading timeline&hellip;</div></div>'+
         '</div></div>'+
-      '<div class="card" style="flex:2;min-width:380px;margin-bottom:0"><div class="hd"><h3>Field intelligence</h3><div class="cap">efficiency per '+TX("top_singular","Farm").toLowerCase()+' &middot; who is free to work, any day</div></div>'+
+      '<div class="card" style="flex:2;min-width:380px;margin-bottom:0"><div class="hd"><h3>Field intelligence</h3><div class="cap">efficiency per '+esc(TX("top_singular","Farm")).toLowerCase()+' &middot; who is free to work, any day</div></div>'+
         '<div class="bd">'+
           '<div class="subtabs" id="wm-fi-tabs" style="margin-bottom:10px">'+
             '<button type="button" class="subtab on" data-fi="eff">Efficiency</button>'+
@@ -998,7 +998,7 @@
   }
 
   function farmTable(rows){
-    if(!rows.length) return '<div class="empty">No '+TX("top_singular","Farm").toLowerCase()+' data.</div>';
+    if(!rows.length) return '<div class="empty">No '+esc(TX("top_singular","Farm")).toLowerCase()+' data.</div>';
     var h='<table><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Appr</th><th class="n">Planned KES</th><th class="n">Assigned</th><th class="n">Confirmed Pay KES</th><th class="n">Unassigned</th></tr></thead><tbody>';
     var tc=0,td=0,tp=0,tu=0;
     rows.forEach(function(r){
@@ -1675,7 +1675,7 @@
       }
       var rows=d.breakdown||[];
       if(!rows.length){ box.innerHTML='<div class="empty">No cost data for this filter.</div>'; return; }
-      var head = (CB.group==="worker")?"Worker":((CB.group==="farm")?TX("top_singular","Farm"):"Activity");
+      var head = (CB.group==="worker")?"Worker":((CB.group==="farm")?esc(TX("top_singular","Farm")):"Activity");
       var h='<table class="pex"><thead><tr><th>'+head+'</th>';
       if(CB.group!=="worker") h+='<th class="n">Workers</th>';
       h+='<th class="n">Qty</th><th class="n">Estimated</th><th class="n">Paid out</th><th class="n">Outstanding</th><th>Progress</th></tr></thead><tbody>';
@@ -1737,7 +1737,7 @@
   function loadTracker(){
     var box=el("et-list"); if(!box) return;
     var a=etState();
-    if(!a.q && !a.farm && !a.task && !a.state){ box.innerHTML='<div class="empty">Type a worker name (or pick a '+TX("top_singular","Farm").toLowerCase()+') to see assignments.</div>'; var su=el("et-summary"); if(su) su.innerHTML=""; return; }
+    if(!a.q && !a.farm && !a.task && !a.state){ box.innerHTML='<div class="empty">Type a worker name (or pick a '+esc(TX("top_singular","Farm")).toLowerCase()+') to see assignments.</div>'; var su=el("et-summary"); if(su) su.innerHTML=""; return; }
     box.innerHTML="Loading…";
     a.action="emp_tracker";
     call(a).then(function(d){
@@ -1751,7 +1751,7 @@
           su.innerHTML='<div class="etkpis">'+
             etKpi("Workers",fmt(k.workers))+
             etKpi("Assignments",fmt(k.assignments))+
-            etKpi(TX("top_plural","Farms"),fmt(k.farms))+
+            etKpi(esc(TX("top_plural","Farms")),fmt(k.farms))+
             etKpi("Tasks",fmt(k.tasks))+
             etKpi("Active slots",fmt(k.active_slots))+
             etKpi("Awaiting approval",fmt(k.pending))+
@@ -1780,7 +1780,7 @@
                  '<span><b>'+fmt(b.active.length)+'</b> active</span>'+
                  '<span><b>'+fmt(b.upcoming.length)+'</b> upcoming</span>'+
                  '<span><b>'+fmt(b.past.length)+'</b> past</span>'+
-                 '<span><b>'+fmt(g.farm_count||0)+'</b> '+TX("top_plural","Farms").toLowerCase()+'</span>'+
+                 '<span><b>'+fmt(g.farm_count||0)+'</b> '+esc(TX("top_plural","Farms")).toLowerCase()+'</span>'+
                  '<span><b>'+fmt(g.task_count||0)+'</b> tasks</span>'+
                  '<a href="#" class="et-emplink" data-emp="'+esc(emp)+'">full detail ↗</a>'+
                '</div>'+
@@ -1928,12 +1928,12 @@
     h+='</div>';
     // colour legend
     if(mode==="cpu"){
-      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Colour = cost per unit vs the median '+TX("unit_singular","Block").toLowerCase()+': <span style="color:#0a7a43;font-weight:700">efficient</span> → <span style="color:#b45309;font-weight:700">costly</span> → <span style="color:#be123c;font-weight:700">most costly</span>. Box size = labour spend.</div>';
+      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Colour = cost per unit vs the median '+esc(TX("unit_singular","Block")).toLowerCase()+': <span style="color:#0a7a43;font-weight:700">efficient</span> → <span style="color:#b45309;font-weight:700">costly</span> → <span style="color:#be123c;font-weight:700">most costly</span>. Box size = labour spend.</div>';
     } else if(mode==="farm"){
       var leg=''; Object.keys(CC_FARM_COLORS).forEach(function(f){ leg+='<span style="display:inline-block;margin-right:10px"><i style="display:inline-block;width:10px;height:10px;background:'+CC_FARM_COLORS[f]+';vertical-align:middle;margin-right:4px"></i>'+esc(f)+'</span>'; });
       h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Box size = labour spend. '+leg+'</div>';
     } else {
-      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Box size &amp; shade = labour spend (darker green = bigger running cost). Click any '+TX("unit_singular","Block").toLowerCase()+' to drill in.</div>';
+      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Box size &amp; shade = labour spend (darker green = bigger running cost). Click any '+esc(TX("unit_singular","Block")).toLowerCase()+' to drill in.</div>';
     }
     box.innerHTML=h;
     box.querySelectorAll(".cc-tile").forEach(function(t){
@@ -1974,14 +1974,14 @@
       h+='</tbody></table></div>';
     }
     // tasks table (+ cost/unit)
-    h+='<div class="wm-dsec">Tasks in this '+TX("unit_singular","Block").toLowerCase()+' ('+tasks.length+')</div>';
+    h+='<div class="wm-dsec">Tasks in this '+esc(TX("unit_singular","Block")).toLowerCase()+' ('+tasks.length+')</div>';
     if(tasks.length){
       h+='<div class="wm-dtscroll"><table class="wm-dtable"><thead><tr><th>Task</th><th class="n">Spend KES</th><th class="n">Qty</th><th class="n">Cost/unit</th><th class="n">Workers</th><th class="n">Worker-days</th></tr></thead><tbody>';
       tasks.forEach(function(t){ h+='<tr><td>'+esc(t.label)+'</td><td class="n">'+fmt(t.spend)+'</td><td class="n">'+fmt(t.qty)+'</td><td class="n">'+(t.cost_per_unit!=null?money(t.cost_per_unit):"—")+'</td><td class="n">'+fmt(t.workers)+'</td><td class="n">'+fmt(t.worker_days)+'</td></tr>'; });
       h+='</tbody></table></div>';
     } else { h+='<div class="wm-dload">No tasks.</div>'; }
     // workers table (+ cost/unit)
-    h+='<div class="wm-dsec">Workers on this '+TX("unit_singular","Block").toLowerCase()+' ('+workers.length+')</div>';
+    h+='<div class="wm-dsec">Workers on this '+esc(TX("unit_singular","Block")).toLowerCase()+' ('+workers.length+')</div>';
     if(workers.length){
       h+='<div class="wm-dtscroll"><table class="wm-dtable"><thead><tr><th>Worker</th><th class="n">Spend KES</th><th class="n">Qty</th><th class="n">Cost/unit</th><th class="n">Days</th><th class="n">Tasks</th></tr></thead><tbody>';
       workers.forEach(function(w){ h+='<tr><td>'+esc(w.nm||w.emp)+'</td><td class="n">'+fmt(w.spend)+'</td><td class="n">'+fmt(w.qty)+'</td><td class="n">'+(w.cost_per_unit!=null?money(w.cost_per_unit):"—")+'</td><td class="n">'+fmt(w.days)+'</td><td class="n">'+fmt(w.tasks)+'</td></tr>'; });
@@ -2012,7 +2012,7 @@
       return;
     }
     var rows=CCDATA.blocks||[];
-    if(!rows.length){ box.innerHTML='<div class="empty">No '+TX("unit_singular","Block").toLowerCase()+' spend for this filter.</div>'; return; }
+    if(!rows.length){ box.innerHTML='<div class="empty">No '+esc(TX("unit_singular","Block")).toLowerCase()+' spend for this filter.</div>'; return; }
     var maxL=0; rows.forEach(function(r){ if(r.labour_spend>maxL) maxL=r.labour_spend; });
     var h='<table class="pex" data-cctable="1"><thead><tr>'+
       '<th>'+esc(TX("unit_singular","Block"))+' (cost centre)</th><th>'+esc(TX("top_singular","Farm"))+'</th>'+
@@ -2285,15 +2285,15 @@
     var box=el("wm-q-body"); if(!box) return;
     if(QT.tab==="plans"){
       box.innerHTML=qTable(D.plan_pending||[],
-        [["Ref"],[TX("top_singular","Farm")],[TX("unit_singular","Block")],["Task"],["People/day",1],["Cost KES",1]],
+        [["Ref"],[esc(TX("top_singular","Farm"))],[esc(TX("unit_singular","Block"))],["Task"],["People/day",1],["Cost KES",1]],
         function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(lbl(r.block_section)||"—")+'</td><td>'+esc(r.task||"—")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.total_cost)+'</td>'; });
     } else if(QT.tab==="asg"){
       box.innerHTML=qTable(D.asg_pending||[],
-        [["Ref"],[TX("top_singular","Farm")],["Task"],["Planned",1],["Assigned",1],["Variance",1]],
+        [["Ref"],[esc(TX("top_singular","Farm"))],["Task"],["Planned",1],["Assigned",1],["Variance",1]],
         function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(r.task||"—")+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+fmt(r.variance)+'</td>'; });
     } else if(QT.tab==="act"){
       box.innerHTML=qTable(D.act_pending||[],
-        [["Ref"],[TX("top_singular","Farm")],["Task"],["Stage"],["Pay KES",1]],
+        [["Ref"],[esc(TX("top_singular","Farm"))],["Task"],["Stage"],["Pay KES",1]],
         function(r){ var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
           return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(r.task||"—")+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
     } else {
@@ -2502,7 +2502,7 @@
       });
       h+='</tbody></table></div>';
     }
-    h+='<div class="explain" style="margin-top:8px;font-size:10px"><span>&mdash; means the '+TX("unit_plural","Blocks").toLowerCase()+' have no area (Ha) captured in the system yet; ask admin to fill <b>Area (Ha)</b> on the '+TX("unit_singular","Block").toLowerCase()+' records.</span></div>';
+    h+='<div class="explain" style="margin-top:8px;font-size:10px"><span>&mdash; means the '+esc(TX("unit_plural","Blocks")).toLowerCase()+' have no area (Ha) captured in the system yet; ask admin to fill <b>Area (Ha)</b> on the '+esc(TX("unit_singular","Block")).toLowerCase()+' records.</span></div>';
     box.innerHTML=h;
   }
   function renderFiAvail(){
