@@ -11,6 +11,8 @@ Kaitet's own values are applied by work_management.seed.kaitet on that site alon
 
 import frappe
 
+from work_management import taxonomy
+
 # Warehouse name fragments that are stores rather than places work happens.
 # Generic enough to be a useful starting point anywhere; override in Settings.
 DEFAULT_BLOCK_EXCLUDE = [
@@ -96,7 +98,11 @@ def get_config():
 		"hr_head_roles": [],
 		"default_company": _default_company(),
 		"block_exclude": list(DEFAULT_BLOCK_EXCLUDE),
-		"taxonomy": {},
+		# The shipped names, not {}: a site whose Settings will not load still
+		# has to give the screens something to print. They fall back to their
+		# own hardcoded wording on an empty dict, which is the same text -- but
+		# only until a screen forgets to pass a fallback.
+		"taxonomy": taxonomy.resolve(None),
 	}
 
 	try:
@@ -121,9 +127,7 @@ def get_config():
 	cfg["farm_approver_role"] = _farm_approver_role(settings, cfg["farms"])
 	cfg["hr_head_roles"] = _stage_roles(settings, "assigner_hr_head", "actuals_hr_head")
 
-	from work_management import taxonomy as _taxonomy
-
-	cfg["taxonomy"] = _taxonomy.resolve(settings)
+	cfg["taxonomy"] = taxonomy.resolve(settings)
 	return cfg
 
 

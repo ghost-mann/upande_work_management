@@ -725,7 +725,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
         <div class="sech">Where &amp; what</div>
         <label class="fl">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</label>
         <select id="f-farm"></select>
-        <label class="fl">Blocks / Sections <span style="color:var(--mute);font-weight:500;text-transform:none;letter-spacing:0">(tap to select one or more)</span></label>
+        <label class="fl">{{ (taxonomy or {}).get('unit_plural', 'Blocks') | e }} / {{ (taxonomy or {}).get('section_plural', 'Sections') | e }} <span style="color:var(--mute);font-weight:500;text-transform:none;letter-spacing:0">(tap to select one or more)</span></label>
         <select id="f-block"><option value="">&mdash; pick farm first &mdash;</option></select>
         <div class="blockgrid" id="f-blockgrid"></div>
         <div class="picked" id="f-picked"></div>
@@ -756,7 +756,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
           <div class="kpi"><div class="k">People / Day</div><div class="v" id="o-ppl">&mdash;</div><div class="u" id="o-ppl-u">crew size</div></div>
           <div class="kpi"><div class="k">Mandays</div><div class="v" id="o-pd">&mdash;</div><div class="u" id="o-pd-u">quantity &divide; daily target</div></div>
           <div class="kpi"><div class="k">Total Hours</div><div class="v" id="o-hrs">&mdash;</div><div class="u">Mon–Fri 8h · Sat 6h · Sun 8h</div></div>
-          <div class="kpi"><div class="k">Block Area</div><div class="v" id="o-area">&mdash;</div><div class="u">Ha (selected blocks)</div></div>
+          <div class="kpi"><div class="k">{{ (taxonomy or {}).get('unit_singular', 'Block') | e }} Area</div><div class="v" id="o-area">&mdash;</div><div class="u">Ha (selected {{ (taxonomy or {}).get('unit_plural', 'Blocks')|lower|e }})</div></div>
           <div class="kpi"><div class="k">Total Cost</div><div class="v" id="o-cost">&mdash;</div><div class="u">KES</div></div>
         </div>
         <div class="cmp" id="o-compare">Pick farm, blocks, task, quantity and dates to see the estimate.</div>
