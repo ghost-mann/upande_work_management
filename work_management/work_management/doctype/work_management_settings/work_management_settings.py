@@ -4,7 +4,7 @@
 import frappe
 from frappe.model.document import Document
 
-from work_management import approvals, taxonomy
+from work_management import approvals, desk, taxonomy
 
 
 class WorkManagementSettings(Document):
@@ -25,3 +25,7 @@ class WorkManagementSettings(Document):
 		approvals.build_workflows(self)
 		taxonomy.apply_labels(self)
 		taxonomy.apply_business_unit_visibility(self)
+		# The desk navigation carries level names too, and no Property Setter
+		# reaches a Workspace Link -- without this a rename shows on the forms
+		# immediately and down the side of the desk only after a migrate.
+		desk.relabel_navigation(self)

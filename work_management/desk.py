@@ -41,6 +41,7 @@ import pathlib
 
 import frappe
 
+from work_management import taxonomy
 from work_management.migrating import DESK_STEP, without_aborting_the_migrate
 
 APP = "work_management"
@@ -57,6 +58,17 @@ BLOCK_DIR = HERE / "custom_html_block"
 BLOCK_SLUG = "work_management_navigation"
 
 COUNTED = ("links", "shortcuts", "custom_blocks")
+
+# Navigation entries whose label names a level, by what they point at. A
+# Workspace Link and a Workspace Sidebar Item are records, not doctype fields,
+# so none of the Property Setters that relabel the forms reaches them -- they
+# are relabelled in place, after every import, by relabel_navigation(). Keyed on
+# link_to rather than on the label, because after the first relabel the label is
+# no longer the shipped one and would not be found again.
+NAV_LABELS = {
+	"Work Management Farm": "{top_plural}",
+	"Work Management Section": "{section_plural}",
+}
 
 
 # ------------------------------------------------------------------ decision
@@ -97,6 +109,16 @@ def workspace_repair_reason(record, present, shipped):
 		if present.get(key, 0) != wanted[key]:
 			return "stale"
 	return None
+
+
+def nav_label(link_to, names):
+	"""What a navigation entry pointing at `link_to` should read, or None.
+
+	None, rather than the label unchanged, so a caller cannot mistake "this
+	entry names no level" for "write this back".
+	"""
+	template = NAV_LABELS.get(link_to)
+	return taxonomy.label_for(template, names) if template else None
 
 
 # --------------------------------------------------------------- nav block
@@ -238,11 +260,44 @@ def sync_sidebar():
 	return SIDEBAR
 
 
+def relabel_navigation(settings=None):
+	"""Put the level names on the navigation entries that carry one.
+
+	Runs after the imports, every time, because importing a shipped definition
+	puts the shipped labels back. Scoped to this app's own surfaces: another
+	app's workspace may well link to a Work Management doctype, and its wording
+	is not ours to rewrite.
+
+	Returns how many entries it changed.
+	"""
+	if settings is None and frappe.db.exists("DocType", "Work Management Settings"):
+		settings = frappe.get_cached_doc("Work Management Settings")
+	names = taxonomy.resolve(settings)
+	ours = [name for name, _path, _shipped in workspace_definitions()]
+	changed = 0
+	for doctype, parents in (("Workspace Link", ours), ("Workspace Sidebar Item", [SIDEBAR])):
+		if not frappe.db.exists("DocType", doctype):
+			continue  # v15 has no Workspace Sidebar.
+		for row in frappe.get_all(
+			doctype,
+			filters={"parent": ["in", parents], "link_to": ["in", list(NAV_LABELS)]},
+			fields=["name", "link_to", "label"],
+		):
+			wanted = nav_label(row.link_to, names)
+			if wanted and row.label != wanted:
+				frappe.db.set_value(doctype, row.name, "label", wanted, update_modified=False)
+				changed = changed + 1
+	if changed:
+		frappe.clear_cache()
+	return changed
+
+
 def sync():
 	"""Repair every desk surface. Safe to run repeatedly."""
 	ensure_nav_block()
 	repaired = sync_workspaces()
 	sync_sidebar()
+	relabel_navigation()
 	if repaired:
 		_refresh_desktop_icon()
 		frappe.clear_cache()

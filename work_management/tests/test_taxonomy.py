@@ -312,6 +312,27 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 			]
 			self.assertEqual(offenders, [], f"{filename}: {offenders[:5]}")
 
+	def test_the_templates_hold_no_bare_level_label(self):
+		"""The five www templates print some labels themselves rather than
+		leaving them to the screen's JS. Those are as visible as any other, and
+		a static one keeps its shipped wording on a renamed install -- which is
+		how "Blocks / Sections" survived the whole screens task.
+
+		Jinja expressions are blanked before scanning, so a level word inside
+		{{ ... }} is what this wants to see; one in plain markup trips it.
+		"""
+		import glob
+		import os
+		import re
+
+		expression = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
+		pattern = re.compile(r"\b(Farm|Farms|Block|Blocks|Section|Sections)\b")
+		for path in sorted(glob.glob(os.path.join(self.APP, "www", "*.html"))):
+			with open(path) as handle:
+				bare = expression.sub("", handle.read())
+			found = sorted({m.group(0) for m in pattern.finditer(bare)})
+			self.assertEqual(found, [], f"{os.path.basename(path)}: {found}")
+
 	def test_dashboard_tx_calls_are_escaped_before_reaching_markup(self):
 		"""A configured level name is a plain Data field with no character
 		restriction, so a bare TX(...) spliced into markup is a stored-value
