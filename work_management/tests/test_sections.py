@@ -5,7 +5,9 @@ Both decisions are pure and tested without a site::
     ./env/bin/python -m unittest work_management.tests.test_sections -v
 """
 
+import contextlib
 import glob
+import io
 import json
 import os
 import unittest
@@ -279,3 +281,70 @@ class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
 	def test_totals_blocks_uses_the_capture_not_a_fresh_len_of_rows(self):
 		self.assertIn('"blocks": block_count', self.src)
 		self.assertNotIn('"totals"] = {"labour": tot_labour, "gl": tot_gl, "blocks": len(rows)', self.src)
+
+
+class TestOneBadRecordDoesNotAbortTheMigrate(unittest.TestCase):
+	"""Both patches walk records the app has never seen. A legacy value that
+	will not validate is a fact of life; aborting `bench migrate` for the whole
+	site over one of them is not, and it contradicts the very principle
+	`without_aborting_the_migrate` was added to establish.
+	"""
+
+	@staticmethod
+	@contextlib.contextmanager
+	def quiet():
+		"""The skip notes are printed and logged on purpose; swallow them so a
+		passing run stays quiet and a real failure still stands out."""
+		noise = io.StringIO()
+		with contextlib.redirect_stdout(noise), contextlib.redirect_stderr(noise):
+			yield
+
+	def test_every_missing_farm_is_created_with_the_right_disabled_flag(self):
+		made = []
+		created, notes = backfill.create_missing(
+			["Saboti", "Torongo"], {"Saboti"}, lambda farm, disabled: made.append((farm, disabled))
+		)
+		self.assertEqual(made, [("Saboti", False), ("Torongo", True)])
+		self.assertEqual(created, 2)
+		self.assertEqual(notes, [])
+
+	def test_a_farm_that_will_not_insert_does_not_stop_the_farms_after_it(self):
+		made = []
+
+		def create(farm, disabled):
+			if farm == "Kiptagich":
+				raise ValueError("Value missing for Work Management Farm: Farm")
+			made.append(farm)
+
+		with self.quiet():
+			created, notes = backfill.create_missing(
+				["Isinya", "Kiptagich", "Torongo"], set(), create
+			)
+		self.assertEqual(made, ["Isinya", "Torongo"])
+		self.assertEqual(created, 2)
+		self.assertEqual(len(notes), 1)
+		self.assertIn("Kiptagich", notes[0])
+
+	def test_each_block_outcome_is_counted(self):
+		outcomes = {
+			"A1": seed.CREATED, "A2": seed.PLACED, "A3": seed.AMBIGUOUS,
+			"A4": seed.FARM_CONFLICT, "A5": None,
+		}
+		counts, notes = seed.tally(sorted(outcomes), outcomes.get)
+		self.assertEqual(counts["created"], 1)
+		self.assertEqual(counts["placed"], 2, "a created section also holds its block")
+		self.assertEqual(counts["ambiguous"], 1)
+		self.assertEqual(counts["farm_conflict"], 1)
+		self.assertEqual(notes, [])
+
+	def test_a_block_that_cannot_be_placed_does_not_stop_the_blocks_after_it(self):
+		def place(block):
+			if block == "VALE-B7":
+				raise ValueError("Warehouse VALE-B7 not found")
+			return seed.PLACED
+
+		with self.quiet():
+			counts, notes = seed.tally(["A1", "VALE-B7", "B2"], place)
+		self.assertEqual(counts["placed"], 2)
+		self.assertEqual(len(notes), 1)
+		self.assertIn("VALE-B7", notes[0])

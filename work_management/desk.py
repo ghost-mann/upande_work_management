@@ -41,6 +41,8 @@ import pathlib
 
 import frappe
 
+from work_management.migrating import DESK_STEP, without_aborting_the_migrate
+
 APP = "work_management"
 MODULE = "Work Management"
 WORKSPACE = "Work Management"
@@ -204,37 +206,9 @@ def _refresh_desktop_icon():
 
 	from frappe.desk.doctype.desktop_icon.desktop_icon import create_desktop_icons
 
-	return without_aborting_the_migrate(create_desktop_icons, "rebuild the desktop icons")
-
-
-def without_aborting_the_migrate(action, what):
-	"""Run a desk rebuild step, refusing to let it take the whole migrate down.
-
-	Frappe 16.27's create_desktop_icons_from_workspace() files each workspace
-	icon with link_type "Workspace Sidebar" while link_to names a Workspace, so
-	the insert fails link validation. Its own handler then reports the failure
-	through frappe.error_log(...) — which is a list, not a function — and the
-	TypeError that raises replaces the original error and escapes, so
-	`bench migrate` stops partway through with a message about neither problem.
-
-	None of that is ours to fix, but all of it reaches a site through this
-	module's after_migrate hook. An apps-screen icon we could not rebuild is a
-	cosmetic loss on one screen; a migrate that halts leaves the site in a state
-	nobody asked for. So the step is allowed to fail, loudly and in writing.
-
-	Returns None on success, or the message it recorded.
-	"""
-	try:
-		action()
-	except Exception as exc:
-		note = f"Work Management: could not {what} — {type(exc).__name__}: {exc}"
-		print(note)
-		try:
-			frappe.log_error(title="Work Management: desk rebuild step failed", message=note)
-		except Exception:
-			pass  # Logging must never be the thing that aborts a migrate either.
-		return note
-	return None
+	return without_aborting_the_migrate(
+		create_desktop_icons, "rebuild the desktop icons", title=DESK_STEP
+	)
 
 
 def sync_workspaces():
