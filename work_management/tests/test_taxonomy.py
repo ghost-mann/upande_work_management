@@ -382,6 +382,44 @@ if __name__ == "__main__":
 	unittest.main()
 
 
+class TestASiteThatRenamedNothingCarriesNothing(unittest.TestCase):
+	"""apply_labels compared each rendered label against the Property Setter it
+	had already written, never against the label the app ships. So a site that
+	renamed nothing still gained one setter per catalogued field, each saying
+	exactly what the shipped JSON already said -- and clearing a name left the
+	setter standing rather than restoring the original.
+	"""
+
+	def test_the_default_template_needs_no_property_setter_at_all(self):
+		plan = taxonomy.plan_labels(taxonomy.resolve(settings()), taxonomy.shipped_labels())
+		self.assertEqual({k: v for k, v in plan.items() if v is not None}, {})
+		self.assertEqual(len(plan), len(taxonomy.FIELD_LABELS))
+
+	def test_renaming_one_level_plans_only_the_fields_that_change(self):
+		plan = taxonomy.plan_labels(
+			taxonomy.resolve(settings(tax_top_plural="Estates")), taxonomy.shipped_labels()
+		)
+		self.assertEqual(
+			{k: v for k, v in plan.items() if v is not None},
+			{
+				("Work Management Settings", "farms"): "Estates",
+				("Work Management Settings", "farms_section"): "Estates",
+				("Work Management Settings", "disc_multi_farm"): "Two Estates, one day",
+			},
+		)
+
+	def test_a_field_this_site_does_not_have_is_left_out_of_the_plan(self):
+		"""Not planned as None, which would mean "remove its setter": a site
+		mid-migrate has fields the catalogue names and the JSON has not
+		reached yet."""
+		self.assertEqual(taxonomy.plan_labels(taxonomy.resolve(settings()), {}), {})
+
+	def test_the_shipped_labels_are_read_from_the_app_not_guessed(self):
+		shipped = taxonomy.shipped_labels()
+		self.assertEqual(shipped["Work Management Section"]["section_name"], "Section")
+		self.assertEqual(shipped["Work Management Settings"]["disc_multi_farm"], "Two Farms, one day")
+
+
 class TestCatalogueCompleteness(unittest.TestCase):
 	"""The reverse guard: no shipped label may name a level and stay out.
 
