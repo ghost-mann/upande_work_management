@@ -240,6 +240,199 @@ class TestRollUp(unittest.TestCase):
 		self.assertEqual(rolled[sections.UNASSIGNED]["labour_spend"], 5.0)
 
 
+
+class TestRollUpCarriesTheFarm(unittest.TestCase):
+	"""A section row with no farm loses the farm column, the farm colour in the
+	treemap, and the "Colour: by farm" option -- all three go blank the moment
+	the toggle moves, even though a section belongs to exactly one farm.
+	"""
+
+	def row(self, block, farm, spend=10.0):
+		return {
+			"block": block, "farm": farm, "labour_spend": spend,
+			"gl_spend": 0.0, "qty": 1.0, "worker_days": 1.0,
+		}
+
+	def test_a_section_carries_the_farm_its_blocks_belong_to(self):
+		rolled = sections.roll_up(
+			[self.row("A1", "Saboti"), self.row("A2", "Saboti")], {"A1": "BLOCK A", "A2": "BLOCK A"}
+		)
+		self.assertEqual(rolled[0]["farm"], "Saboti")
+
+	def test_a_bucket_whose_blocks_span_farms_claims_no_single_farm(self):
+		"""Unassigned collects blocks from every farm; naming one of them would
+		attribute the other farms' money to it."""
+		rolled = sections.roll_up(
+			[self.row("A1", "Saboti"), self.row("Z9", "Vale")], {}
+		)
+		self.assertEqual(rolled[0]["key"], sections.UNASSIGNED)
+		self.assertIsNone(rolled[0]["farm"])
+
+	def test_a_row_carrying_no_farm_leaves_the_bucket_without_one(self):
+		rolled = sections.roll_up([self.row("A1", None)], {"A1": "BLOCK A"})
+		self.assertIsNone(rolled[0]["farm"])
+
+
+class TestTotallingTheBucketsOnScreen(unittest.TestCase):
+	"""The strip above the table totals whatever the table shows. When a search
+	narrows section mode to two sections, the strip has to total those two --
+	and its block count has to stay a count of blocks, which is the bug the
+	toggle already produced once by reading len(rows) after the rollup.
+	"""
+
+	BUCKETS = [
+		{"key": "BLOCK A", "blocks": 2, "labour_spend": 150.0, "gl_spend": 200.0,
+		 "qty": 15.0, "worker_days": 10.0},
+		{"key": "Unassigned", "blocks": 1, "labour_spend": 25.0, "gl_spend": 0.0,
+		 "qty": 2.0, "worker_days": 2.0},
+	]
+
+	def test_the_money_and_quantities_are_summed(self):
+		total = sections.totals(self.BUCKETS)
+		self.assertEqual(total["labour"], 175.0)
+		self.assertEqual(total["gl"], 200.0)
+		self.assertEqual(total["qty"], 17.0)
+		self.assertEqual(total["worker_days"], 12.0)
+
+	def test_the_block_count_counts_blocks_not_buckets(self):
+		"""Three blocks in two sections is three, not two."""
+		self.assertEqual(sections.totals(self.BUCKETS)["blocks"], 3)
+
+	def test_nothing_on_screen_totals_to_zero_not_an_error(self):
+		self.assertEqual(sections.totals([])["blocks"], 0)
+		self.assertEqual(sections.totals([])["labour"], 0)
+
+
+class TestRollUpDerivesWhatCanBeAdded(unittest.TestCase):
+	"""Cost per worker-day and labour's share of GL are both ratios of two
+	fields the rollup already sums, so a section can show them. Left out, two
+	more columns sit blank in section mode for no reason.
+	"""
+
+	ROWS = [
+		{"block": "A1", "farm": "Saboti", "labour_spend": 100.0, "gl_spend": 200.0,
+		 "qty": 10.0, "worker_days": 8.0},
+		{"block": "A2", "farm": "Saboti", "labour_spend": 50.0, "gl_spend": 0.0,
+		 "qty": 5.0, "worker_days": 2.0},
+	]
+	MAPPING = {"A1": "BLOCK A", "A2": "BLOCK A"}
+
+	def test_cost_per_worker_day_is_the_section_total_over_its_worker_days(self):
+		rolled = sections.roll_up(self.ROWS, self.MAPPING)
+		self.assertEqual(rolled[0]["cost_per_wd"], 150.0 / 10.0)
+
+	def test_no_worker_days_gives_no_cost_per_worker_day_rather_than_a_crash(self):
+		rows = [dict(self.ROWS[0], worker_days=0.0)]
+		self.assertIsNone(sections.roll_up(rows, self.MAPPING)[0]["cost_per_wd"])
+
+	def test_labour_share_is_the_section_labour_against_its_own_gl(self):
+		rolled = sections.roll_up(self.ROWS, self.MAPPING)
+		self.assertEqual(rolled[0]["labour_share"], 150.0 / 200.0 * 100)
+
+	def test_no_gl_posted_gives_no_share_rather_than_zero(self):
+		"""Zero would read as "labour is 0% of cost", which is the opposite of
+		"there is no posted cost to compare against"."""
+		rows = [dict(self.ROWS[0], gl_spend=0.0)]
+		self.assertIsNone(sections.roll_up(rows, self.MAPPING)[0]["labour_share"])
+
+
+class TestRollUpMergesTheWeeklyTrend(unittest.TestCase):
+	"""Each per-block row carries the weekly spend behind its sparkline. Left
+	out of the rollup, every sparkline in section mode is empty -- a blank
+	column where block mode shows a trend.
+	"""
+
+	def row(self, block, trend):
+		return {
+			"block": block, "farm": "Saboti", "labour_spend": 10.0,
+			"gl_spend": 0.0, "qty": 1.0, "worker_days": 1.0, "trend": trend,
+		}
+
+	def test_the_same_week_from_two_blocks_becomes_one_point(self):
+		rolled = sections.roll_up(
+			[
+				self.row("A1", [{"w": "2026-08-03", "pay": 100.0}]),
+				self.row("A2", [{"w": "2026-08-03", "pay": 40.0}]),
+			],
+			{"A1": "BLOCK A", "A2": "BLOCK A"},
+		)
+		self.assertEqual(rolled[0]["trend"], [{"w": "2026-08-03", "pay": 140.0}])
+
+	def test_weeks_come_back_in_order(self):
+		rolled = sections.roll_up(
+			[
+				self.row("A1", [{"w": "2026-08-10", "pay": 5.0}]),
+				self.row("A2", [{"w": "2026-08-03", "pay": 7.0}]),
+			],
+			{"A1": "BLOCK A", "A2": "BLOCK A"},
+		)
+		self.assertEqual([p["w"] for p in rolled[0]["trend"]], ["2026-08-03", "2026-08-10"])
+
+	def test_a_row_with_no_trend_at_all_does_not_break_the_merge(self):
+		rolled = sections.roll_up([self.row("A1", None)], {"A1": "BLOCK A"})
+		self.assertEqual(rolled[0]["trend"], [])
+
+
+class TestDrillingIntoOneGroup(unittest.TestCase):
+	"""Clicking a row in the cost-centre table asks cost_center_detail for the
+	tasks and workers behind it. In section mode the row's key is a section
+	name, and no actuals record ever carries one in block_section -- so the
+	drill-down has to be expressed as "the blocks this section holds", or it
+	returns nothing at all and the headline feature dead-ends.
+	"""
+
+	MAPPING = {"A1": "BLOCK A", "A2": "BLOCK A", "B7": "BLOCK B"}
+	COLUMN = "ac.block_section"
+
+	def test_a_section_restricts_to_the_blocks_it_holds(self):
+		cond, params = sections.group_condition(self.COLUMN, "BLOCK A", self.MAPPING)
+		self.assertEqual(cond, "ac.block_section in (%s, %s)")
+		self.assertEqual(params, ["A1", "A2"])
+
+	def test_unassigned_is_every_block_no_section_claims(self):
+		"""Expressed as a negation, so it needs no list of every block that exists."""
+		cond, params = sections.group_condition(self.COLUMN, sections.UNASSIGNED, self.MAPPING)
+		self.assertEqual(cond, "ac.block_section not in (%s, %s, %s)")
+		self.assertEqual(params, ["A1", "A2", "B7"])
+
+	def test_a_section_holding_nothing_matches_nothing(self):
+		"""Not everything: an empty `in ()` list is a SQL error, and falling
+		back to no condition at all would show the whole site's spend under a
+		section that holds no blocks."""
+		cond, params = sections.group_condition(self.COLUMN, "BLOCK A", {})
+		self.assertEqual(cond, "1=0")
+		self.assertEqual(params, [])
+
+	def test_unassigned_on_a_site_with_no_sections_matches_everything(self):
+		cond, params = sections.group_condition(self.COLUMN, sections.UNASSIGNED, {})
+		self.assertEqual(cond, "1=1")
+		self.assertEqual(params, [])
+
+	def test_the_condition_never_interpolates_the_group_name(self):
+		"""Section names are typed by hand; they belong in params, not in SQL."""
+		cond, params = sections.group_condition(self.COLUMN, "BLOCK A", {"'; drop": "BLOCK A"})
+		self.assertNotIn("drop", cond)
+		self.assertEqual(params, ["'; drop"])
+
+	def test_the_blocks_a_section_holds_can_be_listed_on_their_own(self):
+		"""The GL account breakdown needs the blocks themselves, not a condition."""
+		self.assertEqual(sections.blocks_of("BLOCK A", self.MAPPING), ["A1", "A2"])
+
+	def test_unassigned_holds_no_listable_blocks(self):
+		"""It is defined by what it excludes, so there is no list to give --
+		and the GL breakdown has no single grouping account to show for it."""
+		self.assertEqual(sections.blocks_of(sections.UNASSIGNED, self.MAPPING), [])
+
+	def test_a_disabled_section_is_not_a_group_anyone_can_drill_into(self):
+		"""The rollup hides a disabled section by leaving its blocks out of the
+		mapping, so they land in Unassigned. The drill-down reads the same
+		mapping, so Unassigned includes them there too and the two agree."""
+		enabled = {"A1": "BLOCK A"}  # B7's section is disabled, so it is absent
+		cond, params = sections.group_condition(self.COLUMN, sections.UNASSIGNED, enabled)
+		self.assertEqual(cond, "ac.block_section not in (%s)")
+		self.assertEqual(params, ["A1"])
+
+
 import inspect
 
 from work_management.api import dashboard as cost_center_dashboard
@@ -262,6 +455,11 @@ class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
 	whose violation caused the bug -- the true count is captured before the
 	group_by branch can reassign `rows`, and out["totals"] reads that capture
 	rather than re-deriving it from whatever `rows` happens to hold by then.
+
+	The one place that does re-derive the count -- the search inside section
+	mode, which has to re-total whatever survived the filter -- goes through
+	sections.totals(), where the same invariant has a real behavioural test
+	(TestTotallingTheBucketsOnScreen) instead of a source-level one.
 	"""
 
 	def setUp(self):
@@ -269,7 +467,7 @@ class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
 
 	def test_the_block_count_is_captured_before_the_group_by_branch(self):
 		capture_at = self.src.find("block_count = len(rows)")
-		branch_at = self.src.find('== "section":')
+		branch_at = self.src.find("if group_by_section:")
 		self.assertNotEqual(capture_at, -1, "no captured block count found")
 		self.assertNotEqual(branch_at, -1, "no group_by section branch found")
 		self.assertLess(

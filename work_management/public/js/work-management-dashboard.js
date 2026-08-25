@@ -654,11 +654,11 @@
           '<div id="cb-list" style="max-height:420px;overflow:auto;border-top:1px solid #eee">Loading&hellip;</div>'+
         '</div></div>'+
       // ===== COST CENTRE (BLOCK): which block consumes the most money =====
-      '<div class="sech">Cost centres &mdash; spend by '+esc(TX("unit_singular","Block")).toLowerCase()+'</div>'+
-      '<div class="card"><div class="hd"><h3>'+esc(TX("unit_singular","Block"))+' cost centres</h3><div class="cap">running labour cost per '+esc(TX("unit_singular","Block")).toLowerCase()+' beside GL cost-centre actuals &middot; boxes sized by spend &middot; click a '+esc(TX("unit_singular","Block")).toLowerCase()+' for its full breakdown</div></div>'+
+      '<div class="sech">Cost centres &mdash; spend by '+esc(TX("unit_singular","Block")).toLowerCase()+' or '+esc(TX("section_singular","Section")).toLowerCase()+'</div>'+
+      '<div class="card"><div class="hd"><h3>Cost centres</h3><div class="cap">running labour cost per '+esc(TX("unit_singular","Block")).toLowerCase()+' beside GL cost-centre actuals, or totalled by '+esc(TX("section_singular","Section")).toLowerCase()+' &middot; boxes sized by spend &middot; click a row for its full breakdown</div></div>'+
         '<div class="bd">'+
           '<div class="pex-filters" id="cc-filters">'+
-            '<input id="cc-q" placeholder="Search '+esc(TX("unit_singular","Block")).toLowerCase()+'…" />'+
+            '<input id="cc-q" placeholder="Search…" />'+
             '<select id="cc-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
             '<label>From <input type="date" id="cc-from" /></label>'+
             '<label>To <input type="date" id="cc-to" /></label>'+
@@ -1830,6 +1830,22 @@
       group_by:(el("cc-group")||{}).value||"block"
     };
   }
+  // What the rows are, right now. Everything the table says about them -- the
+  // first column heading, the empty state, the tab, the search box -- reads it
+  // here rather than assuming blocks, which is what left the block heading
+  // standing over a column of section names.
+  //
+  // ccGroupText() is the only place in this file that reads a level name
+  // without escaping it, and the only two things it feeds are .textContent and
+  // .placeholder: both take text, neither parses markup, and escaping for them
+  // would print &amp; at a reader. Anything going into markup takes
+  // ccGroupLabel() instead. test_taxonomy.py's escaping guard exempts this one
+  // function by name, and still trips on an unescaped level name anywhere else.
+  function ccGroupText(){
+    return ((el("cc-group")||{}).value==="section")
+      ? TX("section_singular","Section") : TX("unit_singular","Block");
+  }
+  function ccGroupLabel(){ return esc(ccGroupText()); }
   function closeAllExpanded(scope){
     (scope||document).querySelectorAll("tr.wm-detail").forEach(function(tr){ tr.parentNode.removeChild(tr); });
     (scope||document).querySelectorAll("tr.wm-x.open").forEach(function(tr){ tr.classList.remove("open"); });
@@ -2012,10 +2028,14 @@
       return;
     }
     var rows=CCDATA.blocks||[];
-    if(!rows.length){ box.innerHTML='<div class="empty">No '+esc(TX("unit_singular","Block")).toLowerCase()+' spend for this filter.</div>'; return; }
+    var word=ccGroupText(), label=ccGroupLabel();
+    var qbox=el("cc-q"); if(qbox) qbox.placeholder="Search "+word.toLowerCase()+"\u2026";
+    var gtab=document.querySelector('#cc-tabs button[data-ccview="block"]');
+    if(gtab) gtab.textContent="By "+word.toLowerCase();
+    if(!rows.length){ box.innerHTML='<div class="empty">No '+label.toLowerCase()+' spend for this filter.</div>'; return; }
     var maxL=0; rows.forEach(function(r){ if(r.labour_spend>maxL) maxL=r.labour_spend; });
     var h='<table class="pex" data-cctable="1"><thead><tr>'+
-      '<th>'+esc(TX("unit_singular","Block"))+' (cost centre)</th><th>'+esc(TX("top_singular","Farm"))+'</th>'+
+      '<th>'+label+' (cost centre)</th><th>'+esc(TX("top_singular","Farm"))+'</th>'+
       '<th class="n">Labour spend</th>'+(t.has_gl?'<th class="n">GL actuals</th><th class="n">Labour %</th>':'')+
       '<th class="n">Qty</th><th class="n">Cost/unit</th><th class="n">Cost/day</th><th class="n">Avg crew</th><th class="n">Days</th><th class="n">Workers</th>'+
       '<th>Trend</th><th>Share</th></tr></thead><tbody>';
