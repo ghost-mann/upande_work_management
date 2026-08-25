@@ -289,36 +289,6 @@ class TestRollUpCarriesTheFarm(unittest.TestCase):
 		self.assertIsNone(rolled[0]["farm"])
 
 
-class TestTotallingTheBucketsOnScreen(unittest.TestCase):
-	"""The strip above the table totals whatever the table shows. When a search
-	narrows section mode to two sections, the strip has to total those two --
-	and its block count has to stay a count of blocks, which is the bug the
-	toggle already produced once by reading len(rows) after the rollup.
-	"""
-
-	BUCKETS = [
-		{"key": "BLOCK A", "blocks": 2, "labour_spend": 150.0, "gl_spend": 200.0,
-		 "qty": 15.0, "worker_days": 10.0},
-		{"key": "Unassigned", "blocks": 1, "labour_spend": 25.0, "gl_spend": 0.0,
-		 "qty": 2.0, "worker_days": 2.0},
-	]
-
-	def test_the_money_and_quantities_are_summed(self):
-		total = sections.totals(self.BUCKETS)
-		self.assertEqual(total["labour"], 175.0)
-		self.assertEqual(total["gl"], 200.0)
-		self.assertEqual(total["qty"], 17.0)
-		self.assertEqual(total["worker_days"], 12.0)
-
-	def test_the_block_count_counts_blocks_not_buckets(self):
-		"""Three blocks in two sections is three, not two."""
-		self.assertEqual(sections.totals(self.BUCKETS)["blocks"], 3)
-
-	def test_nothing_on_screen_totals_to_zero_not_an_error(self):
-		self.assertEqual(sections.totals([])["blocks"], 0)
-		self.assertEqual(sections.totals([])["labour"], 0)
-
-
 class TestRollUpDerivesWhatCanBeAdded(unittest.TestCase):
 	"""Cost per worker-day and labour's share of GL are both ratios of two
 	fields the rollup already sums, so a section can show them. Left out, two
@@ -478,10 +448,9 @@ class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
 	group_by branch can reassign `rows`, and out["totals"] reads that capture
 	rather than re-deriving it from whatever `rows` happens to hold by then.
 
-	The one place that does re-derive the count -- the search inside section
-	mode, which has to re-total whatever survived the filter -- goes through
-	sections.totals(), where the same invariant has a real behavioural test
-	(TestTotallingTheBucketsOnScreen) instead of a source-level one.
+	Nothing re-derives the count any more: the search filters the per-block
+	rows before this capture, so both toggle positions and any search reach
+	out["totals"] through the one `block_count` taken here.
 	"""
 
 	def setUp(self):

@@ -119,8 +119,9 @@ def blocks_of(key, mapping):
 	"""The blocks one named section holds, in name order.
 
 	Empty for UNASSIGNED, which is defined by the blocks it excludes rather
-	than by a list of its own -- and which has no single grouping account
-	behind it for the GL breakdown to read.
+	than by a list of its own. Callers that need the actual membership of a
+	group -- the GL breakdown does -- read it off the rows the group was
+	totalled from instead, via group_condition().
 	"""
 	if key == UNASSIGNED:
 		return []
@@ -141,24 +142,6 @@ def block_to_section():
 	):
 		mapping[row.block] = row.parent
 	return mapping
-
-
-def totals(rows):
-	"""Total a list of rollup buckets, for the strip above the cost-centre table.
-
-	`blocks` counts the blocks the buckets hold between them, never the buckets
-	themselves. Reading it off the rolled-up list was a real bug once: the
-	strip reported "3 Blocks" on a site with eighty-three of them, because
-	three was the number of sections. It stays a block count in both toggle
-	positions and under a search that narrows either one.
-	"""
-	return {
-		"labour": sum(r["labour_spend"] for r in rows),
-		"gl": sum(r["gl_spend"] for r in rows),
-		"qty": sum(r["qty"] for r in rows),
-		"worker_days": sum(r["worker_days"] for r in rows),
-		"blocks": sum(r["blocks"] for r in rows),
-	}
 
 
 def roll_up(rows, mapping):
