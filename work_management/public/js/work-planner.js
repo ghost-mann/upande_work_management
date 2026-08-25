@@ -1444,7 +1444,7 @@
     if(wd<=0) missing.push("set a valid date range");
     var hint=el("f-submit-hint");
     if(hint){
-      if(missing.length){ hint.style.display="block"; hint.innerHTML="To submit: "+missing.join(" · "); }
+      if(missing.length){ hint.style.display="block"; hint.innerHTML="To submit: "+esc(missing.join(" · ")); }
       else { hint.style.display="none"; hint.innerHTML=""; }
     }
     updateBudgetDraw();
@@ -1501,7 +1501,7 @@
       ST.editTask=p.task; ST.editQty=num(p.quantity); ST.editCost=num(p.total_cost);
       var fs=el("f-farm"); fs.value=p.farm; ST.farm=p.farm;
       ST.picked={}; ST.task=null; ST.taskInfo=null;
-      el("f-blockgrid").innerHTML="<div class='note'>Loading "+TX("unit_plural","blocks").toLowerCase()+"…</div>";
+      el("f-blockgrid").innerHTML="<div class='note'>Loading "+esc(TX("unit_plural","blocks").toLowerCase())+"…</div>";
       var pending=2;
       var done=function(){ pending--; if(pending>0) return;
         (p.blocks||[]).forEach(function(b){ ST.picked[b]=true; });
