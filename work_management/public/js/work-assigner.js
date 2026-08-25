@@ -20,6 +20,10 @@
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+  // What this installation calls the levels. Falls back to the shipped wording
+  // so the screen still reads correctly if the template has not loaded.
+  var TXN = (window.WM_TAXONOMY || {});
+  function TX(key, fallback) { return TXN[key] || fallback; }
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function blocksLbl(obj){ var a=(obj&&obj.blocks)||null; if(a&&a.length){ var o=[]; for(var i=0;i<a.length;i++){ o.push(lbl(a[i])); } return o.join(", "); } return lbl(obj&&obj.block_section); }
   function el(id){ return document.getElementById(id); }
@@ -57,7 +61,7 @@
         '<div style="padding:16px 18px">'+
           '<div style="font-size:12px;color:#444;margin-bottom:10px">'+esc(desc)+(planName?(' <span style="color:#777">Plan <b>'+esc(planName)+'</b>.</span>'):'')+'</div>'+
           '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">Reason (required)</label>'+
-          '<textarea id="wac-reason" rows="3" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;width:100%;background:#fff;color:var(--ink);resize:vertical" placeholder="e.g. crop finished early, block cleared ahead of target"></textarea>'+
+          '<textarea id="wac-reason" rows="3" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;width:100%;background:#fff;color:var(--ink);resize:vertical" placeholder="e.g. crop finished early, '+esc(TX("unit_singular","block").toLowerCase())+' cleared ahead of target"></textarea>'+
         '</div>'+
         '<div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--faint)">'+
           '<button type="button" class="btn" id="wac-cancel">Cancel</button>'+
@@ -129,7 +133,7 @@
     var farms={}; rows.forEach(function(r){ if(r.farm) farms[r.farm]=1; });
     var h='<div class="lfb">'+
       '<input type="text" data-f="q" placeholder="'+esc(opts.ph||"Search…")+'">'+
-      '<select data-f="farm"><option value="">All farms</option>'+Object.keys(farms).sort().map(function(f){ return '<option>'+esc(f)+'</option>'; }).join("")+'</select>';
+      '<select data-f="farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option>'+Object.keys(farms).sort().map(function(f){ return '<option>'+esc(f)+'</option>'; }).join("")+'</select>';
     if(opts.statuses && opts.statuses.length){
       h+='<select data-f="st"><option value="">All statuses</option>'+opts.statuses.map(function(s){ return '<option>'+esc(s)+'</option>'; }).join("")+'</select>';
     }
@@ -248,7 +252,7 @@
     var fsel=el("a-f-farm");
     if(fsel){
       var fkeep=fsel.value;
-      fsel.innerHTML='<option value="">All farms</option>';
+      fsel.innerHTML='<option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option>';
       Object.keys(farms).sort().forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fsel.appendChild(o); });
       fsel.value=fkeep||"";
     }
@@ -314,8 +318,8 @@
       var p=d.planner||{}; ST.planDetail=p;
       el("a-detail").style.display="block";
       el("a-detail").innerHTML=
-        '<div class="dl"><span class="k">Farm</span><span class="v">'+esc(p.farm)+'</span></div>'+
-        '<div class="dl"><span class="k">Block</span><span class="v">'+esc(blocksLbl(p))+'</span></div>'+
+        '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(p.farm)+'</span></div>'+
+        '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(p))+'</span></div>'+
         '<div class="dl"><span class="k">Task</span><span class="v">'+esc(p.task)+'</span></div>'+
         '<div class="dl"><span class="k">Standard</span><span class="v">'+esc(p.task_kpi||"—")+'</span></div>'+
         '<div class="dl"><span class="k">Period</span><span class="v">'+esc(p.from_date)+' → '+esc(p.to_date)+'</span></div>'+
@@ -489,7 +493,7 @@
     clearEdit();
     ST.plan=null; ST.picked={}; ST.planDetail=null; ST.employees=[];
     el("a-plan").value=""; el("a-detail").style.display="none";
-    el("a-empicker").innerHTML='<div class="empty">Pick a plan to load that farm’s workers.</div>';
+    el("a-empicker").innerHTML='<div class="empty">Pick a plan to load that '+esc(TX("top_singular","Farm")).toLowerCase()+'’s workers.</div>';
     el("a-emfilter").value=""; el("a-emfilter").disabled=true; el("a-farmlabel").textContent="";
     el("o-plan").textContent="—";
     refreshCounts(); loadPlans();
@@ -517,8 +521,8 @@
         var p=pd.planner||{}; ST.planDetail=p;
         el("a-detail").style.display="block";
         el("a-detail").innerHTML=
-          '<div class="dl"><span class="k">Farm</span><span class="v">'+esc(p.farm)+'</span></div>'+
-          '<div class="dl"><span class="k">Block</span><span class="v">'+esc(blocksLbl(p))+'</span></div>'+
+          '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(p.farm)+'</span></div>'+
+          '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(p))+'</span></div>'+
           '<div class="dl"><span class="k">Task</span><span class="v">'+esc(p.task)+'</span></div>'+
           '<div class="dl"><span class="k">Standard</span><span class="v">'+esc(p.task_kpi||"—")+'</span></div>'+
           '<div class="dl"><span class="k">Period</span><span class="v">'+esc(p.from_date)+' → '+esc(p.to_date)+'</span></div>'+
@@ -562,13 +566,13 @@
       var hasDates=false; rows.forEach(function(r){ if(r.from_date) hasDates=true; });
       b.className="";
       b.innerHTML='<div class="note" style="margin-bottom:8px">Draft/Rejected → click <b>Edit</b>. Approved (Assigned) → click <b>Manage crew</b> to swap a worker mid-period or release workers who’ve finished so they can be assigned elsewhere.</div>'
-        + fbar(rows,{dates:hasDates,statuses:Object.keys(sts).sort(),ph:"Search ref, plan, farm, block, task…"});
+        + fbar(rows,{dates:hasDates,statuses:Object.keys(sts).sort(),ph:"Search ref, plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.from_date),
                 hay:((r.name||"")+" "+(r.planner_request||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th>Status</th><th></th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r){
           var editable = (r.workflow_state==="Draft"||r.workflow_state==="Rejected"||r.workflow_state==="Pending HR Head");
           var canSub = (r.workflow_state==="Assigned");
@@ -598,13 +602,13 @@
     var closeLabel=isGm?"Close plan":"Request close";
     b.className="";
     b.innerHTML='<div class="note" style="margin-bottom:8px">These assignments were rejected. Click <b>Edit</b> to adjust the roster and resubmit — or <b>'+closeLabel+'</b> if the underlying plan should be stopped.</div>'
-      + fbar(all,{dates:true,ph:"Search ref, plan, farm, block, task…"});
+      + fbar(all,{dates:true,ph:"Search ref, plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
               hay:((r.name||"")+" "+(r.planner_request||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Status</th><th></th></tr></thead><tbody>';
+      var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Status</th><th></th></tr></thead><tbody>';
       rows.forEach(function(r){
         h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+stateTag(r.workflow_state)+'</td>'+
           '<td><div class="ib"><button class="btn solid" data-edit="'+esc(r.name)+'">Edit &amp; resubmit</button><button class="btn" data-close="'+esc(r.name)+'" data-plan="'+esc(r.planner_request||"")+'">'+closeLabel+'</button></div></td></tr>';
@@ -641,8 +645,8 @@
         '<div class="sub-h">Plan &amp; task</div>'+
         '<div class="dl"><span class="k">Assignment</span><span class="v">'+esc(a.name)+'</span></div>'+
         '<div class="dl"><span class="k">Plan</span><span class="v">'+esc(a.planner_request)+'</span></div>'+
-        '<div class="dl"><span class="k">Farm</span><span class="v">'+esc(a.farm)+'</span></div>'+
-        '<div class="dl"><span class="k">Block</span><span class="v">'+esc(blocksLbl(a))+'</span></div>'+
+        '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(a.farm)+'</span></div>'+
+        '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(a))+'</span></div>'+
         '<div class="dl"><span class="k">Task</span><span class="v">'+esc(a.task)+'</span></div>'+
         '<div class="dl"><span class="k">Standard</span><span class="v">'+esc(a.task_kpi||"—")+'</span></div>'+
         '<div class="dl"><span class="k">Rate</span><span class="v">KES '+fmt(a.rate,2)+' / '+esc(uom||"unit")+'</span></div>'+
@@ -774,13 +778,13 @@
     var all=c.rows||[];
     if(!all.length){ b.className=""; b.innerHTML='<div class="empty">Nothing at this stage.</div>'; return; }
     b.className="";
-    b.innerHTML=fbar(all,{dates:true,ph:"Search ref, farm, block, task, assigned by…"});
+    b.innerHTML=fbar(all,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task, assigned by…"});
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
               hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.assigned_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th class="n">Cost</th><th>By</th><th>Action</th></tr></thead><tbody>';
+      var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th class="n">Cost</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r){
         h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
