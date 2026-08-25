@@ -261,7 +261,10 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 		'"Farm"', '"Block"',
 	)
 
-	CONVERTED = ("work-planner.js", "work-assigner.js", "work-actuals.js", "work-payment.js")  # extended as each screen is done
+	CONVERTED = (
+		"work-planner.js", "work-assigner.js", "work-actuals.js", "work-payment.js",
+		"work-management-dashboard.js",
+	)  # extended as each screen is done
 
 	def test_converted_screens_hold_no_bare_level_label(self):
 		import os
