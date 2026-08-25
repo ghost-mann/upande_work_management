@@ -198,6 +198,30 @@ class TestBusinessUnitField(unittest.TestCase):
 	def test_it_is_on_the_form(self):
 		self.assertIn("business_unit", self.doc["field_order"])
 
+	def test_it_ships_hidden_because_the_level_ships_off(self):
+		"""tax_bu_enabled is off by default, so a project that has never heard
+		of business units must not find the field waiting on every farm."""
+		self.assertEqual(self.fields["business_unit"].get("hidden"), 1)
+
+
+class TestTheLevelAboveTheFarmCanBeSwitchedOff(unittest.TestCase):
+	"""tax_bu_enabled was read by nothing at all: ticking it did literally
+	nothing, while its own description promised a level above the farm. It now
+	decides whether that level's field is on the form.
+	"""
+
+	def test_the_field_stays_hidden_while_the_level_is_off(self):
+		self.assertEqual(taxonomy.business_unit_hidden(taxonomy.resolve(settings())), 1)
+
+	def test_turning_the_level_on_reveals_the_field(self):
+		names = taxonomy.resolve(settings(tax_bu_enabled=1))
+		self.assertEqual(taxonomy.business_unit_hidden(names), 0)
+
+	def test_naming_the_level_without_turning_it_on_reveals_nothing(self):
+		"""Typing a name is not the same as saying the level exists."""
+		names = taxonomy.resolve(settings(tax_bu_singular="Division"))
+		self.assertEqual(taxonomy.business_unit_hidden(names), 1)
+
 
 class TestBusinessUnitFieldPlan(unittest.TestCase):
 	"""install.plan_business_unit_field() -- pure, no site, no database.

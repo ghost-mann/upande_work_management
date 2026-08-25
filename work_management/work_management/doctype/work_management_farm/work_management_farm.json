@@ -26,6 +26,7 @@
   },
   {
    "fieldname": "business_unit",
+   "hidden": 1,
    "fieldtype": "Data",
    "label": "Business Unit",
    "description": "The level above this farm. Becomes a link to the Business Unit record where that doctype is installed; plain text otherwise."

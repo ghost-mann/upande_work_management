@@ -24,3 +24,4 @@ class WorkManagementSettings(Document):
 		approvals.sync_roles(self, previous=self.get_doc_before_save())
 		approvals.build_workflows(self)
 		taxonomy.apply_labels(self)
+		taxonomy.apply_business_unit_visibility(self)

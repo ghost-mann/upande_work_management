@@ -429,8 +429,9 @@ def sections():
 			  "Taxonomy and every form, screen and column heading follows. Nothing about "
 			  "the data changes — only what it is called."),
 		("b", "Leave a name empty to use the built-in wording."),
-		("b", "Turn on the level above the farm if your farms belong to a business unit; "
-			  "reports can then group by it."),
+		("b", "Turn on the level above the farm if your farms belong to a business unit. "
+			  "The field then appears on each farm, under whatever you call it; until "
+			  "then it stays off the form. No report groups by it yet."),
 		("b", "The cost grouping name is used by the section view described below."),
 
 		("h2", "Sections, and cost by section"),
