@@ -1896,7 +1896,7 @@
     var t=AU.totals||{};
     function tbl(headers, bodyRows){
       var h='<table><thead><tr>';
-      headers.forEach(function(x){ h+='<th>'+x+'</th>'; }); h+='</tr></thead><tbody>';
+      headers.forEach(function(x){ h+='<th>'+esc(x)+'</th>'; }); h+='</tr></thead><tbody>';
       bodyRows.forEach(function(cells){ h+='<tr>'; cells.forEach(function(c,i){ h+='<td'+(i>=cells._n?' class="n"':'')+'>'+c+'</td>'; }); h+='</tr>'; });
       return h+'</tbody></table>';
     }

@@ -765,7 +765,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   <!-- ═══════════ INSIGHTS / KPIs ═══════════ -->
   <div class="panel" id="p-insights">
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
-      <div><label class="fl">{{ (taxonomy or {}).get('top_singular', 'Farm') }}</label><select id="ins-farm" style="min-width:150px"><option value="">All {{ (taxonomy or {}).get('top_plural', 'Farms')|lower }}</option></select></div>
+      <div><label class="fl">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</label><select id="ins-farm" style="min-width:150px"><option value="">All {{ (taxonomy or {}).get('top_plural', 'Farms')|lower|e }}</option></select></div>
       <div><label class="fl">From</label><input type="date" id="ins-from"></div>
       <div><label class="fl">To</label><input type="date" id="ins-to"></div>
       <button class="btn" id="ins-apply" style="margin-top:0">Apply</button>

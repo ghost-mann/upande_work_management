@@ -723,7 +723,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <div class="grid2">
       <div>
         <div class="sech">Where &amp; what</div>
-        <label class="fl">{{ (taxonomy or {}).get('top_singular', 'Farm') }}</label>
+        <label class="fl">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</label>
         <select id="f-farm"></select>
         <label class="fl">Blocks / Sections <span style="color:var(--mute);font-weight:500;text-transform:none;letter-spacing:0">(tap to select one or more)</span></label>
         <select id="f-block"><option value="">&mdash; pick farm first &mdash;</option></select>
@@ -789,7 +789,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   <div class="panel" id="p-mp">
     <div class="sech">Master plan &mdash; the budget behind every request</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
-      <div><div class="lab">{{ (taxonomy or {}).get('top_singular', 'Farm') }}</div><select id="mp-farm"></select></div>
+      <div><div class="lab">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</div><select id="mp-farm"></select></div>
       <button type="button" class="btn solid" id="mp-refresh">Show</button>
       <button type="button" class="btn" id="mp-new" style="display:none">New master plan</button>
     </div>
