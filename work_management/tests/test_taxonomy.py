@@ -288,6 +288,36 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 			]
 			self.assertEqual(offenders, [], f"{filename}: {offenders[:5]}")
 
+	def test_dashboard_tx_calls_are_escaped_before_reaching_markup(self):
+		"""A configured level name is a plain Data field with no character
+		restriction, so a bare TX(...) spliced into markup is a stored-value
+		injection risk (an admin-set name containing '"' or '<' could break
+		out of an attribute). work-management-dashboard.js settled on one
+		consistent convention -- every call written as esc(TX(...)) -- so
+		this checks that convention holds by requiring 'esc(' to
+		immediately precede every TX( call.
+
+		Scoped to this one file rather than all of CONVERTED: the other four
+		screens mix in different-but-safe patterns this simple adjacency
+		check cannot tell apart from a real gap -- toast()'s use of
+		.textContent (immune to markup injection by construction, no
+		escaping needed at all) and places that escape the whole
+		concatenated expression at the point it reaches the DOM rather than
+		wrapping each TX() call individually. Reusing this exact regex
+		against those files would produce both false positives (on the safe
+		patterns) and true positives this task has no mandate to fix, so it
+		is not extended there.
+		"""
+		import os
+		import re
+
+		path = os.path.join(self.APP, "public", "js", "work-management-dashboard.js")
+		with open(path) as handle:
+			src = handle.read()
+		bare_call = re.compile(r"(?<!esc\()(?<!function )TX\(")
+		offenders = bare_call.findall(src)
+		self.assertEqual(len(offenders), 0, f"{len(offenders)} TX() call(s) not wrapped in esc()")
+
 
 if __name__ == "__main__":
 	unittest.main()
