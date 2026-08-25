@@ -163,21 +163,27 @@ def place(block):
 	abbr = frappe.db.get_value("Company", frappe.db.get_value("Cost Center", parent, "company"), "abbr")
 	name = section_name_for(parent, abbr)
 
-	outcome = PLACED
+	# One document write per block, either way. Inserting the section and then
+	# saving its block was two: the section landed first, so a block the Link
+	# validation refused left a section behind with nothing in it -- committed
+	# by the run's own commit, and counted as neither created nor placed, so
+	# migrate reported "seeded 0 section(s)" on a site that had just gained a
+	# blank one. Building the section with its block attached validates both
+	# before either is written.
 	if frappe.db.exists("Work Management Section", name):
 		doc = frappe.get_doc("Work Management Section", name)
 		if farm_mismatch(doc.farm, farm):
 			return FARM_CONFLICT
-	else:
-		doc = frappe.get_doc({
-			"doctype": "Work Management Section", "section_name": name, "farm": farm,
-		})
-		doc.insert(ignore_permissions=True)
-		outcome = CREATED
-	doc.append("blocks", {"block": block})
-	doc.flags.ignore_permissions = True
-	doc.save()
-	return outcome
+		doc.append("blocks", {"block": block})
+		doc.flags.ignore_permissions = True
+		doc.save()
+		return PLACED
+
+	frappe.get_doc({
+		"doctype": "Work Management Section", "section_name": name, "farm": farm,
+		"blocks": [{"block": block}],
+	}).insert(ignore_permissions=True)
+	return CREATED
 
 
 def execute():

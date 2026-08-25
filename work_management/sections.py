@@ -17,6 +17,22 @@ import frappe
 UNASSIGNED = "Unassigned"
 
 
+def is_reserved_name(name):
+	"""True for a section name that would collide with the unclaimed bucket.
+
+	roll_up files every block no section claims under UNASSIGNED, and
+	group_condition reads that key as "the complement of every claimed block".
+	A real section carrying the same name would be merged into the bucket in
+	the rollup, and its drill-down would show every unclaimed block's spend
+	rather than its own.
+
+	Case and padding are ignored. Only the exact string actually collides
+	today, but a list holding both "Unassigned" and "unassigned" is a trap for
+	the next reader rather than a feature.
+	"""
+	return (name or "").strip().casefold() == UNASSIGNED.casefold()
+
+
 def duplicate_blocks(rows):
 	"""Blocks listed more than once in one section's table, in first-seen order."""
 	seen, repeated = set(), []
@@ -77,13 +93,21 @@ def group_condition(column, key, mapping):
 	dropping the condition would show the whole site's spend under a section
 	with no blocks in it.
 
+	On a site with no sections at all the complement is every block, but it is
+	still not "1=1": the query the row was totalled from carries
+	`block_section IS NOT NULL`, and the drill-down builds its whole condition
+	from this fragment. "Everything" would open a row totalling N and show a
+	breakdown that includes confirmed actuals with no block at all -- money the
+	row never counted. The `not in (...)` form drops those already, because
+	NULL never satisfies it, so this branch says so explicitly.
+
 	`column` is a literal from our own code. The group name and the block names
 	are typed by hand, so they go in params, never into the fragment.
 	"""
 	if key == UNASSIGNED:
 		claimed = sorted(mapping)
 		if not claimed:
-			return "1=1", []
+			return f"{column} is not null", []
 		return f"{column} not in ({_placeholders(claimed)})", claimed
 	held = blocks_of(key, mapping)
 	if not held:

@@ -10,8 +10,19 @@ from work_management import sections
 
 class WorkManagementSection(Document):
 	def validate(self):
+		self.refuse_the_reserved_name()
 		self.refuse_duplicate_blocks()
 		self.refuse_blocks_claimed_elsewhere()
+
+	def refuse_the_reserved_name(self):
+		if sections.is_reserved_name(self.section_name):
+			frappe.throw(
+				_("{0} is the name the cost-centre view gives to blocks that are in no "
+				  "section, so a section cannot be called that. Its total and the "
+				  "unclaimed blocks' total would be added together.").format(
+					frappe.bold(self.section_name)),
+				title=_("That name is taken by the unassigned group"),
+			)
 
 	def refuse_duplicate_blocks(self):
 		repeated = sections.duplicate_blocks(self.get("blocks") or [])
