@@ -59,10 +59,13 @@ def each_without_aborting(items, work, what):
 	Each item's failure is reported with the item named, so migrate output says
 	which record to go and fix rather than only that something went wrong.
 
-	No rollback between items: MariaDB rolls back the failed statement itself,
-	and rolling back the transaction would discard the records that did work.
-	Both patches are written to be re-runnable, so a skipped record is picked
-	up by the next migrate once whatever made it fail is dealt with.
+	No rollback between items, which puts one requirement on `work`: an item
+	must confine itself to a single document write. Rolling the transaction
+	back would discard the records that did succeed, and MariaDB only undoes
+	the statement that failed -- so an item that writes twice can fail halfway
+	and leave the first write standing. Both patches are shaped to write once
+	per record for that reason, and both are re-runnable, so a skipped record
+	is picked up by the next migrate once whatever made it fail is dealt with.
 
 	Returns (how many items the work completed, the notes for the ones it did not).
 	"""

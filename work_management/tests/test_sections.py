@@ -99,6 +99,22 @@ class TestUnassigned(unittest.TestCase):
 		"""Blocks with no section are grouped, never dropped from a total."""
 		self.assertTrue(sections.UNASSIGNED)
 
+	def test_a_section_may_not_take_the_buckets_own_name(self):
+		"""Nothing stopped someone creating a section called Unassigned. roll_up
+		would merge it with the unclaimed blocks, and group_condition would read
+		its drill-down as the *complement* -- so clicking it would show every
+		unclaimed block's spend instead of its own."""
+		self.assertTrue(sections.is_reserved_name("Unassigned"))
+
+	def test_the_check_ignores_case_and_padding(self):
+		"""'unassigned' does not collide today, but a list holding both it and
+		Unassigned is a trap for the next reader, not a feature."""
+		self.assertTrue(sections.is_reserved_name("  unassigned "))
+
+	def test_any_other_name_is_allowed(self):
+		self.assertFalse(sections.is_reserved_name("BLOCK A"))
+		self.assertFalse(sections.is_reserved_name("Unassigned blocks"))
+
 
 from work_management.patches.v1_0 import seed_sections_from_cost_centres as seed
 
@@ -403,9 +419,15 @@ class TestDrillingIntoOneGroup(unittest.TestCase):
 		self.assertEqual(cond, "1=0")
 		self.assertEqual(params, [])
 
-	def test_unassigned_on_a_site_with_no_sections_matches_everything(self):
+	def test_unassigned_on_a_site_with_no_sections_still_excludes_rows_with_no_block(self):
+		"""It cannot be "1=1". The list query the row came from carries
+		`block_section IS NOT NULL`, but the drill-down builds its whole
+		condition from this fragment -- so "everything" would open a row
+		totalling N with a breakdown of confirmed actuals that have no block at
+		all, money the row itself never counted. The `not in (...)` form already
+		drops those, because NULL never satisfies it; this branch has to match."""
 		cond, params = sections.group_condition(self.COLUMN, sections.UNASSIGNED, {})
-		self.assertEqual(cond, "1=1")
+		self.assertEqual(cond, "ac.block_section is not null")
 		self.assertEqual(params, [])
 
 	def test_the_condition_never_interpolates_the_group_name(self):

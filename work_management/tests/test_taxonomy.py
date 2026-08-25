@@ -10,6 +10,9 @@ import unittest
 import frappe
 
 from work_management import install, taxonomy
+from work_management.patches.v1_0 import (
+	enable_business_unit_level_if_used as bu_patch,
+)
 
 
 def settings(**overrides):
@@ -223,6 +226,28 @@ class TestTheLevelAboveTheFarmCanBeSwitchedOff(unittest.TestCase):
 		self.assertEqual(taxonomy.business_unit_hidden(names), 1)
 
 
+class TestTurningTheLevelOnForASiteAlreadyUsingIt(unittest.TestCase):
+	"""The field shipped visible and only later grew an enable flag that
+	defaults to off, so hiding it on the next migrate would take a filled-in
+	field off the form of every site that had started using it, with nothing
+	saying where it went. The one-time patch turns the level on where the data
+	says it is already in use.
+	"""
+
+	def test_a_site_with_business_units_recorded_gets_the_level_turned_on(self):
+		self.assertTrue(bu_patch.should_enable(farms_with_a_unit=4, already_enabled=False))
+
+	def test_a_site_that_already_turned_it_on_is_left_alone(self):
+		"""Not rewritten: the flag is the admin's, and this runs once."""
+		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=4, already_enabled=True))
+
+	def test_a_site_that_never_used_the_field_keeps_the_level_off(self):
+		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=0, already_enabled=False))
+
+	def test_a_site_with_no_data_and_the_level_on_is_left_alone(self):
+		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=0, already_enabled=True))
+
+
 class TestBusinessUnitFieldPlan(unittest.TestCase):
 	"""install.plan_business_unit_field() -- pure, no site, no database.
 
@@ -378,9 +403,6 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 		self.assertEqual(len(offenders), 0, f"{len(offenders)} TX() call(s) not wrapped in esc()")
 
 
-if __name__ == "__main__":
-	unittest.main()
-
 
 class TestASiteThatRenamedNothingCarriesNothing(unittest.TestCase):
 	"""apply_labels compared each rendered label against the Property Setter it
@@ -485,3 +507,6 @@ class TestCatalogueCompleteness(unittest.TestCase):
 		for (doctype, fieldname), reason in self.KEPT_IN_SHIPPED_WORDING.items():
 			self.assertIn(doctype, shipped, reason)
 			self.assertIn(fieldname, shipped[doctype], f"{doctype}.{fieldname}: {reason}")
+
+if __name__ == "__main__":
+	unittest.main()
