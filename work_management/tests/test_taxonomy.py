@@ -254,9 +254,14 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 		"Pending Farm Manager", "Farm Manager", "Farm Manager Saboti",
 		"Farm Manager Lokitela", "Farm Manager Endebess", "Farm Manager Valle",
 		"Plan approval — Farm Manager", "block employees marked Absent",
+		# Payment screen: object keys for the exported audit/worker CSV and
+		# Excel sheets (json_to_sheet / Object.keys turn the key itself into
+		# the column header). Quoted only so this regex finds a clean,
+		# single-token match -- functionally identical to a bareword key.
+		'"Farm"', '"Block"',
 	)
 
-	CONVERTED = ("work-planner.js", "work-assigner.js", "work-actuals.js")  # extended as each screen is done
+	CONVERTED = ("work-planner.js", "work-assigner.js", "work-actuals.js", "work-payment.js")  # extended as each screen is done
 
 	def test_converted_screens_hold_no_bare_level_label(self):
 		import os
