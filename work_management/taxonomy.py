@@ -52,22 +52,35 @@ def label_for(template, names):
 
 # (doctype, fieldname, label template). Every field whose label names a level.
 #
-# Deliberately absent: Work Management Settings.att_block_absent, "Check
-# attendance (block employees marked Absent)" -- that "block" is a verb.
+# Deliberately absent, and guarded by name in test_taxonomy.py so the omission
+# has to stay deliberate:
+#   - Work Management Settings.att_block_absent, "Check attendance (block
+#     employees marked Absent)" -- that "block" is a verb.
+#   - Work Management Settings.tax_* -- these fields are where the names are
+#     typed. Renaming "Farm level (singular)" to "Estate level (singular)" the
+#     moment someone types Estate into it hides the one label that explains
+#     what the field does.
 FIELD_LABELS = (
 	("WM Farm", "farm", "{top_singular}"),
 	("Work Management Actuals", "farm", "{top_singular}"),
 	("Work Management Actuals", "block_section", "{unit_singular} / {section_singular}"),
 	("Work Management Assigner", "farm", "{top_singular}"),
 	("Work Management Assigner", "block_section", "{unit_singular} / {section_singular}"),
+	("Work Management Farm", "business_unit", "{bu_singular}"),
 	("Work Management Farm", "farm_name", "{top_singular}"),
 	("Work Management Master Plan", "farm", "{top_singular}"),
 	("Work Management Payment", "farm", "{top_singular}"),
 	("Work Management Planner", "farm", "{top_singular}"),
+	("Work Management Planner", "sb_blocks", "{unit_plural} / {section_plural}"),
 	("Work Management Planner", "block_section", "{unit_singular} / {section_singular}"),
 	("Work Management Planner", "extra_blocks", "Additional {unit_plural} / {section_plural}"),
+	("Work Management Section", "blocks", "{unit_plural}"),
+	("Work Management Section", "farm", "{top_singular}"),
+	("Work Management Section", "section_name", "{section_singular}"),
+	("Work Management Section Block", "block", "{unit_singular}"),
 	("Work Management Settings", "block_exclude", "{unit_singular} Exclude Keywords"),
 	("Work Management Settings", "farms", "{top_plural}"),
+	("Work Management Settings", "farms_section", "{top_plural}"),
 	("Work Management Settings", "disc_multi_farm", "Two {top_plural}, one day"),
 	("Work Management Settings", "rate_recalc_farm", "{top_singular} Scope"),
 	("Work Management Stage Approver", "scope", "{top_singular}"),

@@ -125,7 +125,7 @@ def _shipped_doctypes():
 
 
 class TestFieldLabelCatalogue(unittest.TestCase):
-	"""The 20 level-naming labels, and the one that must not be touched."""
+	"""Every entry in the level-naming catalogue points at a field that exists."""
 
 	def test_every_entry_names_a_field_the_app_defines(self):
 		known = _shipped_doctypes()
@@ -321,3 +321,70 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestCatalogueCompleteness(unittest.TestCase):
+	"""The reverse guard: no shipped label may name a level and stay out.
+
+	`TestFieldLabelCatalogue` checks that every entry names a real field. That
+	direction cannot catch a field added after the catalogue was frozen, which
+	is how `Work Management Section` -- the one doctype this feature ships --
+	became the one place the feature did not apply to itself.
+	"""
+
+	# Every label the module ships that legitimately keeps its wording, and why.
+	KEPT_IN_SHIPPED_WORDING = {
+		("Work Management Settings", "att_block_absent"):
+			"'block employees marked Absent' uses block as a verb",
+		("Work Management Settings", "tax_bu_enabled"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_bu_singular"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_bu_plural"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_top_singular"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_top_plural"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_unit_singular"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_unit_plural"):
+			"names the template field itself; renaming it would be circular",
+	}
+
+	@staticmethod
+	def _level_words():
+		"""The shipped names of every level, longest first so 'Business Units'
+		is recognised before 'Business Unit'."""
+		words = set()
+		for level in taxonomy.LEVELS:
+			words.add(level.singular)
+			words.add(level.plural)
+		return sorted(words, key=len, reverse=True)
+
+	def test_every_shipped_label_that_names_a_level_is_in_the_catalogue(self):
+		import re
+
+		pattern = re.compile(
+			r"\b(" + "|".join(re.escape(w) for w in self._level_words()) + r")\b", re.I
+		)
+		known = {(d, f) for d, f, _t in taxonomy.FIELD_LABELS}
+		missing = []
+		for doctype, fields in _shipped_doctypes().items():
+			for fieldname, field in fields.items():
+				label = field.get("label") or ""
+				if not pattern.search(label):
+					continue
+				if (doctype, fieldname) in known:
+					continue
+				if (doctype, fieldname) in self.KEPT_IN_SHIPPED_WORDING:
+					continue
+				missing.append(f"{doctype}.{fieldname} = {label!r}")
+		self.assertEqual(sorted(missing), [], "\n".join(sorted(missing)))
+
+	def test_the_exception_list_only_names_labels_that_still_exist(self):
+		"""A stale exception would quietly re-open the hole it was cut for."""
+		shipped = _shipped_doctypes()
+		for (doctype, fieldname), reason in self.KEPT_IN_SHIPPED_WORDING.items():
+			self.assertIn(doctype, shipped, reason)
+			self.assertIn(fieldname, shipped[doctype], f"{doctype}.{fieldname}: {reason}")
