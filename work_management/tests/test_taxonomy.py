@@ -307,6 +307,15 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 		against those files would produce both false positives (on the safe
 		patterns) and true positives this task has no mandate to fix, so it
 		is not extended there.
+
+		One exemption, by name: ccGroupText() returns the level name as plain
+		text for the two DOM properties that take text and cannot be injected
+		into -- .textContent and .placeholder -- where escaping would print
+		&amp; at a reader instead of an ampersand. Its markup-bound twin
+		ccGroupLabel() wraps it in esc(), and that is what the table header
+		uses. The exemption blanks that one function body, so a bare TX(
+		anywhere else in the file -- including anywhere else inside
+		renderCcTable -- still trips this.
 		"""
 		import os
 		import re
@@ -314,8 +323,13 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 		path = os.path.join(self.APP, "public", "js", "work-management-dashboard.js")
 		with open(path) as handle:
 			src = handle.read()
+		exempt = re.compile(
+			r"function ccGroupText\(\)\{.*?\n  \}", re.S
+		)
+		scanned, exemptions = exempt.subn("function ccGroupText(){}", src)
+		self.assertEqual(exemptions, 1, "ccGroupText() not found: the exemption is stale")
 		bare_call = re.compile(r"(?<!esc\()(?<!function )TX\(")
-		offenders = bare_call.findall(src)
+		offenders = bare_call.findall(scanned)
 		self.assertEqual(len(offenders), 0, f"{len(offenders)} TX() call(s) not wrapped in esc()")
 
 
