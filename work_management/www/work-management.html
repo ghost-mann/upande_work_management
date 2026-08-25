@@ -1,3 +1,4 @@
+<script>window.WM_TAXONOMY = {{ (taxonomy or {}) | tojson }};</script>
 {% raw %}
 <style>
 #wmp{--ink:#0a0a0a;--mute:#64748b;--faint:#eef2f6;--line:#e2e8f0;--wash:#f8fafc;--hatch:#cbd5e1;--blue:#2563eb;--violet:#7c3aed;--green:#0a7a43;--amber:#a06000;--red:#b91c1c;--r:12px;--rs:8px;--sh:0 1px 2px rgba(15,23,42,.05);--shm:0 1px 3px rgba(15,23,42,.06),0 4px 12px rgba(15,23,42,.07);font-family:'Poppins',system-ui,sans-serif;color:var(--ink);font-size:13px;line-height:1.45;max-width:1300px;margin:0 auto;padding:0 16px 60px}
@@ -26,11 +27,11 @@
 #wmp .kpi .k{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #wmp .kpi .v{font-size:22px;font-weight:700;letter-spacing:-.03em;margin-top:6px;font-variant-numeric:tabular-nums}
 #wmp .kpi .u{font-size:9.5px;color:var(--mute);margin-top:2px}
-@media(max-width:1100px){#wmp .kpis{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:560px){#wmp .kpis{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1100px){ #wmp .kpis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:560px){ #wmp .kpis{grid-template-columns:repeat(2,1fr)}}
 #wmp .sech{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#94a3b8;font-weight:700;margin:28px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--faint)}
 #wmp .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-@media(max-width:900px){#wmp .grid2{grid-template-columns:1fr}}
+@media(max-width:900px){ #wmp .grid2{grid-template-columns:1fr}}
 #wmp .card{border:1px solid var(--line);border-radius:var(--r);background:#fff;box-shadow:var(--sh)}
 #wmp .card .hd{display:flex;justify-content:space-between;align-items:baseline;padding:12px 16px;border-bottom:1px solid var(--faint)}
 #wmp .card .hd h3{font-size:12.5px;font-weight:700;margin:0}
@@ -118,7 +119,7 @@
 #wmp .pc-row{display:grid;grid-template-columns:minmax(150px,1.1fr) minmax(180px,2fr) minmax(190px,1.1fr);
   gap:14px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r);
   background:#fff;box-shadow:var(--sh);margin-bottom:8px}
-@media(max-width:820px){#wmp .pc-row{grid-template-columns:1fr}}
+@media(max-width:820px){ #wmp .pc-row{grid-template-columns:1fr}}
 #wmp .pc-id b{font-size:12px;font-weight:700;display:block}
 #wmp .pc-id span{font-size:10.5px;color:var(--mute);display:block;margin-top:2px}
 #wmp .pc-track{position:relative;height:16px;border-radius:5px;background:var(--faint);overflow:hidden;
@@ -169,8 +170,8 @@
 #wmp .sc-row:last-child{border-bottom:none}
 #wmp .sc-k{color:var(--mute)}
 #wmp .sc-v{font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
-@media(max-width:1000px){#wmp .stagegrid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:520px){#wmp .stagegrid{grid-template-columns:1fr}}
+@media(max-width:1000px){ #wmp .stagegrid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){ #wmp .stagegrid{grid-template-columns:1fr}}
 /* ===== per-farm strip ===== */
 #wmp .fstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
 #wmp .fs-card{border:1px solid var(--line);border-radius:var(--r);padding:15px 17px;background:#fff;box-shadow:var(--sh);transition:transform .15s,box-shadow .15s}
@@ -181,8 +182,8 @@
 #wmp .fs-line{display:flex;justify-content:space-between;font-size:11.5px;padding:4px 0;border-top:1px solid var(--faint)}
 #wmp .fs-line span{color:var(--mute)}
 #wmp .fs-line b{font-variant-numeric:tabular-nums}
-@media(max-width:1000px){#wmp .fstrip{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:520px){#wmp .fstrip{grid-template-columns:1fr}}
+@media(max-width:1000px){ #wmp .fstrip{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){ #wmp .fstrip{grid-template-columns:1fr}}
 /* new bar swatches */
 #wmp .sw-act{background:var(--blue)}
 #wmp .sw-paid{background:var(--violet)}
@@ -256,7 +257,7 @@
 #wmp table.pex-daily th.n{text-align:right}
 #wmp table.pex-daily td{padding:4px 6px;border-bottom:1px solid var(--faint)}
 #wmp table.pex-daily td.n{text-align:right;font-variant-numeric:tabular-nums}
-@media(max-width:640px){#wmp .pex-kv,#wmp .pex-kv.sm{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){ #wmp .pex-kv,#wmp .pex-kv.sm{grid-template-columns:repeat(2,1fr)}}
 
 /* actuals/payment rows clickable + up-link */
 #wmp table.pex tr[data-actual],#wmp table.pex tr[data-payment]{cursor:pointer}
@@ -314,7 +315,7 @@
 #wmp .wm-dr-apply:hover{opacity:.88;transform:translateY(-1px)}
 #wmp .wm-dr-active{font-size:10.5px;color:var(--mute);font-weight:500;white-space:nowrap}
 #wmp .wm-dr-active b{color:var(--ink);font-weight:700}
-@media(max-width:760px){#wmp .wm-daterange{flex-direction:column;align-items:flex-start}}
+@media(max-width:760px){ #wmp .wm-daterange{flex-direction:column;align-items:flex-start}}
 /* ── Inline expandable rows (click a row to reveal detail) ── */
 #wmp tr.wm-x{cursor:pointer}
 #wmp tr.wm-x > td:first-child{position:relative;padding-left:20px}
@@ -349,7 +350,7 @@
 #wmp .subtab{font-family:inherit;font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:6px 13px;border:1px solid transparent;background:transparent;color:var(--mute);border-radius:999px;cursor:pointer;transition:all .12s}
 #wmp .subtab:hover{color:var(--ink);background:#fff;box-shadow:var(--sh)}
 #wmp .subtab.on{background:var(--ink);border-color:var(--ink);color:#fff;box-shadow:var(--sh)}
-@media(prefers-reduced-motion:reduce){#wmp *,#wmp *::before{animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){ #wmp *,#wmp *::before{animation:none!important;transition:none!important}}
 /* harmonize legacy inline styles emitted by the JS layer (static strings) */
 #wmp [style*="border-radius:2px"]{border-radius:6px!important}
 #wmp [style*="border:1px solid #e4e4e4"]{border-color:#e2e8f0!important}

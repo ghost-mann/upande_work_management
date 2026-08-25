@@ -20,6 +20,10 @@
   // ── tiny helpers ──
   function el(id){ return document.getElementById(id); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+  // What this installation calls the levels. Falls back to the shipped wording
+  // so the screen still reads correctly if the template has not loaded.
+  var TXN = (window.WM_TAXONOMY || {});
+  function TX(key, fallback) { return TXN[key] || fallback; }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function money(n){ if(n==null||isNaN(n)) return "—"; return "KES "+fmt(n,2); }
   function lbl(w){ return (w||"").replace(" - KL",""); }
@@ -102,7 +106,7 @@
         if(args.farm) fsel.value=args.farm;
       }
       var sc=el("ins-scope");
-      if(sc) sc.textContent=((d.window&&d.window.farm)||"All farms")+" · "+((d.window&&d.window.from)||"")+" → "+((d.window&&d.window.to)||"");
+      if(sc) sc.textContent=((d.window&&d.window.farm)||("All "+TX("top_plural","Farms").toLowerCase()))+" · "+((d.window&&d.window.from)||"")+" → "+((d.window&&d.window.to)||"");
       renderInsights(d, b);
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load: '+esc(e&&e.message?e.message:e)+'</div>'; });
   }
@@ -137,7 +141,7 @@
     h+='<div class="sech" style="margin-top:20px">The detail</div>';
     h+='<div id="ins-subtabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>';
     h+='<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'+
-       '<input type="text" id="ins-q" placeholder="Filter by name, farm or activity…" style="max-width:320px">'+
+       '<input type="text" id="ins-q" placeholder="'+esc("Filter by name, "+TX("top_singular","Farm").toLowerCase()+" or activity…")+'" style="max-width:320px">'+
        '<span id="ins-count" style="font-size:10px;color:var(--mute);letter-spacing:.06em;text-transform:uppercase;font-weight:600"></span></div>';
     h+='<div id="ins-tablewrap" style="max-height:460px;overflow:auto;border:1px solid var(--faint)"></div>';
     h+='<div id="ins-note" style="font-size:10.5px;color:var(--mute);margin-top:6px"></div>';
@@ -154,28 +158,28 @@
       {key:"avail", label:"Available", rows:d.available_list||[],
        note:"Active task workers with no live assignment — free to deploy today.",
        search:["nm","emp","farm","designation"], sort:{c:"nm",dir:1},
-       cols:[["Worker","nm",0],["ID","emp",0],["Farm","farm",0],["Designation","designation",0]]},
+       cols:[["Worker","nm",0],["ID","emp",0],[TX("top_singular","Farm"),"farm",0],["Designation","designation",0]]},
       {key:"asgd", label:"Assigned", rows:(d.assigned_list||[]).map(function(r){ r.period=(r.latest_from||"")+(r.latest_to?(" → "+r.latest_to):""); return r; }),
        note:"Everyone on a live assignment and the tasks they are on — the deployed workforce right now.",
        search:["nm","emp","farm","task_list"], sort:{c:"assignments",dir:-1},
-       cols:[["Worker","nm",0],["Farm","farm",0],["Assignments","assignments",1],["Tasks","task_count",1],["Task detail","task_list",0],["Latest period","period",0]]},
+       cols:[["Worker","nm",0],[TX("top_singular","Farm"),"farm",0],["Assignments","assignments",1],["Tasks","task_count",1],["Task detail","task_list",0],["Latest period","period",0]]},
       {key:"owed", label:"Owed money", rows:d.unpaid_list||[],
        note:"Confirmed work not yet paid — build a run from the first tab to clear it. Sorted biggest first; click any column header to re-sort.",
        search:["nm","emp","farm"], sort:{c:"owed",dir:-1},
-       cols:[["Worker","nm",0],["Farm","farm",0],["Days","days",1],["Owed (KES)","owed",1],["Earliest unpaid","oldest",0],["Latest","newest",0]]},
+       cols:[["Worker","nm",0],[TX("top_singular","Farm"),"farm",0],["Days","days",1],["Owed (KES)","owed",1],["Earliest unpaid","oldest",0],["Latest","newest",0]]},
       {key:"idle", label:"Not working", rows:d.idle_list||[],
        note:"Assigned to live work but no confirmed output in this period — idle, on other duties, or their actuals are still in approval.",
        search:["nm","emp","farm"], sort:{c:"assignments",dir:-1},
-       cols:[["Worker","nm",0],["Farm","farm",0],["Live assignments","assignments",1]]},
+       cols:[["Worker","nm",0],[TX("top_singular","Farm"),"farm",0],["Live assignments","assignments",1]]},
       {key:"tasks", label:"Activities", rows:(d.task_costs||[]).map(function(r){
           r.cpu=(r.qty>0)?(r.pay/r.qty):null; return r; }),
-       note:"Confirmed labour spend per activity per farm. KES/unit is what each unit of output actually cost — the column that exposes expensive work even when the total looks small.",
+       note:"Confirmed labour spend per activity per "+TX("top_singular","Farm").toLowerCase()+". KES/unit is what each unit of output actually cost — the column that exposes expensive work even when the total looks small.",
        search:["label","farm"], sort:{c:"pay",dir:-1},
-       cols:[["Activity","label",0],["Farm","farm",0],["Spend (KES)","pay",1],["Share","share",1],["KES/unit","cpu",1],["Units","qty",1],["People","workers",1],["Mandays","mandays",1]]},
+       cols:[["Activity","label",0],[TX("top_singular","Farm"),"farm",0],["Spend (KES)","pay",1],["Share","share",1],["KES/unit","cpu",1],["Units","qty",1],["People","workers",1],["Mandays","mandays",1]]},
       {key:"top", label:"Top earners", rows:d.top_workers||[],
        note:"Biggest confirmed earners in the period — recognition list and anomaly check in one.",
        search:["nm","emp","farm"], sort:{c:"pay",dir:-1},
-       cols:[["Worker","nm",0],["Farm","farm",0],["Days","days",1],["Output","qty",1],["Earned (KES)","pay",1]]}
+       cols:[["Worker","nm",0],[TX("top_singular","Farm"),"farm",0],["Days","days",1],["Output","qty",1],["Earned (KES)","pay",1]]}
     ];
   }
   function drawInsTab(){
@@ -308,7 +312,7 @@
   function renderFarmChips(){
     var host=el("pay-farmchips");
     if(!ST.farms.length){ host.innerHTML=""; return; }
-    var h='<div class="fchip allchip'+(Object.keys(ST.activeFarms).length?"":" on")+'" data-farm="">All farms</div>';
+    var h='<div class="fchip allchip'+(Object.keys(ST.activeFarms).length?"":" on")+'" data-farm="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</div>';
     ST.farms.forEach(function(f){
       var on=ST.activeFarms[f.farm]?" on":"";
       h+='<div class="fchip'+on+'" data-farm="'+esc(f.farm)+'">'+esc(f.farm)+
@@ -336,7 +340,7 @@
     var box=el("build-body");
     var rows=(ST.workers||[]).filter(passesSearch);
     if(!rows.length){
-      box.innerHTML='<div class="empty"><b>No workers here</b>No confirmed work matches this window and filter. Widen the dates or clear the farm filter.</div>';
+      box.innerHTML='<div class="empty"><b>No workers here</b>No confirmed work matches this window and filter. Widen the dates or clear the '+esc(TX("top_singular","Farm")).toLowerCase()+' filter.</div>';
       return;
     }
     var order={"Unpaid":0,"Sent to accounts":1,"Paid":2};
@@ -355,7 +359,7 @@
         : 'You can review and audit here. Sending work to accounts is done by the HR head, accounting or the general manager.')+'</span></div>';
     h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
       '<th class="c" style="width:34px"><input type="checkbox" id="bulk-all" title="Select every actionable worker shown"></th>'+
-      '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
+      '<th>Worker</th><th>ID</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
       '<th class="n">Earned KES</th><th class="n">Paid KES</th><th class="n">Unpaid KES</th><th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
     var tq=0, te=0, tp=0, tu=0;
     rows.forEach(function(w){
@@ -685,7 +689,7 @@
           return;
         }
         var h='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
-          '<th>Date</th><th>Task</th><th>Farm</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead><tbody>';
+          '<th>Date</th><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead><tbody>';
         jobs.forEach(function(j){
           h+='<tr><td>'+esc(j.wdate||"")+'</td><td>'+esc(j.task||"")+'</td><td>'+esc(lbl(j.farm)||"")+'</td>'+
              '<td class="n m">'+fmt(j.qty)+'</td><td class="n m">'+fmt(j.rate,2)+'</td><td class="n m">'+money(j.amount)+'</td></tr>';
@@ -750,7 +754,7 @@
       '<button class="btn" id="ac-reset" style="border-color:var(--line);color:var(--mute)">Reset</button>'+
       '<span style="flex:1"></span><span class="hint">'+showing+'</span>'+
       (chips?'</div><div class="farmchips" style="margin-bottom:10px">'+
-        '<div class="fchip allchip'+(Object.keys(ST.accFarms||{}).length?"":" on")+'" data-accfarm="">All farms</div>'+chips+'</div>'
+        '<div class="fchip allchip'+(Object.keys(ST.accFarms||{}).length?"":" on")+'" data-accfarm="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</div>'+chips+'</div>'
        :'</div>');
   }
 
@@ -792,7 +796,7 @@
     }
     if(!ST.accTotal){
       box.innerHTML=accFilterBar()+'<div class="empty"><b>Nothing matches these filters</b>'+
-        fmt(ST.accQueueTotal)+' run'+(ST.accQueueTotal===1?'':'s')+' in the queue overall &mdash; widen the dates, clear the farm or the search.</div>';
+        fmt(ST.accQueueTotal)+' run'+(ST.accQueueTotal===1?'':'s')+' in the queue overall &mdash; widen the dates, clear the '+esc(TX("top_singular","Farm")).toLowerCase()+' or the search.</div>';
       wireAccFilters(box);
       return;
     }
@@ -1074,7 +1078,7 @@
 
   function renderAuditChips(){
     var host=el("au-farmchips"); if(!host) return;
-    var h='<div class="fchip allchip'+(Object.keys(AU.farms).length?"":" on")+'" data-farm="">All farms</div>';
+    var h='<div class="fchip allchip'+(Object.keys(AU.farms).length?"":" on")+'" data-farm="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</div>';
     (AU.allFarms||[]).forEach(function(f){
       h+='<div class="fchip'+(AU.farms[f]?" on":"")+'" data-farm="'+esc(f)+'">'+esc(f)+'</div>';
     });
@@ -1235,20 +1239,20 @@
     var h='<div class="tablescroll" style="max-height:380px"><table style="margin-top:0"><thead><tr>';
     var body='';
     if(c.key==="multi_farm_day"){
-      h+='<th>Worker</th><th>Day</th><th>Farms</th><th class="n">KES</th><th>Actuals docs</th>';
+      h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_plural","Farms"))+'</th><th class="n">KES</th><th>Actuals docs</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farms||"")+'</td>'+
           '<td class="n m">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td></tr>';
       });
     } else if(c.key==="self_approved"){
-      h+='<th>Actuals doc</th><th>Farm</th><th>Task</th><th>Entered by</th><th>HR appr.</th><th>GM appr.</th><th class="n">KES</th>';
+      h+='<th>Actuals doc</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Entered by</th><th>HR appr.</th><th>GM appr.</th><th class="n">KES</th>';
       rows.forEach(function(r){
         body+='<tr><td class="m">'+esc(r.actuals)+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td>'+esc(shortUser(r.entered_by))+'</td><td>'+esc(shortUser(r.hr_approved_by)||"—")+'</td><td>'+esc(shortUser(r.gm_approved_by)||"—")+'</td>'+
           '<td class="n m">'+fmt(r.amount,2)+'</td></tr>';
       });
     } else if(c.key==="left_but_earning"){
-      h+='<th>Worker</th><th>Day worked</th><th>Left on</th><th>Farm</th><th>Task</th><th class="n">KES</th><th>Doc</th>';
+      h+='<th>Worker</th><th>Day worked</th><th>Left on</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">KES</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td class="m" style="color:var(--bad)">'+esc(dshort(r.left_date))+'</td>'+
           '<td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td><td class="n m">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
@@ -1261,7 +1265,7 @@
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
     } else if(c.key==="inactive_assigned"){
-      h+='<th>Worker</th><th>HR status</th><th>Farm</th><th>Task</th><th>Assignment</th><th>Period</th>';
+      h+='<th>Worker</th><th>HR status</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Assignment</th><th>Period</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td>'+
           '<td><span class="tag" style="color:var(--bad)">'+esc(r.emp_status||"Inactive")+'</span></td>'+
@@ -1270,7 +1274,7 @@
           '<td class="m">'+esc(r.wdate||"")+'</td></tr>';
       });
     } else if(c.key==="dup_day"){
-      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Copies</th><th class="n">Total KES</th><th class="n">Excess KES</th><th>Docs</th><th>Entered by</th>';
+      h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Copies</th><th class="n">Total KES</th><th class="n">Excess KES</th><th>Docs</th><th>Entered by</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.copies)+'×</td>'+
@@ -1280,7 +1284,7 @@
           '<td class="m" style="font-size:10px">'+esc(shortUser(r.entered_by||""))+'</td></tr>';
       });
     } else if(c.key==="no_pay"){
-      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Should be KES</th><th class="n">Stored</th><th>Doc</th>';
+      h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Should be KES</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td>'+
@@ -1290,7 +1294,7 @@
       });
     } else {
       // presence-based checks: absent_paid / ghost_days / leave_paid / off_paid
-      h+='<th>Worker</th><th>Day</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Presence</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
+      h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Presence</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
@@ -1318,7 +1322,7 @@
            '<span class="hint" style="margin-left:10px">Sets pay to qty × rate, restores payroll counting, re-sums the documents and leaves an audit comment. Workers go back to Unpaid for review.</span></div>';
       }
     }
-    if(c.count>=200) h+='<div class="note">Showing the first 200 rows — narrow the date range or farm filter to see the rest.</div>';
+    if(c.count>=200) h+='<div class="note">Showing the first 200 rows — narrow the date range or '+esc(TX("top_singular","Farm")).toLowerCase()+' filter to see the rest.</div>';
     return h;
   }
 
@@ -1326,7 +1330,7 @@
     var rows=AU.summary||[];
     if(!rows.length){ box.innerHTML='<div class="empty">No confirmed actuals in this range.</div>'; return; }
     var h='<div class="tablewrap"><div class="tablescroll"><table id="au-table"><thead><tr>'+
-      '<th>Farm</th><th>Task</th><th>Block</th><th>Assignment</th>'+
+      '<th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Assignment</th>'+
       '<th class="n">Planned</th><th class="n">Assigned</th><th class="n">Qty</th><th class="n">Workers</th>'+
       '<th class="n">Total KES</th><th class="n">Paid KES</th><th class="n">Unpaid KES</th>'+
       '<th class="c">Status</th><th>Run</th><th>Entered by</th></tr></thead><tbody>';
@@ -1353,7 +1357,7 @@
     var rows=AU.detail||[];
     if(!rows.length){ box.innerHTML='<div class="empty">No confirmed worker rows in this range.</div>'; return; }
     var h='<div class="tablewrap"><div class="tablescroll"><table id="au-table"><thead><tr>'+
-      '<th>Farm</th><th>Task</th><th>Assignment</th><th>Worker</th><th>ID</th><th>Type</th>'+
+      '<th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Assignment</th><th>Worker</th><th>ID</th><th>Type</th>'+
       '<th>Date</th><th class="n">Qty</th><th class="n">Amount KES</th><th class="c">Paid</th><th>Run</th></tr></thead><tbody>';
     rows.forEach(function(r){
       h+='<tr>'+
@@ -1439,7 +1443,7 @@
       });
       el("auw-count").textContent=flt.length+" of "+rows.length+" workers";
       var t='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
-        '<th>Worker</th><th>ID</th><th>Farm</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
+        '<th>Worker</th><th>ID</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
         '<th class="n">Earned KES</th><th class="n">Paid KES</th><th class="n">Unpaid KES</th>'+
         '<th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
       var tq=0, te=0, tp=0, tu=0;
@@ -1546,7 +1550,7 @@
     h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 22px;padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:var(--wash);margin-bottom:14px;font-size:12px">'+
       '<div><div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600">Worker</div><b>'+esc(info.employee_name||"—")+'</b><div style="color:var(--mute)" class="m">'+esc(info.employee||"")+'</div></div>'+
       '<div><div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600">Designation</div><b>'+esc(info.designation||"—")+'</b><div style="color:var(--mute)">'+esc(info.employment_type||"")+'</div></div>'+
-      '<div><div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600">Farm</div><b>'+esc(lbl(info.farm)||"—")+'</b><div style="color:var(--mute)">'+esc(info.status||"")+'</div></div>'+
+      '<div><div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600">'+esc(TX("top_singular","Farm"))+'</div><b>'+esc(lbl(info.farm)||"—")+'</b><div style="color:var(--mute)">'+esc(info.status||"")+'</div></div>'+
       '<div><div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600">Joined</div><b>'+esc(dshort(info.date_of_joining)||"—")+'</b></div>'+
       '<div><div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600">Worked this window</div><b>'+esc(dshort(k.first_day))+' &rarr; '+esc(dshort(k.last_day))+'</b><div style="color:var(--mute)">'+fmt(k.days)+' days</div></div>'+
     '</div>';
@@ -1562,7 +1566,7 @@
     if(!tasks.length){ h+='<div class="empty">No confirmed work in this window.</div>'; }
     else{
       h+='<div class="tablewrap"><table><thead><tr>'+
-        '<th>Task</th><th>Block</th><th>Standard</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
+        '<th>Task</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Standard</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
         '<th class="n">Rate</th><th class="n">Amount KES</th><th class="n">Unpaid</th><th class="c">Status</th></tr></thead><tbody>';
       tasks.forEach(function(t){
         h+='<tr><td><b>'+esc(t.task||"—")+'</b></td><td>'+esc(lbl(t.block)||"—")+'</td>'+
@@ -1888,11 +1892,11 @@
   // ── print: opens a clean, self-contained window with both sheets ──
   function printAudit(){
     var r={from:el("au-from").value||"(start)", to:el("au-to").value||"(today)"};
-    var farms=Object.keys(AU.farms).length?Object.keys(AU.farms).join(", "):"All farms";
+    var farms=Object.keys(AU.farms).length?Object.keys(AU.farms).join(", "):("All "+TX("top_plural","Farms").toLowerCase());
     var t=AU.totals||{};
     function tbl(headers, bodyRows){
       var h='<table><thead><tr>';
-      headers.forEach(function(x){ h+='<th>'+x+'</th>'; }); h+='</tr></thead><tbody>';
+      headers.forEach(function(x){ h+='<th>'+esc(x)+'</th>'; }); h+='</tr></thead><tbody>';
       bodyRows.forEach(function(cells){ h+='<tr>'; cells.forEach(function(c,i){ h+='<td'+(i>=cells._n?' class="n"':'')+'>'+c+'</td>'; }); h+='</tr>'; });
       return h+'</tbody></table>';
     }
@@ -1919,9 +1923,9 @@
       ' &middot; generated '+esc(todayISO())+'</div>'+
       '<div class="meta">Totals: '+fmt(t.tasks)+' tasks &middot; '+fmt(t.worker_days)+' worker-days &middot; KES '+fmt(t.total_pay)+' total ('+fmt(t.paid)+' paid, '+fmt(t.unpaid)+' unpaid)</div>';
     var body='<h2>Summary — by task</h2>'+
-      tbl(["Farm","Task","Block","Assignment","Planned","Assigned","Qty","Workers","Total KES","Paid KES","Unpaid KES","Status","Run","Entered by"], sumRows)+
+      tbl([TX("top_singular","Farm"),"Task",TX("unit_singular","Block"),"Assignment","Planned","Assigned","Qty","Workers","Total KES","Paid KES","Unpaid KES","Status","Run","Entered by"], sumRows)+
       '<h2>Detail — by worker &amp; day</h2>'+
-      tbl(["Farm","Task","Assignment","Worker","ID","Type","Date","Qty","Amount KES","Paid","Run"], detRows);
+      tbl([TX("top_singular","Farm"),"Task","Assignment","Worker","ID","Type","Date","Qty","Amount KES","Paid","Run"], detRows);
     win.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+esc(orgPrefix())+'Payroll Audit</title><style>'+css+'</style></head><body>'+head+body+
       '<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>');
     win.document.close();
@@ -1969,14 +1973,14 @@
       [],
       ["Worker", info.employee_name||"", "ID", info.employee||""],
       ["Designation", info.designation||"", "Type", info.employment_type||""],
-      ["Farm", info.farm||"", "Joined", info.date_of_joining||""],
+      [TX("top_singular","Farm"), info.farm||"", "Joined", info.date_of_joining||""],
       ["Window", (WR.from||"start")+" → "+(WR.to||"today"), "Worked", (k.first_day||"")+" → "+(k.last_day||"")],
       [],
       ["Earned KES", k.earned||0, "Paid KES", k.paid_amt||0],
       ["Unpaid KES", k.unpaid_amt||0, "Days worked", k.days||0],
       ["Tasks", tasks.length, "Total qty", k.qty||0],
       [],
-      ["Task","Block","Standard","Farm","Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
+      ["Task",TX("unit_singular","Block"),"Standard",TX("top_singular","Farm"),"Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
     ];
     tasks.forEach(function(t){
       s1.push([t.task||"", t.block||"", t.standard||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,
@@ -2017,7 +2021,7 @@
 
   function exportWorkerCSV(d){
     var daily=(d.daily||[]).map(function(r){ return {
-      Date:r.wdate||"", Task:r.task||"", Block:r.block||"", Farm:r.farm||"",
+      Date:r.wdate||"", Task:r.task||"", "Block":r.block||"", "Farm":r.farm||"",
       Qty:r.qty||0, Rate:Math.round((r.rate||0)*100)/100, "Pay KES":r.amount||0,
       Status:(r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll"), Run:r.run_ref||""
     }; });
@@ -2068,7 +2072,7 @@
 
   function buildXLSX(){
     var sum=(AU.summary||[]).map(function(s){ return {
-      Farm:s.farm, Task:s.task, Block:s.block||"", Assignment:s.assignment||"",
+      "Farm":s.farm, Task:s.task, "Block":s.block||"", Assignment:s.assignment||"",
       "Planner":s.planner_request||"", "From":s.from_date||"", "To":s.to_date||"",
       "Planned people":s.planned_people, "Assigned":s.assigned_count, "Variance":s.variance,
       "Actual qty":s.actual_qty, "Workers":s.workers, "Worker-days":s.worker_days,
@@ -2076,7 +2080,7 @@
       "Status":s.pay_status, "Run(s)":s.run_refs||"", "Entered by":s.entered_by||"", "Entry date":s.entry_date||""
     }; });
     var det=(AU.detail||[]).map(function(d){ return {
-      Farm:d.farm, Task:d.task, Block:d.block||"", Assignment:d.assignment||"",
+      "Farm":d.farm, Task:d.task, "Block":d.block||"", Assignment:d.assignment||"",
       Worker:d.emp_name||d.emp, "ID":d.emp, "Type":d.emp_type||"", "Date":d.wdate||"",
       "Qty":d.qty, "Amount KES":d.amount, "In payroll":d.in_payroll, "Paid":d.pay_status, "Run":d.run_ref||""
     }; });
@@ -2099,13 +2103,13 @@
     }
     function csvCell(v){ v=(v==null?"":String(v)); if(/[",\r\n]/.test(v)){ v='"'+v.replace(/"/g,'""')+'"'; } return v; }
     var sum=(AU.summary||[]).map(function(s){ return {
-      Farm:s.farm,Task:s.task,Block:s.block||"",Assignment:s.assignment||"",Planner:s.planner_request||"",
+      "Farm":s.farm,Task:s.task,"Block":s.block||"",Assignment:s.assignment||"",Planner:s.planner_request||"",
       From:s.from_date||"",To:s.to_date||"","Planned people":s.planned_people,Assigned:s.assigned_count,Variance:s.variance,
       "Actual qty":s.actual_qty,Workers:s.workers,"Worker-days":s.worker_days,"Total KES":s.total_pay,
       "Paid KES":s.paid_pay,"Unpaid KES":s.unpaid_pay,Status:s.pay_status,"Run(s)":s.run_refs||"","Entered by":s.entered_by||"","Entry date":s.entry_date||""
     }; });
     var det=(AU.detail||[]).map(function(d){ return {
-      Farm:d.farm,Task:d.task,Block:d.block||"",Assignment:d.assignment||"",Worker:d.emp_name||d.emp,ID:d.emp,
+      "Farm":d.farm,Task:d.task,"Block":d.block||"",Assignment:d.assignment||"",Worker:d.emp_name||d.emp,ID:d.emp,
       Type:d.emp_type||"",Date:d.wdate||"",Qty:d.qty,"Amount KES":d.amount,"In payroll":d.in_payroll,Paid:d.pay_status,Run:d.run_ref||""
     }; });
     dl(auditFileBase()+"_summary.csv", toCSV(sum));
@@ -2160,7 +2164,7 @@
           h+='<div class="empty">No payment lines recorded on this run.</div>';
         } else {
           h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
-             '<th>Worker</th><th>Farm</th><th class="n">Days</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead><tbody>';
+             '<th>Worker</th><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Days</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead><tbody>';
           lines.forEach(function(ln){
             h+='<tr><td>'+esc(ln.employee_name||ln.employee||"")+'</td><td>'+esc(lbl(ln.farm)||"")+'</td>'+
                '<td class="n m">'+fmt(ln.days)+'</td><td class="n m">'+fmt(ln.qty)+'</td><td class="n m">'+money(ln.amount)+'</td></tr>';

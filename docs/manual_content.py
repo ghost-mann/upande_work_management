@@ -423,6 +423,30 @@ def sections():
 				 "history writes itself. Backdated rate changes belong to a rate card, applied "
 				 "from the Rates section of Settings."),
 
+		("h2", "Naming the levels"),
+		("p", "The module ships calling things farms and blocks. If your project calls "
+			  "them estates and plots, say so once in Work Management Settings under "
+			  "Taxonomy and every form, screen and column heading follows. Nothing about "
+			  "the data changes — only what it is called."),
+		("b", "Leave a name empty to use the built-in wording."),
+		("b", "Turn on the level above the farm if your farms belong to a business unit; "
+			  "reports can then group by it."),
+		("b", "The cost grouping name is used by the section view described below."),
+
+		("h2", "Sections, and cost by section"),
+		("p", "A section is a group of blocks. It exists so the cost-centre view on the "
+			  "dashboard can be read by section instead of block by block — nothing else "
+			  "in the system uses it, and no plan, assignment or payment mentions one."),
+		("n", "Create a section, give it a farm, and add its blocks to the table."),
+		("n", "A block belongs to one section only. Adding a block another section already "
+			  "holds is refused, naming that section — counted twice it would double its "
+			  "cost in the total."),
+		("n", "On the dashboard, the cost-centre view has a Group toggle: by block, or by "
+			  "section. Overheads and administration appear under both."),
+		("note", "Blocks you have not placed in a section are grouped under Unassigned, "
+				 "never dropped, so the section view always totals the same as the block "
+				 "view."),
+
 		("h2", "Approval stages and approvers"),
 		("p", "Every step of every approval chain is configured in Work Management Settings, "
 			  "under Approvals. Nothing about who approves what is fixed in the software."),

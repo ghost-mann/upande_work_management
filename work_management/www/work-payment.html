@@ -30,8 +30,8 @@
 #wpay .kpi .k{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600}
 #wpay .kpi .v{font-size:24px;font-weight:800;letter-spacing:-.03em;margin-top:6px;line-height:1;font-variant-numeric:tabular-nums}
 #wpay .kpi .u{font-size:9.5px;color:var(--mute);margin-top:4px}
-@media(max-width:900px){#wpay .kpis{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:460px){#wpay .kpis{grid-template-columns:1fr}}
+@media(max-width:900px){ #wpay .kpis{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:460px){ #wpay .kpis{grid-template-columns:1fr}}
 
 /* ── filter row ── */
 #wpay .filters{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:18px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--wash)}
@@ -154,7 +154,7 @@
 #wpay .toast.show{opacity:1}
 #wpay .toast.good{background:var(--good)}
 #wpay .toast.bad{background:#b91c1c}
-@media(prefers-reduced-motion:reduce){#wpay *,#wpay *::before,#wpay *::after{animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){ #wpay *,#wpay *::before,#wpay *::after{animation:none!important;transition:none!important}}
 /* harmonize legacy inline styles emitted by the JS layer (static strings) */
 #wpay [style*="border-radius:2px"]{border-radius:6px!important}
 #wpay [style*="color:#999"],#wpay [style*="color:#bbb"]{color:#94a3b8!important}
@@ -765,7 +765,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   <!-- ═══════════ INSIGHTS / KPIs ═══════════ -->
   <div class="panel" id="p-insights">
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
-      <div><label class="fl">Farm</label><select id="ins-farm" style="min-width:150px"><option value="">All farms</option></select></div>
+      <div><label class="fl">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</label><select id="ins-farm" style="min-width:150px"><option value="">All {{ (taxonomy or {}).get('top_plural', 'Farms')|lower|e }}</option></select></div>
       <div><label class="fl">From</label><input type="date" id="ins-from"></div>
       <div><label class="fl">To</label><input type="date" id="ins-to"></div>
       <button class="btn" id="ins-apply" style="margin-top:0">Apply</button>
@@ -780,6 +780,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 </div>
 </div>
 <script>window.WM_ORG = {{ (org_name or "") | tojson }};</script>
+<script>window.WM_TAXONOMY = {{ (taxonomy or {}) | tojson }};</script>
 <script>
 (function () {
   var who = document.getElementById("pay-who");

@@ -2228,9 +2228,34 @@ def wm_dashboard(**kwargs):
         if cpu_list:
             mid = len(cpu_list) // 2
             med_cpu = cpu_list[mid] if len(cpu_list) % 2 == 1 else (cpu_list[mid - 1] + cpu_list[mid]) / 2.0
+        # the true block count, captured before group_by (below) can reassign
+        # `rows` to a shorter list of section buckets -- out["totals"]["blocks"]
+        # must stay a block count in both toggle positions.
+        block_count = len(rows)
+        # optional Block/Section toggle: re-express the same rows, totalled by
+        # section instead of by block. A section marked disabled is hidden from
+        # this toggle (see the doctype's own field description), so its blocks
+        # fall back to Unassigned here rather than being dropped or counted under
+        # a section name the toggle no longer shows -- money must still add up.
+        if (frappe.form_dict.get("group_by") or "block") == "section":
+            from work_management import sections
+            disabled = set(frappe.db.get_all("Work Management Section", filters={"disabled": 1}, pluck="name"))
+            section_map = {b: s for b, s in sections.block_to_section().items() if s not in disabled}
+            rows = [
+                {
+                    "block": r["key"], "farm": None,
+                    "labour_spend": r["labour_spend"], "gl_spend": r["gl_spend"],
+                    "cost_center": None, "qty": r["qty"], "workers": None,
+                    "tasks": None, "worker_days": r["worker_days"], "days_active": None,
+                    "first_day": None, "last_day": None,
+                    "cost_per_unit": r["cost_per_unit"], "cost_per_wd": None,
+                    "avg_crew": None, "labour_share": None, "trend": [],
+                }
+                for r in sections.roll_up(rows, section_map)
+            ]
         out["blocks"] = rows
         out["farm_totals"] = farm_rows
-        out["totals"] = {"labour": tot_labour, "gl": tot_gl, "blocks": len(rows),
+        out["totals"] = {"labour": tot_labour, "gl": tot_gl, "blocks": block_count,
             "qty": tot_qty, "worker_days": tot_wd,
             "cost_per_unit": (tot_labour / tot_qty) if tot_qty > 0 else None,
             "median_cost_per_unit": med_cpu, "has_gl": 1 if has_gl else 0}
