@@ -2093,6 +2093,10 @@ def wm_dashboard(**kwargs):
         ccto = frappe.form_dict.get("to_date")
         ccq = (frappe.form_dict.get("q") or "").strip().lower()
         group_by_section = (frappe.form_dict.get("group_by") or "block") == "section"
+        # Read once, before the loop: the search needs it to know what each block
+        # is called in this toggle position, and the rollup below reads the same
+        # mapping so a disabled section's blocks land in Unassigned in both.
+        section_map = sections.enabled_block_to_section() if group_by_section else {}
         conds = "ac.workflow_state='CONFIRMED' AND ac.block_section IS NOT NULL"
         params = []
         if ccfarm:
@@ -2152,12 +2156,16 @@ def wm_dashboard(**kwargs):
         tot_wd = 0
         for r in labour:
             # The search box searches whatever the rows are: block names here,
-            # section names once the toggle moves. So in section mode every
-            # block is kept and the filter lands after the rollup -- matching
-            # block names first would hide a section whose blocks are not
-            # called what the section is called.
-            if ccq and not group_by_section and ccq not in str(r.block).lower():
-                continue
+            # section names once the toggle moves. Matching the block name in
+            # section mode would hide a section whose blocks are not called what
+            # the section is called -- so a block is matched on its section, and
+            # the filter still happens here, once. Everything downstream is built
+            # from what survives it: the farm subtotals, the median that colours
+            # the cost-per-unit column, the totals strip and the block count.
+            if ccq:
+                named = str(section_map.get(r.block) or sections.UNASSIGNED) if group_by_section else str(r.block)
+                if ccq not in named.lower():
+                    continue
             gl_spend = 0
             cc = None
             if has_gl and r.block:
@@ -2245,18 +2253,17 @@ def wm_dashboard(**kwargs):
         # fall back to Unassigned here rather than being dropped or counted under
         # a section name the toggle no longer shows -- money must still add up.
         if group_by_section:
-            rolled = sections.roll_up(rows, sections.enabled_block_to_section())
-            if ccq:
-                # The totals strip has to describe what is on screen, so it is
-                # re-totalled from the sections that survived the search.
-                # sections.totals() keeps `blocks` a block count.
-                rolled = [b for b in rolled if ccq in str(b["key"]).lower()]
-                narrowed = sections.totals(rolled)
-                tot_labour = narrowed["labour"]
-                tot_gl = narrowed["gl"]
-                tot_qty = narrowed["qty"]
-                tot_wd = narrowed["worker_days"]
-                block_count = narrowed["blocks"]
+            rolled = sections.roll_up(rows, section_map)
+            # The colour scale compares a row against the middle of its own kind.
+            # Left as the median block, it judged sections against blocks -- a
+            # section holding six blocks is dearer than almost any single one of
+            # them, so nearly every row came out red.
+            sec_cpu = sorted([b["cost_per_unit"] for b in rolled if b["cost_per_unit"] is not None])
+            if sec_cpu:
+                mid = len(sec_cpu) // 2
+                med_cpu = sec_cpu[mid] if len(sec_cpu) % 2 == 1 else (sec_cpu[mid - 1] + sec_cpu[mid]) / 2.0
+            else:
+                med_cpu = None
             # workers, tasks, days_active and the dates they imply are counts of
             # distinct things two blocks can share, so they cannot be added and
             # stay empty here on purpose. Everything the rollup could derive
@@ -2296,12 +2303,11 @@ def wm_dashboard(**kwargs):
         if drill_into_section:
             # The same mapping the rollup used, so a disabled section's blocks
             # sit under Unassigned in the row and in the drill-down alike.
-            section_map = sections.enabled_block_to_section()
-            group_blocks = sections.blocks_of(ccblock, section_map)
             where, where_params = sections.group_condition(
-                "ac.block_section", ccblock, section_map)
+                "ac.block_section", ccblock, sections.enabled_block_to_section())
             conds = "ac.workflow_state='CONFIRMED' AND " + where
             params = list(where_params)
+            group_blocks = None  # resolved from the row's own condition, below
         else:
             group_blocks = [ccblock] if ccblock else []
             conds = "ac.workflow_state='CONFIRMED' AND ac.block_section = %s"
@@ -2358,6 +2364,21 @@ def wm_dashboard(**kwargs):
         gl_accounts = []
         gl_total = 0
         has_gl = frappe.get_meta("GL Entry").get_field("cost_center") is not None
+        if has_gl and group_blocks is None:
+            # A section has no cost centre of its own, so its GL breakdown is the
+            # breakdown of its blocks' cost centres read together -- and "its
+            # blocks" has to mean the same ones the row was totalled from, filters
+            # and all, or the accounts listed would not add up to the GL figure the
+            # row displays. Unassigned in particular has no list of its own: it is
+            # defined by what it excludes, which is exactly what this condition
+            # says. Asking blocks_of() instead left every Unassigned drill-down
+            # with no GL accounts under a row reporting GL spend.
+            group_blocks = [
+                row[0] for row in frappe.db.sql(
+                    "SELECT DISTINCT ac.block_section FROM `tabWork Actuals Employee` we "
+                    "INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name "
+                    "WHERE " + conds, tuple(params))
+            ]
         if has_gl and group_blocks:
             # A section has no cost centre of its own: its GL breakdown is its
             # blocks' cost centres read together. In block mode that list is
