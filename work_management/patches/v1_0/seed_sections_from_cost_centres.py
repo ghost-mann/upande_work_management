@@ -26,7 +26,7 @@ another's section.
 
 import frappe
 
-from work_management import sections
+from work_management import migrating, sections
 
 # `select distinct` with no ordering leaves iteration order up to the
 # database. That does not matter when every block resolves independently, but
@@ -35,6 +35,13 @@ from work_management import sections
 PLANNER_BLOCKS_SQL = """select distinct block_section from `tabWork Management Planner`
 	where ifnull(block_section, '') != ''
 	order by block_section"""
+
+# What placing one block did. CREATED means a section was made for it, so the
+# block landed too -- the summary counts it under both.
+CREATED = "created"
+PLACED = "placed"
+AMBIGUOUS = "ambiguous"
+FARM_CONFLICT = "farm_conflict"
 
 
 def section_name_for(cost_centre, abbr):
@@ -109,44 +116,85 @@ def summary_message(created, placed, ambiguous, farm_conflict):
 	)
 
 
+def tally(blocks, place):
+	"""Place every block, count what each one did, and survive the ones that raise.
+
+	`place` returns one outcome per block, or None where the ledger says
+	nothing about it. It is passed in rather than called directly so the
+	counting can be tested without a site.
+
+	A block is somebody else's record: a Warehouse renamed since the plan was
+	raised, a Cost Center whose company was deleted, a section name too long
+	for the field. Any of those raises, and raising used to abort `bench
+	migrate` for the whole site -- over a head start that is explicitly
+	optional and that the next migrate would pick up anyway. So a block that
+	cannot be placed is named and skipped, and the other eighty-two still get
+	their section.
+
+	Returns (counts by outcome, notes for the blocks that raised).
+	"""
+	counts = {CREATED: 0, PLACED: 0, AMBIGUOUS: 0, FARM_CONFLICT: 0}
+
+	def work(block):
+		outcome = place(block)
+		if outcome == CREATED:
+			counts[CREATED] = counts[CREATED] + 1
+			counts[PLACED] = counts[PLACED] + 1
+		elif outcome in counts:
+			counts[outcome] = counts[outcome] + 1
+
+	_done, notes = migrating.each_without_aborting(blocks, work, "seed a section from")
+	return counts, notes
+
+
+def place(block):
+	"""Put one block in the section its cost centre implies, and say what happened."""
+	if sections.claimed_by(block):
+		return None
+	cc, is_ambiguous = cost_centre_lookup(block)
+	if is_ambiguous:
+		return AMBIGUOUS
+	parent = _parent_of(cc) if cc else None
+	if not parent:
+		return None
+	farm = frappe.db.get_value("Warehouse", block, "custom_farm")
+	if not farm or not frappe.db.exists("Work Management Farm", farm):
+		return None
+	abbr = frappe.db.get_value("Company", frappe.db.get_value("Cost Center", parent, "company"), "abbr")
+	name = section_name_for(parent, abbr)
+
+	outcome = PLACED
+	if frappe.db.exists("Work Management Section", name):
+		doc = frappe.get_doc("Work Management Section", name)
+		if farm_mismatch(doc.farm, farm):
+			return FARM_CONFLICT
+	else:
+		doc = frappe.get_doc({
+			"doctype": "Work Management Section", "section_name": name, "farm": farm,
+		})
+		doc.insert(ignore_permissions=True)
+		outcome = CREATED
+	doc.append("blocks", {"block": block})
+	doc.flags.ignore_permissions = True
+	doc.save()
+	return outcome
+
+
 def execute():
 	for doctype in ("Work Management Section", "Cost Center", "Work Management Farm"):
 		if not frappe.db.exists("DocType", doctype):
 			return
 
-	blocks = frappe.db.sql(PLANNER_BLOCKS_SQL)
-	created = placed = ambiguous = farm_conflict = 0
-	for (block,) in blocks:
-		if sections.claimed_by(block):
-			continue
-		cc, is_ambiguous = cost_centre_lookup(block)
-		if is_ambiguous:
-			ambiguous += 1
-			continue
-		parent = _parent_of(cc) if cc else None
-		if not parent:
-			continue
-		farm = frappe.db.get_value("Warehouse", block, "custom_farm")
-		if not farm or not frappe.db.exists("Work Management Farm", farm):
-			continue
-		abbr = frappe.db.get_value("Company", frappe.db.get_value("Cost Center", parent, "company"), "abbr")
-		name = section_name_for(parent, abbr)
-
-		if frappe.db.exists("Work Management Section", name):
-			doc = frappe.get_doc("Work Management Section", name)
-			if farm_mismatch(doc.farm, farm):
-				farm_conflict += 1
-				continue
-		else:
-			doc = frappe.get_doc({
-				"doctype": "Work Management Section", "section_name": name, "farm": farm,
-			})
-			doc.insert(ignore_permissions=True)
-			created += 1
-		doc.append("blocks", {"block": block})
-		doc.flags.ignore_permissions = True
-		doc.save()
-		placed += 1
+	blocks = [row[0] for row in frappe.db.sql(PLANNER_BLOCKS_SQL)]
+	counts, notes = tally(blocks, place)
 
 	frappe.db.commit()
-	print(summary_message(created, placed, ambiguous, farm_conflict))
+	print(summary_message(
+		created=counts[CREATED], placed=counts[PLACED],
+		ambiguous=counts[AMBIGUOUS], farm_conflict=counts[FARM_CONFLICT],
+	))
+	if notes:
+		print(
+			f"Work Management: {len(notes)} block(s) left for someone to place by hand, "
+			"named above and in the Error Log"
+		)

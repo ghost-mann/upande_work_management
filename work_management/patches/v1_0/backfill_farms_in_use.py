@@ -22,6 +22,8 @@ a given site, and execute() skips any farm that already has a record.
 
 import frappe
 
+from work_management import migrating
+
 # (doctype, fieldname) pairs that carry a farm name.
 SOURCES = (
 	("Employee", "custom_farm"),
@@ -66,6 +68,35 @@ def farms_in_use():
 	return found
 
 
+def create_missing(farms, configured, create):
+	"""Create a record for every farm that has none, surviving one that will not.
+
+	The insert is passed in rather than called here, so the loop can be tested
+	without a site and so a farm the field will not accept -- a legacy value
+	longer than the column, a name that trips the unique constraint, a farm
+	whose company was deleted -- costs that one farm instead of the migrate.
+	Nothing here creates the farms this app plans against; those come from
+	Settings. Every record it creates is a link somebody else's data already
+	points at, so skipping one leaves exactly the dangling link that was there
+	before, which is a smaller problem than a site stuck half-upgraded.
+
+	Returns (created, notes).
+	"""
+	return migrating.each_without_aborting(
+		farms,
+		lambda farm: create(farm, should_disable(farm, configured)),
+		"create the farm record for",
+	)
+
+
+def _insert(farm, disabled):
+	frappe.get_doc({
+		"doctype": "Work Management Farm",
+		"farm_name": farm,
+		"disabled": 1 if disabled else 0,
+	}).insert(ignore_permissions=True)
+
+
 def execute():
 	if not frappe.db.exists("DocType", "Work Management Farm"):
 		return
@@ -74,16 +105,16 @@ def execute():
 	configured = {r.farm for r in (settings.get("farms") or []) if r.farm}
 	configured |= set(frappe.get_all("Work Management Farm", filters={"disabled": 0}, pluck="name"))
 
-	created = 0
-	for farm in sorted(farms_in_use()):
-		if frappe.db.exists("Work Management Farm", farm):
-			continue
-		frappe.get_doc({
-			"doctype": "Work Management Farm",
-			"farm_name": farm,
-			"disabled": 1 if should_disable(farm, configured) else 0,
-		}).insert(ignore_permissions=True)
-		created += 1
+	missing = [
+		farm for farm in sorted(farms_in_use())
+		if not frappe.db.exists("Work Management Farm", farm)
+	]
+	created, skipped = create_missing(missing, configured, _insert)
 
 	frappe.db.commit()
 	print(f"Work Management: created {created} farm record(s) for values already in use")
+	if skipped:
+		print(
+			f"Work Management: {len(skipped)} farm(s) skipped and left dangling, "
+			"named above and in the Error Log"
+		)
