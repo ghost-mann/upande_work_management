@@ -8,6 +8,8 @@ def get_context(context):
 		frappe.throw(frappe._("Please login to access Work Management"), frappe.PermissionError)
 	context.no_cache = 1
 	context.title = "Payment · Work Management"
+	config = get_config()
 	# Printed and exported audit documents are headed with this.
-	context.org_name = get_config().get("default_company") or ""
+	context.org_name = config.get("default_company") or ""
+	context.taxonomy = config.get("taxonomy") or {}
 	return context

@@ -29,6 +29,10 @@
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+  // What this installation calls the levels. Falls back to the shipped wording
+  // so the screen still reads correctly if the template has not loaded.
+  var TXN = (window.WM_TAXONOMY || {});
+  function TX(key, fallback) { return TXN[key] || fallback; }
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function blocksLbl(obj){ var a=(obj&&obj.blocks)||null; if(a&&a.length){ var o=[]; for(var i=0;i<a.length;i++){ o.push(lbl(a[i])); } return o.join(", "); } return lbl(obj&&obj.block_section); }
   function el(id){ return document.getElementById(id); }
@@ -122,7 +126,7 @@
     var farms={}; rows.forEach(function(r){ if(r.farm) farms[r.farm]=1; });
     var h='<div class="lfb">'+
       '<input type="text" data-f="q" placeholder="'+esc(opts.ph||"Search…")+'">'+
-      '<select data-f="farm"><option value="">All farms</option>'+Object.keys(farms).sort().map(function(f){ return '<option>'+esc(f)+'</option>'; }).join("")+'</select>';
+      '<select data-f="farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option>'+Object.keys(farms).sort().map(function(f){ return '<option>'+esc(f)+'</option>'; }).join("")+'</select>';
     if(opts.statuses && opts.statuses.length){
       h+='<select data-f="st"><option value="">All statuses</option>'+opts.statuses.map(function(s){ return '<option>'+esc(s)+'</option>'; }).join("")+'</select>';
     }
@@ -239,7 +243,7 @@
     var fsel=el("ac-f-farm");
     if(fsel){
       var fkeep=fsel.value;
-      fsel.innerHTML='<option value="">All farms</option>';
+      fsel.innerHTML='<option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option>';
       Object.keys(farms).sort().forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fsel.appendChild(o); });
       fsel.value=fkeep||"";
     }
@@ -385,11 +389,11 @@
     var draftNote = a.draft_name ? ('<div style="margin-top:8px;font-size:11px;color:#555">Resuming draft <b>'+esc(a.draft_name)+'</b> — edit and re-save.</div>') : "";
     el("ac-detail").style.display="block";
     el("ac-detail").innerHTML=
-      '<div class="dl"><span class="k">Farm</span><span class="v">'+esc(a.farm)+'</span></div>'+
-      '<div class="dl"><span class="k">Block</span><span class="v">'+esc(blocksLbl(a))+'</span></div>'+
+      '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(a.farm)+'</span></div>'+
+      '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(a))+'</span></div>'+
       '<div class="dl"><span class="k">Task</span><span class="v">'+esc(a.task)+'</span></div>'+
       '<div class="dl"><span class="k">Standard</span><span class="v">'+(a.daily_target>0?(fmt(a.daily_target)+" "+esc(uom||"unit")+"/day"):(a.task_kpi?esc(a.task_kpi):"—"))+'</span></div>'+
-      '<div class="dl"><span class="k">Block Area</span><span class="v">'+(a.block_area>0?(fmt(a.block_area,2)+" Ha"):"—")+'</span></div>'+
+      '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+' Area</span><span class="v">'+(a.block_area>0?(fmt(a.block_area,2)+" Ha"):"—")+'</span></div>'+
       '<div class="dl"><span class="k">Rate</span><span class="v">KES '+fmt(a.rate,2)+' / '+esc(uom||"unit")+'</span></div>'+
       '<div class="dl"><span class="k">Period</span><span class="v">'+esc(a.from_date)+' → '+esc(a.to_date)+'</span></div>'+
       '<div class="dl"><span class="k">Target</span><span class="v big">'+fmt(a.target_qty)+' '+esc(uom)+'</span></div>'+
@@ -764,7 +768,7 @@
       var cands=d.candidates||[];
       if(!cands.length){
         sel.innerHTML='<option value="">— no eligible replacements —</option>';
-        el("ac-sub-note").textContent="No available Task Workers on this farm (all are already assigned somewhere overlapping this period).";
+        el("ac-sub-note").textContent="No available Task Workers on this "+TX("top_singular","Farm").toLowerCase()+" (all are already assigned somewhere overlapping this period).";
         return;
       }
       sel.innerHTML='<option value="">— select replacement —</option>';
@@ -927,13 +931,13 @@
       var sts={}; rows.forEach(function(r){ if(r.workflow_state) sts[r.workflow_state]=1; });
       b.className="";
       b.innerHTML='<div class="note" style="margin-bottom:8px">Draft or rejected records are editable — click a row to resume entering day by day.</div>'
-        + fbar(rows,{dates:true,statuses:Object.keys(sts).sort(),ph:"Search ref, farm, task…"});
+        + fbar(rows,{dates:true,statuses:Object.keys(sts).sort(),ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.entry_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.task||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
           var editable = (r.workflow_state==="Draft" || r.workflow_state==="Rejected");
           var editcell = editable ? '<span class="editlink" data-asg="'+esc(r.assignment)+'">Edit →</span>' : '';
@@ -960,13 +964,13 @@
       if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">Nothing rejected — you’re all clear.</div>'; return; }
       b.className="";
       b.innerHTML='<div class="note" style="margin-bottom:8px">These actuals were rejected. Click <b>Edit</b> to adjust the daily quantities and resubmit for approval.</div>'
-        + fbar(rows,{dates:true,ph:"Search ref, farm, task…"});
+        + fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.task||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
           h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td><span class="editlink" data-asg="'+esc(r.assignment)+'">Edit &amp; resubmit →</span></td></tr>';
         });
@@ -992,13 +996,13 @@
       if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">No close requests awaiting you.</div>'; return; }
       b.className="";
       b.innerHTML='<div class="note" style="margin-bottom:8px">A section head / farm manager has asked to close these plans early. Approving confirms open actuals, caps the plan (target kept), and frees the workers.</div>'
-        + fbar(rows,{dates:true,ph:"Search plan, farm, block, task…"});
+        + fbar(rows,{dates:true,ph:"Search plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.custom_close_request_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.custom_close_requested_by||"")).toLowerCase()};
       }, function(body, list){
       if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Plan</th><th>Farm</th><th>Block</th><th>Task</th><th class="n">Target</th><th class="n">Done</th><th class="n">Remaining</th><th>Requested by</th><th>Reason</th><th>Action</th></tr></thead><tbody>';
+      var h='<table><thead><tr><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Target</th><th class="n">Done</th><th class="n">Remaining</th><th>Requested by</th><th>Reason</th><th>Action</th></tr></thead><tbody>';
       list.forEach(function(r, i){
         h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td>'+
            '<td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td>'+
@@ -1036,13 +1040,13 @@
       var rows=d.pending||[];
       if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">Nothing at this stage.</div>'; return; }
       b.className="";
-      b.innerHTML=fbar(rows,{dates:true,ph:"Search ref, farm, task, entered by…"});
+      b.innerHTML=fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task, entered by…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.entered_by||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>Farm</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>By</th><th>Action</th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>By</th><th>Action</th></tr></thead><tbody>';
         list.forEach(function(r, i){
           h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
         });

@@ -36,6 +36,11 @@ approvers, and the screens say so rather than offering someone else's.
   discrepancy checks, rates and payroll settings, header logo.
 - **Work Management Farm**: the unit work is planned against — farm, estate,
   site, division, whatever your project calls it — with its cost project.
+  Optionally belongs to a **Business Unit**, a level above the farm that
+  reports can group by.
+- **Work Management Section**: an optional grouping of blocks (Warehouses),
+  used only to let the dashboard's cost-centre view be read by section
+  instead of block by block. A block belongs to at most one section.
 - **Desk surfaces**: a Workspace, a v16 Workspace Sidebar, and an apps-screen
   entry (`add_to_apps_screen`). The sidebar is v16-only and is simply not read
   on v15.
@@ -72,6 +77,37 @@ awaiting-approval inbox.
 Adding a stage is a change to `CATALOGUE` in `work_management/approvals.py`;
 the next `bench migrate` seeds it and rebuilds the workflows.
 
+## Taxonomy
+
+The module ships calling things farms and blocks. What each level is called
+is configuration, not code: set it once in **Work Management Settings →
+Taxonomy** and every desk label, screen and column heading follows.
+
+- **Farm** and **Block** are always present; a level above the farm
+  (**Business Unit** by default) is optional and off until switched on.
+- Leaving a name blank falls back to the shipped wording rather than
+  rendering an empty label.
+- Renaming writes Property Setters (`work_management/taxonomy.py`), so the
+  app's own JSON never changes and clearing a name restores the original.
+  The same names reach the five web screens via `get_config()["taxonomy"]`
+  in `work_management/api/config.py`.
+- If **upande_core** is installed, `Work Management Farm.business_unit`
+  upgrades from a plain text field to a real Link to its `Business Unit`
+  doctype, validated on save; if upande_core is later removed, the field
+  reverts to Data with no leftover Property Setters. This runs on every
+  `bench migrate` (`work_management.install.upgrade_business_unit_link`).
+
+### Sections
+
+A **Work Management Section** groups blocks purely so the dashboard's
+cost-centre view can be read by section instead of block by block — no
+plan, assignment, actuals or payment ever mentions one. A block belongs to
+at most one section; adding it to a second section is refused, naming the
+section that already holds it. Blocks left out of any section are grouped
+under "Unassigned" so the section view always totals the same as the block
+view. The Group toggle on the dashboard's cost-centre card switches between
+the two.
+
 ## Install
 
 ```bash
@@ -96,6 +132,10 @@ Supports Frappe 15 and 16.
    - optionally set a header logo.
 4. Set `custom_farm` on Warehouses (blocks) and Employees (task workers), and
    `custom_uom` / `custom_daily_target` / `custom_rate` on Tasks.
+5. Optionally, under **Work Management Settings → Taxonomy**, rename the
+   levels to match the project's own words, and switch on the level above
+   the farm if it uses one. Optionally group blocks into **Work Management
+   Section** records for the dashboard's by-section cost view.
 
 ### Migrating a site that ran the earlier version
 
@@ -109,6 +149,15 @@ One behaviour change to know about: the workflows this replaced carried an
 unconditional `Farm Manager` transition alongside the per-farm ones, so anyone
 holding the plain role could approve any farm. Once per-farm approvers are
 configured, only they can.
+
+Two later patches run once, on the same migrate:
+`work_management.patches.v1_0.backfill_farms_in_use` creates a disabled Work
+Management Farm record for every farm value already in use on Employee,
+Warehouse or a transaction but missing from Settings — so no existing link is
+left dangling — and
+`work_management.patches.v1_0.seed_sections_from_cost_centres` builds a first
+pass of Work Management Section records from the Cost Center tree already in
+the ledger, leaving anything ambiguous unassigned for a human to place.
 
 ### Site-specific configuration
 

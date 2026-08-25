@@ -8,6 +8,7 @@
  "engine": "InnoDB",
  "field_order": [
   "farm_name",
+  "business_unit",
   "project",
   "column_break_main",
   "disabled",
@@ -22,6 +23,12 @@
    "reqd": 1,
    "unique": 1,
    "description": "The unit of land or operation work is planned against. Whatever your project calls it — farm, estate, site, division — name it here."
+  },
+  {
+   "fieldname": "business_unit",
+   "fieldtype": "Data",
+   "label": "Business Unit",
+   "description": "The level above this farm. Becomes a link to the Business Unit record where that doctype is installed; plain text otherwise."
   },
   {
    "fieldname": "project",

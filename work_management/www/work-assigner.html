@@ -14,7 +14,7 @@
 #wap nav.tabs button[aria-selected=true]{background:var(--ink);color:#fff;border-color:var(--ink);box-shadow:var(--sh)}
 #wap .panel{display:none;padding-top:18px}#wap .panel.on{display:block}
 #wap .grid2{display:grid;grid-template-columns:.9fr 1.1fr;gap:20px}
-@media(max-width:820px){#wap .grid2{grid-template-columns:1fr}}
+@media(max-width:820px){ #wap .grid2{grid-template-columns:1fr}}
 #wap label.fl{display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:14px 0 5px}
 #wap select,#wap input{font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 11px;width:100%;background:#fff;color:var(--ink);border-radius:var(--rs);transition:border-color .12s,box-shadow .12s}
 #wap select:focus,#wap input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
@@ -159,7 +159,7 @@
 #wap .lfb-clear{font-family:inherit;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--line);background:#fff;color:var(--mute);padding:7px 12px;border-radius:999px;cursor:pointer;transition:all .12s}
 #wap .lfb-clear:hover{border-color:var(--ink);color:var(--ink)}
 #wap .lfb-count{font-size:10px;color:var(--mute);letter-spacing:.06em;text-transform:uppercase;font-weight:600;margin-left:auto}
-@media(prefers-reduced-motion:reduce){#wap *,#wap *::before,#wa-subdialog *{animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){ #wap *,#wap *::before,#wa-subdialog *{animation:none!important;transition:none!important}}
 /* harmonize legacy inline styles emitted by the JS layer (static strings) */
 #wap [style*="border:2px solid var(--ink)"],#wa-subdialog [style*="border:2px solid var(--ink)"]{border:1px solid #e2e8f0!important;border-radius:16px;box-shadow:0 25px 50px -12px rgba(15,23,42,.35);overflow:hidden}
 #wap [style*="border:1px solid #eee"],#wa-subdialog [style*="border:1px solid #eee"]{border-color:#e2e8f0!important;border-radius:10px}
@@ -685,6 +685,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
 </div>
 </div>
+<script>window.WM_TAXONOMY = {{ (taxonomy or {}) | tojson }};</script>
 <script>
 (function () {
   var who = document.getElementById("wa-who");
