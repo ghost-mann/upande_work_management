@@ -7,7 +7,6 @@ import json
 
 import frappe
 
-from work_management import sections
 from work_management.api.config import get_config
 
 
@@ -33,6 +32,120 @@ def wm_dashboard(**kwargs):
     WEEKDAY_HOURS = 8
     SATURDAY_HOURS = 6
     SUNDAY_HOURS = 8
+
+    # ---- sections, inlined so this file runs in both worlds --------------------
+    # The app keeps these in work_management/sections.py, with unit tests. A Server
+    # Script has no __import__, so the live copy cannot import them -- and this file
+    # is what both the live script and the app's api/dashboard.py are built from.
+    # Repeating them here is what lets the two behave identically; letting the app
+    # import while the live script went without is what made them diverge.
+    # test_dashboard_inline.py asserts these still agree with sections.py.
+    WMSEC_UNASSIGNED = "Unassigned"
+
+
+    def wmsec_sections_available():
+        """Whether this site has sections at all.
+
+        The doctype ships with the app. The legacy deployment does not have it, and
+        frappe.get_all() on a doctype that does not exist raises rather than
+        returning nothing -- so asking first is what lets the same script serve both
+        sites. Without this the Group toggle took the whole card down with a
+        DoesNotExistError instead of simply having nothing to group by.
+        """
+        return 1 if frappe.db.exists("DocType", "Work Management Section") else 0
+
+
+    def wmsec_enabled_block_to_section():
+        """{block: section} for the sections the cost-centre toggle still shows."""
+        if not wmsec_sections_available():
+            return {}
+        wmsec_off = []
+        for wmsec_r in frappe.get_all("Work Management Section", filters={"disabled": 1}, fields=["name"]):
+            wmsec_off.append(wmsec_r.name)
+        wmsec_map = {}
+        for wmsec_r in frappe.get_all("Work Management Section Block",
+                filters={"parenttype": "Work Management Section"}, fields=["block", "parent"]):
+            if wmsec_r.parent not in wmsec_off:
+                wmsec_map[wmsec_r.block] = wmsec_r.parent
+        return wmsec_map
+
+
+    def wmsec_blocks_of(key, mapping):
+        """The blocks one named section holds. Empty for Unassigned, which is
+        defined by what it excludes rather than by a list of its own."""
+        if key == WMSEC_UNASSIGNED:
+            return []
+        wmsec_held = []
+        for wmsec_b in mapping:
+            if mapping[wmsec_b] == key:
+                wmsec_held.append(wmsec_b)
+        return sorted(wmsec_held)
+
+
+    def wmsec_group_condition(column, key, mapping):
+        """(SQL fragment, params) restricting cost rows to the blocks of one group.
+
+        No actuals record carries a section name, so a section is asked for as the
+        blocks it holds -- asking for the name itself returned nothing, every time.
+        Unassigned is the complement, written as a negation so it needs no list of
+        every block in existence. A named section holding nothing matches nothing
+        rather than everything. On a site with no sections at all the complement is
+        "has a block" rather than 1=1, because the row it opens was totalled from
+        rows that had one.
+        """
+        if key == WMSEC_UNASSIGNED:
+            wmsec_claimed = sorted(mapping)
+            if not wmsec_claimed:
+                return column + " is not null", []
+            return column + " not in (" + ", ".join(["%s"] * len(wmsec_claimed)) + ")", wmsec_claimed
+        wmsec_held = wmsec_blocks_of(key, mapping)
+        if not wmsec_held:
+            return "1=0", []
+        return column + " in (" + ", ".join(["%s"] * len(wmsec_held)) + ")", wmsec_held
+
+
+    def wmsec_roll_up(rows, mapping):
+        """Total per-block cost-centre rows into per-section rows, biggest first.
+
+        Carries the farm where the blocks agree on one, merges the weekly trend
+        week by week, and derives the ratios of the sums it already keeps. What
+        cannot be added -- workers, tasks, days active -- the caller leaves empty,
+        because two blocks can share all three.
+        """
+        wmsec_grouped = {}
+        wmsec_farms = {}
+        wmsec_weeks = {}
+        for wmsec_row in rows:
+            wmsec_key = mapping.get(wmsec_row.get("block")) or WMSEC_UNASSIGNED
+            wmsec_b = wmsec_grouped.get(wmsec_key)
+            if not wmsec_b:
+                wmsec_b = {"key": wmsec_key, "blocks": 0, "labour_spend": 0.0,
+                    "gl_spend": 0.0, "qty": 0.0, "worker_days": 0.0}
+                wmsec_grouped[wmsec_key] = wmsec_b
+                wmsec_farms[wmsec_key] = []
+                wmsec_weeks[wmsec_key] = {}
+            wmsec_b["blocks"] = wmsec_b["blocks"] + 1
+            if wmsec_row.get("farm") not in wmsec_farms[wmsec_key]:
+                wmsec_farms[wmsec_key].append(wmsec_row.get("farm"))
+            for wmsec_p in (wmsec_row.get("trend") or []):
+                wmsec_w = wmsec_p["w"]
+                wmsec_weeks[wmsec_key][wmsec_w] = (wmsec_weeks[wmsec_key].get(wmsec_w) or 0.0) + float(wmsec_p.get("pay") or 0)
+            for wmsec_f in ("labour_spend", "gl_spend", "qty", "worker_days"):
+                wmsec_b[wmsec_f] = wmsec_b[wmsec_f] + float(wmsec_row.get(wmsec_f) or 0)
+        wmsec_out = []
+        for wmsec_key in wmsec_grouped:
+            wmsec_b = wmsec_grouped[wmsec_key]
+            wmsec_b["farm"] = wmsec_farms[wmsec_key][0] if len(wmsec_farms[wmsec_key]) == 1 else None
+            wmsec_tr = []
+            for wmsec_w in sorted(wmsec_weeks[wmsec_key]):
+                wmsec_tr.append({"w": wmsec_w, "pay": wmsec_weeks[wmsec_key][wmsec_w]})
+            wmsec_b["trend"] = wmsec_tr
+            wmsec_b["cost_per_unit"] = (wmsec_b["labour_spend"] / wmsec_b["qty"]) if wmsec_b["qty"] > 0 else None
+            wmsec_b["cost_per_wd"] = (wmsec_b["labour_spend"] / wmsec_b["worker_days"]) if wmsec_b["worker_days"] > 0 else None
+            wmsec_b["labour_share"] = (wmsec_b["labour_spend"] / wmsec_b["gl_spend"] * 100) if wmsec_b["gl_spend"] > 0 else None
+            wmsec_out.append(wmsec_b)
+        return sorted(wmsec_out, key=lambda r: -r["labour_spend"])
+
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -2092,11 +2205,12 @@ def wm_dashboard(**kwargs):
         ccfrom = frappe.form_dict.get("from_date")
         ccto = frappe.form_dict.get("to_date")
         ccq = (frappe.form_dict.get("q") or "").strip().lower()
-        group_by_section = (frappe.form_dict.get("group_by") or "block") == "section"
+        group_by_section = ((frappe.form_dict.get("group_by") or "block") == "section"
+            and wmsec_sections_available())
         # Read once, before the loop: the search needs it to know what each block
         # is called in this toggle position, and the rollup below reads the same
         # mapping so a disabled section's blocks land in Unassigned in both.
-        section_map = sections.enabled_block_to_section() if group_by_section else {}
+        section_map = wmsec_enabled_block_to_section() if group_by_section else {}
         conds = "ac.workflow_state='CONFIRMED' AND ac.block_section IS NOT NULL"
         params = []
         if ccfarm:
@@ -2163,7 +2277,7 @@ def wm_dashboard(**kwargs):
             # from what survives it: the farm subtotals, the median that colours
             # the cost-per-unit column, the totals strip and the block count.
             if ccq:
-                named = str(section_map.get(r.block) or sections.UNASSIGNED) if group_by_section else str(r.block)
+                named = str(section_map.get(r.block) or WMSEC_UNASSIGNED) if group_by_section else str(r.block)
                 if ccq not in named.lower():
                     continue
             gl_spend = 0
@@ -2253,7 +2367,7 @@ def wm_dashboard(**kwargs):
         # fall back to Unassigned here rather than being dropped or counted under
         # a section name the toggle no longer shows -- money must still add up.
         if group_by_section:
-            rolled = sections.roll_up(rows, section_map)
+            rolled = wmsec_roll_up(rows, section_map)
             # The colour scale compares a row against the middle of its own kind.
             # Left as the median block, it judged sections against blocks -- a
             # section holding six blocks is dearer than almost any single one of
@@ -2299,12 +2413,13 @@ def wm_dashboard(**kwargs):
         ccfarm = frappe.form_dict.get("farm")
         ccfrom = frappe.form_dict.get("from_date")
         ccto = frappe.form_dict.get("to_date")
-        drill_into_section = (frappe.form_dict.get("group_by") or "block") == "section"
+        drill_into_section = ((frappe.form_dict.get("group_by") or "block") == "section"
+            and wmsec_sections_available())
         if drill_into_section:
             # The same mapping the rollup used, so a disabled section's blocks
             # sit under Unassigned in the row and in the drill-down alike.
-            where, where_params = sections.group_condition(
-                "ac.block_section", ccblock, sections.enabled_block_to_section())
+            where, where_params = wmsec_group_condition(
+                "ac.block_section", ccblock, wmsec_enabled_block_to_section())
             conds = "ac.workflow_state='CONFIRMED' AND " + where
             params = list(where_params)
             group_blocks = None  # resolved from the row's own condition, below
