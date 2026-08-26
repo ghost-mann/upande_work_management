@@ -95,7 +95,7 @@ def wm_masterplan(**kwargs):
         out["can_gm_approve"] = CAN_GM
         out["is_consultant"] = IS_CONSULTANT
         out["can_edit_approved"] = CAN_EDIT_APPROVED
-        out["farms"] = [f.name for f in frappe.db.get_all("Farm", fields=["name"], order_by="name")]
+        out["farms"] = [f.name for f in frappe.db.get_all("Work Management Farm", fields=["name"], order_by="name")]
         out["counts"] = frappe.db.sql("""
             SELECT workflow_state st, COUNT(*) n
             FROM `tabWork Management Master Plan` GROUP BY workflow_state
