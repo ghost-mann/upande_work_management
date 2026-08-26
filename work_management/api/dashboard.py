@@ -1318,6 +1318,93 @@ def wm_dashboard(**kwargs):
         out["key"] = ckey
         out["totals"] = {"count": len(rows), "estimated": est, "paid": paid, "outstanding": est - paid}
 
+    elif action == "mp_value":
+        # Planned against delivered, in money, per master plan -- which is per farm
+        # and per period, because that is what a master plan is. No task-level
+        # matching is invented here: a master plan is defined on farm + period, so
+        # that is the join, and the figures answer the question the plan itself asks.
+        mpfarm = frappe.form_dict.get("farm")
+        mpfrom = frappe.form_dict.get("from_date")
+        mpto = frappe.form_dict.get("to_date")
+        mconds = "1=1"
+        mparams = []
+        if mpfarm:
+            mconds = mconds + " AND mp.farm = %s"
+            mparams.append(mpfarm)
+        if mpfrom:
+            mconds = mconds + " AND mp.period_to >= %s"
+            mparams.append(mpfrom)
+        if mpto:
+            mconds = mconds + " AND mp.period_from <= %s"
+            mparams.append(mpto)
+        plans = frappe.db.sql("""
+            SELECT mp.name, mp.farm, mp.period_from, mp.period_to, mp.workflow_state,
+                   mp.total_man_days, mp.total_cost
+            FROM `tabWork Management Master Plan` mp
+            WHERE """ + mconds + """
+            ORDER BY mp.period_from DESC
+            LIMIT 120
+        """, tuple(mparams), as_dict=True)
+
+        # the budget, from the plan's own activity lines. remaining_* is what the
+        # planner screen decrements as requests draw the budget down, so
+        # planned - remaining is what has been committed rather than delivered.
+        budget = {}
+        if plans:
+            for ba in frappe.db.sql("""
+                SELECT parent,
+                       COALESCE(SUM(cost),0) planned_cost,
+                       COALESCE(SUM(remaining_cost),0) remaining_cost,
+                       COALESCE(SUM(work_qty),0) planned_qty,
+                       COALESCE(SUM(remaining_qty),0) remaining_qty,
+                       COUNT(*) line_count
+                FROM `tabWork Management Master Plan Activity`
+                WHERE parent IN %s
+                GROUP BY parent
+            """, (tuple([mp.name for mp in plans]),), as_dict=True):
+                budget[ba.parent] = ba
+
+        # delivery, read once by farm and day and then attributed to whichever
+        # plan's period contains it -- one query rather than one per plan.
+        delivered = frappe.db.sql("""
+            SELECT ac.farm farm, we.work_date d,
+                   COALESCE(SUM(we.amount),0) pay,
+                   COALESCE(SUM(we.actual_quantity),0) qty
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE ac.workflow_state = 'CONFIRMED'
+            GROUP BY ac.farm, we.work_date
+        """, as_dict=True)
+
+        mrows = []
+        for mp in plans:
+            ba = budget.get(mp.name)
+            planned = frappe.utils.flt(ba.planned_cost) if ba else frappe.utils.flt(mp.total_cost)
+            remaining = frappe.utils.flt(ba.remaining_cost) if ba else 0
+            pqty = frappe.utils.flt(ba.planned_qty) if ba else 0
+            dpay = 0
+            dqty = 0
+            for dv in delivered:
+                if dv.farm == mp.farm and mp.period_from <= dv.d <= mp.period_to:
+                    dpay = dpay + frappe.utils.flt(dv.pay)
+                    dqty = dqty + frappe.utils.flt(dv.qty)
+            mrows.append({
+                "plan": mp.name, "farm": mp.farm, "state": mp.workflow_state,
+                "period_from": str(mp.period_from), "period_to": str(mp.period_to),
+                "lines": frappe.utils.cint(ba.line_count) if ba else 0,
+                "planned": planned,
+                "committed": planned - remaining,
+                "remaining": remaining,
+                "delivered": dpay,
+                "planned_qty": pqty,
+                "delivered_qty": dqty,
+                "achieved_pct": (dpay / planned * 100) if planned > 0 else None,
+                "committed_pct": ((planned - remaining) / planned * 100) if planned > 0 else None,
+                "variance": dpay - planned,
+            })
+        out["plans"] = mrows
+        out["farms"] = FARMS
+
     elif action == "charts":
         # confirmed-work analytics: weekly output/pay/workers, top tasks, farm share, approver ranking.
         # Follows the dashboard date filter; no filter = last ~12 weeks.
