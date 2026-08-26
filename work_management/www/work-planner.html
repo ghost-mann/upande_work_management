@@ -869,3 +869,11 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   document.addEventListener("keydown", function(e){ if(e.key==="Escape") close(); });
 })();
 </script>
+<script>window.frappe = window.frappe || {}; window.frappe.csrf_token = "{{ csrf_token }}";</script>
+<script>
+(function () {
+  var s = document.createElement("script");
+  s.src = "/assets/work_management/js/work-planner.js";
+  document.body.appendChild(s);
+})();
+</script>
