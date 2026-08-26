@@ -137,3 +137,40 @@ class TestEveryTemplateCompiles(unittest.TestCase):
 			except jinja2.TemplateSyntaxError as exc:
 				broken.append(f"{name}:{exc.lineno} {exc.message}")
 		self.assertEqual(broken, [], f"templates Jinja cannot compile: {broken}")
+
+
+class TestPagesThatWriteCarryACsrfToken(unittest.TestCase):
+	"""A page that POSTs has to be handed the session's CSRF token by its controller.
+
+	Frappe emits `frappe.csrf_token` from the `<!-- csrf_token -->` marker in
+	frappe/templates/base.html -- and these templates never reach base.html.
+	They carry no `{% extends %}`, and template_page.py decides the wrap against
+	`context.base_template`, which is still unset at that point (it is filled in
+	afterwards, by post_process_context). So each page renders as a bare
+	fragment: no base template, no marker, no token, and every write comes back
+	`CSRFTokenError: Invalid Request`. The controller has to supply it.
+	"""
+
+	def js_files(self, html):
+		return re.findall(r"/assets/work_management/js/([\w-]+\.js)", html)
+
+	def test_writing_pages_emit_and_set_the_token(self):
+		for name in sorted(os.listdir(WWW)):
+			if not name.endswith(".html"):
+				continue
+			html = read(os.path.join(WWW, name))
+			scripts = [read(os.path.join(JS, js)) for js in self.js_files(html)]
+			if not any("X-Frappe-CSRF-Token" in s for s in scripts):
+				continue
+			with self.subTest(page=name):
+				self.assertIn(
+					'window.frappe.csrf_token = "{{ csrf_token }}"',
+					html,
+					f"{name} POSTs but never puts the token on the frappe global",
+				)
+				controller = name[: -len(".html")].replace("-", "_") + ".py"
+				self.assertIn(
+					"context.csrf_token = frappe.sessions.get_csrf_token()",
+					read(os.path.join(WWW, controller)),
+					f"{controller} leaves csrf_token undefined, so the template renders it empty",
+				)
