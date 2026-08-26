@@ -97,6 +97,138 @@ input), `hr_approved_by`, `gm_approved_by`.
 | `pay_mark_paid` | Release: mark entry Paid + stamp rows |
 | `pay_run_withdraw` | Return to unpaid: clear refs/review stamps, delete entry |
 
+## The taxonomy — naming the levels
+
+The module ships calling things **Farm** and **Block**. A project that runs
+estates and plots says so once, and every label follows. Nothing about the
+data or the meaning of a level is configurable — only what it is called.
+
+### The levels
+
+`work_management/taxonomy.py` holds them, ordered outermost first:
+
+| key | shipped name | notes |
+|---|---|---|
+| `bu` | Business Unit / Units | optional, **off** by default |
+| `top` | Farm / Farms | always present |
+| `unit` | Block / Blocks | always present |
+| `section` | Section / Sections | **not a level in the chain** — it names the cost-centre grouping and its toggle |
+
+Names live on **Work Management Settings** as `tax_<key>_singular` /
+`tax_<key>_plural`, plus `tax_bu_enabled`. A blank or whitespace-only value
+falls back to the shipped default rather than rendering an empty label
+(`_pick()`), so clearing a field restores the original wording instead of
+breaking a form.
+
+### How a name reaches the desk
+
+`apply_labels()` writes **Property Setters** — never edits to the shipped
+JSON — so the app's files are the same on every site. `FIELD_LABELS` is the
+catalogue: 27 `(doctype, fieldname, template)` triples, where a template looks
+like `"{unit_singular} / {section_singular}"` or `"Two {top_plural}, one day"`.
+`label_for()` fills one and leaves an unknown placeholder **visible** rather
+than raising — a typo in a label should look wrong, not stop a migrate.
+
+`plan_labels()` compares the rendered label against the **shipped JSON**
+(`shipped_labels()`), not against the setter it wrote last time. Two
+consequences worth knowing:
+
+- a site that renamed nothing carries **zero** Property Setters, where it used
+  to carry one per catalogued field, each restating the JSON;
+- clearing a name **removes** its setter rather than writing the old word into
+  one, which is what makes "clearing restores the original" literally true.
+
+### How a name reaches the five web screens
+
+`get_config()["taxonomy"]` → the www controller sets `context.taxonomy` → the
+template emits `window.WM_TAXONOMY = {{ taxonomy | tojson }}` → the screen's JS
+reads `TX(key, fallback)`.
+
+**Escaping is not optional here.** Frappe does not enable Jinja autoescape, so
+`{{ }}` emits markup verbatim; every taxonomy interpolation carries `| e`, and
+every JS insertion goes through `esc(TX(...))`. Level names are admin-entered
+Data fields with no character restriction and Settings is writable by HR
+Manager, so an unescaped one is a stored-XSS path into a System Manager's
+browser. Two guards hold the line: one requires every `TX(` in the dashboard JS
+to be wrapped in `esc(` (with a single named exemption for the accessor that
+feeds `.textContent` and `.placeholder`), and one blanks Jinja expressions in
+the five templates and fails on any level word left in plain markup.
+
+### How a name reaches the desk navigation
+
+Workspace Links and Workspace Sidebar Items are **records, not doctype
+fields**, so no Property Setter reaches them. `desk.relabel_navigation()` sets
+them in place, keyed on what each entry *points at* rather than on its label —
+after the first relabel the label is no longer the shipped one and would not be
+found again. It runs from `desk.sync()` (so after every migrate, and after any
+force-import that puts the shipped labels back) and from
+`Settings.on_update`, so a rename does not wait for a migrate.
+
+### Business Unit — a real level, optional
+
+`Work Management Farm.business_unit` ships as **Data** and upgrades to a
+**Link** to `upande_core`'s `Business Unit` doctype wherever that app is
+installed, degrading back to Data — with no leftover Property Setters — if it
+is removed. Both directions are verified on a real dual-app site, not inferred.
+
+`tax_bu_enabled` decides whether the level exists on the form at all. The field
+ships `hidden: 1`; turning the level on writes a `hidden=0` setter, turning it
+off **deletes** that setter rather than writing `hidden=1` over a field that is
+hidden anyway. Naming the level is deliberately not the same as having one:
+typing "Division" into the template without ticking the box reveals nothing.
+A one-time patch (`enable_business_unit_level_if_used`) turns the level on
+wherever any farm already carries a business unit, so a site that had started
+using the field does not watch it vanish on the next migrate.
+
+### Section — deliberately not a level
+
+A `Work Management Section` **owns a table of blocks**; a block does not name
+its section. So setting one up means opening a section and adding blocks to it,
+rather than opening 83 blocks. A block belongs to at most one section —
+counted twice it would double its cost and the section totals would quietly
+stop matching the block totals they are built from. Blocks in no section group
+under `Unassigned`, so the section view always totals the same as the block
+view it replaces, and the doctype refuses the name "Unassigned" for a real
+section because `roll_up` would merge the two.
+
+### Guards that keep it honest
+
+- **The reverse-completeness guard.** The catalogue used to be checked in one
+  direction only — every entry names a real field. Nothing asked the reverse,
+  so a field added after the catalogue was frozen was invisible to it; that is
+  how `Work Management Section`, the one doctype this feature shipped, became
+  the one place the feature did not apply to itself. The guard now scans every
+  shipped DocType JSON for a label containing any level's shipped name and
+  fails listing each one the catalogue does not carry. It found seven.
+- **Named omissions.** `att_block_absent` — "block employees marked Absent" is
+  a verb — and the `tax_*` fields themselves, because renaming "Farm level
+  (singular)" the moment somebody types Estate into it hides the one label that
+  explains what the field does. A second test fails if an exception outlives
+  its field.
+- **The generated-wording test** asserts every template renders to today's
+  shipped wording, so an upgraded site looks unchanged until somebody edits the
+  template.
+
+### What the taxonomy deliberately does not touch
+
+- **Doctype names.** A DocType's name is its identity.
+- **Fieldnames, workflow states, roles.** "Farm Manager" is a real Role and is
+  not renamed by the taxonomy.
+- **Payroll export column headers.** The Excel/CSV exports build rows as
+  `{Farm: ..., Block: ...}`, whose keys become the column headers — a data
+  contract something downstream reads, not a label.
+- **Reports.** Nothing groups by Business Unit. The Settings description, the
+  README and the shipped guide used to promise that it did; the claim was
+  removed rather than the feature invented.
+
+### On the live site
+
+None of this exists there yet. `kaitet-group.upande.com` has **no `tax_*`
+fields**, and no `Work Management Farm` or `Work Management Section` doctype —
+its Work Management doctypes are custom records that the app has never been
+installed over. The taxonomy is app-only until that install happens, and the
+dashboard's Group toggle correctly falls back to block mode there.
+
 ## Time & Attendance gate
 
 Toggles live on **Work Management Settings** (Single): `att_block_absent`,

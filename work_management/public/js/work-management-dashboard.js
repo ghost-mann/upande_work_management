@@ -591,25 +591,26 @@
             '<button type="button" class="subtab" data-pp="assigners">Assigners</button>'+
             '<button type="button" class="subtab" data-pp="enterers">Actuals enterers</button>'+
           '</div>'+
+          '<div class="pex-filters" id="pf-filters">'+
+            '<label>From <input type="date" id="pf-from" /></label>'+
+            '<label>To <input type="date" id="pf-to" /></label>'+
+            '<button id="pf-clear" class="pex-clear">Clear</button>'+
+            '<button id="pf-xls" class="pex-clear">Download for Excel</button>'+
+          '</div>'+
           '<div id="wm-perf-body"><div class="loading">Measuring planners&hellip;</div></div>'+
         '</div></div>'+
       // ===== trends & analytics tabs =====
       '<div class="sech">Trends &amp; analytics</div>'+
       '<div class="card"><div class="hd"><h3>What the numbers are doing</h3><div class="cap">confirmed work only &middot; last 12 weeks</div></div>'+
-        '<div class="bd"><div id="wm-an-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div><div id="wm-an-body" style="min-height:180px;color:var(--mute)">Loading charts…</div></div></div>'+
-      // ===== pipeline + per-farm comparison (one card, pill tabs) =====
-      '<div class="sech">Pipeline &mdash; plan &rarr; assign &rarr; confirm &rarr; pay</div>'+
-      '<div class="card"><div class="hd"><h3>Pipeline &amp; per-'+esc(TX("top_singular","Farm")).toLowerCase()+' comparison</h3><div class="cap">switch views · every number in one scrollable table</div></div>'+
         '<div class="bd">'+
-          '<div class="subtabs" id="wm-combo-tabs">'+
-            '<button type="button" class="subtab on" data-ct="funnel">Pipeline</button>'+
-            '<button type="button" class="subtab" data-ct="deploy">Deployment</button>'+
-            '<button type="button" class="subtab" data-ct="output">Output</button>'+
-            '<button type="button" class="subtab" data-ct="money">Money</button>'+
-            '<button type="button" class="subtab" data-ct="flow">Value flow</button>'+
+          '<div class="pex-filters" id="an-filters">'+
+            '<select id="an-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
+            '<label>From <input type="date" id="an-from" /></label>'+
+            '<label>To <input type="date" id="an-to" /></label>'+
+            '<button id="an-clear" class="pex-clear">Clear</button>'+
           '</div>'+
-          '<div id="wm-combo" style="max-height:420px;overflow:auto"></div>'+
-        '</div></div>'+
+          '<div id="wm-an-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div><div id="wm-an-body" style="min-height:180px;color:var(--mute)">Loading charts…</div></div></div>'+
+      // ===== pipeline + per-farm comparison (one card, pill tabs) =====
       '<div class="sech">Pipeline Explorer &mdash; drill into planning, assigning, actuals &amp; payment</div>'+
       '<div class="card"><div class="hd"><h3>All records</h3><div class="cap">click any row for full detail &middot; filter and browse each stage</div></div>'+
         '<div class="bd">'+
@@ -634,25 +635,6 @@
         '</div></div>'+
       '<div id="pex-modal" class="pex-modal"><div class="pex-back"></div><div class="pex-sheet"><button class="pex-x">×</button><div id="pex-modal-body">…</div></div></div>'+
       // ===== COST BREAKDOWN: estimated vs paid, per activity / worker / farm =====
-      '<div class="sech">Cost breakdown &mdash; estimated vs paid out</div>'+
-      '<div class="card"><div class="hd"><h3>Labour cost</h3><div class="cap">estimated (earned on confirmed actuals) vs actually paid out</div></div>'+
-        '<div class="bd">'+
-          '<div class="pex-tabs" id="cb-tabs">'+
-            '<button data-cg="task" class="on">By activity</button>'+
-            '<button data-cg="worker">By worker</button>'+
-            '<button data-cg="farm">By '+esc(TX("top_singular","Farm")).toLowerCase()+'</button>'+
-          '</div>'+
-          '<div class="pex-filters" id="cb-filters">'+
-            '<input id="cb-q" placeholder="Search…" />'+
-            '<select id="cb-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
-            '<input id="cb-task" placeholder="Task" />'+
-            '<label>From <input type="date" id="cb-from" /></label>'+
-            '<label>To <input type="date" id="cb-to" /></label>'+
-            '<button id="cb-clear" class="pex-clear">Clear</button>'+
-          '</div>'+
-          '<div id="cb-totals" class="cb-totals"></div>'+
-          '<div id="cb-list" style="max-height:420px;overflow:auto;border-top:1px solid #eee">Loading&hellip;</div>'+
-        '</div></div>'+
       // ===== COST CENTRE (BLOCK): which block consumes the most money =====
       '<div class="sech">Cost centres &mdash; spend by '+esc(TX("unit_singular","Block")).toLowerCase()+' or '+esc(TX("section_singular","Section")).toLowerCase()+'</div>'+
       '<div class="card"><div class="hd"><h3>Cost centres</h3><div class="cap">running labour cost per '+esc(TX("unit_singular","Block")).toLowerCase()+' beside GL cost-centre actuals, or totalled by '+esc(TX("section_singular","Section")).toLowerCase()+' &middot; boxes sized by spend &middot; click a row for its full breakdown</div></div>'+
@@ -740,7 +722,6 @@
           '<div class="subtabs" id="wm-q-tabs"></div>'+
           '<div id="wm-q-body" style="max-height:420px;overflow:auto;margin-top:10px"></div>'+
         '</div></div>';
-    comboInit(D);
     activityTable();
     planCompletion();
     initCharts();
@@ -839,7 +820,25 @@
     });
     paintAnTabs();
     AN.data=null;
-    call({action:"charts"}).then(function(d){
+    ["an-farm","an-from","an-to"].forEach(function(id){
+      var e=el(id); if(e && !e.dataset.wired){ e.dataset.wired="1"; e.onchange=function(){ loadCharts(); }; }
+    });
+    var anc=el("an-clear");
+    if(anc && !anc.dataset.wired){
+      anc.dataset.wired="1";
+      anc.onclick=function(){ ["an-from","an-to"].forEach(function(id){ var e=el(id); if(e) e.value=""; });
+        var f=el("an-farm"); if(f) f.value=""; loadCharts(); };
+    }
+    loadCharts();
+  }
+  function loadCharts(){
+    var a={action:"charts", farm:(el("an-farm")||{}).value||"",
+      from_date:(el("an-from")||{}).value||"", to_date:(el("an-to")||{}).value||""};
+    call(a).then(function(d){
+      var fsel=el("an-farm");
+      if(fsel && fsel.options.length<=1 && d.farms){
+        d.farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fsel.appendChild(o); });
+      }
       if(d.error){ var bd=el("wm-an-body"); if(bd) bd.innerHTML='<div style="padding:16px;text-align:center">Could not load charts: '+esc(d.error)+'</div>';
         var pp0=el("wm-appr-people"); if(pp0) pp0.innerHTML='<div style="color:var(--mute)">Ranking unavailable.</div>'; return; }
       AN.data=d; drawAnalytic();
@@ -2708,6 +2707,31 @@
     bd.innerHTML=head+g;
   }
 
+  // A CSV rather than a real .xlsx: it opens straight into Excel and needs no
+  // library, where a true workbook would mean lazy-loading XLSX the way the
+  // payment screen does. Say so if you want the workbook instead.
+  function exportPerformers(){
+    if(!PP.data){ toast("Nothing to export yet"); return; }
+    var rows=(PP.tab==="assigners"?PP.data.assigners:(PP.tab==="enterers"?PP.data.enterers:PP.data.creators))||[];
+    if(!rows.length){ toast("Nothing to export"); return; }
+    var cols=Object.keys(rows[0]);
+    var esc2=function(v){
+      if(v===null||v===undefined) return "";
+      var t=String(v);
+      return /[",\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t;
+    };
+    var lines=[cols.join(",")];
+    rows.forEach(function(r){ lines.push(cols.map(function(c){ return esc2(r[c]); }).join(",")); });
+    var r=ppRange();
+    var name="pipeline-performers-"+PP.tab+(r.from_date?"-"+r.from_date:"")+(r.to_date?"-to-"+r.to_date:"")+".csv";
+    var blob=new Blob(["\ufeff"+lines.join("\r\n")], {type:"text/csv;charset=utf-8;"});
+    var a=document.createElement("a");
+    a.href=URL.createObjectURL(blob); a.download=name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    toast("Downloaded "+name);
+  }
+
   // ============ PIPELINE PERFORMERS (planners & assigners) ============
   var PP={data:null, tab:"creators"};
   function initPerformers(){
@@ -2722,7 +2746,22 @@
         };
       });
     }
-    call({action:"planner_performance"}).then(function(d){
+    ["pf-from","pf-to"].forEach(function(id){
+      var e=el(id); if(e) e.onchange=function(){ loadPerformers(); };
+    });
+    var pfc=el("pf-clear");
+    if(pfc) pfc.onclick=function(){ ["pf-from","pf-to"].forEach(function(id){ var e=el(id); if(e) e.value=""; }); loadPerformers(); };
+    var pfx=el("pf-xls"); if(pfx) pfx.onclick=function(){ exportPerformers(); };
+    loadPerformers();
+  }
+  function ppRange(){
+    return {from_date:(el("pf-from")||{}).value||"", to_date:(el("pf-to")||{}).value||""};
+  }
+  function loadPerformers(){
+    var box=el("wm-perf-body"); if(!box) return;
+    box.innerHTML='<div class="loading">Measuring planners&hellip;</div>';
+    var a=ppRange(); a.action="planner_performance";
+    call(a).then(function(d){
       if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
       PP.data=d; renderPerformers();
     }).catch(function(e){ box.innerHTML='<div class="empty">Could not measure planners: '+esc(e.message)+'</div>'; });
@@ -2736,6 +2775,12 @@
     var box=el("wm-perf-body"); if(!box||!PP.data) return;
     var rows=(PP.tab==="assigners"?PP.data.assigners:(PP.tab==="enterers"?PP.data.enterers:PP.data.creators))||[];
     if(!rows.length){ box.innerHTML='<div class="empty">No activity in this window.</div>'; return; }
+    // Best-delivering first. Sorted on a copy: the chips below read rows[0] as
+    // the server ordered it, and re-pointing that would change what they mean.
+    var srows=rows.slice();
+    if(srows.length && srows[0].achieved_pct !== undefined){
+      srows.sort(function(a,b){ return (b.achieved_pct||0)-(a.achieved_pct||0); });
+    }
     // most / least expensive by cost per unit (only people with real volume)
     var judged=rows.filter(function(r){ return (r.actual_qty||0)>500 && r.cost_per_unit>0; });
     var maxC=null,minC=null;
@@ -2756,9 +2801,9 @@
       h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
         '<th'+sth+'>Planner</th><th class="n"'+sth+'>Plans</th><th class="n"'+sth+'>Target qty</th>'+
         '<th class="n"'+sth+'>Actual qty</th><th class="n"'+sth+'>Achieved</th>'+
-        '<th class="n"'+sth+'>Budget KES</th><th class="n"'+sth+'>Spent KES</th>'+
+        '<th class="n"'+sth+'>Planned KES</th><th class="n"'+sth+'>Spent KES</th>'+
         '<th class="n"'+sth+'>Of plan</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
-      rows.forEach(function(r){
+      srows.forEach(function(r){
         var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
         h+='<tr'+hot+'><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
           '<td class="n m">'+fmt(r.plans)+'</td><td class="n m">'+fmt(r.target_qty)+'</td>'+
@@ -2773,7 +2818,7 @@
         '<span><b>Target qty</b> — the output their plans promised (sum of plan targets, in each task\'s units).</span>'+
         '<span><b>Actual qty</b> — confirmed output actually delivered on those plans.</span>'+
         '<span><b>Achieved</b> — Actual ÷ Target: how much of what they planned got done (green ≥90%, amber ≥60%, red below).</span>'+
-        '<span><b>Budget KES</b> — what their plans were worth if fully delivered (rate × target).</span>'+
+        '<span><b>Planned KES</b> — what their plans were worth if fully delivered (rate × target).</span>'+
         '<span><b>Spent KES</b> — confirmed pay actually earned on their plans.</span>'+
         '<span><b>Of plan</b> — Spent ÷ Planned. Low is NOT automatically savings — read it with Achieved (50% spent at 50% achieved just means half the work happened).</span>'+
         '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this planner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
@@ -2782,7 +2827,7 @@
         '<th'+sth+'>Enterer</th><th class="n"'+sth+'>Docs</th><th class="n"'+sth+'>Worker-days</th>'+
         '<th class="n"'+sth+'>Qty entered</th><th class="n"'+sth+'>Value KES</th>'+
         '<th class="n"'+sth+'>Avg entry lag</th><th class="n"'+sth+'>Rejected</th></tr></thead><tbody>';
-      rows.forEach(function(r){
+      srows.forEach(function(r){
         h+='<tr><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
           '<td class="n m">'+fmt(r.docs)+'</td><td class="n m">'+fmt(r.worker_days)+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.value,0)+'</td>'+
@@ -2801,7 +2846,7 @@
         '<th'+sth+'>Assigner</th><th class="n"'+sth+'>Assignments</th><th class="n"'+sth+'>Workers put on jobs</th>'+
         '<th class="n"'+sth+'>Target qty</th><th class="n"'+sth+'>Actual qty</th><th class="n"'+sth+'>Achieved</th>'+
         '<th class="n"'+sth+'>Spent KES</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
-      rows.forEach(function(r){
+      srows.forEach(function(r){
         var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
         h+='<tr'+hot+'><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
           '<td class="n m">'+fmt(r.assignments)+'</td><td class="n m">'+fmt(r.workers_put)+'</td>'+
@@ -2929,7 +2974,6 @@
       if(D.error){ el("wm-body").innerHTML='<div class="err">Error: '+esc(D.error)+'</div>'; return; }
       render(D);
       wirePex();
-      wireCost();
       wireCostCentre();
       wireTracker();
       loadSubs();

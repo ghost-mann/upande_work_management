@@ -1323,11 +1323,17 @@ def wm_dashboard(**kwargs):
         # Follows the dashboard date filter; no filter = last ~12 weeks.
         cfrom = frappe.form_dict.get("from_date")
         cto = frappe.form_dict.get("to_date")
+        cfarm = frappe.form_dict.get("farm")
         if not cfrom and not cto:
             cto = frappe.utils.today()
             cfrom = frappe.utils.add_days(cto, -84)
         dconds = "ac.workflow_state='CONFIRMED'"
         dparams = []
+        # One farm at a time, when asked. The farm-share chart then reads as a single
+        # slice, which is the honest answer to "show me only this farm".
+        if cfarm:
+            dconds = dconds + " AND ac.farm = %s"
+            dparams.append(cfarm)
         if cfrom:
             dconds = dconds + " AND we.work_date >= %s"
             dparams.append(cfrom)
