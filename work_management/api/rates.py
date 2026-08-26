@@ -995,13 +995,22 @@ def wm_rates(**kwargs):
     # ==================================================================
     elif action == "rate_meta":
         out["can_edit"] = CAN_RATE
-        out["tasks"] = frappe.db.sql("""
-            SELECT t.name, t.subject, t.custom_uom uom, t.custom_daily_target daily_target,
-                   t.custom_rate rate
-            FROM `tabTask` t
-            WHERE t.is_group = 0 AND IFNULL(t.project,'') IN ('PROJ-0031','PROJ-0032')
-            ORDER BY t.subject
-        """, as_dict=True)
+        # Which tasks carry a rate is a question about the cost projects the farms
+        # are booked to, not about two project ids that happened to be Kaitet's. The
+        # hardcoded 'PROJ-0031','PROJ-0032' meant every other site got an empty Rates
+        # tab. An install with no farms yet has no projects, and so no tasks -- the
+        # tab says so rather than offering the whole Task list.
+        rm_projects = sorted({p for p in FARM_PROJECT.values() if p})
+        if not rm_projects:
+            out["tasks"] = []
+        else:
+            out["tasks"] = frappe.db.sql("""
+                SELECT t.name, t.subject, t.custom_uom uom, t.custom_daily_target daily_target,
+                       t.custom_rate rate
+                FROM `tabTask` t
+                WHERE t.is_group = 0 AND IFNULL(t.project,'') IN %(projects)s
+                ORDER BY t.subject
+            """, {"projects": tuple(rm_projects)}, as_dict=True)
 
     # ==================================================================
     # NEW RATE — the one write that is always safe: a new rate from a date
