@@ -65,8 +65,11 @@
   "sb_payroll",
   "salary_component",
   "sb_whopays",
+  "tw_employment_type_rows",
   "tw_employment_types",
+  "tw_designation_rows",
   "tw_designations",
+  "tw_category_rows",
   "tw_categories",
   "allow_part_week_send",
   "sb_branding",
@@ -377,25 +380,46 @@
    "description": "This system pays task work only. Salaried staff are paid through payroll, so their recorded work must never become a payment here. An employee qualifies if ANY of the three lists below matches — that way a blank employment type on a new hire does not quietly make them unpayable."
   },
   {
+   "fieldname": "tw_employment_type_rows",
+   "fieldtype": "Table MultiSelect",
+   "label": "Employment types paid here",
+   "options": "Work Management Payable Employment Type",
+   "description": "Pick them. Anyone whose employment type is listed is paid per unit."
+  },
+  {
    "fieldname": "tw_employment_types",
    "fieldtype": "Small Text",
-   "label": "Employment types paid here",
+   "label": "Employment types paid here (old, typed)",
    "default": "Task Worker",
-   "description": "Comma-separated, matched against Employee → Employment Type."
+   "description": "Superseded by the picker above. Still read when the picker is empty, so nothing changes until you fill it in; it will be removed once every site has."
+  },
+  {
+   "fieldname": "tw_designation_rows",
+   "fieldtype": "Table MultiSelect",
+   "label": "Designations paid here",
+   "options": "Work Management Payable Designation",
+   "description": "Pick them. Any one of these three lists matching is enough."
   },
   {
    "fieldname": "tw_designations",
    "fieldtype": "Small Text",
-   "label": "Designations paid here",
+   "label": "Designations paid here (old, typed)",
    "default": "Task Worker",
-   "description": "Comma-separated, matched against Employee → Designation."
+   "description": "Superseded by the picker above. Still read when the picker is empty, so nothing changes until you fill it in; it will be removed once every site has."
+  },
+  {
+   "fieldname": "tw_category_rows",
+   "fieldtype": "Table",
+   "label": "Categories paid here",
+   "options": "Work Management Payable Category",
+   "description": "Pick them. Category is a Select on Employee, so these are chosen from the same options rather than linked."
   },
   {
    "fieldname": "tw_categories",
    "fieldtype": "Small Text",
-   "label": "Categories paid here",
+   "label": "Categories paid here (old, typed)",
    "default": "Task Worker",
-   "description": "Comma-separated, matched against Employee → Category (custom_category)."
+   "description": "Superseded by the picker above. Still read when the picker is empty, so nothing changes until you fill it in; it will be removed once every site has."
   },
   {
    "fieldname": "allow_part_week_send",

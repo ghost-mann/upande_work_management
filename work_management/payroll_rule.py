@@ -21,11 +21,16 @@ is the missing check.
 # values are interpolated into SQL.
 ALLOWED_CHARS = " -_/&().'"
 
-# (Settings fieldname, the Employee field it is matched against).
+# (legacy text field, child table, field on the child row, Employee field).
+#
+# The lists are moving from free text people type to values they pick. Both are
+# read, child rows first, so payroll is never down for the moment in between:
+# code deployed with the tables still empty behaves exactly as before, and a
+# list migrated one at a time does not disturb the others.
 LISTS = (
-	("tw_employment_types", "employment_type"),
-	("tw_designations", "designation"),
-	("tw_categories", "custom_category"),
+	("tw_employment_types", "tw_employment_type_rows", "employment_type", "employment_type"),
+	("tw_designations", "tw_designation_rows", "designation", "designation"),
+	("tw_categories", "tw_category_rows", "category", "custom_category"),
 )
 
 
@@ -44,10 +49,33 @@ def parse_list(raw):
 	return values
 
 
+def picked_values(rows, field):
+	"""The values chosen in a child table.
+
+	No character check: these are Link targets or Select options, not typing, so
+	a designation with an apostrophe in it is a docname rather than a hazard.
+	"""
+	values = set()
+	for row in rows or []:
+		value = (row.get(field) if hasattr(row, "get") else getattr(row, field, None)) or ""
+		value = str(value).strip()
+		if value:
+			values.add(value)
+	return values
+
+
 def rule_from(settings):
-	"""{employee field: allowed values} read off a Settings document or dict."""
+	"""{employee field: allowed values} read off a Settings document or dict.
+
+	A list that has been picked wins outright over whatever text it replaced --
+	the old box is history at that point, not an addition to it.
+	"""
 	getter = settings.get if hasattr(settings, "get") else lambda k: None
-	return {field: parse_list(getter(box)) for box, field in LISTS}
+	rule = {}
+	for box, table, child_field, employee_field in LISTS:
+		values = picked_values(getter(table), child_field)
+		rule[employee_field] = values or parse_list(getter(box))
+	return rule
 
 
 def qualifies(employee, rule):

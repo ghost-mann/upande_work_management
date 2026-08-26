@@ -111,3 +111,64 @@ class TestSpottingRowsTheRuleNoLongerAgreesWith(unittest.TestCase):
 	def test_an_employee_the_lookup_does_not_know_is_left_alone(self):
 		"""Not guessed at: a deleted employee is a different problem."""
 		self.assertEqual(rule.disagreements([self.row("999", 0)], self.RULE, {}), [])
+
+
+class TestReadingEitherShape(unittest.TestCase):
+	"""The three lists are moving from free text to picked values, and payroll
+	cannot be down for a moment in between. So the reader accepts both: child
+	rows if the table has any, otherwise the legacy text. Every intermediate
+	state -- code deployed but tables empty, tables filled but text still there
+	-- resolves to the same rule.
+	"""
+
+	def settings(self, **kw):
+		base = {"tw_employment_types": "", "tw_designations": "", "tw_categories": "",
+			"tw_employment_type_rows": [], "tw_designation_rows": [], "tw_category_rows": []}
+		base.update(kw)
+		return base
+
+	def test_the_legacy_text_is_still_read_when_no_rows_exist(self):
+		"""The state live is in today. Nothing may change for it."""
+		r = rule.rule_from(self.settings(tw_employment_types="Contract",
+			tw_designations="Task Worker\nSecurity Guard", tw_categories="Value Adder"))
+		self.assertEqual(r["employment_type"], {"Contract"})
+		self.assertEqual(r["designation"], {"Task Worker", "Security Guard"})
+		self.assertEqual(r["custom_category"], {"Value Adder"})
+
+	def test_picked_rows_are_read_when_they_exist(self):
+		r = rule.rule_from(self.settings(
+			tw_employment_type_rows=[{"employment_type": "Contract"}],
+			tw_designation_rows=[{"designation": "Task Worker"}, {"designation": "Security Guard"}],
+			tw_category_rows=[{"category": "Value Adder"}]))
+		self.assertEqual(r["employment_type"], {"Contract"})
+		self.assertEqual(r["designation"], {"Task Worker", "Security Guard"})
+		self.assertEqual(r["custom_category"], {"Value Adder"})
+
+	def test_rows_win_over_leftover_text(self):
+		"""Once a list is picked, the old text is history -- not an addition."""
+		r = rule.rule_from(self.settings(tw_employment_types="Permanent, Intern",
+			tw_employment_type_rows=[{"employment_type": "Contract"}]))
+		self.assertEqual(r["employment_type"], {"Contract"})
+
+	def test_the_two_shapes_can_be_mixed_per_list(self):
+		"""Migrating one list at a time must not disturb the others."""
+		r = rule.rule_from(self.settings(
+			tw_employment_type_rows=[{"employment_type": "Contract"}],
+			tw_designations="Task Worker"))
+		self.assertEqual(r["employment_type"], {"Contract"})
+		self.assertEqual(r["designation"], {"Task Worker"})
+
+	def test_blank_rows_are_ignored_rather_than_matching_everyone(self):
+		r = rule.rule_from(self.settings(tw_employment_type_rows=[{"employment_type": ""},
+			{"employment_type": None}], tw_employment_types="Contract"))
+		self.assertEqual(r["employment_type"], {"Contract"})
+
+	def test_a_picked_value_needs_no_character_check(self):
+		"""A Link value is a docname, not typing. Apostrophes stay."""
+		r = rule.rule_from(self.settings(
+			tw_designation_rows=[{"designation": "Director's Aide"}]))
+		self.assertEqual(r["designation"], {"Director's Aide"})
+
+	def test_nothing_configured_anywhere_qualifies_nobody(self):
+		r = rule.rule_from(self.settings())
+		self.assertFalse(rule.qualifies({"employment_type": "Contract"}, r))

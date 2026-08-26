@@ -49,21 +49,32 @@ def wm_payroll_drift(**kwargs):
     # Same separators and the same character whitelist. If this disagreed, the rows
     # it flagged would disagree with the rows the entry screen writes.
     DRIFT_LISTS = [
-        ("employment_type", frappe.db.get_single_value("Work Management Settings", "tw_employment_types")),
-        ("designation", frappe.db.get_single_value("Work Management Settings", "tw_designations")),
-        ("custom_category", frappe.db.get_single_value("Work Management Settings", "tw_categories")),
+        ("employment_type", "Work Management Payable Employment Type", "employment_type", "tw_employment_types"),
+        ("designation", "Work Management Payable Designation", "designation", "tw_designations"),
+        ("custom_category", "Work Management Payable Category", "category", "tw_categories"),
     ]
     RULE = {}
-    for dr_col, dr_raw in DRIFT_LISTS:
+    for dr_col, dr_child, dr_cfield, dr_box in DRIFT_LISTS:
         dr_vals = []
-        for dr_v in str(dr_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
-            dr_c = dr_v.strip()
-            dr_ok = 1
-            for dr_ch in dr_c:
-                if not (dr_ch.isalnum() or dr_ch in " -_/&().'"):
-                    dr_ok = 0
-            if dr_c and dr_ok:
-                dr_vals.append(dr_c)
+        # Pickers first, the old typed boxes second -- the same order the entry
+        # screen reads them in. If these two disagreed, the detector would report
+        # drift that the screen does not see, or miss drift that it does.
+        if frappe.db.exists("DocType", dr_child):
+            for dr_r in frappe.get_all(dr_child,
+                    filters={"parenttype": "Work Management Settings"}, fields=[dr_cfield]):
+                dr_p = str(dr_r.get(dr_cfield) or "").strip()
+                if dr_p:
+                    dr_vals.append(dr_p)
+        if not dr_vals:
+            dr_raw = frappe.db.get_single_value("Work Management Settings", dr_box)
+            for dr_v in str(dr_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
+                dr_c = dr_v.strip()
+                dr_ok = 1
+                for dr_ch in dr_c:
+                    if not (dr_ch.isalnum() or dr_ch in " -_/&().'"):
+                        dr_ok = 0
+                if dr_c and dr_ok:
+                    dr_vals.append(dr_c)
         RULE[dr_col] = dr_vals
     out["rule"] = RULE
 
