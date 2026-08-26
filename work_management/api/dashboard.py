@@ -33,6 +33,13 @@ def wm_dashboard(**kwargs):
     SATURDAY_HOURS = 6
     SUNDAY_HOURS = 8
 
+    # `IN %s` with an empty tuple is a SQL syntax error, not an empty result. A site
+    # with no farms configured yet -- every site, the day the app is installed --
+    # hit that on three queries and the whole dashboard returned a 500. Nothing to
+    # ask about means nothing to return, so the loops below are skipped instead.
+    FARM_TUPLE = tuple(FARMS) if FARMS else None
+
+
     # ---- sections, inlined so this file runs in both worlds --------------------
     # The app keeps these in work_management/sections.py, with unit tests. A Server
     # Script has no __import__, so the live copy cannot import them -- and this file
@@ -868,14 +875,14 @@ def wm_dashboard(**kwargs):
         wf_task = 0
         wf_perm = 0
         wf_farm = {}
-        for r in frappe.db.sql("""
+        for r in (frappe.db.sql("""
             SELECT TRIM(custom_farm) farm,
                    CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END k,
                    COUNT(*) n
             FROM `tabEmployee`
             WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) IN %s
             GROUP BY TRIM(custom_farm), CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END
-        """, (tuple(FARMS),), as_dict=True):
+        """, (FARM_TUPLE,), as_dict=True) if FARM_TUPLE else []):
             fmw = wf_farm.get(r.farm)
             if fmw is None:
                 fmw = {"tw": 0, "perm": 0}
@@ -2651,7 +2658,7 @@ def wm_dashboard(**kwargs):
         for fm in FARMS:
             series[fm] = {"present": {}, "assigned": {}, "worked": {}}
         # present: submitted attendance joined to the employee's farm
-        for r in frappe.db.sql("""
+        for r in (frappe.db.sql("""
             SELECT emp.custom_farm farm, att.attendance_date d, COUNT(DISTINCT att.employee) n
             FROM `tabAttendance` att
             INNER JOIN `tabEmployee` emp ON emp.name = att.employee
@@ -2659,7 +2666,7 @@ def wm_dashboard(**kwargs):
               AND att.attendance_date BETWEEN %s AND %s
               AND TRIM(emp.custom_farm) IN %s
             GROUP BY emp.custom_farm, att.attendance_date
-        """, (lfrom, lto, tuple(FARMS)), as_dict=True):
+        """, (lfrom, lto, FARM_TUPLE), as_dict=True) if FARM_TUPLE else []):
             fm = (r.farm or "").strip()
             if fm in series:
                 series[fm]["present"][str(r.d)] = frappe.utils.cint(r.n)
@@ -2883,12 +2890,12 @@ def wm_dashboard(**kwargs):
                 scans_av[r.employee] = 1
         av_farms = {}
         av_total = 0
-        for r in frappe.db.sql("""
+        for r in (frappe.db.sql("""
             SELECT name, employee_name, designation, employment_type, TRIM(custom_farm) farm
             FROM `tabEmployee`
             WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) IN %s
             ORDER BY employee_name
-        """, (tuple(FARMS),), as_dict=True):
+        """, (FARM_TUPLE,), as_dict=True) if FARM_TUPLE else []):
             if busy.get(r.name):
                 continue
             fa = av_farms.get(r.farm)
