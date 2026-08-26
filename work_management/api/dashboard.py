@@ -2693,7 +2693,11 @@ def wm_dashboard(**kwargs):
             if fe is None:
                 fe = {"farm": r.farm, "area": 0, "mandays": 0, "cost": 0, "plans": 0}
                 farm_eff[r.farm] = fe
-            fe["area"] = fe["area"] + parea
+            # NOT fe["area"] + parea. Area was summed once per plan, so a block
+            # planned twice counted its hectares twice -- inflating the area and
+            # deflating cost per hectare by however often the ground was worked.
+            # A farm's area is a property of the farm, so it is read from the farm,
+            # once, below.
             fe["mandays"] = fe["mandays"] + frappe.utils.cint(r.mandays)
             fe["cost"] = fe["cost"] + frappe.utils.flt(r.pay)
             fe["plans"] = fe["plans"] + 1
@@ -2705,11 +2709,59 @@ def wm_dashboard(**kwargs):
             te["area"] = te["area"] + parea
             te["mandays"] = te["mandays"] + frappe.utils.cint(r.mandays)
             te["cost"] = te["cost"] + frappe.utils.flt(r.pay)
+        # The area of each farm, as configured. Work Management Farm carries it
+        # where the app is installed; the farms table on Settings carries it
+        # everywhere else, which is the only shape the legacy deployment has.
+        # frappe.get_all() on an absent doctype raises, so ask before looking.
+        farm_area = {}
+        if frappe.db.exists("DocType", "Work Management Farm"):
+            for fa in frappe.get_all("Work Management Farm", fields=["name", "area_ha"]):
+                if frappe.utils.flt(fa.get("area_ha")) > 0:
+                    farm_area[fa.get("name")] = frappe.utils.flt(fa.get("area_ha"))
+        if frappe.db.exists("DocType", "WM Farm"):
+            for fa in frappe.get_all("WM Farm",
+                    filters={"parenttype": "Work Management Settings"},
+                    fields=["farm", "area_ha"]):
+                if fa.get("farm") not in farm_area and frappe.utils.flt(fa.get("area_ha")) > 0:
+                    farm_area[fa.get("farm")] = frappe.utils.flt(fa.get("area_ha"))
+        # Nobody has entered an area yet on most sites, and a blank area would take
+        # Ha/man-day and Cost/Ha down with it. So fall back to the farm's own blocks,
+        # each counted ONCE -- which is the number the old code was reaching for
+        # before it summed the same block again for every plan that touched it. An
+        # area entered against the farm always wins over this.
+        fallback_area = {}
+        for wa in frappe.db.sql("""
+            SELECT custom_farm farm, COALESCE(SUM(IFNULL(custom_area_ha, 0)), 0) ha
+            FROM `tabWarehouse`
+            WHERE IFNULL(custom_farm, '') != ''
+            GROUP BY custom_farm
+        """, as_dict=True):
+            if frappe.utils.flt(wa.ha) > 0:
+                fallback_area[wa.farm] = frappe.utils.flt(wa.ha)
+
+        # Everything confirmed, ever, per farm. Deliberately outside the window:
+        # this is the running total to date, and mixing it with the filtered
+        # figures in one query is how the two would come to be confused.
+        cum_pay = {}
+        for cr in frappe.db.sql("""
+            SELECT ac.farm farm, COALESCE(SUM(we.amount),0) pay
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE ac.workflow_state = 'CONFIRMED'
+            GROUP BY ac.farm
+        """, as_dict=True):
+            cum_pay[cr.farm] = frappe.utils.flt(cr.pay)
+
         farms_out = []
         for f in FARMS:
             fe = farm_eff.get(f)
             if not fe:
                 continue
+            fe["area"] = farm_area.get(f) or fallback_area.get(f, 0)
+            # so the screen can say where the number came from
+            fe["area_source"] = ("farm" if f in farm_area
+                else ("blocks" if f in fallback_area else "unset"))
+            fe["cum_pay"] = cum_pay.get(f, 0)
             fe["ha_per_manday"] = (fe["area"] / fe["mandays"]) if fe["mandays"] else 0
             fe["cost_per_ha"] = (fe["cost"] / fe["area"]) if fe["area"] else 0
             farms_out.append(fe)

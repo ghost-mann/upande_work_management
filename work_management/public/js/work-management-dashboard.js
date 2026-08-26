@@ -2510,15 +2510,27 @@
     if(!farms.length){ box.innerHTML='<div class="empty">No confirmed work in this window.</div>'; return; }
     function hpm(v){ return v>0? fmt(v,3) : "—"; }
     function cph(v){ return v>0? fmt(v,0) : "—"; }
-    var h='<div class="tablewrap"><table><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Area Ha</th><th class="n">Man-days</th><th class="n">Ha / man-day</th><th class="n">Cost KES</th><th class="n">Cost / Ha</th></tr></thead><tbody>';
+    var h='<div class="tablewrap"><table><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Area Ha</th><th class="n">Man-days</th><th class="n">Ha / man-day</th><th class="n">Cost KES</th><th class="n">Cost / Ha</th><th class="n">All-time KES</th></tr></thead><tbody>';
     var ta=0,tm=0,tc=0;
     farms.forEach(function(f){
       ta+=f.area; tm+=f.mandays; tc+=f.cost;
-      h+='<tr><td><b>'+esc(f.farm)+'</b></td><td class="n m">'+(f.area>0?fmt(f.area,1):"—")+'</td><td class="n m">'+fmt(f.mandays)+'</td>'+
-         '<td class="n m">'+hpm(f.ha_per_manday)+'</td><td class="n m">'+fmt(f.cost,0)+'</td><td class="n m">'+cph(f.cost_per_ha)+'</td></tr>';
+      // an unset area is called out rather than shown as a dash: the two
+      // ratios beside it are blank *because* nobody has entered one
+      // say where the area came from: entered against the farm, or derived from
+      // its blocks. Same number either way, but one of them is somebody's answer.
+      var areaCell = f.area>0
+        ? fmt(f.area,1)+(f.area_source==="blocks"
+            ? '<span title="Summed from this '+esc(TX("top_singular","Farm")).toLowerCase()+"'s "+esc(TX("unit_plural","Blocks")).toLowerCase()+'. Set an area on the '+esc(TX("top_singular","Farm")).toLowerCase()+' to override." style="color:var(--mute);font-size:9px"> \u2248</span>'
+            : '')
+        : '<span title="No area on this '+esc(TX("top_singular","Farm")).toLowerCase()+' and none on its '+esc(TX("unit_plural","Blocks")).toLowerCase()+'" style="color:#b45309">not set</span>';
+      h+='<tr><td><b>'+esc(f.farm)+'</b></td><td class="n m">'+areaCell+'</td><td class="n m">'+fmt(f.mandays)+'</td>'+
+         '<td class="n m">'+hpm(f.ha_per_manday)+'</td><td class="n m">'+fmt(f.cost,0)+'</td><td class="n m">'+cph(f.cost_per_ha)+'</td>'+
+         '<td class="n m" title="Everything confirmed to date, ignoring the date filter">'+fmt(f.cum_pay||0,0)+'</td></tr>';
     });
+    var tcum=0; farms.forEach(function(f){ tcum+=(f.cum_pay||0); });
     h+='</tbody><tfoot><tr><th>TOTAL</th><th class="n">'+(ta>0?fmt(ta,1):"—")+'</th><th class="n">'+fmt(tm)+'</th>'+
-       '<th class="n">'+(ta>0&&tm>0?fmt(ta/tm,3):"—")+'</th><th class="n">'+fmt(tc,0)+'</th><th class="n">'+(ta>0?fmt(tc/ta,0):"—")+'</th></tr></tfoot></table></div>';
+       '<th class="n">'+(ta>0&&tm>0?fmt(ta/tm,3):"—")+'</th><th class="n">'+fmt(tc,0)+'</th><th class="n">'+(ta>0?fmt(tc/ta,0):"—")+'</th>'+
+       '<th class="n">'+fmt(tcum,0)+'</th></tr></tfoot></table></div>';
     if(tasks.length){
       h+='<div class="sech" style="margin-top:12px;font-size:10px">By task &middot; top by man-days</div>'+
         '<div class="tablewrap" style="max-height:220px;overflow-y:auto"><table><thead><tr><th>Task</th><th class="n">Man-days</th><th class="n">Ha/md</th><th class="n">Cost/Ha</th></tr></thead><tbody>';

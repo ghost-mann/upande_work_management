@@ -10,6 +10,7 @@
   "farm_name",
   "business_unit",
   "project",
+  "area_ha",
   "column_break_main",
   "disabled",
   "description"
@@ -38,6 +39,13 @@
    "label": "Cost Project",
    "options": "Project",
    "description": "Costs recorded for this farm are attributed to this project."
+  },
+  {
+   "fieldname": "area_ha",
+   "fieldtype": "Float",
+   "label": "Area (HA)",
+   "precision": "2",
+   "description": "The farm's own area. Field intelligence divides by this, so it is a property of the farm rather than a sum of whatever blocks were worked."
   },
   {
    "fieldname": "column_break_main",
