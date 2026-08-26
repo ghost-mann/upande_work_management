@@ -208,6 +208,117 @@ def _adopt(name, shipped):
 	)
 
 
+def plan_link_visibility(rows, available):
+	"""(to hide, to show) for navigation links, by whether their doctype exists.
+
+	A link pointing at a doctype the site does not have is a 404 waiting to be
+	clicked. Only DocType links are judged -- a URL or a report has no doctype
+	to look up -- and the decision is reversible: a link hidden because its
+	target was missing is shown again when the target comes back.
+
+	Pure, so the rule can be tested without a site.
+	"""
+	hide, show = [], []
+	for row in rows:
+		if (row.get("link_type") or "") != "DocType" or not row.get("link_to"):
+			continue
+		present = row["link_to"] in available
+		hidden = 1 if row.get("hidden") else 0
+		if not present and not hidden:
+			hide.append(row["name"])
+		elif present and hidden:
+			show.append(row["name"])
+	return hide, show
+
+
+def hide_links_to_missing_doctypes():
+	"""Apply plan_link_visibility to this app's own navigation surfaces."""
+	ours = [name for name, _path, _shipped in workspace_definitions()]
+	changed = 0
+	for doctype, parents in (("Workspace Link", ours), ("Workspace Sidebar Item", [SIDEBAR])):
+		if not frappe.db.exists("DocType", doctype):
+			continue  # v15 has no Workspace Sidebar
+		# Workspace Link has `hidden`; Workspace Sidebar Item does not. Asking
+		# for a column a doctype has not got is a hard SQL error, and inside
+		# after_migrate that takes the whole migrate down -- so ask the meta
+		# first rather than assuming the two child tables share a shape.
+		if not frappe.get_meta(doctype).get_field("hidden"):
+			continue
+		rows = frappe.get_all(
+			doctype,
+			filters={"parent": ["in", parents]},
+			fields=["name", "link_type", "link_to", "hidden"],
+		)
+		wanted = {r["link_to"] for r in rows if r.get("link_to")}
+		available = {
+			d for d in wanted if frappe.db.exists("DocType", d)
+		}
+		hide, show = plan_link_visibility(rows, available)
+		for name in hide:
+			frappe.db.set_value(doctype, name, "hidden", 1, update_modified=False)
+		for name in show:
+			frappe.db.set_value(doctype, name, "hidden", 0, update_modified=False)
+		changed = changed + len(hide) + len(show)
+	if changed:
+		frappe.clear_cache()
+	return changed
+
+
+def desktop_icon_fields(label=None):
+	"""The Desktop Icon row that actually works on a v16 apps screen.
+
+	Read off the one working example on a real 16.27 site (frappe's own "My
+	Workspaces"): link_type "Workspace Sidebar", with link_to AND sidebar both
+	naming a Workspace Sidebar record, and an icon name that resolves. Ours had
+	link_type "External", link_to null and icon null -- so the apps screen had
+	nothing to draw and the click had nowhere to go.
+
+	Pure, so the shape can be checked without a site.
+	"""
+	header_icon = ""
+	if SIDEBAR_JSON.exists():
+		header_icon = (json.loads(SIDEBAR_JSON.read_text()).get("header_icon") or "").strip()
+	return {
+		"label": label or WORKSPACE,
+		"link_type": "Workspace Sidebar",
+		"link_to": SIDEBAR,
+		"sidebar": SIDEBAR,
+		"app": APP,
+		"icon": header_icon or "projects",
+		"standard": 1,
+		"hidden": 0,
+	}
+
+
+def ensure_desktop_icon():
+	"""Put this app's apps-screen icon there, correctly, and keep it that way.
+
+	Frappe's create_desktop_icons_from_workspace() cannot do it on 16.27 (see
+	without_aborting_the_migrate), and letting it fail left the icon half-made
+	rather than absent -- which is worse, because a dead icon looks like a
+	working one. So the icon is ours to write, the same way the navigation block
+	is: overwritten every time, because the app's own definition is the truth.
+
+	Needs the Workspace Sidebar to exist first, or link_to would not resolve.
+	"""
+	if not frappe.db.exists("DocType", "Desktop Icon"):
+		return None  # v15: the apps screen is built from hooks alone.
+	if not frappe.db.exists("Workspace Sidebar", SIDEBAR):
+		return None  # sync_sidebar() has not run, or this is v15
+
+	fields = desktop_icon_fields()
+	if frappe.db.exists("Desktop Icon", WORKSPACE):
+		doc = frappe.get_doc("Desktop Icon", WORKSPACE)
+	else:
+		doc = frappe.new_doc("Desktop Icon")
+		doc.name = WORKSPACE
+	doc.update(fields)
+	doc.flags.ignore_permissions = True
+	doc.save()
+	frappe.db.commit()
+	return WORKSPACE
+
+
 def _refresh_desktop_icon():
 	"""Rebuild this app's desktop icons from the now-correct workspaces.
 
@@ -228,9 +339,15 @@ def _refresh_desktop_icon():
 
 	from frappe.desk.doctype.desktop_icon.desktop_icon import create_desktop_icons
 
-	return without_aborting_the_migrate(
+	# Still offered a chance -- other apps' icons come from it -- but ours no
+	# longer depends on it succeeding, and is written afterwards either way.
+	note = without_aborting_the_migrate(
 		create_desktop_icons, "rebuild the desktop icons", title=DESK_STEP
 	)
+	without_aborting_the_migrate(
+		ensure_desktop_icon, "write this app's apps-screen icon", title=DESK_STEP
+	)
+	return note
 
 
 def sync_workspaces():
@@ -297,6 +414,8 @@ def sync():
 	ensure_nav_block()
 	repaired = sync_workspaces()
 	sync_sidebar()
+	ensure_desktop_icon()
+	hide_links_to_missing_doctypes()
 	relabel_navigation()
 	if repaired:
 		_refresh_desktop_icon()
