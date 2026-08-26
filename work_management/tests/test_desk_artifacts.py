@@ -265,9 +265,19 @@ class TestAppsScreen(unittest.TestCase):
 		self.assertIn('"name": "work_management"', self.hooks)
 		self.assertIn('"title": "Work Management"', self.hooks)
 
-	def test_its_route_is_one_of_the_screens(self):
-		route = re.search(r'"route": "([^"]+)"', self.hooks).group(1)
-		self.assertIn(route, SCREENS)
+	def test_its_route_opens_the_desk_not_a_single_screen(self):
+		"""This used to assert the route was one of the www screens, and it was
+		-- /work-management, the dashboard. That meant clicking the app on the
+		apps screen jumped past the desk into one screen, with no sidebar to
+		choose from. The requirement is the opposite: land on the app's
+		workspace and let the reader pick. It reuses app_home, so there is one
+		destination rather than two that can drift.
+		"""
+		import work_management.hooks as h
+		route = h.add_to_apps_screen[0]["route"]
+		self.assertEqual(route, h.app_home)
+		self.assertTrue(route.startswith("/app/"), route)
+		self.assertNotIn(route.lstrip("/"), SCREENS)
 
 	def test_its_logo_file_is_shipped(self):
 		logo = re.search(r'"logo": "([^"]+)"', self.hooks).group(1)

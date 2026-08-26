@@ -16,12 +16,17 @@ app_license = "mit"
 # /app redirects to /desk on v16, so one route serves both versions.
 app_home = "/app/work-management"
 
+# The apps screen reads its route from HERE, not from the Desktop Icon -- which
+# is why fixing the icon did not change where clicking the app went. It used to
+# be hardcoded to /work-management, the web dashboard, so the app jumped past
+# the desk into a single screen. It reuses app_home now: land in the desk on
+# this app's workspace, sidebar and all, and let the reader choose.
 add_to_apps_screen = [
 	{
 		"name": "work_management",
 		"logo": "/assets/work_management/images/work-management-logo.svg",
 		"title": "Work Management",
-		"route": "/work-management",
+		"route": app_home,
 		"has_permission": "work_management.api.permission.has_app_permission",
 	}
 ]

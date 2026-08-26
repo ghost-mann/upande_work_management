@@ -373,3 +373,35 @@ class TestALinkToSomethingAbsentHidesItself(unittest.TestCase):
 
 	def test_nothing_to_do_is_two_empty_lists(self):
 		self.assertEqual(desk.plan_link_visibility([], set()), ([], []))
+
+
+class TestTheAppsScreenOpensTheDesk(unittest.TestCase):
+	"""Clicking the app on the apps screen must land in the desk, on this app's
+	workspace, so the sidebar is there and the reader chooses where to go.
+
+	It used to point at /work-management -- the web dashboard -- so the app
+	icon jumped straight past the desk into one screen. The apps screen reads
+	this from hooks, not from the Desktop Icon, which is why fixing the icon
+	did not fix the destination.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		import work_management.hooks as h
+		cls.entry = h.add_to_apps_screen[0]
+		cls.app_home = getattr(h, "app_home", None)
+
+	def test_it_is_a_desk_route(self):
+		self.assertTrue(self.entry["route"].startswith("/app/"), self.entry["route"])
+
+	def test_it_is_not_the_web_dashboard(self):
+		"""The regression this guards: /work-management is a www page."""
+		self.assertNotEqual(self.entry["route"].rstrip("/"), "/work-management")
+
+	def test_it_names_the_workspace_the_app_ships(self):
+		slug = desk.WORKSPACE.lower().replace(" ", "-")
+		self.assertEqual(self.entry["route"], "/app/" + slug)
+
+	def test_app_home_agrees_with_it(self):
+		"""Two doors, one destination."""
+		self.assertEqual(self.app_home, self.entry["route"])
