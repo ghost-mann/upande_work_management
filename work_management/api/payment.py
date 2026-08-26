@@ -41,28 +41,42 @@ def wm_payment(**kwargs):
     # reads tabEmployee.
     # An employee qualifies if ANY of the three configured lists matches. A blank
     # employment type on a new hire therefore does not quietly make them unpayable.
-    TW_FIELDS = [
-        ("employment_type", frappe.db.get_single_value("Work Management Settings", "tw_employment_types")),
-        ("designation", frappe.db.get_single_value("Work Management Settings", "tw_designations")),
-        ("custom_category", frappe.db.get_single_value("Work Management Settings", "tw_categories")),
+    # Read the pickers first and the old typed boxes second, so both shapes work
+    # while sites migrate: an empty picker changes nothing at all. A picked value is
+    # a Link target or a Select option rather than something typed, so it needs no
+    # character check -- an apostrophe in a designation is a docname, not a hazard.
+    TW_SOURCES = [
+        ("employment_type", "Work Management Payable Employment Type", "employment_type", "tw_employment_types"),
+        ("designation", "Work Management Payable Designation", "designation", "tw_designations"),
+        ("custom_category", "Work Management Payable Category", "category", "tw_categories"),
     ]
     TW_CLAUSES = []
-    for tw_col, tw_raw in TW_FIELDS:
+    for tw_col, tw_child, tw_cfield, tw_box in TW_SOURCES:
         tw_vals = []
-        # the Settings fields are multi-line boxes, so people list one value per line
-        # as readily as they comma-separate them. Accept either: a newline that
-        # survived into a value used to fail the character check below and take the
-        # WHOLE list with it, silently, which stopped 315 task workers being payable.
-        for tw_v in str(tw_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
-            tw_c = tw_v.strip()
-            # values come from Settings and land in SQL, so allow only the shapes a
-            # job title can actually take and drop anything else outright
-            tw_ok = 1
-            for tw_ch in tw_c:
-                if not (tw_ch.isalnum() or tw_ch in " -_/&().'"):
-                    tw_ok = 0
-            if tw_c and tw_ok:
-                tw_vals.append("'" + tw_c.replace("'", "''") + "'")
+        # frappe.get_all() on a doctype this site does not have raises rather than
+        # returning nothing, so ask before looking.
+        if frappe.db.exists("DocType", tw_child):
+            for tw_r in frappe.get_all(tw_child,
+                    filters={"parenttype": "Work Management Settings"}, fields=[tw_cfield]):
+                tw_p = str(tw_r.get(tw_cfield) or "").strip()
+                if tw_p:
+                    tw_vals.append("'" + tw_p.replace("'", "''") + "'")
+        if not tw_vals:
+            # the Settings fields are multi-line boxes, so people list one value per line
+            # as readily as they comma-separate them. Accept either: a newline that
+            # survived into a value used to fail the character check below and take the
+            # WHOLE list with it, silently, which stopped 315 task workers being payable.
+            tw_raw = frappe.db.get_single_value("Work Management Settings", tw_box)
+            for tw_v in str(tw_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
+                tw_c = tw_v.strip()
+                # values come from Settings and land in SQL, so allow only the shapes a
+                # job title can actually take and drop anything else outright
+                tw_ok = 1
+                for tw_ch in tw_c:
+                    if not (tw_ch.isalnum() or tw_ch in " -_/&().'"):
+                        tw_ok = 0
+                if tw_c and tw_ok:
+                    tw_vals.append("'" + tw_c.replace("'", "''") + "'")
         if tw_vals:
             TW_CLAUSES.append("twe." + tw_col + " IN (" + ", ".join(tw_vals) + ")")
     if not TW_CLAUSES:
