@@ -62,13 +62,16 @@ scheduler_events = {
 after_install = "work_management.install.after_install"
 before_install = "work_management.install.before_install"
 
-# Reseeds the approval stage catalogue and regenerates the five workflows from
+# Takes back any doctype the site owns as a custom one (it deploys nowhere, and
+# migrate says nothing about it), reseeds the approval stage catalogue and
+# regenerates the five workflows from
 # it, upgrades Work Management Farm.business_unit to a Link once upande_core is
 # installed, relabels the desk from the taxonomy template, shows or hides the
 # level above the farm, and repairs the desk
 # workspace when a same-named one built in the desk has shadowed the one this
 # app ships.
 after_migrate = [
+	"work_management.install.adopt_existing_custom_doctypes",
 	"work_management.approvals.after_migrate",
 	"work_management.install.upgrade_business_unit_link",
 	"work_management.taxonomy.apply_labels",

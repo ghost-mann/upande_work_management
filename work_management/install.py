@@ -2,11 +2,20 @@
 
 Two jobs:
 
-1. before_install — "adopt" the doctypes if they already exist on the site as
-   *custom* doctypes (the situation on kaitet-group.upande.com, where the whole
-   system was built in the UI). Flipping custom=0 and pointing the module at
-   this app lets `bench migrate` sync the JSON definitions over the existing
-   tables without dropping any data.
+1. before_install, and again on every after_migrate — "adopt" the doctypes if
+   they already exist on the site as *custom* doctypes (the situation on
+   kaitet-group.upande.com, where the whole system was built in the UI: nine of
+   them sit under erpnext's Projects module with custom=1). Flipping custom=0
+   and pointing the module at this app lets the JSON definitions sync over the
+   existing tables without dropping any data.
+
+   A custom doctype lives only in the database -- no app file, nothing that
+   `export-fixtures` produces -- so it deploys nowhere, and the app's own copy
+   never reaches a site that already has one. Worse, the mismatch is silent:
+   `import_file.py` skips a DocType whose content hash matches its last
+   import, and flipping custom in the database does not change the file, so
+   `bench migrate` exits 0 having done nothing. Hence the force-import here,
+   the same move desk.py makes for workspaces.
 
 2. after_install — create the custom fields this app needs on core doctypes
    (Employee, Warehouse, Task), then seed the approval stage catalogue and
@@ -14,19 +23,66 @@ Two jobs:
    fields when the link target doctype is not installed on the site.
 """
 
+import glob
+import json
+import os
+
 import frappe
 
-WM_DOCTYPES = [
-	"Work Management Planner",
-	"Work Management Assigner",
-	"Work Management Actuals",
-	"Work Management Payment",
-	"Work Planner Block",
-	"Work Assignment Employee",
-	"Work Actuals Employee",
-	"Work Payment Line",
-	"Work Management Task",
-]
+MODULE = "Work Management"
+HERE = os.path.dirname(os.path.abspath(__file__))
+DOCTYPE_DIR = os.path.join(HERE, "work_management", "doctype")
+
+
+def scrub(name):
+	"""A doctype's folder name, the way Frappe derives it."""
+	return name.replace(" ", "_").replace("-", "_").lower()
+
+
+def doctype_json(name):
+	"""Where this app keeps the shipped definition of one doctype."""
+	slug = scrub(name)
+	return os.path.join(DOCTYPE_DIR, slug, f"{slug}.json")
+
+
+def shipped_doctypes():
+	"""Every DocType this app ships, read from its own files.
+
+	This was a hand-written list of nine, frozen when the app had nine. It
+	ships twenty-one, and the twelve added since -- Farm, Settings, Section and
+	the rest -- had no adoption path at all: a site owning one of them as a
+	custom doctype kept it, silently, for good. Reading the folder means the
+	next doctype added cannot be forgotten the same way.
+	"""
+	names = []
+	for path in glob.glob(os.path.join(DOCTYPE_DIR, "*", "*.json")):
+		with open(path) as handle:
+			doc = json.load(handle)
+		if doc.get("doctype") == "DocType":
+			names.append(doc["name"])
+	return sorted(names)
+
+
+def shipped_fieldnames(name):
+	"""The fieldnames the app's own definition of a doctype carries."""
+	path = doctype_json(name)
+	if not os.path.exists(path):
+		return []
+	with open(path) as handle:
+		doc = json.load(handle)
+	return [f["fieldname"] for f in doc.get("fields", []) if f.get("fieldname")]
+
+
+def extra_fieldnames(existing, shipped):
+	"""Fieldnames the site's own copy carries that this app does not define.
+
+	A custom doctype keeps every field on the DocType record itself rather than
+	as separate Custom Field records, so force-importing the app's definition
+	takes any of these off the form. The column and its data stay in the table
+	and a Custom Field puts it back, but nobody can act on that without being
+	told, so adoption prints them.
+	"""
+	return sorted(set(existing) - set(shipped))
 
 # (dt, fieldname, label, fieldtype, options, insert_after, extras)
 CORE_CUSTOM_FIELDS = [
@@ -56,19 +112,45 @@ def after_install():
 
 
 def adopt_existing_custom_doctypes():
-	for name in WM_DOCTYPES:
+	"""Take ownership of any doctype this app ships that the site owns as a
+	custom one, and put the app's definition on it.
+
+	Runs at before_install, where the sync that follows carries the definition,
+	and again at every after_migrate, where that sync has already been and gone
+	-- so here it force-imports, or the doctype would end up owned by this app
+	and still shaped the way the site drew it.
+
+	Returns the names it adopted.
+	"""
+	from frappe.modules.import_file import import_file_by_path
+
+	adopted = []
+	for name in shipped_doctypes():
 		if not frappe.db.exists("DocType", name):
 			continue
-		is_custom = frappe.db.get_value("DocType", name, "custom")
-		if is_custom:
-			frappe.db.set_value(
-				"DocType",
-				name,
-				{"custom": 0, "module": "Work Management"},
-				update_modified=False,
+		if not frappe.db.get_value("DocType", name, "custom"):
+			continue
+
+		lost = extra_fieldnames(
+			[f.fieldname for f in frappe.get_meta(name).fields], shipped_fieldnames(name)
+		)
+		frappe.db.set_value(
+			"DocType", name, {"custom": 0, "module": MODULE}, update_modified=False
+		)
+		path = doctype_json(name)
+		if os.path.exists(path):
+			import_file_by_path(path, force=True)
+		adopted.append(name)
+		print(f"Adopted existing custom DocType: {name}")
+		if lost:
+			print(
+				f"  {name} carried {len(lost)} field(s) this app does not define, now off "
+				f"the form (the data is still in the table): {', '.join(lost)}"
 			)
-			print(f"Adopted existing custom DocType: {name}")
-	frappe.db.commit()
+	if adopted:
+		frappe.db.commit()
+		frappe.clear_cache()
+	return adopted
 
 
 def create_core_custom_fields():
