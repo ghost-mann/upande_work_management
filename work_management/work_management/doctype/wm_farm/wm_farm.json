@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "farm",
+  "area_ha",
   "project",
   "approver_role"
  ],
@@ -17,6 +18,13 @@
    "label": "Farm",
    "reqd": 1,
    "options": "Work Management Farm"
+  },
+  {
+   "fieldname": "area_ha",
+   "fieldtype": "Float",
+   "label": "Area (HA)",
+   "precision": "2",
+   "description": "The farm's own area. Field intelligence divides by this, so it is a property of the farm rather than a sum of whatever blocks were worked."
   },
   {
    "fieldname": "project",
