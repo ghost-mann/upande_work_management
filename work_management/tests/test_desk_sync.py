@@ -287,3 +287,89 @@ class TestNavigationLabelsFollowTheTaxonomy(unittest.TestCase):
 		}
 		for link_to in desk.NAV_LABELS:
 			self.assertIn(link_to, shipped, link_to)
+
+
+class TestTheAppsScreenIcon(unittest.TestCase):
+	"""The icon was there and dead: link_type "External" with link_to null, and
+	no icon name, so nothing rendered on the apps screen and clicking it went
+	nowhere.
+
+	Frappe 16.27's create_desktop_icons_from_workspace() cannot produce a
+	working one -- it files the icon with link_type "Workspace Sidebar" while
+	link_to names a Workspace, the insert fails link validation, and its own
+	handler raises a second time on the way out. desk.py lets that fail rather
+	than take the migrate down, which left the icon half-made. So the icon is
+	built here instead, from the one shape known to work on a v16 site:
+
+	    link_type "Workspace Sidebar", link_to and sidebar naming the app's
+	    own Workspace Sidebar record, and an icon name that actually resolves.
+	"""
+
+	def test_it_points_at_the_apps_own_sidebar(self):
+		f = desk.desktop_icon_fields()
+		self.assertEqual(f["link_type"], "Workspace Sidebar")
+		self.assertEqual(f["link_to"], desk.SIDEBAR)
+		self.assertEqual(f["sidebar"], desk.SIDEBAR)
+
+	def test_it_carries_an_icon_so_something_renders(self):
+		"""A null icon is why the apps screen showed nothing at all."""
+		self.assertTrue((desk.desktop_icon_fields().get("icon") or "").strip())
+
+	def test_it_is_attributed_to_this_app(self):
+		self.assertEqual(desk.desktop_icon_fields()["app"], desk.APP)
+
+	def test_it_is_visible(self):
+		self.assertFalse(desk.desktop_icon_fields().get("hidden"))
+
+	def test_the_icon_name_is_the_one_the_sidebar_header_uses(self):
+		"""Same glyph in both places, so the apps screen and the sidebar agree."""
+		import json
+		shipped = json.loads(desk.SIDEBAR_JSON.read_text())
+		self.assertEqual(desk.desktop_icon_fields()["icon"], shipped.get("header_icon"))
+
+	def test_a_caller_can_override_the_label(self):
+		self.assertEqual(desk.desktop_icon_fields(label="Estates")["label"], "Estates")
+
+
+class TestALinkToSomethingAbsentHidesItself(unittest.TestCase):
+	"""A workspace link whose doctype is not on the site is a 404 waiting for
+	somebody to click it. The app ships links for every doctype it owns, but a
+	site can be missing one -- installed over an older layout, or without the
+	app that owns a shared target like Task. Hiding is reversible: the link
+	comes back the moment the doctype does.
+	"""
+
+	ROWS = [
+		{"name": "a", "link_type": "DocType", "link_to": "Work Management Farm", "hidden": 0},
+		{"name": "b", "link_type": "DocType", "link_to": "Nonexistent Doctype", "hidden": 0},
+		{"name": "c", "link_type": "DocType", "link_to": "Work Management Farm", "hidden": 1},
+		{"name": "d", "link_type": "DocType", "link_to": "Gone Away", "hidden": 1},
+	]
+	HAVE = {"Work Management Farm"}
+
+	def test_a_link_whose_target_is_missing_is_hidden(self):
+		hide, show = desk.plan_link_visibility(self.ROWS, self.HAVE)
+		self.assertIn("b", hide)
+
+	def test_a_link_already_hidden_for_a_missing_target_is_left_alone(self):
+		hide, show = desk.plan_link_visibility(self.ROWS, self.HAVE)
+		self.assertNotIn("d", hide)
+
+	def test_a_link_hidden_for_a_target_that_came_back_is_shown_again(self):
+		hide, show = desk.plan_link_visibility(self.ROWS, self.HAVE)
+		self.assertIn("c", show)
+
+	def test_a_working_visible_link_is_not_touched(self):
+		hide, show = desk.plan_link_visibility(self.ROWS, self.HAVE)
+		self.assertNotIn("a", hide)
+		self.assertNotIn("a", show)
+
+	def test_a_non_doctype_link_is_never_judged(self):
+		"""A URL or a report link has no doctype to look up."""
+		rows = [{"name": "u", "link_type": "URL", "link_to": "https://example.com", "hidden": 0},
+			{"name": "r", "link_type": "Report", "link_to": "Some Report", "hidden": 0}]
+		hide, show = desk.plan_link_visibility(rows, set())
+		self.assertEqual((hide, show), ([], []))
+
+	def test_nothing_to_do_is_two_empty_lists(self):
+		self.assertEqual(desk.plan_link_visibility([], set()), ([], []))
