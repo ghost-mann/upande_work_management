@@ -98,6 +98,86 @@
   var AT = { rows:[], from:null, to:null, farm:"", state:"", q:"", sort:"completion", dir:1, open:null, loading:false };
   var AT_REQ = "#2563eb", AT_DONE = "#0a7a43", AT_REF = "#6b7280", AT_OVER = "#b91c1c";
 
+  // ===== Planned value & delivery, by master plan =====
+  // A master plan IS a farm and a period, so that is the grain: planned budget
+  // from its own activity lines, against what was confirmed inside its window.
+  var MV={loaded:false, tab:"plan"};
+  function mvState(){
+    return {farm:(el("mv-farm")||{}).value||"",
+      from_date:(el("mv-from")||{}).value||"", to_date:(el("mv-to")||{}).value||""};
+  }
+  function pvTabs(){
+    var bar=el("wm-pv-tabs"); if(!bar) return;
+    bar.querySelectorAll("[data-pv]").forEach(function(b){
+      b.onclick=function(){
+        bar.querySelectorAll("[data-pv]").forEach(function(x){ x.classList.toggle("on", x===b); });
+        MV.tab=b.getAttribute("data-pv");
+        var mp=el("wm-mpv"), ac=el("wm-acts"), fl=el("mv-filters");
+        if(MV.tab==="plan"){
+          if(mp) mp.style.display=""; if(ac) ac.style.display="none"; if(fl) fl.style.display="";
+          loadMasterPlanValue();
+        } else {
+          if(mp) mp.style.display="none"; if(ac) ac.style.display=""; if(fl) fl.style.display="none";
+          if(!MV.loaded){ MV.loaded=true; activityTable(); }
+        }
+      };
+    });
+    ["mv-farm","mv-from","mv-to"].forEach(function(id){
+      var e=el(id); if(e) e.onchange=function(){ loadMasterPlanValue(); };
+    });
+    var c=el("mv-clear");
+    if(c) c.onclick=function(){ ["mv-from","mv-to"].forEach(function(id){ var e=el(id); if(e) e.value=""; });
+      var f=el("mv-farm"); if(f) f.value=""; loadMasterPlanValue(); };
+    loadMasterPlanValue();
+  }
+  function mvPct(v){
+    if(v===null||v===undefined) return '<span style="color:var(--mute)">&mdash;</span>';
+    var c = v>=90?"#0a7a43":(v>=60?"#b45309":"#be123c");
+    return '<span style="color:'+c+';font-weight:700">'+Math.round(v)+'%</span>';
+  }
+  function loadMasterPlanValue(){
+    var box=el("wm-mpv"); if(!box) return;
+    box.innerHTML='<div class="loading">Reading master plans&hellip;</div>';
+    var a=mvState(); a.action="mp_value";
+    call(a).then(function(d){
+      var fs=el("mv-farm");
+      if(fs && fs.options.length<=1 && d.farms){
+        d.farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
+      }
+      var rows=d.plans||[];
+      if(!rows.length){ box.innerHTML='<div class="empty">No master plan covers this window.</div>'; return; }
+      var tp=0,tc=0,td=0;
+      var h='<div class="tablewrap" style="max-height:460px;overflow-y:auto"><table><thead><tr>'+
+        '<th>Master plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period</th>'+
+        '<th class="n">Lines</th><th class="n">Planned KES</th><th class="n">Committed</th>'+
+        '<th class="n">Delivered KES</th><th class="n">Achieved</th><th class="n">Variance</th>'+
+        '<th>State</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        tp+=r.planned; tc+=r.committed; td+=r.delivered;
+        h+='<tr><td><b>'+esc(r.plan)+'</b></td><td>'+esc(r.farm||"")+'</td>'+
+           '<td class="m" style="font-size:10px">'+esc(r.period_from)+' &rarr; '+esc(r.period_to)+'</td>'+
+           '<td class="n m">'+fmt(r.lines)+'</td>'+
+           '<td class="n m">'+fmt(r.planned,0)+'</td>'+
+           '<td class="n m" title="Planned minus what is still unclaimed on the plan\u2019s lines">'+fmt(r.committed,0)+'</td>'+
+           '<td class="n m" style="font-weight:700">'+fmt(r.delivered,0)+'</td>'+
+           '<td class="n">'+mvPct(r.achieved_pct)+'</td>'+
+           '<td class="n m" style="color:'+(r.variance<0?"#b45309":"#0a7a43")+'">'+fmt(r.variance,0)+'</td>'+
+           '<td style="font-size:10px">'+esc(r.state||"")+'</td></tr>';
+      });
+      h+='</tbody><tfoot><tr><th colspan="4">TOTAL</th><th class="n">'+fmt(tp,0)+'</th>'+
+         '<th class="n">'+fmt(tc,0)+'</th><th class="n">'+fmt(td,0)+'</th>'+
+         '<th class="n">'+(tp>0?Math.round(td/tp*100)+'%':'&mdash;')+'</th>'+
+         '<th class="n">'+fmt(td-tp,0)+'</th><th></th></tr></tfoot></table></div>';
+      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
+        '<span><b>Planned KES</b> \u2014 the budget on the plan\u2019s own activity lines.</span>'+
+        '<span><b>Committed</b> \u2014 how much of that budget planners have already drawn down.</span>'+
+        '<span><b>Delivered KES</b> \u2014 confirmed pay for work done inside the plan\u2019s farm and period.</span>'+
+        '<span><b>Achieved</b> \u2014 Delivered \u00f7 Planned (green \u226590%, amber \u226560%, red below).</span>'+
+        '</div>';
+      box.innerHTML=h;
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load master plans.</div>'; });
+  }
+
   function activityTable(){
     var box=el("wm-acts"); if(!box) return;
     var args={action:"activity_table"};
@@ -573,7 +653,20 @@
       '<div class="sech">Planned value &amp; delivery</div>'+
       '<div class="card"><div class="hd"><h3>Every activity, planned against delivered</h3>'+
         '<div class="cap">one row per budget line &middot; filter and sort across '+esc(TX("top_plural","Farms")).toLowerCase()+' &middot; click a row for its charts</div></div>'+
-        '<div class="bd" id="wm-acts"><div class="loading">Reading activities&hellip;</div></div></div>'+
+        '<div class="bd">'+
+          '<div class="subtabs" id="wm-pv-tabs" style="margin-bottom:10px">'+
+            '<button type="button" class="subtab on" data-pv="plan">By master plan</button>'+
+            '<button type="button" class="subtab" data-pv="act">By activity</button>'+
+          '</div>'+
+          '<div class="pex-filters" id="mv-filters">'+
+            '<select id="mv-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
+            '<label>From <input type="date" id="mv-from" /></label>'+
+            '<label>To <input type="date" id="mv-to" /></label>'+
+            '<button id="mv-clear" class="pex-clear">Clear</button>'+
+          '</div>'+
+          '<div id="wm-mpv"><div class="loading">Reading master plans&hellip;</div></div>'+
+          '<div id="wm-acts" style="display:none"><div class="loading">Reading activities&hellip;</div></div>'+
+        '</div></div>'+
       // ===== how much of each plan actually happened =====
       '<div class="sech">Plan completion &mdash; planned, requested, delivered</div>'+
       '<div class="card"><div class="hd"><h3>How much of each master plan actually happened</h3>'+
@@ -722,7 +815,7 @@
           '<div class="subtabs" id="wm-q-tabs"></div>'+
           '<div id="wm-q-body" style="max-height:420px;overflow:auto;margin-top:10px"></div>'+
         '</div></div>';
-    activityTable();
+    pvTabs();   // the master-plan view is the default; activityTable() loads when its tab is opened
     planCompletion();
     initCharts();
     initQueues(D);
