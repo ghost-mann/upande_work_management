@@ -47,6 +47,7 @@
   "sb_consult",
   "require_consultant_approval",
   "consultant_users",
+  "master_plan_post_approval_editors",
   "sb_rates",
   "current_daily_wage",
   "rate_periods_html",
@@ -265,6 +266,12 @@
    "label": "Consultant users (comma-separated emails)",
    "description": "Superseded by Stage Approvers rows on the Planner: Weekly Consultant stage. Read-only, and removed in the next release.",
    "read_only": 1
+  },
+  {
+   "fieldname": "master_plan_post_approval_editors",
+   "fieldtype": "Small Text",
+   "label": "Master plan post-approval editors (comma-separated emails)",
+   "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in \u2014 an administrator who must intervene already has the Desk form."
   },
   {
    "fieldname": "sb_rates",
