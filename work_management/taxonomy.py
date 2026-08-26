@@ -52,22 +52,35 @@ def label_for(template, names):
 
 # (doctype, fieldname, label template). Every field whose label names a level.
 #
-# Deliberately absent: Work Management Settings.att_block_absent, "Check
-# attendance (block employees marked Absent)" -- that "block" is a verb.
+# Deliberately absent, and guarded by name in test_taxonomy.py so the omission
+# has to stay deliberate:
+#   - Work Management Settings.att_block_absent, "Check attendance (block
+#     employees marked Absent)" -- that "block" is a verb.
+#   - Work Management Settings.tax_* -- these fields are where the names are
+#     typed. Renaming "Farm level (singular)" to "Estate level (singular)" the
+#     moment someone types Estate into it hides the one label that explains
+#     what the field does.
 FIELD_LABELS = (
 	("WM Farm", "farm", "{top_singular}"),
 	("Work Management Actuals", "farm", "{top_singular}"),
 	("Work Management Actuals", "block_section", "{unit_singular} / {section_singular}"),
 	("Work Management Assigner", "farm", "{top_singular}"),
 	("Work Management Assigner", "block_section", "{unit_singular} / {section_singular}"),
+	("Work Management Farm", "business_unit", "{bu_singular}"),
 	("Work Management Farm", "farm_name", "{top_singular}"),
 	("Work Management Master Plan", "farm", "{top_singular}"),
 	("Work Management Payment", "farm", "{top_singular}"),
 	("Work Management Planner", "farm", "{top_singular}"),
+	("Work Management Planner", "sb_blocks", "{unit_plural} / {section_plural}"),
 	("Work Management Planner", "block_section", "{unit_singular} / {section_singular}"),
 	("Work Management Planner", "extra_blocks", "Additional {unit_plural} / {section_plural}"),
+	("Work Management Section", "blocks", "{unit_plural}"),
+	("Work Management Section", "farm", "{top_singular}"),
+	("Work Management Section", "section_name", "{section_singular}"),
+	("Work Management Section Block", "block", "{unit_singular}"),
 	("Work Management Settings", "block_exclude", "{unit_singular} Exclude Keywords"),
 	("Work Management Settings", "farms", "{top_plural}"),
+	("Work Management Settings", "farms_section", "{top_plural}"),
 	("Work Management Settings", "disc_multi_farm", "Two {top_plural}, one day"),
 	("Work Management Settings", "rate_recalc_farm", "{top_singular} Scope"),
 	("Work Management Stage Approver", "scope", "{top_singular}"),
@@ -78,45 +91,151 @@ FIELD_LABELS = (
 )
 
 
+def shipped_labels():
+	"""{doctype: {fieldname: label}} as the app's own JSON ships them.
+
+	Read from the files rather than from frappe.get_meta, which returns the
+	label a Property Setter has already overwritten -- comparing against that
+	is what made every setter look necessary.
+	"""
+	import glob
+	import json
+	import os
+
+	here = os.path.dirname(os.path.abspath(__file__))
+	shipped = {}
+	for path in glob.glob(os.path.join(here, "work_management", "doctype", "*", "*.json")):
+		with open(path) as handle:
+			doc = json.load(handle)
+		if doc.get("doctype") != "DocType":
+			continue
+		shipped[doc["name"]] = {
+			f["fieldname"]: f.get("label") for f in doc.get("fields", [])
+		}
+	return shipped
+
+
+def plan_labels(names, shipped):
+	"""{(doctype, fieldname): label or None} -- None meaning "leave the JSON".
+
+	A rendered label equal to the shipped one needs no Property Setter at all.
+	Writing one anyway left a site that renamed nothing carrying one record per
+	catalogued field, each saying exactly what the JSON says, and left clearing
+	a name with the old setter still standing instead of the original label.
+
+	A field the shipped map does not carry is left out entirely rather than
+	planned as None: a site mid-migrate has fields the catalogue names and the
+	JSON has not reached yet, and "remove its setter" is not the same as
+	"nothing to say about it".
+	"""
+	plan = {}
+	for doctype, fieldname, template in FIELD_LABELS:
+		if fieldname not in shipped.get(doctype, {}):
+			continue
+		label = label_for(template, names)
+		plan[(doctype, fieldname)] = None if label == shipped[doctype][fieldname] else label
+	return plan
+
+
+def business_unit_hidden(names):
+	"""1 while the level above the farm is switched off, 0 once it is on.
+
+	Naming the level is not the same as having one, so this reads the enable
+	flag alone: a project can type "Division" into the template and still not
+	be organised into divisions.
+	"""
+	return 0 if names.get("bu_enabled") else 1
+
+
+def apply_business_unit_visibility(settings=None):
+	"""Show or hide Work Management Farm.business_unit, per the enable flag.
+
+	The field ships hidden, because the level ships off. Turning the level on
+	writes a Property Setter that reveals it; turning it back off deletes that
+	setter rather than writing hidden=1 over a field that is hidden already --
+	a project that never uses the level ends up carrying nothing.
+
+	Returns what it did: "shown", "hidden", or None when nothing changed.
+	"""
+	import frappe
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	if not frappe.db.exists("DocType", "Work Management Farm"):
+		return None
+	if settings is None:
+		settings = frappe.get_cached_doc("Work Management Settings")
+	filters = {"doc_type": "Work Management Farm", "field_name": "business_unit",
+		"property": "hidden"}
+	existing = frappe.db.get_value("Property Setter", filters, "name")
+
+	if business_unit_hidden(resolve(settings)):
+		if not existing:
+			return None
+		frappe.delete_doc("Property Setter", existing, force=True, ignore_permissions=True)
+		frappe.clear_cache(doctype="Work Management Farm")
+		return "hidden"
+	if existing and frappe.db.get_value("Property Setter", existing, "value") in ("0", 0):
+		return None
+	make_property_setter("Work Management Farm", "business_unit", "hidden", 0, "Check",
+		validate_fields_for_doctype=False)
+	frappe.clear_cache(doctype="Work Management Farm")
+	return "shown"
+
+
 def apply_labels(settings=None):
-	"""Write a Property Setter for each level-naming label. Idempotent.
+	"""Bring the level-naming labels into line with the template. Idempotent.
 
 	Property Setters rather than edits to the shipped JSON, so the app's files
 	stay the same on every site and clearing the template puts the original
-	labels back.
+	labels back -- which means removing the setter, not writing the original
+	label into one. A site that renamed nothing therefore ends up carrying no
+	setters at all.
+
+	Returns (written, removed).
 	"""
 	import frappe
 	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
 	if settings is None:
 		settings = frappe.get_cached_doc("Work Management Settings")
-	names = resolve(settings)
+	plan = plan_labels(resolve(settings), shipped_labels())
 
-	written = 0
-	for doctype, fieldname, template in FIELD_LABELS:
+	written = removed = 0
+	for (doctype, fieldname), label in plan.items():
 		if not frappe.db.exists("DocType", doctype):
 			continue
-		label = label_for(template, names)
-		current = frappe.db.get_value(
-			"Property Setter",
-			{"doc_type": doctype, "field_name": fieldname, "property": "label"},
-			"value",
-		)
-		if current == label:
+		filters = {"doc_type": doctype, "field_name": fieldname, "property": "label"}
+		existing = frappe.db.get_value("Property Setter", filters, ["name", "value"], as_dict=True)
+		if label is None:
+			if not existing:
+				continue
+			frappe.delete_doc("Property Setter", existing.name, force=True, ignore_permissions=True)
+			removed += 1
+			continue
+		if existing and existing.value == label:
 			continue
 		make_property_setter(doctype, fieldname, "label", label, "Data",
 			validate_fields_for_doctype=False)
 		written += 1
-	if written:
+	if written or removed:
 		frappe.clear_cache()
-	return written
+	return written, removed
 
 
 def clear_labels():
-	"""Remove the labels this module wrote, restoring the shipped wording."""
+	"""Remove what this module wrote, restoring the shipped wording and the
+	shipped visibility of the level above the farm."""
 	import frappe
 
 	removed = 0
+	for name in frappe.get_all(
+		"Property Setter",
+		filters={"doc_type": "Work Management Farm", "field_name": "business_unit",
+			"property": "hidden"},
+		pluck="name",
+	):
+		frappe.delete_doc("Property Setter", name, force=True, ignore_permissions=True)
+		removed += 1
 	for doctype, fieldname, _template in FIELD_LABELS:
 		for name in frappe.get_all(
 			"Property Setter",

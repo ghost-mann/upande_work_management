@@ -5,7 +5,9 @@ Both decisions are pure and tested without a site::
     ./env/bin/python -m unittest work_management.tests.test_sections -v
 """
 
+import contextlib
 import glob
+import io
 import json
 import os
 import unittest
@@ -96,6 +98,22 @@ class TestUnassigned(unittest.TestCase):
 	def test_the_unassigned_bucket_has_a_name(self):
 		"""Blocks with no section are grouped, never dropped from a total."""
 		self.assertTrue(sections.UNASSIGNED)
+
+	def test_a_section_may_not_take_the_buckets_own_name(self):
+		"""Nothing stopped someone creating a section called Unassigned. roll_up
+		would merge it with the unclaimed blocks, and group_condition would read
+		its drill-down as the *complement* -- so clicking it would show every
+		unclaimed block's spend instead of its own."""
+		self.assertTrue(sections.is_reserved_name("Unassigned"))
+
+	def test_the_check_ignores_case_and_padding(self):
+		"""'unassigned' does not collide today, but a list holding both it and
+		Unassigned is a trap for the next reader, not a feature."""
+		self.assertTrue(sections.is_reserved_name("  unassigned "))
+
+	def test_any_other_name_is_allowed(self):
+		self.assertFalse(sections.is_reserved_name("BLOCK A"))
+		self.assertFalse(sections.is_reserved_name("Unassigned blocks"))
 
 
 from work_management.patches.v1_0 import seed_sections_from_cost_centres as seed
@@ -238,6 +256,175 @@ class TestRollUp(unittest.TestCase):
 		self.assertEqual(rolled[sections.UNASSIGNED]["labour_spend"], 5.0)
 
 
+
+class TestRollUpCarriesTheFarm(unittest.TestCase):
+	"""A section row with no farm loses the farm column, the farm colour in the
+	treemap, and the "Colour: by farm" option -- all three go blank the moment
+	the toggle moves, even though a section belongs to exactly one farm.
+	"""
+
+	def row(self, block, farm, spend=10.0):
+		return {
+			"block": block, "farm": farm, "labour_spend": spend,
+			"gl_spend": 0.0, "qty": 1.0, "worker_days": 1.0,
+		}
+
+	def test_a_section_carries_the_farm_its_blocks_belong_to(self):
+		rolled = sections.roll_up(
+			[self.row("A1", "Saboti"), self.row("A2", "Saboti")], {"A1": "BLOCK A", "A2": "BLOCK A"}
+		)
+		self.assertEqual(rolled[0]["farm"], "Saboti")
+
+	def test_a_bucket_whose_blocks_span_farms_claims_no_single_farm(self):
+		"""Unassigned collects blocks from every farm; naming one of them would
+		attribute the other farms' money to it."""
+		rolled = sections.roll_up(
+			[self.row("A1", "Saboti"), self.row("Z9", "Vale")], {}
+		)
+		self.assertEqual(rolled[0]["key"], sections.UNASSIGNED)
+		self.assertIsNone(rolled[0]["farm"])
+
+	def test_a_row_carrying_no_farm_leaves_the_bucket_without_one(self):
+		rolled = sections.roll_up([self.row("A1", None)], {"A1": "BLOCK A"})
+		self.assertIsNone(rolled[0]["farm"])
+
+
+class TestRollUpDerivesWhatCanBeAdded(unittest.TestCase):
+	"""Cost per worker-day and labour's share of GL are both ratios of two
+	fields the rollup already sums, so a section can show them. Left out, two
+	more columns sit blank in section mode for no reason.
+	"""
+
+	ROWS = [
+		{"block": "A1", "farm": "Saboti", "labour_spend": 100.0, "gl_spend": 200.0,
+		 "qty": 10.0, "worker_days": 8.0},
+		{"block": "A2", "farm": "Saboti", "labour_spend": 50.0, "gl_spend": 0.0,
+		 "qty": 5.0, "worker_days": 2.0},
+	]
+	MAPPING = {"A1": "BLOCK A", "A2": "BLOCK A"}
+
+	def test_cost_per_worker_day_is_the_section_total_over_its_worker_days(self):
+		rolled = sections.roll_up(self.ROWS, self.MAPPING)
+		self.assertEqual(rolled[0]["cost_per_wd"], 150.0 / 10.0)
+
+	def test_no_worker_days_gives_no_cost_per_worker_day_rather_than_a_crash(self):
+		rows = [dict(self.ROWS[0], worker_days=0.0)]
+		self.assertIsNone(sections.roll_up(rows, self.MAPPING)[0]["cost_per_wd"])
+
+	def test_labour_share_is_the_section_labour_against_its_own_gl(self):
+		rolled = sections.roll_up(self.ROWS, self.MAPPING)
+		self.assertEqual(rolled[0]["labour_share"], 150.0 / 200.0 * 100)
+
+	def test_no_gl_posted_gives_no_share_rather_than_zero(self):
+		"""Zero would read as "labour is 0% of cost", which is the opposite of
+		"there is no posted cost to compare against"."""
+		rows = [dict(self.ROWS[0], gl_spend=0.0)]
+		self.assertIsNone(sections.roll_up(rows, self.MAPPING)[0]["labour_share"])
+
+
+class TestRollUpMergesTheWeeklyTrend(unittest.TestCase):
+	"""Each per-block row carries the weekly spend behind its sparkline. Left
+	out of the rollup, every sparkline in section mode is empty -- a blank
+	column where block mode shows a trend.
+	"""
+
+	def row(self, block, trend):
+		return {
+			"block": block, "farm": "Saboti", "labour_spend": 10.0,
+			"gl_spend": 0.0, "qty": 1.0, "worker_days": 1.0, "trend": trend,
+		}
+
+	def test_the_same_week_from_two_blocks_becomes_one_point(self):
+		rolled = sections.roll_up(
+			[
+				self.row("A1", [{"w": "2026-08-03", "pay": 100.0}]),
+				self.row("A2", [{"w": "2026-08-03", "pay": 40.0}]),
+			],
+			{"A1": "BLOCK A", "A2": "BLOCK A"},
+		)
+		self.assertEqual(rolled[0]["trend"], [{"w": "2026-08-03", "pay": 140.0}])
+
+	def test_weeks_come_back_in_order(self):
+		rolled = sections.roll_up(
+			[
+				self.row("A1", [{"w": "2026-08-10", "pay": 5.0}]),
+				self.row("A2", [{"w": "2026-08-03", "pay": 7.0}]),
+			],
+			{"A1": "BLOCK A", "A2": "BLOCK A"},
+		)
+		self.assertEqual([p["w"] for p in rolled[0]["trend"]], ["2026-08-03", "2026-08-10"])
+
+	def test_a_row_with_no_trend_at_all_does_not_break_the_merge(self):
+		rolled = sections.roll_up([self.row("A1", None)], {"A1": "BLOCK A"})
+		self.assertEqual(rolled[0]["trend"], [])
+
+
+class TestDrillingIntoOneGroup(unittest.TestCase):
+	"""Clicking a row in the cost-centre table asks cost_center_detail for the
+	tasks and workers behind it. In section mode the row's key is a section
+	name, and no actuals record ever carries one in block_section -- so the
+	drill-down has to be expressed as "the blocks this section holds", or it
+	returns nothing at all and the headline feature dead-ends.
+	"""
+
+	MAPPING = {"A1": "BLOCK A", "A2": "BLOCK A", "B7": "BLOCK B"}
+	COLUMN = "ac.block_section"
+
+	def test_a_section_restricts_to_the_blocks_it_holds(self):
+		cond, params = sections.group_condition(self.COLUMN, "BLOCK A", self.MAPPING)
+		self.assertEqual(cond, "ac.block_section in (%s, %s)")
+		self.assertEqual(params, ["A1", "A2"])
+
+	def test_unassigned_is_every_block_no_section_claims(self):
+		"""Expressed as a negation, so it needs no list of every block that exists."""
+		cond, params = sections.group_condition(self.COLUMN, sections.UNASSIGNED, self.MAPPING)
+		self.assertEqual(cond, "ac.block_section not in (%s, %s, %s)")
+		self.assertEqual(params, ["A1", "A2", "B7"])
+
+	def test_a_section_holding_nothing_matches_nothing(self):
+		"""Not everything: an empty `in ()` list is a SQL error, and falling
+		back to no condition at all would show the whole site's spend under a
+		section that holds no blocks."""
+		cond, params = sections.group_condition(self.COLUMN, "BLOCK A", {})
+		self.assertEqual(cond, "1=0")
+		self.assertEqual(params, [])
+
+	def test_unassigned_on_a_site_with_no_sections_still_excludes_rows_with_no_block(self):
+		"""It cannot be "1=1". The list query the row came from carries
+		`block_section IS NOT NULL`, but the drill-down builds its whole
+		condition from this fragment -- so "everything" would open a row
+		totalling N with a breakdown of confirmed actuals that have no block at
+		all, money the row itself never counted. The `not in (...)` form already
+		drops those, because NULL never satisfies it; this branch has to match."""
+		cond, params = sections.group_condition(self.COLUMN, sections.UNASSIGNED, {})
+		self.assertEqual(cond, "ac.block_section is not null")
+		self.assertEqual(params, [])
+
+	def test_the_condition_never_interpolates_the_group_name(self):
+		"""Section names are typed by hand; they belong in params, not in SQL."""
+		cond, params = sections.group_condition(self.COLUMN, "BLOCK A", {"'; drop": "BLOCK A"})
+		self.assertNotIn("drop", cond)
+		self.assertEqual(params, ["'; drop"])
+
+	def test_the_blocks_a_section_holds_can_be_listed_on_their_own(self):
+		"""The GL account breakdown needs the blocks themselves, not a condition."""
+		self.assertEqual(sections.blocks_of("BLOCK A", self.MAPPING), ["A1", "A2"])
+
+	def test_unassigned_holds_no_listable_blocks(self):
+		"""It is defined by what it excludes, so there is no list to give --
+		and the GL breakdown has no single grouping account to show for it."""
+		self.assertEqual(sections.blocks_of(sections.UNASSIGNED, self.MAPPING), [])
+
+	def test_a_disabled_section_is_not_a_group_anyone_can_drill_into(self):
+		"""The rollup hides a disabled section by leaving its blocks out of the
+		mapping, so they land in Unassigned. The drill-down reads the same
+		mapping, so Unassigned includes them there too and the two agree."""
+		enabled = {"A1": "BLOCK A"}  # B7's section is disabled, so it is absent
+		cond, params = sections.group_condition(self.COLUMN, sections.UNASSIGNED, enabled)
+		self.assertEqual(cond, "ac.block_section not in (%s)")
+		self.assertEqual(params, ["A1"])
+
+
 import inspect
 
 from work_management.api import dashboard as cost_center_dashboard
@@ -260,6 +447,10 @@ class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
 	whose violation caused the bug -- the true count is captured before the
 	group_by branch can reassign `rows`, and out["totals"] reads that capture
 	rather than re-deriving it from whatever `rows` happens to hold by then.
+
+	Nothing re-derives the count any more: the search filters the per-block
+	rows before this capture, so both toggle positions and any search reach
+	out["totals"] through the one `block_count` taken here.
 	"""
 
 	def setUp(self):
@@ -267,7 +458,7 @@ class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
 
 	def test_the_block_count_is_captured_before_the_group_by_branch(self):
 		capture_at = self.src.find("block_count = len(rows)")
-		branch_at = self.src.find('== "section":')
+		branch_at = self.src.find("if group_by_section:")
 		self.assertNotEqual(capture_at, -1, "no captured block count found")
 		self.assertNotEqual(branch_at, -1, "no group_by section branch found")
 		self.assertLess(
@@ -279,3 +470,70 @@ class TestCostCentreTotalsBlockCountSurvivesTheToggle(unittest.TestCase):
 	def test_totals_blocks_uses_the_capture_not_a_fresh_len_of_rows(self):
 		self.assertIn('"blocks": block_count', self.src)
 		self.assertNotIn('"totals"] = {"labour": tot_labour, "gl": tot_gl, "blocks": len(rows)', self.src)
+
+
+class TestOneBadRecordDoesNotAbortTheMigrate(unittest.TestCase):
+	"""Both patches walk records the app has never seen. A legacy value that
+	will not validate is a fact of life; aborting `bench migrate` for the whole
+	site over one of them is not, and it contradicts the very principle
+	`without_aborting_the_migrate` was added to establish.
+	"""
+
+	@staticmethod
+	@contextlib.contextmanager
+	def quiet():
+		"""The skip notes are printed and logged on purpose; swallow them so a
+		passing run stays quiet and a real failure still stands out."""
+		noise = io.StringIO()
+		with contextlib.redirect_stdout(noise), contextlib.redirect_stderr(noise):
+			yield
+
+	def test_every_missing_farm_is_created_with_the_right_disabled_flag(self):
+		made = []
+		created, notes = backfill.create_missing(
+			["Saboti", "Torongo"], {"Saboti"}, lambda farm, disabled: made.append((farm, disabled))
+		)
+		self.assertEqual(made, [("Saboti", False), ("Torongo", True)])
+		self.assertEqual(created, 2)
+		self.assertEqual(notes, [])
+
+	def test_a_farm_that_will_not_insert_does_not_stop_the_farms_after_it(self):
+		made = []
+
+		def create(farm, disabled):
+			if farm == "Kiptagich":
+				raise ValueError("Value missing for Work Management Farm: Farm")
+			made.append(farm)
+
+		with self.quiet():
+			created, notes = backfill.create_missing(
+				["Isinya", "Kiptagich", "Torongo"], set(), create
+			)
+		self.assertEqual(made, ["Isinya", "Torongo"])
+		self.assertEqual(created, 2)
+		self.assertEqual(len(notes), 1)
+		self.assertIn("Kiptagich", notes[0])
+
+	def test_each_block_outcome_is_counted(self):
+		outcomes = {
+			"A1": seed.CREATED, "A2": seed.PLACED, "A3": seed.AMBIGUOUS,
+			"A4": seed.FARM_CONFLICT, "A5": None,
+		}
+		counts, notes = seed.tally(sorted(outcomes), outcomes.get)
+		self.assertEqual(counts["created"], 1)
+		self.assertEqual(counts["placed"], 2, "a created section also holds its block")
+		self.assertEqual(counts["ambiguous"], 1)
+		self.assertEqual(counts["farm_conflict"], 1)
+		self.assertEqual(notes, [])
+
+	def test_a_block_that_cannot_be_placed_does_not_stop_the_blocks_after_it(self):
+		def place(block):
+			if block == "VALE-B7":
+				raise ValueError("Warehouse VALE-B7 not found")
+			return seed.PLACED
+
+		with self.quiet():
+			counts, notes = seed.tally(["A1", "VALE-B7", "B2"], place)
+		self.assertEqual(counts["placed"], 2)
+		self.assertEqual(len(notes), 1)
+		self.assertIn("VALE-B7", notes[0])

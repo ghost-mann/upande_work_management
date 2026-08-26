@@ -10,6 +10,9 @@ import unittest
 import frappe
 
 from work_management import install, taxonomy
+from work_management.patches.v1_0 import (
+	enable_business_unit_level_if_used as bu_patch,
+)
 
 
 def settings(**overrides):
@@ -125,7 +128,7 @@ def _shipped_doctypes():
 
 
 class TestFieldLabelCatalogue(unittest.TestCase):
-	"""The 20 level-naming labels, and the one that must not be touched."""
+	"""Every entry in the level-naming catalogue points at a field that exists."""
 
 	def test_every_entry_names_a_field_the_app_defines(self):
 		known = _shipped_doctypes()
@@ -197,6 +200,52 @@ class TestBusinessUnitField(unittest.TestCase):
 
 	def test_it_is_on_the_form(self):
 		self.assertIn("business_unit", self.doc["field_order"])
+
+	def test_it_ships_hidden_because_the_level_ships_off(self):
+		"""tax_bu_enabled is off by default, so a project that has never heard
+		of business units must not find the field waiting on every farm."""
+		self.assertEqual(self.fields["business_unit"].get("hidden"), 1)
+
+
+class TestTheLevelAboveTheFarmCanBeSwitchedOff(unittest.TestCase):
+	"""tax_bu_enabled was read by nothing at all: ticking it did literally
+	nothing, while its own description promised a level above the farm. It now
+	decides whether that level's field is on the form.
+	"""
+
+	def test_the_field_stays_hidden_while_the_level_is_off(self):
+		self.assertEqual(taxonomy.business_unit_hidden(taxonomy.resolve(settings())), 1)
+
+	def test_turning_the_level_on_reveals_the_field(self):
+		names = taxonomy.resolve(settings(tax_bu_enabled=1))
+		self.assertEqual(taxonomy.business_unit_hidden(names), 0)
+
+	def test_naming_the_level_without_turning_it_on_reveals_nothing(self):
+		"""Typing a name is not the same as saying the level exists."""
+		names = taxonomy.resolve(settings(tax_bu_singular="Division"))
+		self.assertEqual(taxonomy.business_unit_hidden(names), 1)
+
+
+class TestTurningTheLevelOnForASiteAlreadyUsingIt(unittest.TestCase):
+	"""The field shipped visible and only later grew an enable flag that
+	defaults to off, so hiding it on the next migrate would take a filled-in
+	field off the form of every site that had started using it, with nothing
+	saying where it went. The one-time patch turns the level on where the data
+	says it is already in use.
+	"""
+
+	def test_a_site_with_business_units_recorded_gets_the_level_turned_on(self):
+		self.assertTrue(bu_patch.should_enable(farms_with_a_unit=4, already_enabled=False))
+
+	def test_a_site_that_already_turned_it_on_is_left_alone(self):
+		"""Not rewritten: the flag is the admin's, and this runs once."""
+		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=4, already_enabled=True))
+
+	def test_a_site_that_never_used_the_field_keeps_the_level_off(self):
+		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=0, already_enabled=False))
+
+	def test_a_site_with_no_data_and_the_level_on_is_left_alone(self):
+		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=0, already_enabled=True))
 
 
 class TestBusinessUnitFieldPlan(unittest.TestCase):
@@ -288,6 +337,27 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 			]
 			self.assertEqual(offenders, [], f"{filename}: {offenders[:5]}")
 
+	def test_the_templates_hold_no_bare_level_label(self):
+		"""The five www templates print some labels themselves rather than
+		leaving them to the screen's JS. Those are as visible as any other, and
+		a static one keeps its shipped wording on a renamed install -- which is
+		how "Blocks / Sections" survived the whole screens task.
+
+		Jinja expressions are blanked before scanning, so a level word inside
+		{{ ... }} is what this wants to see; one in plain markup trips it.
+		"""
+		import glob
+		import os
+		import re
+
+		expression = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
+		pattern = re.compile(r"\b(Farm|Farms|Block|Blocks|Section|Sections)\b")
+		for path in sorted(glob.glob(os.path.join(self.APP, "www", "*.html"))):
+			with open(path) as handle:
+				bare = expression.sub("", handle.read())
+			found = sorted({m.group(0) for m in pattern.finditer(bare)})
+			self.assertEqual(found, [], f"{os.path.basename(path)}: {found}")
+
 	def test_dashboard_tx_calls_are_escaped_before_reaching_markup(self):
 		"""A configured level name is a plain Data field with no character
 		restriction, so a bare TX(...) spliced into markup is a stored-value
@@ -307,6 +377,15 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 		against those files would produce both false positives (on the safe
 		patterns) and true positives this task has no mandate to fix, so it
 		is not extended there.
+
+		One exemption, by name: ccGroupText() returns the level name as plain
+		text for the two DOM properties that take text and cannot be injected
+		into -- .textContent and .placeholder -- where escaping would print
+		&amp; at a reader instead of an ampersand. Its markup-bound twin
+		ccGroupLabel() wraps it in esc(), and that is what the table header
+		uses. The exemption blanks that one function body, so a bare TX(
+		anywhere else in the file -- including anywhere else inside
+		renderCcTable -- still trips this.
 		"""
 		import os
 		import re
@@ -314,10 +393,120 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 		path = os.path.join(self.APP, "public", "js", "work-management-dashboard.js")
 		with open(path) as handle:
 			src = handle.read()
+		exempt = re.compile(
+			r"function ccGroupText\(\)\{.*?\n  \}", re.S
+		)
+		scanned, exemptions = exempt.subn("function ccGroupText(){}", src)
+		self.assertEqual(exemptions, 1, "ccGroupText() not found: the exemption is stale")
 		bare_call = re.compile(r"(?<!esc\()(?<!function )TX\(")
-		offenders = bare_call.findall(src)
+		offenders = bare_call.findall(scanned)
 		self.assertEqual(len(offenders), 0, f"{len(offenders)} TX() call(s) not wrapped in esc()")
 
+
+
+class TestASiteThatRenamedNothingCarriesNothing(unittest.TestCase):
+	"""apply_labels compared each rendered label against the Property Setter it
+	had already written, never against the label the app ships. So a site that
+	renamed nothing still gained one setter per catalogued field, each saying
+	exactly what the shipped JSON already said -- and clearing a name left the
+	setter standing rather than restoring the original.
+	"""
+
+	def test_the_default_template_needs_no_property_setter_at_all(self):
+		plan = taxonomy.plan_labels(taxonomy.resolve(settings()), taxonomy.shipped_labels())
+		self.assertEqual({k: v for k, v in plan.items() if v is not None}, {})
+		self.assertEqual(len(plan), len(taxonomy.FIELD_LABELS))
+
+	def test_renaming_one_level_plans_only_the_fields_that_change(self):
+		plan = taxonomy.plan_labels(
+			taxonomy.resolve(settings(tax_top_plural="Estates")), taxonomy.shipped_labels()
+		)
+		self.assertEqual(
+			{k: v for k, v in plan.items() if v is not None},
+			{
+				("Work Management Settings", "farms"): "Estates",
+				("Work Management Settings", "farms_section"): "Estates",
+				("Work Management Settings", "disc_multi_farm"): "Two Estates, one day",
+			},
+		)
+
+	def test_a_field_this_site_does_not_have_is_left_out_of_the_plan(self):
+		"""Not planned as None, which would mean "remove its setter": a site
+		mid-migrate has fields the catalogue names and the JSON has not
+		reached yet."""
+		self.assertEqual(taxonomy.plan_labels(taxonomy.resolve(settings()), {}), {})
+
+	def test_the_shipped_labels_are_read_from_the_app_not_guessed(self):
+		shipped = taxonomy.shipped_labels()
+		self.assertEqual(shipped["Work Management Section"]["section_name"], "Section")
+		self.assertEqual(shipped["Work Management Settings"]["disc_multi_farm"], "Two Farms, one day")
+
+
+class TestCatalogueCompleteness(unittest.TestCase):
+	"""The reverse guard: no shipped label may name a level and stay out.
+
+	`TestFieldLabelCatalogue` checks that every entry names a real field. That
+	direction cannot catch a field added after the catalogue was frozen, which
+	is how `Work Management Section` -- the one doctype this feature ships --
+	became the one place the feature did not apply to itself.
+	"""
+
+	# Every label the module ships that legitimately keeps its wording, and why.
+	KEPT_IN_SHIPPED_WORDING = {
+		("Work Management Settings", "att_block_absent"):
+			"'block employees marked Absent' uses block as a verb",
+		("Work Management Settings", "tax_bu_enabled"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_bu_singular"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_bu_plural"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_top_singular"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_top_plural"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_unit_singular"):
+			"names the template field itself; renaming it would be circular",
+		("Work Management Settings", "tax_unit_plural"):
+			"names the template field itself; renaming it would be circular",
+	}
+
+	@staticmethod
+	def _level_words():
+		"""The shipped names of every level, longest first so 'Business Units'
+		is recognised before 'Business Unit'."""
+		words = set()
+		for level in taxonomy.LEVELS:
+			words.add(level.singular)
+			words.add(level.plural)
+		return sorted(words, key=len, reverse=True)
+
+	def test_every_shipped_label_that_names_a_level_is_in_the_catalogue(self):
+		import re
+
+		pattern = re.compile(
+			r"\b(" + "|".join(re.escape(w) for w in self._level_words()) + r")\b", re.I
+		)
+		known = {(d, f) for d, f, _t in taxonomy.FIELD_LABELS}
+		missing = []
+		for doctype, fields in _shipped_doctypes().items():
+			for fieldname, field in fields.items():
+				label = field.get("label") or ""
+				if not pattern.search(label):
+					continue
+				if (doctype, fieldname) in known:
+					continue
+				if (doctype, fieldname) in self.KEPT_IN_SHIPPED_WORDING:
+					continue
+				missing.append(f"{doctype}.{fieldname} = {label!r}")
+		self.assertEqual(sorted(missing), [], "\n".join(sorted(missing)))
+
+	def test_the_exception_list_only_names_labels_that_still_exist(self):
+		"""A stale exception would quietly re-open the hole it was cut for."""
+		shipped = _shipped_doctypes()
+		for (doctype, fieldname), reason in self.KEPT_IN_SHIPPED_WORDING.items():
+			self.assertIn(doctype, shipped, reason)
+			self.assertIn(fieldname, shipped[doctype], f"{doctype}.{fieldname}: {reason}")
 
 if __name__ == "__main__":
 	unittest.main()

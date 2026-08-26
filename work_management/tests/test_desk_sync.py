@@ -22,9 +22,12 @@ The repair decision is pure, so it is tested here without a site::
 
 import contextlib
 import io
+import json
 import unittest
 
-from work_management import desk
+import frappe
+
+from work_management import desk, taxonomy
 
 
 def record(module=desk.MODULE, app=desk.APP, parent_page=""):
@@ -219,3 +222,68 @@ class TestARebuildStepThatFails(unittest.TestCase):
 		calls = []
 		desk.without_aborting_the_migrate(lambda: calls.append(1), "count")
 		self.assertEqual(calls, [1])
+
+
+class TestNavigationLabelsFollowTheTaxonomy(unittest.TestCase):
+	"""A Workspace Link and a Sidebar Item are records, not doctype fields, so
+	the Property Setters that relabel the forms never reach them: a site
+	calling them Estates and Plots still read "Farms" and "Sections" down the
+	side of the desk.
+	"""
+
+	def names(self, **overrides):
+		base = {
+			"tax_bu_enabled": 0, "tax_bu_singular": "", "tax_bu_plural": "",
+			"tax_top_singular": "", "tax_top_plural": "",
+			"tax_unit_singular": "", "tax_unit_plural": "",
+			"tax_section_singular": "", "tax_section_plural": "",
+		}
+		base.update(overrides)
+		return taxonomy.resolve(frappe._dict(base))
+
+	def test_a_renamed_level_reaches_the_navigation(self):
+		names = self.names(tax_top_plural="Estates", tax_section_plural="Zones")
+		self.assertEqual(desk.nav_label("Work Management Farm", names), "Estates")
+		self.assertEqual(desk.nav_label("Work Management Section", names), "Zones")
+
+	def test_the_default_template_leaves_the_shipped_wording(self):
+		self.assertEqual(desk.nav_label("Work Management Farm", self.names()), "Farms")
+
+	def test_an_entry_that_names_no_level_is_left_alone(self):
+		"""Returning "" or the label would invite a caller to write it back."""
+		self.assertIsNone(desk.nav_label("Task", self.names()))
+
+	def test_every_shipped_navigation_label_that_names_a_level_is_covered(self):
+		"""The reverse guard, as for the field catalogue: a link added later
+		must not quietly opt out of the taxonomy."""
+		import re
+
+		words = sorted(
+			{w for level in taxonomy.LEVELS for w in (level.singular, level.plural)},
+			key=len, reverse=True,
+		)
+		pattern = re.compile(r"\b(" + "|".join(re.escape(w) for w in words) + r")\b")
+		missing = []
+		for entries in self.shipped_navigation():
+			for entry in entries:
+				label = entry.get("label") or ""
+				if pattern.search(label) and entry.get("link_to") not in desk.NAV_LABELS:
+					missing.append(f"{label!r} -> {entry.get('link_to')!r}")
+		self.assertEqual(sorted(missing), [], "\n".join(sorted(missing)))
+
+	@staticmethod
+	def shipped_navigation():
+		"""Every navigation entry the app ships, workspace links and sidebar
+		items alike."""
+		for _name, path, shipped in desk.workspace_definitions():
+			yield shipped.get("links") or []
+		yield json.loads(desk.SIDEBAR_JSON.read_text()).get("items") or []
+
+	def test_the_covered_links_are_really_shipped(self):
+		"""A stale entry in NAV_LABELS would relabel nothing and hide a gap."""
+		shipped = {
+			entry.get("link_to")
+			for entries in self.shipped_navigation() for entry in entries
+		}
+		for link_to in desk.NAV_LABELS:
+			self.assertIn(link_to, shipped, link_to)
