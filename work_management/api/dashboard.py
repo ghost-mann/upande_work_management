@@ -7,6 +7,7 @@ import json
 
 import frappe
 
+from work_management import sections
 from work_management.api.config import get_config
 
 
@@ -2091,6 +2092,11 @@ def wm_dashboard(**kwargs):
         ccfrom = frappe.form_dict.get("from_date")
         ccto = frappe.form_dict.get("to_date")
         ccq = (frappe.form_dict.get("q") or "").strip().lower()
+        group_by_section = (frappe.form_dict.get("group_by") or "block") == "section"
+        # Read once, before the loop: the search needs it to know what each block
+        # is called in this toggle position, and the rollup below reads the same
+        # mapping so a disabled section's blocks land in Unassigned in both.
+        section_map = sections.enabled_block_to_section() if group_by_section else {}
         conds = "ac.workflow_state='CONFIRMED' AND ac.block_section IS NOT NULL"
         params = []
         if ccfarm:
@@ -2149,8 +2155,17 @@ def wm_dashboard(**kwargs):
         tot_qty = 0
         tot_wd = 0
         for r in labour:
-            if ccq and ccq not in str(r.block).lower():
-                continue
+            # The search box searches whatever the rows are: block names here,
+            # section names once the toggle moves. Matching the block name in
+            # section mode would hide a section whose blocks are not called what
+            # the section is called -- so a block is matched on its section, and
+            # the filter still happens here, once. Everything downstream is built
+            # from what survives it: the farm subtotals, the median that colours
+            # the cost-per-unit column, the totals strip and the block count.
+            if ccq:
+                named = str(section_map.get(r.block) or sections.UNASSIGNED) if group_by_section else str(r.block)
+                if ccq not in named.lower():
+                    continue
             gl_spend = 0
             cc = None
             if has_gl and r.block:
@@ -2237,21 +2252,34 @@ def wm_dashboard(**kwargs):
         # this toggle (see the doctype's own field description), so its blocks
         # fall back to Unassigned here rather than being dropped or counted under
         # a section name the toggle no longer shows -- money must still add up.
-        if (frappe.form_dict.get("group_by") or "block") == "section":
-            from work_management import sections
-            disabled = set(frappe.db.get_all("Work Management Section", filters={"disabled": 1}, pluck="name"))
-            section_map = {b: s for b, s in sections.block_to_section().items() if s not in disabled}
+        if group_by_section:
+            rolled = sections.roll_up(rows, section_map)
+            # The colour scale compares a row against the middle of its own kind.
+            # Left as the median block, it judged sections against blocks -- a
+            # section holding six blocks is dearer than almost any single one of
+            # them, so nearly every row came out red.
+            sec_cpu = sorted([b["cost_per_unit"] for b in rolled if b["cost_per_unit"] is not None])
+            if sec_cpu:
+                mid = len(sec_cpu) // 2
+                med_cpu = sec_cpu[mid] if len(sec_cpu) % 2 == 1 else (sec_cpu[mid - 1] + sec_cpu[mid]) / 2.0
+            else:
+                med_cpu = None
+            # workers, tasks, days_active and the dates they imply are counts of
+            # distinct things two blocks can share, so they cannot be added and
+            # stay empty here on purpose. Everything the rollup could derive
+            # honestly comes through.
             rows = [
                 {
-                    "block": r["key"], "farm": None,
+                    "block": r["key"], "farm": r["farm"],
                     "labour_spend": r["labour_spend"], "gl_spend": r["gl_spend"],
                     "cost_center": None, "qty": r["qty"], "workers": None,
                     "tasks": None, "worker_days": r["worker_days"], "days_active": None,
                     "first_day": None, "last_day": None,
-                    "cost_per_unit": r["cost_per_unit"], "cost_per_wd": None,
-                    "avg_crew": None, "labour_share": None, "trend": [],
+                    "cost_per_unit": r["cost_per_unit"], "cost_per_wd": r["cost_per_wd"],
+                    "avg_crew": None, "labour_share": r["labour_share"],
+                    "trend": r["trend"], "blocks": r["blocks"],
                 }
-                for r in sections.roll_up(rows, section_map)
+                for r in rolled
             ]
         out["blocks"] = rows
         out["farm_totals"] = farm_rows
@@ -2263,12 +2291,27 @@ def wm_dashboard(**kwargs):
 
     elif action == "cost_center_detail":
         # For one block: tasks in it AND workers on it (both tables), same filters.
+        # The row clicked is a block, or -- once the Group toggle has moved -- a
+        # section. No actuals record carries a section name, so a section is
+        # asked for as the blocks it holds; asking for the name itself matched
+        # nothing and the drill-down opened empty every time.
         ccblock = frappe.form_dict.get("block")
         ccfarm = frappe.form_dict.get("farm")
         ccfrom = frappe.form_dict.get("from_date")
         ccto = frappe.form_dict.get("to_date")
-        conds = "ac.workflow_state='CONFIRMED' AND ac.block_section = %s"
-        params = [ccblock]
+        drill_into_section = (frappe.form_dict.get("group_by") or "block") == "section"
+        if drill_into_section:
+            # The same mapping the rollup used, so a disabled section's blocks
+            # sit under Unassigned in the row and in the drill-down alike.
+            where, where_params = sections.group_condition(
+                "ac.block_section", ccblock, sections.enabled_block_to_section())
+            conds = "ac.workflow_state='CONFIRMED' AND " + where
+            params = list(where_params)
+            group_blocks = None  # resolved from the row's own condition, below
+        else:
+            group_blocks = [ccblock] if ccblock else []
+            conds = "ac.workflow_state='CONFIRMED' AND ac.block_section = %s"
+            params = [ccblock]
         if ccfarm:
             conds = conds + " AND ac.farm = %s"
             params.append(ccfarm)
@@ -2321,15 +2364,35 @@ def wm_dashboard(**kwargs):
         gl_accounts = []
         gl_total = 0
         has_gl = frappe.get_meta("GL Entry").get_field("cost_center") is not None
-        if has_gl and ccblock:
-            cc = None
-            if frappe.db.exists("Cost Center", ccblock):
-                cc = ccblock
-            if not cc:
-                cc = frappe.db.get_value("Cost Center", {"cost_center_name": ccblock}, "name")
-            if cc:
-                glconds2 = "gl.cost_center = %s AND gl.is_cancelled = 0"
-                glparams2 = [cc]
+        if has_gl and group_blocks is None:
+            # A section has no cost centre of its own, so its GL breakdown is the
+            # breakdown of its blocks' cost centres read together -- and "its
+            # blocks" has to mean the same ones the row was totalled from, filters
+            # and all, or the accounts listed would not add up to the GL figure the
+            # row displays. Unassigned in particular has no list of its own: it is
+            # defined by what it excludes, which is exactly what this condition
+            # says. Asking blocks_of() instead left every Unassigned drill-down
+            # with no GL accounts under a row reporting GL spend.
+            group_blocks = [
+                row[0] for row in frappe.db.sql(
+                    "SELECT DISTINCT ac.block_section FROM `tabWork Actuals Employee` we "
+                    "INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name "
+                    "WHERE " + conds, tuple(params))
+            ]
+        if has_gl and group_blocks:
+            # A section has no cost centre of its own: its GL breakdown is its
+            # blocks' cost centres read together. In block mode that list is
+            # the one block, and `in (%s)` asks exactly what `= %s` asked.
+            centres = []
+            for block in group_blocks:
+                cc = block if frappe.db.exists("Cost Center", block) else frappe.db.get_value(
+                    "Cost Center", {"cost_center_name": block}, "name")
+                if cc and cc not in centres:
+                    centres.append(cc)
+            if centres:
+                glconds2 = ("gl.cost_center in (" + ", ".join(["%s"] * len(centres))
+                    + ") AND gl.is_cancelled = 0")
+                glparams2 = list(centres)
                 if ccfrom:
                     glconds2 = glconds2 + " AND gl.posting_date >= %s"
                     glparams2.append(ccfrom)

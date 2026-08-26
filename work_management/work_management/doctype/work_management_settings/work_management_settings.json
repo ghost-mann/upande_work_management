@@ -446,7 +446,7 @@
    "fieldtype": "Check",
    "label": "Use a level above the farm",
    "default": "0",
-   "description": "On: farms belong to a business unit, and reports can group by it."
+   "description": "On: each farm carries a business unit, and the field appears on the farm under the name given below. Off: the level is hidden. No report groups by it yet."
   },
   {
    "fieldname": "tax_bu_singular",

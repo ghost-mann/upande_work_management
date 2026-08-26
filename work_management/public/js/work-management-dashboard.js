@@ -654,11 +654,11 @@
           '<div id="cb-list" style="max-height:420px;overflow:auto;border-top:1px solid #eee">Loading&hellip;</div>'+
         '</div></div>'+
       // ===== COST CENTRE (BLOCK): which block consumes the most money =====
-      '<div class="sech">Cost centres &mdash; spend by '+esc(TX("unit_singular","Block")).toLowerCase()+'</div>'+
-      '<div class="card"><div class="hd"><h3>'+esc(TX("unit_singular","Block"))+' cost centres</h3><div class="cap">running labour cost per '+esc(TX("unit_singular","Block")).toLowerCase()+' beside GL cost-centre actuals &middot; boxes sized by spend &middot; click a '+esc(TX("unit_singular","Block")).toLowerCase()+' for its full breakdown</div></div>'+
+      '<div class="sech">Cost centres &mdash; spend by '+esc(TX("unit_singular","Block")).toLowerCase()+' or '+esc(TX("section_singular","Section")).toLowerCase()+'</div>'+
+      '<div class="card"><div class="hd"><h3>Cost centres</h3><div class="cap">running labour cost per '+esc(TX("unit_singular","Block")).toLowerCase()+' beside GL cost-centre actuals, or totalled by '+esc(TX("section_singular","Section")).toLowerCase()+' &middot; boxes sized by spend &middot; click a row for its full breakdown</div></div>'+
         '<div class="bd">'+
           '<div class="pex-filters" id="cc-filters">'+
-            '<input id="cc-q" placeholder="Search '+esc(TX("unit_singular","Block")).toLowerCase()+'…" />'+
+            '<input id="cc-q" placeholder="Search…" />'+
             '<select id="cc-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
             '<label>From <input type="date" id="cc-from" /></label>'+
             '<label>To <input type="date" id="cc-to" /></label>'+
@@ -1830,6 +1830,22 @@
       group_by:(el("cc-group")||{}).value||"block"
     };
   }
+  // What the rows are, right now. Everything the table says about them -- the
+  // first column heading, the empty state, the tab, the search box -- reads it
+  // here rather than assuming blocks, which is what left the block heading
+  // standing over a column of section names.
+  //
+  // ccGroupText() is the only place in this file that reads a level name
+  // without escaping it, and the only two things it feeds are .textContent and
+  // .placeholder: both take text, neither parses markup, and escaping for them
+  // would print &amp; at a reader. Anything going into markup takes
+  // ccGroupLabel() instead. test_taxonomy.py's escaping guard exempts this one
+  // function by name, and still trips on an unescaped level name anywhere else.
+  function ccGroupText(){
+    return ((el("cc-group")||{}).value==="section")
+      ? TX("section_singular","Section") : TX("unit_singular","Block");
+  }
+  function ccGroupLabel(){ return esc(ccGroupText()); }
   function closeAllExpanded(scope){
     (scope||document).querySelectorAll("tr.wm-detail").forEach(function(tr){ tr.parentNode.removeChild(tr); });
     (scope||document).querySelectorAll("tr.wm-x.open").forEach(function(tr){ tr.classList.remove("open"); });
@@ -1928,12 +1944,12 @@
     h+='</div>';
     // colour legend
     if(mode==="cpu"){
-      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Colour = cost per unit vs the median '+esc(TX("unit_singular","Block")).toLowerCase()+': <span style="color:#0a7a43;font-weight:700">efficient</span> → <span style="color:#b45309;font-weight:700">costly</span> → <span style="color:#be123c;font-weight:700">most costly</span>. Box size = labour spend.</div>';
+      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Colour = cost per unit vs the median '+ccGroupLabel().toLowerCase()+': <span style="color:#0a7a43;font-weight:700">efficient</span> → <span style="color:#b45309;font-weight:700">costly</span> → <span style="color:#be123c;font-weight:700">most costly</span>. Box size = labour spend.</div>';
     } else if(mode==="farm"){
       var leg=''; Object.keys(CC_FARM_COLORS).forEach(function(f){ leg+='<span style="display:inline-block;margin-right:10px"><i style="display:inline-block;width:10px;height:10px;background:'+CC_FARM_COLORS[f]+';vertical-align:middle;margin-right:4px"></i>'+esc(f)+'</span>'; });
       h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Box size = labour spend. '+leg+'</div>';
     } else {
-      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Box size &amp; shade = labour spend (darker green = bigger running cost). Click any '+esc(TX("unit_singular","Block")).toLowerCase()+' to drill in.</div>';
+      h+='<div style="font-size:10px;color:var(--mute);margin-top:6px">Box size &amp; shade = labour spend (darker green = bigger running cost). Click any '+ccGroupLabel().toLowerCase()+' to drill in.</div>';
     }
     box.innerHTML=h;
     box.querySelectorAll(".cc-tile").forEach(function(t){
@@ -1994,6 +2010,13 @@
     var box=el("cc-list"); if(!box) return;
     var t=CCDATA.totals||{};
     var med=t.median_cost_per_unit;
+    // Above the farm-tab return on purpose: the toggle can be moved while that
+    // tab is in front, and leaving these behind it meant the heading and the
+    // search box still said "block" until you switched tabs back.
+    var word=ccGroupText(), label=ccGroupLabel();
+    var qbox=el("cc-q"); if(qbox) qbox.placeholder="Search "+word.toLowerCase()+"\u2026";
+    var gtab=document.querySelector('#cc-tabs button[data-ccview="block"]');
+    if(gtab) gtab.textContent="By "+word.toLowerCase();
     if(CCDATA.view==="farm"){
       var frows=CCDATA.farm_totals||[];
       if(!frows.length){ box.innerHTML='<div class="empty">No data.</div>'; return; }
@@ -2012,17 +2035,20 @@
       return;
     }
     var rows=CCDATA.blocks||[];
-    if(!rows.length){ box.innerHTML='<div class="empty">No '+esc(TX("unit_singular","Block")).toLowerCase()+' spend for this filter.</div>'; return; }
+    if(!rows.length){ box.innerHTML='<div class="empty">No '+label.toLowerCase()+' spend for this filter.</div>'; return; }
     var maxL=0; rows.forEach(function(r){ if(r.labour_spend>maxL) maxL=r.labour_spend; });
     var h='<table class="pex" data-cctable="1"><thead><tr>'+
-      '<th>'+esc(TX("unit_singular","Block"))+' (cost centre)</th><th>'+esc(TX("top_singular","Farm"))+'</th>'+
+      '<th>'+label+' (cost centre)</th><th>'+esc(TX("top_singular","Farm"))+'</th>'+
       '<th class="n">Labour spend</th>'+(t.has_gl?'<th class="n">GL actuals</th><th class="n">Labour %</th>':'')+
       '<th class="n">Qty</th><th class="n">Cost/unit</th><th class="n">Cost/day</th><th class="n">Avg crew</th><th class="n">Days</th><th class="n">Workers</th>'+
       '<th>Trend</th><th>Share</th></tr></thead><tbody>';
     rows.forEach(function(r){
       var w=maxL>0?Math.round(r.labour_spend/maxL*100):0;
       var cpuCol=ccEffColor(r.cost_per_unit, med);
-      var glCell = t.has_gl ? ('<td class="n m">'+(r.cost_center?money(r.gl_spend):'<span style="color:#bbb">—</span>')+'</td>'+
+      // A section row carries no cost centre of its own but does carry the GL
+      // its blocks posted, and the Labour % beside this cell is derived from
+      // it -- gating on cost_center alone printed a dash next to "75%".
+      var glCell = t.has_gl ? ('<td class="n m">'+((r.cost_center||r.gl_spend>0)?money(r.gl_spend):'<span style="color:#bbb">—</span>')+'</td>'+
                    '<td class="n m">'+(r.labour_share!=null?('<span style="color:'+(r.labour_share>90?"#be123c":(r.labour_share>60?"#b45309":"#0a7a43"))+'">'+Math.round(r.labour_share)+'%</span>'):"—")+'</td>') : '';
       h+='<tr data-ref="'+esc(r.block)+'"><td><b>'+esc(lbl(r.block))+'</b></td><td>'+
          '<i style="display:inline-block;width:8px;height:8px;background:'+ccFarmColor(r.farm)+';margin-right:5px"></i>'+esc(r.farm||"")+'</td>'+

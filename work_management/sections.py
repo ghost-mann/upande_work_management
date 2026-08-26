@@ -17,6 +17,22 @@ import frappe
 UNASSIGNED = "Unassigned"
 
 
+def is_reserved_name(name):
+	"""True for a section name that would collide with the unclaimed bucket.
+
+	roll_up files every block no section claims under UNASSIGNED, and
+	group_condition reads that key as "the complement of every claimed block".
+	A real section carrying the same name would be merged into the bucket in
+	the rollup, and its drill-down would show every unclaimed block's spend
+	rather than its own.
+
+	Case and padding are ignored. Only the exact string actually collides
+	today, but a list holding both "Unassigned" and "unassigned" is a trap for
+	the next reader rather than a feature.
+	"""
+	return (name or "").strip().casefold() == UNASSIGNED.casefold()
+
+
 def duplicate_blocks(rows):
 	"""Blocks listed more than once in one section's table, in first-seen order."""
 	seen, repeated = set(), []
@@ -49,6 +65,73 @@ def section_of(block):
 	return claimed_by(block)
 
 
+def enabled_block_to_section():
+	"""{block: section} for the sections the cost-centre toggle still shows.
+
+	A disabled section is hidden from the toggle, so its blocks have to fall
+	back to Unassigned -- in the rollup and in the drill-down alike. Both read
+	this, rather than each deciding for itself, because a row that totals money
+	the drill-down then refuses to show is worse than either behaviour alone.
+	"""
+	disabled = set(
+		frappe.get_all("Work Management Section", filters={"disabled": 1}, pluck="name")
+	)
+	return {b: s for b, s in block_to_section().items() if s not in disabled}
+
+
+def group_condition(column, key, mapping):
+	"""(SQL fragment, params) restricting cost rows to the blocks of one group.
+
+	No actuals record carries a section name -- `block_section` holds a block --
+	so drilling into a section row means asking for the blocks that section
+	holds. Asking for the section name itself is what made the drill-down
+	return nothing at all.
+
+	UNASSIGNED is the complement, written as a negation so it needs no list of
+	every block that has ever existed. A named section holding nothing matches
+	nothing rather than everything: an empty `in ()` is a SQL error, and
+	dropping the condition would show the whole site's spend under a section
+	with no blocks in it.
+
+	On a site with no sections at all the complement is every block, but it is
+	still not "1=1": the query the row was totalled from carries
+	`block_section IS NOT NULL`, and the drill-down builds its whole condition
+	from this fragment. "Everything" would open a row totalling N and show a
+	breakdown that includes confirmed actuals with no block at all -- money the
+	row never counted. The `not in (...)` form drops those already, because
+	NULL never satisfies it, so this branch says so explicitly.
+
+	`column` is a literal from our own code. The group name and the block names
+	are typed by hand, so they go in params, never into the fragment.
+	"""
+	if key == UNASSIGNED:
+		claimed = sorted(mapping)
+		if not claimed:
+			return f"{column} is not null", []
+		return f"{column} not in ({_placeholders(claimed)})", claimed
+	held = blocks_of(key, mapping)
+	if not held:
+		return "1=0", []
+	return f"{column} in ({_placeholders(held)})", held
+
+
+def blocks_of(key, mapping):
+	"""The blocks one named section holds, in name order.
+
+	Empty for UNASSIGNED, which is defined by the blocks it excludes rather
+	than by a list of its own. Callers that need the actual membership of a
+	group -- the GL breakdown does -- read it off the rows the group was
+	totalled from instead, via group_condition().
+	"""
+	if key == UNASSIGNED:
+		return []
+	return sorted(block for block, section in mapping.items() if section == key)
+
+
+def _placeholders(values):
+	return ", ".join(["%s"] * len(values))
+
+
 def block_to_section():
 	"""{block: section} for every block that has been placed in one."""
 	mapping = {}
@@ -66,15 +149,31 @@ def roll_up(rows, mapping):
 
 	Mirrors the shape of the farm-level rollup already in the cost-centre view:
 	sum the same money/quantity fields (labour_spend, gl_spend, qty,
-	worker_days), count the blocks, then derive cost_per_unit guarded on qty
+	worker_days), count the blocks, then derive the ratios of those sums --
+	cost_per_unit, cost_per_wd, labour_share -- each guarded on its divisor
 	being positive. Pure -- no frappe calls -- so the arithmetic is testable
 	without a site.
 
 	A block with no section (mapping.get(block) is falsy) lands under
 	UNASSIGNED rather than being dropped, which is what keeps the section
 	view summing to the same figure as the block view it replaces.
+
+	The weekly trend behind each sparkline is merged week by week, so a section
+	has a sparkline of its own instead of a blank column. What cannot be added
+	is left out: `workers` and `tasks` are counts of distinct things and two
+	blocks can share both, so summing them would overstate. Those columns stay
+	empty in section mode on purpose.
+
+	The farm comes along where the blocks agree on one. A section belongs to a
+	single farm, so its rollup normally does too, and carrying it keeps the farm
+	column, the treemap's farm colours and the "Colour: by farm" option working
+	in both toggle positions. UNASSIGNED collects blocks from every farm, and
+	naming one of them there would attribute the others' money to it -- so a
+	bucket whose rows disagree carries no farm rather than the first one seen.
 	"""
 	grouped = {}
+	farms = {}
+	weeks = {}
 	fields = ("labour_spend", "gl_spend", "qty", "worker_days")
 	for row in rows:
 		key = mapping.get(row.get("block")) or UNASSIGNED
@@ -82,10 +181,26 @@ def roll_up(rows, mapping):
 			key, {"key": key, "blocks": 0, **{f: 0.0 for f in fields}}
 		)
 		bucket["blocks"] += 1
+		farms.setdefault(key, set()).add(row.get("farm"))
+		by_week = weeks.setdefault(key, {})
+		for point in row.get("trend") or []:
+			by_week[point["w"]] = by_week.get(point["w"], 0.0) + float(point.get("pay") or 0)
 		for field in fields:
 			bucket[field] += float(row.get(field) or 0)
-	for bucket in grouped.values():
+	for key, bucket in grouped.items():
+		bucket["farm"] = next(iter(farms[key])) if len(farms[key]) == 1 else None
+		bucket["trend"] = [
+			{"w": week, "pay": weeks[key][week]} for week in sorted(weeks[key])
+		]
 		bucket["cost_per_unit"] = (
 			(bucket["labour_spend"] / bucket["qty"]) if bucket["qty"] > 0 else None
+		)
+		bucket["cost_per_wd"] = (
+			(bucket["labour_spend"] / bucket["worker_days"]) if bucket["worker_days"] > 0 else None
+		)
+		# None, not zero: zero reads as "labour is 0% of cost", which is the
+		# opposite of "nothing has been posted to compare against".
+		bucket["labour_share"] = (
+			(bucket["labour_spend"] / bucket["gl_spend"] * 100) if bucket["gl_spend"] > 0 else None
 		)
 	return sorted(grouped.values(), key=lambda r: -r["labour_spend"])

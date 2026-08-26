@@ -321,6 +321,10 @@ def sections():
 		("b", "Action queues — everything waiting on someone, one queue at a time."),
 		("b", "Value flow — weekly planned/assigned/confirmed value and a per-plan table with "
 			  "each plan's accountability chain."),
+		("b", "Cost centres — running labour cost per block, beside the GL cost-centre actuals "
+			  "posted against it, as a treemap sized by spend and a table below it. A Group "
+			  "toggle reads the same money by section instead of by block; either way, click a "
+			  "row for the tasks, workers, weekly trend and GL accounts behind it."),
 		("b", "Crew movements — substitution history: who left, who joined, swaps."),
 		("h3", "Pipeline performers"),
 		("p", "Planner and assigner economics, per person, with most/least-expensive callouts "
@@ -426,11 +430,14 @@ def sections():
 		("h2", "Naming the levels"),
 		("p", "The module ships calling things farms and blocks. If your project calls "
 			  "them estates and plots, say so once in Work Management Settings under "
-			  "Taxonomy and every form, screen and column heading follows. Nothing about "
-			  "the data changes — only what it is called."),
-		("b", "Leave a name empty to use the built-in wording."),
-		("b", "Turn on the level above the farm if your farms belong to a business unit; "
-			  "reports can then group by it."),
+			  "Taxonomy and every form, screen, column heading and desk menu entry "
+			  "follows. Nothing about the data changes — only what it is called."),
+		("b", "Leave a name empty to use the built-in wording. Clearing a name you had "
+			  "set removes it rather than writing the old word back, so the original "
+			  "label returns exactly as it shipped."),
+		("b", "Turn on the level above the farm if your farms belong to a business unit. "
+			  "The field then appears on each farm, under whatever you call it; until "
+			  "then it stays off the form. No report groups by it yet."),
 		("b", "The cost grouping name is used by the section view described below."),
 
 		("h2", "Sections, and cost by section"),
@@ -443,9 +450,19 @@ def sections():
 			  "cost in the total."),
 		("n", "On the dashboard, the cost-centre view has a Group toggle: by block, or by "
 			  "section. Overheads and administration appear under both."),
+		("n", "Click a section to open what is behind it: the tasks, the workers, the weekly "
+			  "trend and the GL accounts of all its blocks together — the same breakdown a "
+			  "single block gives. While the toggle is on sections, the search box searches "
+			  "section names."),
 		("note", "Blocks you have not placed in a section are grouped under Unassigned, "
 				 "never dropped, so the section view always totals the same as the block "
-				 "view."),
+				 "view. Unassigned opens the same way as any section."),
+		("p", "A section shows a farm when every block in it belongs to the same one — "
+			  "Unassigned spans farms, so it shows none. Four columns stay empty on "
+			  "purpose: workers, tasks, days active and average crew each count distinct "
+			  "things that two blocks can have in common, so adding them together would "
+			  "overstate every one of them. The block count above the table stays a count "
+			  "of blocks in both toggle positions."),
 
 		("h2", "Approval stages and approvers"),
 		("p", "Every step of every approval chain is configured in Work Management Settings, "
@@ -510,6 +527,10 @@ def sections():
 		("b", "Farm — the unit work is planned against, whatever your project calls it."),
 		("b", "Block — a Warehouse record standing for a piece of ground, optionally with its "
 			  "area in hectares."),
+		("b", "Section — a named group of blocks. It exists only to total cost by section "
+			  "instead of block by block; nothing else in the module refers to one."),
+		("b", "Business unit — the optional level above the farm, off until switched on in "
+			  "Settings, recording which unit a farm belongs to."),
 		("b", "Stage — one step of an approval chain, configured in Settings."),
 	]
 
