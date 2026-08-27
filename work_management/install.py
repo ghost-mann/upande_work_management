@@ -101,7 +101,50 @@ CORE_CUSTOM_FIELDS = [
 
 
 def before_install():
-	adopt_existing_custom_doctypes()
+	# stashed for after_install: once adoption has run there is no way left to
+	# tell a migrated site from a fresh one, and the two need different patching
+	frappe.flags.wm_adopted = adopt_existing_custom_doctypes()
+	release_module_def()
+
+
+def should_release_module_def(module_def_exists, in_install):
+	"""Whether to hand the app's Module Def back to Frappe's installer.
+
+	Only in the install path, and only if something already created it. At
+	after_migrate the module is the live one and nothing is about to recreate
+	it, so deleting it there would strand every DocType pointing at it.
+	"""
+	return bool(module_def_exists and in_install)
+
+
+def release_module_def():
+	"""Delete the Module Def adoption created, so the installer can make its own.
+
+	frappe.installer.add_module_defs() inserts this app's module with
+	ignore_if_duplicate=False, so a Module Def already sitting there aborts
+	`bench install-app` outright and half-installed:
+
+	    DuplicateEntryError: ('Module Def', 'Work Management')
+
+	Adoption is what puts it there. Force-importing a doctype whose module the
+	site has not got makes Frappe create the module on the spot, and adoption
+	runs at before_install -- so this app creates the module, and then the
+	installer refuses to create it again. A fresh site adopts nothing and so
+	never creates it, which is why this only ever bit a site that already had
+	these doctypes as custom ones: exactly the site being migrated onto.
+
+	Deleting it costs nothing. The installer recreates it under the same name
+	moments later, and that name is the primary key every DocType.module points
+	at -- so the link is restored rather than repaired. force=True because those
+	links exist while it goes.
+	"""
+	if not should_release_module_def(frappe.db.exists("Module Def", MODULE), frappe.flags.in_install):
+		return False
+	frappe.delete_doc("Module Def", MODULE, force=True, ignore_permissions=True,
+	                  ignore_missing=True)
+	frappe.db.commit()
+	print(f"Handed the {MODULE} Module Def back to the installer to create")
+	return True
 
 
 def after_install():
@@ -110,6 +153,74 @@ def after_install():
 	drop_stale_link_options()
 	seed_approvals()
 	sync_desk_surfaces()
+	run_data_patches(frappe.flags.get("wm_adopted") or [])
+
+
+def data_patches():
+	"""Every patch this app ships, read from patches.txt.
+
+	Read rather than listed, so a patch added to the file cannot be left out of
+	the migration by someone forgetting a second list.
+	"""
+	path = os.path.join(HERE, "patches.txt")
+	if not os.path.exists(path):
+		return []
+	with open(path) as handle:
+		return [
+			line.strip() for line in handle
+			if line.strip() and not line.startswith(("#", "["))
+		]
+
+
+def should_run_data_patches(adopted):
+	"""Whether this install has to run its own patches by hand.
+
+	frappe.installer.install_app() calls set_all_patches_as_completed(), so
+	installing records every patch as done without running one. On a genuinely
+	fresh site that is right: there is no legacy data for a patch to fix.
+
+	On a site being migrated onto it is exactly backwards. The site arrives full
+	of the data these patches were written to reconcile, and marking them
+	applied skips the reconciliation for good -- the next migrate sees them in
+	the Patch Log and moves on. Rehearsed on a 16.27 restore of the live site
+	that left no Work Management Farm records at all, for 441 planners and 402
+	assigners whose farm link had nothing to point at.
+
+	Adopting a doctype is the signal: it means the site already had this app's
+	data under its own custom definition.
+	"""
+	return bool(adopted)
+
+
+def run_data_patches(adopted):
+	"""Run the shipped patches on a site that brought its own data.
+
+	Each is written to be safe to run twice -- backfill skips a farm that
+	already has a record, seeding skips a block some section already claims --
+	so running them here costs nothing on a site where they would have run
+	anyway, and a patch that raises is reported rather than left to abort the
+	install.
+	"""
+	if not should_run_data_patches(adopted):
+		return []
+
+	import importlib
+
+	ran = []
+	for patch in data_patches():
+		try:
+			importlib.import_module(patch).execute()
+			frappe.db.commit()
+			ran.append(patch)
+		except Exception as exc:
+			frappe.db.rollback()
+			print(f"Could not run {patch} on this site: {exc}")
+			frappe.log_error(title="Work Management: patch skipped on install")
+	print(
+		f"Ran {len(ran)} shipped patch(es) by hand: the installer had marked them "
+		f"applied, but this site brought {len(adopted)} doctype(s) of its own data"
+	)
+	return ran
 
 
 def adopt_existing_custom_doctypes():
