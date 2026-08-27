@@ -87,3 +87,79 @@ class TestNothingDisappearsWithoutSaying(unittest.TestCase):
 
 	def test_the_report_is_ordered_so_two_runs_read_the_same(self):
 		self.assertEqual(install.extra_fieldnames(["z", "a", "farm"], ["farm"]), ["a", "z"])
+
+
+class TestHandingTheModuleDefBackToTheInstaller(unittest.TestCase):
+	"""`bench install-app work_management` aborted on any site that already had
+	these doctypes as custom ones -- which is every site being migrated:
+
+	    DuplicateEntryError: ('Module Def', 'Work Management')
+
+	Adoption is what puts the module there. Force-importing a doctype whose
+	module the site has not got makes Frappe create that module on the spot, and
+	adoption runs at before_install; frappe.installer.add_module_defs() then
+	inserts the app's module with ignore_if_duplicate=False and the install dies
+	half done. A fresh site adopts nothing and so never created the module,
+	which is why this only ever bit the migration case.
+	"""
+
+	def test_the_installer_gets_it_back_when_adoption_made_it(self):
+		self.assertTrue(install.should_release_module_def(True, True))
+
+	def test_a_migrate_never_deletes_the_live_module(self):
+		"""after_migrate adopts too, and nothing there is about to recreate the
+		module. Deleting it then would strand every doctype pointing at it."""
+		self.assertFalse(install.should_release_module_def(True, False))
+
+	def test_nothing_to_hand_back_when_it_was_never_created(self):
+		self.assertFalse(install.should_release_module_def(False, True))
+		self.assertFalse(install.should_release_module_def(False, False))
+
+	def test_before_install_hands_it_back(self):
+		"""The order matters: adopt first (which may create the module), then
+		release, then let the installer create it as its own."""
+		import inspect
+		body = inspect.getsource(install.before_install)
+		self.assertIn("adopt_existing_custom_doctypes", body)
+		self.assertIn("release_module_def", body)
+		self.assertLess(body.index("adopt_existing_custom_doctypes"),
+		                body.index("release_module_def"))
+
+
+class TestPatchesOnASiteThatBroughtItsOwnData(unittest.TestCase):
+	"""frappe.installer.install_app() calls set_all_patches_as_completed(), so
+	installing this app records every patch as done without running any of them.
+
+	On a genuinely fresh site that is right -- there is no legacy data for a
+	patch to fix. On a site being migrated onto, it is exactly backwards: the
+	site arrives full of v15 data and the patches written to reconcile it are
+	marked applied and skipped. Rehearsed on a 16.27 restore of the live site,
+	that left 0 Work Management Farm records for 441 planners and 402 assigners
+	whose `farm` link had nothing to point at, and 0 sections.
+	"""
+
+	def test_a_site_that_adopted_nothing_is_genuinely_fresh(self):
+		self.assertFalse(install.should_run_data_patches([]))
+
+	def test_a_site_that_adopted_doctypes_needs_its_patches_run(self):
+		self.assertTrue(install.should_run_data_patches(["Work Management Planner"]))
+
+	def test_the_patch_list_is_read_from_patches_txt(self):
+		"""Not a second hand-maintained list. A patch added to patches.txt and
+		forgotten here would be skipped on every migration."""
+		patches = install.data_patches()
+		self.assertIn("work_management.patches.v1_0.backfill_farms_in_use", patches)
+		self.assertIn("work_management.patches.v1_0.seed_sections_from_cost_centres", patches)
+
+	def test_it_names_every_patch_the_file_carries(self):
+		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		with open(os.path.join(here, "patches.txt")) as handle:
+			wanted = {l.strip() for l in handle
+			          if l.strip() and not l.startswith(("#", "["))}
+		self.assertEqual(set(install.data_patches()), wanted)
+
+	def test_every_patch_it_names_is_importable(self):
+		import importlib
+		for patch in install.data_patches():
+			module = importlib.import_module(patch)
+			self.assertTrue(hasattr(module, "execute"), patch)
