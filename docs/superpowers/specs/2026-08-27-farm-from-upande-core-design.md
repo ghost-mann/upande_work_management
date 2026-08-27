@@ -5,7 +5,8 @@
 ## The change in one sentence
 
 `Work Management Farm` is retired; Upande Core's `Farm` becomes the only farm
-doctype Work Management knows, and the app declares upande_core a required app.
+doctype Work Management knows, read-only, and the app declares upande_core a
+required app.
 
 ## Why
 
@@ -33,17 +34,25 @@ the hard dependency rather than a name check at runtime.
 
 ## Decisions
 
-1. **Ownership.** Core `Farm` is the single source of truth. `Work Management
-   Farm` is deleted from the app and from sites by a patch.
+1. **Ownership.** Core `Farm` is the single source of truth for which farms
+   exist. `Work Management Farm` is deleted from the app and from sites by a
+   patch.
 2. **Dependency.** Hard: `required_apps = ["upande_core"]` in `hooks.py`.
    `bench install-app work_management` fails on a site without it. Farm reads
    become plain `frappe.get_all("Farm", …)` with no `exists()` guard.
-3. **Orphans.** A farm name in use with no core counterpart aborts the patch
-   with the list. Nothing half-formed is written into another app's doctype.
-4. **Business unit.** WM installs `custom_business_unit` (`Link → Business
-   Unit`) on `Farm`, matching `Employee.custom_business_unit`, which is already
-   a Link to core's Business Unit.
-5. **Mirror.** The mirror keeps its `("Work Management Farm", "Farm")` fallback
+3. **Core `Farm` is read-only to this app.** Work Management adds no field to
+   it, writes no Property Setter against it, and never saves one of its
+   documents. What WM knows about a farm and Core does not lives on WM's own
+   side (below).
+4. **Orphans resolve themselves.** A farm name in use that Core does not have
+   is cleared from whatever referenced it, and logged. No aborted migrate, no
+   half-formed record pushed into another app's doctype. On kaitet.local this is
+   Kabarak: two Warehouses, no Employees, no documents of any kind.
+5. **Business unit is dropped.** No `Work Management Farm` row has one set, and
+   `Employee.custom_business_unit` already links people to Core's Business Unit.
+   If farms should belong to business units, that is a field Upande Core adds to
+   its own doctype.
+6. **Mirror.** The mirror keeps its `("Work Management Farm", "Farm")` fallback
    so live is untouched; `port_app.py` rewrites it to a plain core-`Farm` read
    when generating `api/*.py`.
 
@@ -55,42 +64,40 @@ the hard dependency rather than a name check at runtime.
 - **`Work Management Section` vs core `Section`.** The same overlap exists one
   level down (core `Section`, 0 rows; `Work Management Section`, 16 rows). Out
   of scope, deliberately.
-- **Renaming or reshaping core `Farm`.** WM adds fields to it and reads it. It
-  does not relabel it, reorder it, or change its mandatory fields.
+- **Anything about core `Farm` itself** — its fields, labels, field order, or
+  mandatory rules. See decision 3.
 
-## Field mapping
+## Where each piece of farm knowledge lives afterwards
 
-| `Work Management Farm` | lands on core `Farm` as |
-|---|---|
-| `farm_name` (Data, unique, `autoname: field:farm_name`) | core `farm_name` — identical shape and naming rule |
-| `project` (Link Project, "Cost Project") | **new** `custom_project`, installed by WM |
-| `area_ha` (Float, 2dp) | core `area` ("Area (Hectares)") — read by `dashboard.py:2812`; every value is 0.0, so nothing to carry |
-| `disabled` (Check) | **new** `custom_disabled`, installed by WM |
-| `business_unit` (Data, hidden, upgraded to Link at install) | **new** `custom_business_unit` (Link → Business Unit) |
-| `description` (Small Text) | dropped — nothing reads it |
+| what | before | after |
+|---|---|---|
+| which farms exist, and their names | `Work Management Farm` | core `Farm` |
+| a farm's cost project | `Work Management Farm.project` | the **farms table on Work Management Settings** (`WM Farm` child: `farm`, `project`) |
+| a farm's area | `Work Management Farm.area_ha` | core `Farm.area`, overridden by `WM Farm.area_ha` where set — the shape `dashboard.py:2812-2819` already reads |
+| whether a farm is out of use | `Work Management Farm.disabled` | core `Farm.disabled` where the site has that column, every farm enabled where it does not |
+| which business unit a farm belongs to | `Work Management Farm.business_unit` | dropped (decision 5) |
+| a farm's description | `Work Management Farm.description` | dropped — nothing read it |
+| who approves for a farm | Stage Approvers on Settings | unchanged |
 
-`disabled` deserves a note: core `Farm` does **not** ship one. The `disabled`
-field on `kaitet.local` is a hand-made Custom Field, `module: None`, owner
+The cost project is not droppable: live maps `Saboti / Lokitela / Vale →
+PROJ-0031` and `Endebess → PROJ-0032`, ten api modules read `farm_project`, and
+`rates.py:1003` uses it to decide which Tasks the Rates tab may offer. It cannot
+be derived either — `Project` has no farm field, and the projects on this site
+are one-off works ("Chepsito GH 16 Replanting"), not per-farm buckets.
+
+Its new home already exists and is the right shape: the `farms` table on
+Work Management Settings (child doctype `WM Farm`, fields `farm`, `area_ha`,
+`project`, `approver_role`). It is empty on kaitet.local and is currently
+described as "Superseded by the Work Management Farm doctype … removed in the
+next release". This change reverses that: the table stays, its description is
+rewritten, its `farm` column becomes a `Link → Farm`, and `approver_role` stays
+deprecated in favour of Stage Approvers.
+
+`disabled` is read, never written. Core `Farm` does not ship one — the field on
+kaitet.local is a hand-made Custom Field, `module: None`, owner
 otieno@upande.com, and `upande_scp/serverscripts/spray_plan_creator/admin.py:24`
-reads it behind `frappe.db.has_column("Farm", "disabled")` — that app conceding
-the same thing. WM owns `custom_disabled` rather than depending on someone's
-UI edit. No row is disabled in either doctype today.
-
-## Two constraints on how WM touches core `Farm`
-
-**Never `.save()` a `Farm` document.** All 16 rows are missing `farm_type`
-(`reqd: 1`) and Eldama is missing `company` (`reqd: 1`), so any `doc.save()`
-raises *Farm Type is required*. WM writes its own fields with
-`frappe.db.set_value` and the migration never round-trips a Farm doc.
-
-**Insert fields explicitly, and expect interference.** Upande Kaitet owns four
-Custom Fields on `Farm` (`custom_handles_sales`, `custom_sales_order_type`,
-`custom_location`, `custom_column_break_32dil`) and a `field_order` Property
-Setter naming `farm` and `kephis_farm_id` — fields core `Farm` does not have.
-It is inert today (Frappe falls back to core's order) but a future upande_kaitet
-fixture sync could reassert it and drop WM's fields off the form. Every WM field
-is added with an explicit `insert_after`, and this risk is recorded in the
-developer guide.
+reads it behind `frappe.db.has_column("Farm", "disabled")`. WM does the same.
+No row is disabled in either doctype today.
 
 ## Code changes
 
@@ -98,13 +105,14 @@ developer guide.
 line 73 about upgrading `business_unit` to a Link once upande_core arrives, and
 the hook it describes.
 
-**`install.py`** — `CORE_CUSTOM_FIELDS`: `Employee.custom_farm` and
-`Warehouse.custom_farm` options become `Farm` (lines 89, 94); add
-`Farm.custom_project`, `Farm.custom_disabled`, `Farm.custom_business_unit`.
-Delete the `business_unit` Link-upgrade machinery (lines 347-404). Adoption
-needs no edit: `adopt_existing_custom_doctypes()` (line 279) works off
-`shipped_doctypes()` (line 48), which reads the doctype folders, so deleting the
-folder is what removes the farm from it.
+**`install.py`** — in `CORE_CUSTOM_FIELDS`, `Employee.custom_farm` and
+`Warehouse.custom_farm` options become `Farm` (lines 89, 94), and
+`Employee.custom_business_unit` is left as it is. These are fields on ERPNext
+doctypes that already exist on the site in exactly this shape; nothing is added
+to core `Farm`. Delete the `business_unit` Link-upgrade machinery (lines
+347-404). Adoption needs no edit: `adopt_existing_custom_doctypes()` (line 279)
+works off `shipped_doctypes()` (line 48), which reads the doctype folders, so
+deleting the folder is what removes the farm from it.
 
 **Link fields — 10 sites, `options` only, no data rewriting** (values are farm
 names and already exist in core `Farm`):
@@ -118,69 +126,84 @@ names and already exist in core `Farm`):
 - `work_management_stage_approver.json` · `scope`
 - `work_payment_line.json` · `farm`
 - `work_rate_recalc_run.json` · `farm`
-- `wm_farm.json` · `farm` (the deprecated Settings child table)
+- `wm_farm.json` · `farm` (the Settings farms table, no longer deprecated)
 
 **Delete** `work_management/work_management/doctype/work_management_farm/`.
 
-**`api/config.py`** — `_farms()` reads `Farm` with no `exists()` guard, fields
-`["name", "custom_project"]`, filter `{"custom_disabled": 0}`; update the module
-docstring (line 4) and the legacy-fallback comment (line 120).
+**`api/config.py`** — `_farms()` returns the farm list from `Farm` with no
+`exists()` guard, filtered by `disabled` only where that column exists, and
+takes `farm_project` from the Settings farms table. The legacy branch at lines
+120-125 stops being a fallback and becomes the only path for `farm_project`.
+Update the module docstring (line 4).
 
 **`approvals.py:509`** — farm list reads `Farm`, guard dropped.
 
 **`taxonomy.py`** — remove the two `FIELD_LABELS` entries keyed to
 `Work Management Farm` (`farm_name`, `business_unit`) and
-`apply_business_unit_visibility()` entirely. WM must not write a Property Setter
-against core `Farm`: it would relabel the field for every app that uses it
-(spray plan, irrigation, sales). Consequence, accepted: the configurable
-taxonomy can still rename WM's own `farm` link labels on Planner, Assigner,
-Actuals, Payment and Section, but the farm record's own labels now belong to
-Upande Core.
+`apply_business_unit_visibility()` entirely. The `("WM Farm", "farm")` entry
+stays — that is WM's own field. WM must not write a Property Setter against core
+`Farm`: it would relabel the field for every app that uses it (spray plan,
+irrigation, sales). Consequence, accepted: the configurable taxonomy can still
+rename WM's own `farm` labels on Planner, Assigner, Actuals, Payment, Section
+and the Settings table, but the farm record's own labels belong to Upande Core.
 
 **`desk.py:69`** — `nav_label` key becomes `Farm`.
 
 **Desk artifacts** — `workspace/work_management_setup/…json:29` and
 `workspace_sidebar/work_management.json:289` link to `Farm`.
 
-**`seed/kaitet.py:84,87,156`** — creates core `Farm` records via
-`frappe.db.set_value` for WM's own fields only, and does not attempt to satisfy
-core's mandatory fields; a farm it cannot create is reported, not invented.
+**`seed/kaitet.py:84,87,156`** — stops creating farms. Farms are Upande Core's
+to create; the seed fills in the Settings farms table for farms that exist and
+reports the names it could not find.
 
-**Existing patches** — `migrate_farms_and_approvers`, `backfill_farms_in_use`,
-`seed_sections_from_cost_centres` and `enable_business_unit_level_if_used` all
-already return early when `Work Management Farm` is absent, so they no-op once
-the doctype is gone. `enable_business_unit_level_if_used` is deleted from
-`patches.txt` along with the visibility machinery it drives.
+**Existing patches** — `migrate_farms_and_approvers`, `backfill_farms_in_use`
+and `seed_sections_from_cost_centres` already return early when
+`Work Management Farm` is absent, so they no-op once the doctype is gone.
+`enable_business_unit_level_if_used` is deleted from `patches.txt` along with
+the visibility machinery it drives.
 
-**Settings** — `work_management_settings.json:103` describes the deprecated
-`farms` table as "Superseded by the Work Management Farm doctype". Reword: it is
-superseded by core `Farm`.
+**Settings** — `work_management_settings.json:103` describes the `farms` table
+as superseded and slated for removal. Rewrite: it holds each farm's cost project
+and area override; the farms themselves come from Upande Core.
 
 ## The migration patch
 
 `work_management.patches.v1_0.move_farms_to_upande_core`, `[post_model_sync]`:
 
-1. **Collect every farm name in use.** From `Work Management Farm` where it
-   still exists, from the deprecated `WM Farm` rows on Settings, and from every
-   Link field in `backfill_farms_in_use.SOURCES` — which is already defined as
-   "every Link field the app ships pointing at Work Management Farm".
-2. **Abort on any name absent from core `Farm`**, listing each with what uses
-   it (`Kabarak — 2 Warehouses`). The message says to create them in Upande
-   Core with a real company, farm type and abbreviation, then re-run migrate.
-   On kaitet.local this is exactly one name.
-3. **Carry WM's fields across** with `frappe.db.set_value`: `project` →
-   `custom_project`, `disabled` → `custom_disabled`, `business_unit` →
-   `custom_business_unit`, and `area_ha` → `area` only where core's `area` is
-   0 and `area_ha` is not.
-4. **Clear stale overrides.** The JSON ships the new `options`, so this step
+1. **Carry WM's own knowledge into the Settings table.** For each
+   `Work Management Farm` with a `project` or a non-zero `area_ha`, ensure a row
+   in the Settings farms table with those values. Nothing to do on kaitet.local
+   — no farm has either — but live's four mapped farms arrive this way.
+2. **Clear references to farms Core does not have.** For every Link field in
+   `backfill_farms_in_use.SOURCES` plus `Employee.custom_farm` and
+   `Warehouse.custom_farm`, blank any value absent from core `Farm`, and log
+   each one with what held it (`Kabarak — Warehouse "Kabarak - KR", Warehouse
+   "Kabarak silage pits (now 4 pits) - KR"`). Uses `frappe.db.set_value` so no
+   document validation runs.
+3. **Clear stale overrides.** The JSON ships the new `options`, so this step
    only removes what a site wrote over it — Property Setters and Custom Field
    `options` still naming the old target. `install.is_stale_link_option()`
    (line 408) already decides this; reuse it rather than writing a second rule.
-5. **Delete** the `Work Management Farm` doctype and its table, plus every
+4. **Delete** the `Work Management Farm` doctype and its table, plus every
    Property Setter and Custom Field naming it.
 
-Idempotent: a second run finds nothing in use that core lacks, no
-`Work Management Farm` doctype, and exits.
+Idempotent: a second run finds no `Work Management Farm` doctype and exits at
+step 1.
+
+## Why WM must never write to a `Farm` document
+
+Beyond decision 3 being the instruction: all 16 core `Farm` rows are missing
+`farm_type` and Eldama is missing `company`, both `reqd: 1`. Any `doc.save()` on
+an existing Farm raises *Farm Type is required*. Even a well-meant write would
+fail. Reads only, and `frappe.db.set_value` never touches Farm at all.
+
+Related hazard worth recording: Upande Kaitet owns four Custom Fields on `Farm`
+(`custom_handles_sales`, `custom_sales_order_type`, `custom_location`,
+`custom_column_break_32dil`) and a `field_order` Property Setter naming `farm`
+and `kephis_farm_id` — fields core `Farm` does not have. It is inert today
+(Frappe falls back to core's order). WM owns nothing there, so nothing of WM's
+can be lost to it; it is documented so the next person does not read that
+Property Setter as ours.
 
 ## Tests
 
@@ -190,14 +213,16 @@ TDD — each of these is written before the change it describes.
   `test_the_fragile_list_is_all_doctypes_this_app_ships` (line 56) asserts every
   `FRAGILE` name is a doctype this app ships, so deleting the doctype *requires*
   this edit — the two stay consistent by construction. Every other guard stays.
-- **New** `test_farm_source.py`: no shipped JSON has a Link whose `options` is
-  `Work Management Farm`; `Farm` appears in no guard; `required_apps` names
-  `upande_core`; WM writes no Property Setter against `Farm`; WM never calls
-  `.save()`/`insert()` on a `Farm` doc (source-level assertion over `api/` and
-  the app modules).
-- **New** `test_move_farms_to_upande_core.py`: aborts and names the orphan;
-  succeeds and carries the four fields when every name exists; is idempotent;
-  leaves core `Farm` rows otherwise untouched.
+- **New** `test_farm_source.py`, all source-level, no site:
+  - no shipped JSON has a Link whose `options` is `Work Management Farm`
+  - `Farm` appears in no `exists()` guard
+  - `required_apps` names `upande_core`
+  - `CORE_CUSTOM_FIELDS` declares no field on `Farm`
+  - nothing in the app writes a Property Setter against `Farm`
+  - nothing in the app calls `.save()`, `.insert()` or `set_value` on `Farm`
+- **New** `test_move_farms_to_upande_core.py`: carries project and area into the
+  Settings table; clears the orphan and logs it; is idempotent; leaves core
+  `Farm` rows byte-identical.
 - Update `test_adoption.py:32,137`, `test_sections.py:34,46,505`,
   `test_taxonomy.py:293,304`, `test_desk_sync.py:246,250,343-348`.
 - The 343 existing tests stay green:
@@ -221,10 +246,10 @@ port* afterwards. The mirror files themselves do not change, so
 
 `README.md` — the app is no longer installable standalone; say so where it
 claims portability, and replace the `Work Management Farm` bullet with core
-`Farm` plus the three fields WM adds. `docs/DEVELOPER_GUIDE.md` — the farm
-source, the never-`.save()`-a-`Farm` rule, and the upande_kaitet `field_order`
-risk. `docs/manual_content.py` — where the user guide tells someone to add a
-farm, it now points at Upande Core.
+`Farm` plus the Settings farms table. `docs/DEVELOPER_GUIDE.md` — the farm
+source, the read-only rule and why, and the upande_kaitet `field_order` note.
+`docs/manual_content.py` — where the user guide says to add a farm, it now says
+Upande Core, and the cost project is set on Settings.
 
 ## Risks
 
@@ -232,18 +257,18 @@ farm, it now points at Upande Core.
 |---|---|
 | WM stops installing without upande_core | accepted, by decision |
 | A site whose `Farm` is Upande Kaitet's | install fails on the missing app before WM can read the wrong doctype |
-| upande_kaitet reasserts its `field_order` Property Setter | WM's fields survive in the database; they can vanish from the form. Documented; explicit `insert_after` on every field |
-| Core `Farm` rows fail their own mandatory fields | WM never saves a Farm doc; writes go through `frappe.db.set_value` |
+| Core `Farm` rows fail their own mandatory fields | WM never writes to a Farm document at all |
+| A farm exists in Core but is missing from the Settings table | it appears in the pickers with no cost project — the same state a newly added farm is in today; the Rates tab shows nothing for it until someone fills it in |
+| Orphan references cleared silently | logged per reference with what held it; on kaitet.local it is two Warehouses and nothing else |
 | Taxonomy can no longer rename the farm level's own labels | accepted; renaming another app's field would leak into every app that uses it |
-| Orphan farms block `bench migrate` | intended; the message names them and what uses them |
 
 ## Order of work
 
 1. Tests for the end state (they fail).
-2. `install.py` custom fields + `hooks.py` `required_apps`.
+2. `hooks.py` `required_apps`; `install.py` options and deletions.
 3. Repoint the 10 Link `options`; delete the doctype folder.
 4. `config.py`, `approvals.py`, `taxonomy.py`, `desk.py`, `seed/kaitet.py`,
-   workspace and sidebar JSON.
+   workspace and sidebar JSON, Settings description.
 5. The migration patch.
 6. `port_app.py` rewrite + `check_ported.py` green.
 7. Docs.
