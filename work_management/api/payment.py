@@ -1305,24 +1305,24 @@ def wm_payment(**kwargs):
             wk_part_ok = frappe.utils.cint(frappe.db.get_single_value(
                 "Work Management Settings", "allow_part_week_send"))
             wk_map = {}
-            wk_single_ok = frappe.utils.cint(frappe.db.get_single_value(
-                "Work Management Settings", "allow_single_day_send"))
+            wk_per_day = frappe.utils.cint(frappe.db.get_single_value(
+                "Work Management Settings", "send_per_day"))
             wk_outside = []
             for wr in wk_rows:
                 wdd = frappe.utils.getdate(wr.d)
                 wk_back = (wdd.weekday() - wk_start_wd) % 7
                 wk_span = wk_len
-                if wk_back >= wk_len:
-                    # the pay week is shorter than seven days and this weekday sits
-                    # in the gap, so it belongs to no week
-                    if not wk_single_ok:
-                        # reported, never dropped -- but still not sendable
-                        wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
-                        continue
-                    # allow_single_day_send: give it a week of its own, one day long,
-                    # rather than leaving the work unpayable for good
+                if wk_per_day:
+                    # send_per_day: every date is a window of its own, so the
+                    # configured week is not consulted at all
                     wk_back = 0
                     wk_span = 1
+                elif wk_back >= wk_len:
+                    # the pay week is shorter than seven days and this weekday sits
+                    # in the gap, so it belongs to no week -- reported, never dropped,
+                    # and only sendable by switching to per-day
+                    wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
+                    continue
                 wk_s = frappe.utils.add_days(wdd, -wk_back)
                 wk_e = frappe.utils.add_days(wk_s, wk_span - 1)
                 wk_key = str(wk_s)
@@ -1634,8 +1634,8 @@ def wm_payment(**kwargs):
             bw_today = frappe.utils.getdate(frappe.utils.today())
             bw_part_ok = frappe.utils.cint(frappe.db.get_single_value(
                 "Work Management Settings", "allow_part_week_send"))
-            bw_single_ok = frappe.utils.cint(frappe.db.get_single_value(
-                "Work Management Settings", "allow_single_day_send"))
+            bw_per_day = frappe.utils.cint(frappe.db.get_single_value(
+                "Work Management Settings", "send_per_day"))
             # what the pay week leaves over. The single send has always reported
             # these; the bulk send dropped them without a word, which is how 5,027
             # Monday lines went unpayable and unnoticed on a Tuesday-to-Sunday week.
@@ -1666,12 +1666,12 @@ def wm_payment(**kwargs):
                     bdd = frappe.utils.getdate(br.d)
                     bback = (bdd.weekday() - bw_start_wd) % 7
                     bspan = bw_len
-                    if bback >= bw_len:
-                        if not bw_single_ok:
-                            bw_outside.append({"employee": emp, "date": str(br.d)})
-                            continue
+                    if bw_per_day:
                         bback = 0
                         bspan = 1
+                    elif bback >= bw_len:
+                        bw_outside.append({"employee": emp, "date": str(br.d)})
+                        continue
                     bs = frappe.utils.add_days(bdd, -bback)
                     be = frappe.utils.add_days(bs, bspan - 1)
                     if frappe.utils.getdate(be) < bw_today or bw_part_ok:
