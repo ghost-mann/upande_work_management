@@ -127,6 +127,20 @@ def execute():
 
 	install.drop_stale_link_options()
 
+	# The navigation entry has to come across too. desk.sync() re-imports the
+	# shipped workspace only when the site's copy has fallen behind in size, and
+	# a link whose target was renamed is the same size as one that was not -- so
+	# the site kept its "Farms" link pointing at the retired doctype, and
+	# hide_links_to_missing_doctypes() dutifully hid it, leaving the Setup
+	# workspace with no Farms link at all. Repointing is enough: that same
+	# function shows a link again once its target exists.
+	for doctype, key in (("Workspace Link", "link_to"), ("Workspace Sidebar Item", "link_to")):
+		if not frappe.db.exists("DocType", doctype):
+			continue  # v15 has no Workspace Sidebar
+		for name in frappe.get_all(doctype, filters={key: OLD}, pluck="name"):
+			frappe.db.set_value(doctype, name, key, "Farm", update_modified=False)
+			print(f"Work Management: repointed {doctype} {name} at Upande Core's Farm")
+
 	for kind, filters in (
 		("Property Setter", {"doc_type": OLD}),
 		("Custom Field", {"dt": OLD}),
@@ -134,6 +148,18 @@ def execute():
 		for leftover in frappe.get_all(kind, filters=filters, pluck="name"):
 			frappe.delete_doc(kind, leftover, force=True, ignore_permissions=True)
 
+	# Named before they go. What was carried went to Settings and what was
+	# cleared was printed above, so these lines are the only remaining record
+	# that these records existed -- on kaitet.local all fourteen held a name and
+	# nothing else, which is why nothing needed carrying.
+	print(
+		f"Work Management: retiring {len(old_farms)} {OLD} record(s) -> "
+		+ ", ".join(farm["name"] for farm in old_farms)
+	)
 	frappe.delete_doc("DocType", OLD, force=True, ignore_permissions=True)
+	# Explicitly, rather than trusting the delete to take the table with it: on
+	# a v16 site it did not, and an orphan `tab` table outlives every tool that
+	# would otherwise notice it.
+	frappe.db.sql_ddl(f"drop table if exists `tab{OLD}`")
 	frappe.db.commit()
 	print(f"Work Management: {OLD} retired; farms are Upande Core's records now")
