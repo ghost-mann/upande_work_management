@@ -173,3 +173,31 @@ class TestTheFarmDoctypeIsGone(unittest.TestCase):
 
 		for doctype, _fieldname, _template in taxonomy.FIELD_LABELS:
 			self.assertNotIn(doctype, ("Farm", OLD), doctype)
+
+
+class TestTheNavigationPointsAtCoreFarm(unittest.TestCase):
+	"""The shipped workspace and sidebar name Core's Farm, not the retired one.
+
+	Worth its own check because the site's copy of a workspace does not follow
+	the shipped one automatically: desk.sync() re-imports only when the site's
+	copy has fallen behind in *size*, and a link whose target was renamed is the
+	same size as one that was not. On kaitet.local the old link survived, was
+	hidden by hide_links_to_missing_doctypes() for pointing at nothing, and left
+	the Setup workspace with no Farms link at all -- which is why the migration
+	patch repoints it rather than trusting the import.
+	"""
+
+	PATHS = (
+		os.path.join("work_management", "workspace", "work_management_setup",
+			"work_management_setup.json"),
+		os.path.join("workspace_sidebar", "work_management.json"),
+	)
+
+	def test_no_shipped_navigation_entry_names_the_retired_doctype(self):
+		for relpath in self.PATHS:
+			self.assertNotIn(OLD, read(relpath), relpath)
+
+	def test_the_patch_repoints_the_entries_a_site_already_has(self):
+		source = read(os.path.join("patches", "v1_0", "move_farms_to_upande_core.py"))
+		self.assertIn("Workspace Link", source)
+		self.assertIn("Workspace Sidebar Item", source)

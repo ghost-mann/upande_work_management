@@ -191,6 +191,16 @@ dependency. Three rules follow, all of them tested in
 has, by hand) this app respects it; where none exists every farm is active.
 `upande_scp` reads it the same way, behind the same `has_column` check.
 
+One thing worth knowing if you ever retarget a navigation link: `desk.sync()`
+re-imports a shipped workspace only when the site's copy has fallen behind in
+**size**, and a link whose `link_to` was renamed is the same size as one that
+was not. So the site keeps the old target, `hide_links_to_missing_doctypes()`
+hides it for pointing at nothing, and the card loses that link entirely. That is
+what happened to the Setup workspace's *Farms* link on kaitet.local, and why
+`move_farms_to_upande_core` repoints Workspace Links and Sidebar Items itself
+rather than trusting the import. Hiding is reversible, so repointing is enough —
+the next migrate shows the link again.
+
 One thing on that doctype is *not* ours and should not be read as ours:
 `upande_kaitet` owns a `field_order` Property Setter on `Farm` naming `farm` and
 `kephis_farm_id`, fields Core's `Farm` does not have. It is inert — Frappe falls
