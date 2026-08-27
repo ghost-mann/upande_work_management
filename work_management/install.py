@@ -107,6 +107,7 @@ def before_install():
 def after_install():
 	create_core_custom_fields()
 	upgrade_business_unit_link()
+	drop_stale_link_options()
 	seed_approvals()
 	sync_desk_surfaces()
 
@@ -238,6 +239,73 @@ def upgrade_business_unit_link():
 				frappe.delete_doc("Property Setter", name, force=True, ignore_permissions=True)
 		frappe.clear_cache(doctype="Work Management Farm")
 	return doctype_present
+
+
+def is_stale_link_option(is_link_field, value, target_exists):
+	"""Does this `options` override leave a Link field pointing at nothing?
+
+	Pulled out of drop_stale_link_options() so the decision can be tested without
+	a site, the way plan_business_unit_field() is. An override on a Select is that
+	field's option list and none of this app's business; an override naming a real
+	doctype is a deliberate repoint. Only the third case -- a Link aimed at a
+	doctype that does not exist -- is the leftover worth deleting.
+	"""
+	if not is_link_field:
+		return False
+	if not (value or "").strip():
+		return True
+	return not target_exists
+
+
+def drop_stale_link_options():
+	"""Delete `options` overrides that leave one of this app's Link fields dangling.
+
+	A field that used to be a Select listing farm names by hand, and is now a Link
+	to Work Management Farm, keeps whatever `options` Property Setter someone wrote
+	against the old shape. On a Select that string is the option list. On a Link it
+	is the target doctype, so the override silently repoints the field at a doctype
+	that was never a doctype:
+
+	    Work Management Planner-farm-options = "\nKentrout"
+
+	Every save of a Work Management Planner then died with
+	`DocType \nKentrout not found` -- a 404 that reached the person as nothing more
+	than a failed Save button. Nothing in this app writes these; they are leftovers
+	from before the farms became records, and migrating the field shape does not
+	take them with it.
+
+	Deliberately narrow -- this app's own doctypes, `options` only, Link fields
+	only, and only where the target does not exist.
+	"""
+	dropped = []
+	for doctype in shipped_doctypes():
+		path = doctype_json(doctype)
+		if not os.path.exists(path):
+			continue
+		with open(path) as handle:
+			shipped = json.load(handle)
+		links = {
+			field["fieldname"]
+			for field in shipped.get("fields", [])
+			if field.get("fieldtype") == "Link" and field.get("fieldname")
+		}
+		here = []
+		for setter in frappe.get_all(
+			"Property Setter",
+			filters={"doc_type": doctype, "property": "options"},
+			fields=["name", "field_name", "value"],
+		):
+			target = (setter.value or "").strip()
+			if not is_stale_link_option(
+				setter.field_name in links, target, bool(frappe.db.exists("DocType", target))
+			):
+				continue
+			frappe.delete_doc("Property Setter", setter.name, force=True, ignore_permissions=True)
+			here.append(setter.name)
+		if here:
+			frappe.clear_cache(doctype=doctype)
+			dropped.extend(here)
+	return dropped
 
 
 def seed_approvals():

@@ -286,6 +286,34 @@ class TestBusinessUnitFieldPlan(unittest.TestCase):
 		)
 
 
+class TestStaleLinkOption(unittest.TestCase):
+	"""install.is_stale_link_option() -- pure, no site, no database.
+
+	The case that sent someone looking: Work Management Planner.farm stopped being
+	a hand-typed Select of farm names and became a Link to Work Management Farm,
+	but the `options` Property Setter written against the old shape stayed. On a
+	Link, options IS the target doctype, so every save died with
+	`DocType \nKentrout not found`.
+	"""
+
+	def test_a_link_aimed_at_a_doctype_that_does_not_exist_is_stale(self):
+		self.assertTrue(install.is_stale_link_option(True, "\nKentrout", False))
+
+	def test_a_link_aimed_at_a_real_doctype_is_a_deliberate_repoint(self):
+		"""Someone meant this. Not ours to undo."""
+		self.assertFalse(install.is_stale_link_option(True, "Work Management Farm", True))
+
+	def test_an_override_on_a_field_that_is_not_a_link_is_left_alone(self):
+		"""On a Select, options is the option list -- none of this app's business."""
+		self.assertFalse(install.is_stale_link_option(False, "\nApproved\nReturned", False))
+
+	def test_a_link_with_a_blank_override_is_stale(self):
+		"""An empty target is a field pointing nowhere, however it got there."""
+		self.assertTrue(install.is_stale_link_option(True, "", False))
+		self.assertTrue(install.is_stale_link_option(True, "   ", False))
+		self.assertTrue(install.is_stale_link_option(True, None, False))
+
+
 class TestScreensReadTheTemplate(unittest.TestCase):
 	"""No screen may hardcode a level name in text the user reads.
 
