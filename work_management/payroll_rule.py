@@ -117,3 +117,40 @@ def disagreements(rows, rule, people):
 				"expected": expected,
 			})
 	return found
+
+
+# Weekday indices as Python reports them: Monday is 0, Sunday is 6.
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def pay_week_length(start_day, end_day):
+    """How many days the configured pay week spans, inclusive.
+
+    Tuesday to Sunday is six days -- which is the point: a week shorter than
+    seven leaves a weekday belonging to no week at all.
+    """
+    start = WEEKDAYS.index(start_day) if start_day in WEEKDAYS else 6
+    end = WEEKDAYS.index(end_day) if end_day in WEEKDAYS else 5
+    return start, ((end - start) % 7) + 1
+
+
+def pay_week_for(weekday, start_weekday, week_len, allow_single_day):
+    """(days back to the week start, days the week spans) for one work date.
+
+    None when the date falls in the gap of a pay week shorter than seven days
+    and single-day sending is off. That gap is why Monday work on a
+    Tuesday-to-Sunday week could never be sent: the bulk send dropped those
+    dates without a word, and the single send could only list them as
+    "outside".
+
+    With single-day sending on, such a date becomes a one-day week of its own
+    rather than nothing. A date that already has a week is returned unchanged
+    either way -- turning the setting on must not regroup work that was already
+    being sent correctly.
+    """
+    back = (weekday - start_weekday) % 7
+    if back < week_len:
+        return back, week_len
+    if allow_single_day:
+        return 0, 1
+    return None

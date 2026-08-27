@@ -73,6 +73,10 @@
   "tw_category_rows",
   "tw_categories",
   "allow_part_week_send",
+  "pay_week_starts_on",
+  "pay_week_ends_on",
+  "pay_day",
+  "allow_single_day_send",
   "sb_branding",
   "project_logo"
  ],
@@ -434,6 +438,33 @@
    "label": "Allow sending the week still in progress",
    "default": "0",
    "description": "Off: a pay week can only be sent once it closes, so a week is never paid twice. On: the current week can be sent for the days worked so far."
+  },
+  {
+   "fieldname": "pay_week_starts_on",
+   "fieldtype": "Select",
+   "options": "\nMonday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday",
+   "label": "Pay week starts on",
+   "description": "The weekday a pay week opens. Default Sunday. Together with the closing day this decides how work is grouped into weekly payments."
+  },
+  {
+   "fieldname": "pay_week_ends_on",
+   "fieldtype": "Select",
+   "options": "\nMonday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday",
+   "label": "Pay week ends on",
+   "description": "The weekday a pay week closes. Default Saturday. If the span is shorter than seven days, the weekdays left over belong to no week at all and cannot be sent unless single-day sending is on."
+  },
+  {
+   "fieldname": "pay_day",
+   "fieldtype": "Select",
+   "options": "\nMonday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday",
+   "label": "Pay day",
+   "description": "The weekday payment is expected. Defaults to the closing day."
+  },
+  {
+   "fieldname": "allow_single_day_send",
+   "fieldtype": "Check",
+   "label": "Allow sending a day that falls outside the pay week",
+   "description": "On: a work date left over by a pay week shorter than seven days is sent on its own, as a one-day week, instead of never. Off: such a date cannot be sent -- which is how Monday work on a Tuesday-to-Sunday week became unpayable. Does not change how any date that already has a week is grouped."
   },
   {
    "fieldname": "sb_approvals",
