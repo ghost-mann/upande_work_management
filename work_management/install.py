@@ -147,12 +147,65 @@ def release_module_def():
 	return True
 
 
+def shadowed_custom_fields(custom_fieldnames, shipped):
+	"""Custom Fields whose fieldname this app now ships as its own DocField.
+
+	The Custom Field wins in the meta, so while one of these sits there the
+	app's definition of that field never takes effect -- and nothing says so.
+	A field the app does not ship is somebody's own and is left alone.
+	"""
+	return sorted(set(custom_fieldnames) & set(shipped))
+
+
+def drop_shadowing_custom_fields():
+	"""Take back the fields this app defines, on every doctype it ships.
+
+	A site built in the UI carries Custom Fields for fields this app has since
+	shipped as DocFields of its own. Both describe the same column, but the
+	Custom Field is applied on top, so the app's version of that field is frozen
+	at whatever the site drew -- silently, and for good.
+
+	That is not theoretical. The app added "Completed" to the plan close-state
+	options; after migrate the DocField carried it and the meta still refused
+	the value, because a Custom Field of the same fieldname sat on top with the
+	old three. 591 of the live site's plans hold that value.
+
+	This is its own step rather than part of adoption, because adoption skips a
+	doctype it already owns: a site adopted months ago would never revisit
+	these. Deleting them costs no data -- Frappe's Custom Field.on_trash does
+	not drop columns, and the DocField keeps the column regardless.
+	"""
+	dropped = []
+	for name in shipped_doctypes():
+		if not frappe.db.exists("DocType", name):
+			continue
+		shipped = shipped_fieldnames(name)
+		if not shipped:
+			continue
+		existing = frappe.get_all("Custom Field", filters={"dt": name},
+		                         fields=["name", "fieldname"])
+		by_fieldname = {row.fieldname: row.name for row in existing}
+		for fieldname in shadowed_custom_fields(by_fieldname, shipped):
+			frappe.delete_doc("Custom Field", by_fieldname[fieldname],
+			                  force=True, ignore_permissions=True)
+			dropped.append(f"{name}.{fieldname}")
+	if dropped:
+		frappe.db.commit()
+		frappe.clear_cache()
+		print(
+			f"Took back {len(dropped)} field(s) a Custom Field was shadowing, so this "
+			f"app's own definition applies: {', '.join(dropped)}"
+		)
+	return dropped
+
+
 def after_install():
 	create_core_custom_fields()
 	upgrade_business_unit_link()
 	drop_stale_link_options()
 	seed_approvals()
 	sync_desk_surfaces()
+	drop_shadowing_custom_fields()
 	run_data_patches(frappe.flags.get("wm_adopted") or [])
 
 
