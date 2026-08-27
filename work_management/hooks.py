@@ -76,22 +76,17 @@ before_install = "work_management.install.before_install"
 
 # Takes back any doctype the site owns as a custom one (it deploys nowhere, and
 # migrate says nothing about it), reseeds the approval stage catalogue and
-# regenerates the five workflows from
-# it, upgrades Work Management Farm.business_unit to a Link once upande_core is
-# installed, relabels the desk from the taxonomy template, shows or hides the
-# level above the farm, and repairs the desk
-# workspace when a same-named one built in the desk has shadowed the one this
-# app ships.
+# regenerates the five workflows from it, relabels the desk from the taxonomy
+# template, and repairs the desk workspace when a same-named one built in the
+# desk has shadowed the one this app ships.
 after_migrate = [
 	"work_management.install.adopt_existing_custom_doctypes",
 	# before the taxonomy writes its Property Setters: deleting a Custom Field
 	# takes that field's Property Setters with it
 	"work_management.install.drop_shadowing_custom_fields",
 	"work_management.approvals.after_migrate",
-	"work_management.install.upgrade_business_unit_link",
 	"work_management.install.drop_stale_link_options",
 	"work_management.taxonomy.apply_labels",
-	"work_management.taxonomy.apply_business_unit_visibility",
 	"work_management.desk.sync",
 ]
 

@@ -76,7 +76,7 @@
    "fieldtype": "Link",
    "label": "Farm Scope",
    "read_only": 1,
-   "options": "Work Management Farm"
+   "options": "Farm"
   },
   {
    "default": "1",

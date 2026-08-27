@@ -65,7 +65,7 @@
    "label": "Farm",
    "in_standard_filter": 1,
    "read_only": 1,
-   "options": "Work Management Farm"
+   "options": "Farm"
   },
   {
    "fieldname": "total_days",

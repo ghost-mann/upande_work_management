@@ -100,12 +100,11 @@
    "label": "Farms"
   },
   {
-   "description": "Superseded by the Work Management Farm doctype, which now holds farms and their cost projects, and by Stage Approvers, which holds who approves for each farm. Read-only, and removed in the next release.",
+   "description": "Each farm's cost project, and an area override where the farm's own area is not the figure to divide by. The farms themselves are Upande Core's records; a row naming a farm Core has not got is ignored.",
    "fieldname": "farms",
    "fieldtype": "Table",
    "label": "Farms",
-   "options": "WM Farm",
-   "read_only": 1
+   "options": "WM Farm"
   },
   {
    "fieldname": "sb_att",
@@ -508,7 +507,7 @@
    "fieldtype": "Check",
    "label": "Use a level above the farm",
    "default": "0",
-   "description": "On: each farm carries a business unit, and the field appears on the farm under the name given below. Off: the level is hidden. No report groups by it yet."
+   "description": "Names the level above the farm, for Employee records and for reports. Farms themselves are Upande Core's records and carry no business unit of their own."
   },
   {
    "fieldname": "tax_bu_singular",

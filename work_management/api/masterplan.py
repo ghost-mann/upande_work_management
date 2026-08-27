@@ -95,17 +95,13 @@ def wm_masterplan(**kwargs):
         out["can_gm_approve"] = CAN_GM
         out["is_consultant"] = IS_CONSULTANT
         out["can_edit_approved"] = CAN_EDIT_APPROVED
-        # Farms come from this app's own doctype where the site has it, and from the
-        # site's own `Farm` where it does not -- kaitet-group built the whole system
-        # in the UI before the app existed and has the latter. frappe.db.get_all()
-        # on a doctype the site has not got raises rather than returning nothing, so
-        # naming only one of them is not a narrower list, it is a dead Master Plan
-        # screen. wm_dashboard already asks before looking; this did not.
-        out["farms"] = []
-        for mp_farm_dt in ("Work Management Farm", "Farm"):
-            if frappe.db.exists("DocType", mp_farm_dt):
-                out["farms"] = [f.name for f in frappe.db.get_all(mp_farm_dt, fields=["name"], order_by="name")]
-                break
+        # Farms are Upande Core's records. hooks.py declares that app required, so
+        # `Farm` is unambiguous and unguarded here -- and it has to be unguarded: a
+        # guard around a doctype every screen depends on answers "no farms" rather
+        # than failing, which is how a dead Master Plan screen looks from the desk.
+        # The mirror asks, because live owns a `Farm` of its own; the app does not.
+        out["farms"] = [f.name for f in frappe.db.get_all(
+                "Farm", fields=["name"], order_by="name")]
         out["counts"] = frappe.db.sql("""
             SELECT workflow_state st, COUNT(*) n
             FROM `tabWork Management Master Plan` GROUP BY workflow_state

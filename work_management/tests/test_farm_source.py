@@ -114,3 +114,62 @@ class TestTheCustomFarmFieldsOnOtherDoctypes(unittest.TestCase):
 		from work_management import install
 
 		self.assertEqual([row for row in install.CORE_CUSTOM_FIELDS if row[0] == "Farm"], [])
+
+
+class TestTheFarmDoctypeIsGone(unittest.TestCase):
+	def test_no_shipped_link_points_at_the_retired_doctype(self):
+		"""Every farm link is a link to Upande Core's Farm now.
+
+		The values behind these fields are farm names, and every name in use
+		already exists in core `Farm` -- which is what made this a change of
+		`options` rather than a rewrite of ten tables.
+		"""
+		self.assertEqual(links_to(OLD), [])
+
+	def test_ten_shipped_links_point_at_core_farm(self):
+		"""The count is asserted so a field cannot quietly stop being a farm.
+
+		A future field that should carry a farm and does not would otherwise pass
+		every other test here.
+		"""
+		self.assertEqual(len(links_to("Farm")), 10)
+
+	def test_the_app_no_longer_ships_a_farm_doctype(self):
+		from work_management import install
+
+		self.assertNotIn(OLD, install.shipped_doctypes())
+
+	def test_nothing_reads_the_retired_doctype_any_more(self):
+		"""No module asks the database about `Work Management Farm`.
+
+		Scoped to reads rather than to the string: two docstrings still name it
+		while explaining history, which is worth keeping. What must not survive
+		is a live query, including a guarded one -- a guard around a doctype that
+		no longer exists answers "no farms" forever, silently.
+		"""
+		read = re.compile(
+			r"(get_all|get_list|get_value|get_doc|set_value|count|exists)\("
+			r"[^)]*\"Work Management Farm\""
+		)
+		offenders = []
+		for path in glob.glob(os.path.join(HERE, "**", "*.py"), recursive=True):
+			rel = os.path.relpath(path, HERE)
+			if rel.startswith("tests" + os.sep) or rel.startswith("patches" + os.sep):
+				continue
+			with open(path) as handle:
+				if read.search(handle.read()):
+					offenders.append(rel)
+		self.assertEqual(sorted(offenders), [])
+
+	def test_no_property_setter_is_written_against_core_farm(self):
+		"""Relabelling `Farm` would relabel it for every app that reads it.
+
+		taxonomy.FIELD_LABELS is the only place this app writes label Property
+		Setters, so keeping `Farm` out of it is the whole rule. The cost is
+		accepted and documented: a project can rename this app's own farm links,
+		but not the farm record's own fields.
+		"""
+		from work_management import taxonomy
+
+		for doctype, _fieldname, _template in taxonomy.FIELD_LABELS:
+			self.assertNotIn(doctype, ("Farm", OLD), doctype)

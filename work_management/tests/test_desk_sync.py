@@ -243,11 +243,11 @@ class TestNavigationLabelsFollowTheTaxonomy(unittest.TestCase):
 
 	def test_a_renamed_level_reaches_the_navigation(self):
 		names = self.names(tax_top_plural="Estates", tax_section_plural="Zones")
-		self.assertEqual(desk.nav_label("Work Management Farm", names), "Estates")
+		self.assertEqual(desk.nav_label("Farm", names), "Estates")
 		self.assertEqual(desk.nav_label("Work Management Section", names), "Zones")
 
 	def test_the_default_template_leaves_the_shipped_wording(self):
-		self.assertEqual(desk.nav_label("Work Management Farm", self.names()), "Farms")
+		self.assertEqual(desk.nav_label("Farm", self.names()), "Farms")
 
 	def test_an_entry_that_names_no_level_is_left_alone(self):
 		"""Returning "" or the label would invite a caller to write it back."""
@@ -340,12 +340,12 @@ class TestALinkToSomethingAbsentHidesItself(unittest.TestCase):
 	"""
 
 	ROWS = [
-		{"name": "a", "link_type": "DocType", "link_to": "Work Management Farm", "hidden": 0},
+		{"name": "a", "link_type": "DocType", "link_to": "Farm", "hidden": 0},
 		{"name": "b", "link_type": "DocType", "link_to": "Nonexistent Doctype", "hidden": 0},
-		{"name": "c", "link_type": "DocType", "link_to": "Work Management Farm", "hidden": 1},
+		{"name": "c", "link_type": "DocType", "link_to": "Farm", "hidden": 1},
 		{"name": "d", "link_type": "DocType", "link_to": "Gone Away", "hidden": 1},
 	]
-	HAVE = {"Work Management Farm"}
+	HAVE = {"Farm"}
 
 	def test_a_link_whose_target_is_missing_is_hidden(self):
 		hide, show = desk.plan_link_visibility(self.ROWS, self.HAVE)

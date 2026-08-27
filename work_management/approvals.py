@@ -505,9 +505,11 @@ def validate_configuration(settings):
 	save than to discover it when a plan cannot be approved.
 	"""
 	rows = stage_rows(settings)
-	farms = frappe.get_all(
-		"Work Management Farm", filters={"disabled": 0}, pluck="name",
-	) if frappe.db.exists("DocType", "Work Management Farm") else []
+	# Upande Core's Farm, unguarded: hooks.py requires that app, so the doctype is
+	# there by definition. `disabled` is not a field Core ships -- respected where
+	# a site has added one, ignored where none has.
+	filters = {"disabled": 0} if frappe.db.has_column("Farm", "disabled") else {}
+	farms = frappe.get_all("Farm", filters=filters, pluck="name")
 	if not farms:
 		return
 
