@@ -86,12 +86,22 @@ def extra_fieldnames(existing, shipped):
 
 # (dt, fieldname, label, fieldtype, options, insert_after, extras)
 CORE_CUSTOM_FIELDS = [
-	("Employee", "custom_farm", "Unit/Division", "Link", "Work Management Farm", "department", {}),
+	# Declared exactly as upande_kaitet declares it -- same label, same target,
+	# same position -- because both apps ship this field and whichever migrates
+	# last writes it. Disagreeing was the bug: ours said "Work Management Farm"
+	# after `department`, theirs says "Farm" after `grade`, and once this app's
+	# definitions became authoritative the next migrate would have moved the box
+	# and repointed 3,241 employees at a farm list missing three names in use.
+	("Employee", "custom_farm", "Unit/Division", "Link", "Farm", "grade", {}),
 	("Employee", "custom_business_unit", "Business Unit", "Link", "Business Unit", "custom_farm", {}),
 	# Options are left empty on purpose: each project fills in its own
 	# locations. A Select with someone else's sites in it is worse than a blank.
 	("Employee", "custom_group_name", "Location", "Select", "", "custom_business_unit", {}),
-	("Warehouse", "custom_farm", "Farm", "Link", "Work Management Farm", "warehouse_name", {}),
+	# Warehouse.custom_farm is deliberately absent: it is Upande Core's field.
+	# Core ships it, exports it as the fixture `Warehouse-custom_farm`, hooks
+	# warehouse_hooks.py to it, orders the Warehouse form around it in its own
+	# install, and Row, Section and Bed all fetch_from it. We only read it --
+	# which is also why it is still a safe anchor for the field below.
 	("Warehouse", "custom_area_ha", "Area (HA)", "Float", None, "custom_farm", {}),
 	("Warehouse", "custom_cost_center", "Cost Center", "Link", "Cost Center", "custom_area_ha", {}),
 	("Task", "custom_uom", "UoM", "Link", "UOM", "subject", {}),
