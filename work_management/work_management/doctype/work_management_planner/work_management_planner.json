@@ -261,8 +261,9 @@
    "fieldname": "custom_close_state",
    "fieldtype": "Select",
    "label": "Close State",
-   "options": "\nClose Requested\nClosed",
-   "read_only": 1
+   "options": "\nClose Requested\nClosed\nCompleted",
+   "read_only": 1,
+   "description": "How the plan closed. Close Requested then Closed is somebody asking and being granted it; Completed is the app closing the plan itself once the confirmed quantity reaches the target, so it drops out of the pickers. Both count as closed wherever the state is read."
   },
   {
    "collapsible": 1,

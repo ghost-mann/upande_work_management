@@ -77,6 +77,9 @@ before_install = "work_management.install.before_install"
 # app ships.
 after_migrate = [
 	"work_management.install.adopt_existing_custom_doctypes",
+	# before the taxonomy writes its Property Setters: deleting a Custom Field
+	# takes that field's Property Setters with it
+	"work_management.install.drop_shadowing_custom_fields",
 	"work_management.approvals.after_migrate",
 	"work_management.install.upgrade_business_unit_link",
 	"work_management.install.drop_stale_link_options",

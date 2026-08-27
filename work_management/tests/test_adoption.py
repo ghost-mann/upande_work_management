@@ -163,3 +163,47 @@ class TestPatchesOnASiteThatBroughtItsOwnData(unittest.TestCase):
 		for patch in install.data_patches():
 			module = importlib.import_module(patch)
 			self.assertTrue(hasattr(module, "execute"), patch)
+
+
+class TestCustomFieldsThatShadowShippedOnes(unittest.TestCase):
+	"""A site built in the UI carries Custom Fields for fields this app now
+	ships as its own. The Custom Field wins in the meta, so the app's
+	definition of that field never takes effect -- silently, for good.
+
+	Found by rehearsing the migration: the app added "Completed" to the plan's
+	close-state options, the DocField carried it after migrate, and the meta
+	still refused the value because a Custom Field of the same fieldname sat on
+	top with the old three. 14 fields were shadowed that way on the restore, 9
+	on Planner and 5 on Actuals.
+
+	Deleting the Custom Field costs no data. Both definitions describe the same
+	column, Frappe's Custom Field.on_trash does not drop columns, and the
+	DocField keeps it regardless.
+	"""
+
+	def test_a_custom_field_the_app_also_ships_is_shadowing(self):
+		self.assertEqual(
+			install.shadowed_custom_fields(["custom_close_state", "site_only_field"],
+			                               ["custom_close_state", "farm"]),
+			["custom_close_state"])
+
+	def test_a_custom_field_the_app_does_not_ship_is_left_alone(self):
+		"""Someone's own extra field is theirs. Only fields this app defines are
+		taken back."""
+		self.assertEqual(
+			install.shadowed_custom_fields(["site_only_field"], ["custom_close_state"]), [])
+
+	def test_nothing_to_do_when_the_site_added_nothing(self):
+		self.assertEqual(install.shadowed_custom_fields([], ["farm"]), [])
+
+	def test_it_reports_them_in_a_stable_order(self):
+		self.assertEqual(
+			install.shadowed_custom_fields(["b", "a", "c"], ["c", "b", "a"]), ["a", "b", "c"])
+
+	def test_the_sweep_runs_on_every_migrate(self):
+		"""Adoption skips a doctype it already owns, so a site adopted months ago
+		would never revisit these. The sweep has to be its own step."""
+		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		with open(os.path.join(here, "hooks.py")) as handle:
+			hooks = handle.read()
+		self.assertIn("work_management.install.drop_shadowing_custom_fields", hooks)

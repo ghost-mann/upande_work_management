@@ -7,3 +7,8 @@ node_modules/
 # is public -- git history would keep them permanently, in every fork and clone.
 # Generate them into the working tree and keep them there.
 *.xlsx
+
+# Frappe exports Desktop Icon records into the app folder when developer_mode
+# is on. This app creates its icon in code (desk.ensure_desktop_icon), so an
+# exported copy would ship one site's timestamps and owner to every other.
+work_management/desktop_icon/*.json
