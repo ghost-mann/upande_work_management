@@ -55,6 +55,19 @@ the hard dependency rather than a name check at runtime.
 6. **Mirror.** The mirror keeps its `("Work Management Farm", "Farm")` fallback
    so live is untouched; `port_app.py` rewrites it to a plain core-`Farm` read
    when generating `api/*.py`.
+7. **The two `custom_farm` fields on other doctypes.** `Warehouse.custom_farm`
+   is Upande Core's — it ships it, exports it as the fixture
+   `Warehouse-custom_farm`, hangs `warehouse_hooks.py` off it, and `Row`,
+   `Section` and `Bed` all `fetch_from` it. WM stops declaring it. WM keeps
+   declaring `Employee.custom_farm`, so the box exists without upande_kaitet,
+   but declares it *identically* to upande_kaitet's: label "Unit/Division",
+   `Link → Farm`, `insert_after: grade`. Two apps then write the same field and
+   neither can flip it.
+8. **Verification on kaitet.local directly**, not a copy: `bench migrate`, then
+   the five screens and Master Plan driven against the real 16 farms.
+9. **Sections are out of scope.** Core's `Section` (0 rows) versus
+   `Work Management Section` (16 rows) is the same overlap one level down, and
+   gets its own change after this one is proven.
 
 ## Non-goals
 
@@ -105,14 +118,28 @@ No row is disabled in either doctype today.
 line 73 about upgrading `business_unit` to a Link once upande_core arrives, and
 the hook it describes.
 
-**`install.py`** — in `CORE_CUSTOM_FIELDS`, `Employee.custom_farm` and
-`Warehouse.custom_farm` options become `Farm` (lines 89, 94), and
-`Employee.custom_business_unit` is left as it is. These are fields on ERPNext
-doctypes that already exist on the site in exactly this shape; nothing is added
-to core `Farm`. Delete the `business_unit` Link-upgrade machinery (lines
-347-404). Adoption needs no edit: `adopt_existing_custom_doctypes()` (line 279)
-works off `shipped_doctypes()` (line 48), which reads the doctype folders, so
-deleting the folder is what removes the farm from it.
+**`install.py`** — in `CORE_CUSTOM_FIELDS`:
+
+- `Employee.custom_farm` (line 89) becomes `Link → Farm`, `insert_after: grade`,
+  label unchanged at "Unit/Division" — byte-identical to upande_kaitet's
+  declaration in `upande_kaitet/upande_kaitet/custom/employee.json`. Today the
+  two disagree on both target and position, and since `67a940b` made this
+  app's definitions authoritative, WM's version wins the
+  next migrate: the box moves up the form and repoints 3,241 employees at a
+  farm list missing SIMO, Greenville and cheptiret. Matching the declaration
+  removes the conflict rather than winning it.
+- `Warehouse.custom_farm` (line 94) is **deleted**. Upande Core owns that field:
+  it ships it in `upande_core/upande_core/custom/warehouse.json`, exports it as
+  the fixture `Warehouse-custom_farm`, hooks `warehouse_hooks.py` to it, and
+  `Row`, `Section` and `Bed` `fetch_from` it. `upande_core/install.py:51-54`
+  even orders the Warehouse form around it. WM only reads it.
+- `Warehouse.custom_area_ha` and `Employee.custom_business_unit` stay as they
+  are. Nothing is added to core `Farm`.
+
+Delete the `business_unit` Link-upgrade machinery (lines 347-404). Adoption
+needs no edit: `adopt_existing_custom_doctypes()` (line 279) works off
+`shipped_doctypes()` (line 48), which reads the doctype folders, so deleting the
+folder is what removes the farm from it.
 
 **Link fields — 10 sites, `options` only, no data rewriting** (values are farm
 names and already exist in core `Farm`):
@@ -153,8 +180,12 @@ and the Settings table, but the farm record's own labels belong to Upande Core.
 `workspace_sidebar/work_management.json:289` link to `Farm`.
 
 **`seed/kaitet.py:84,87,156`** — stops creating farms. Farms are Upande Core's
-to create; the seed fills in the Settings farms table for farms that exist and
-reports the names it could not find.
+to create. The seed instead fills the Settings farms table with Kaitet's own
+mapping — `Saboti`, `Lokitela`, `Vale` → `PROJ-0031`, `Endebess` → `PROJ-0032`,
+the four rows live runs on — for farms that exist, and reports the names it
+could not find. A rebuilt Kaitet site then has a working Rates tab without
+anyone retyping the mapping, and the values stay where Kaitet-specific values
+already belong by design.
 
 **Existing patches** — `migrate_farms_and_approvers`, `backfill_farms_in_use`
 and `seed_sections_from_cost_centres` already return early when
@@ -220,6 +251,9 @@ TDD — each of these is written before the change it describes.
   - `CORE_CUSTOM_FIELDS` declares no field on `Farm`
   - nothing in the app writes a Property Setter against `Farm`
   - nothing in the app calls `.save()`, `.insert()` or `set_value` on `Farm`
+  - `CORE_CUSTOM_FIELDS` declares no `Warehouse.custom_farm`
+  - the `Employee.custom_farm` declaration matches upande_kaitet's field shape
+    (label, fieldtype, options, `insert_after`)
 - **New** `test_move_farms_to_upande_core.py`: carries project and area into the
   Settings table; clears the orphan and logs it; is idempotent; leaves core
   `Farm` rows byte-identical.
@@ -260,6 +294,8 @@ Upande Core, and the cost project is set on Settings.
 | Core `Farm` rows fail their own mandatory fields | WM never writes to a Farm document at all |
 | A farm exists in Core but is missing from the Settings table | it appears in the pickers with no cost project — the same state a newly added farm is in today; the Rates tab shows nothing for it until someone fills it in |
 | Orphan references cleared silently | logged per reference with what held it; on kaitet.local it is two Warehouses and nothing else |
+| Two apps declare `Employee.custom_farm` | resolved by declaring it identically, not by winning: same label, same target, same position. A test asserts the declaration matches upande_kaitet's shape |
+| WM stops declaring `Warehouse.custom_farm` | Core ships it as a fixture and depends on it in three doctypes and a hook, so it cannot silently vanish. A site with neither app would have no such field, but such a site cannot install WM anyway |
 | Taxonomy can no longer rename the farm level's own labels | accepted; renaming another app's field would leak into every app that uses it |
 
 ## Order of work
@@ -272,5 +308,6 @@ Upande Core, and the cost project is set on Settings.
 5. The migration patch.
 6. `port_app.py` rewrite + `check_ported.py` green.
 7. Docs.
-8. Full suite green; then `bench migrate` on kaitet.local and drive the five
-   screens plus the Master Plan screen against real data.
+8. Full suite green; then `bench migrate` on kaitet.local — which also picks up
+   upande_core's new `farm_location` — and drive the five screens plus the
+   Master Plan screen against the real 16 farms.
