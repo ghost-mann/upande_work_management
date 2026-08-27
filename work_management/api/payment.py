@@ -1299,17 +1299,26 @@ def wm_payment(**kwargs):
             wk_part_ok = frappe.utils.cint(frappe.db.get_single_value(
                 "Work Management Settings", "allow_part_week_send"))
             wk_map = {}
+            wk_single_ok = frappe.utils.cint(frappe.db.get_single_value(
+                "Work Management Settings", "allow_single_day_send"))
             wk_outside = []
             for wr in wk_rows:
                 wdd = frappe.utils.getdate(wr.d)
                 wk_back = (wdd.weekday() - wk_start_wd) % 7
+                wk_span = wk_len
                 if wk_back >= wk_len:
                     # the pay week is shorter than seven days and this weekday sits
-                    # in the gap, so it belongs to no week -- reported, never dropped
-                    wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
-                    continue
+                    # in the gap, so it belongs to no week
+                    if not wk_single_ok:
+                        # reported, never dropped -- but still not sendable
+                        wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
+                        continue
+                    # allow_single_day_send: give it a week of its own, one day long,
+                    # rather than leaving the work unpayable for good
+                    wk_back = 0
+                    wk_span = 1
                 wk_s = frappe.utils.add_days(wdd, -wk_back)
-                wk_e = frappe.utils.add_days(wk_s, wk_len - 1)
+                wk_e = frappe.utils.add_days(wk_s, wk_span - 1)
                 wk_key = str(wk_s)
                 if wk_key not in wk_map:
                     wk_map[wk_key] = {"week_from": str(wk_s), "week_to": str(wk_e),
@@ -1619,6 +1628,12 @@ def wm_payment(**kwargs):
             bw_today = frappe.utils.getdate(frappe.utils.today())
             bw_part_ok = frappe.utils.cint(frappe.db.get_single_value(
                 "Work Management Settings", "allow_part_week_send"))
+            bw_single_ok = frappe.utils.cint(frappe.db.get_single_value(
+                "Work Management Settings", "allow_single_day_send"))
+            # what the pay week leaves over. The single send has always reported
+            # these; the bulk send dropped them without a word, which is how 5,027
+            # Monday lines went unpayable and unnoticed on a Tuesday-to-Sunday week.
+            bw_outside = []
             for emp in emp_list:
                 # same weekly rule as the single send: one payment per worker per
                 # COMPLETED pay week, with the week in progress held back
@@ -1644,10 +1659,15 @@ def wm_payment(**kwargs):
                 for br in bwk_rows:
                     bdd = frappe.utils.getdate(br.d)
                     bback = (bdd.weekday() - bw_start_wd) % 7
+                    bspan = bw_len
                     if bback >= bw_len:
-                        continue
+                        if not bw_single_ok:
+                            bw_outside.append({"employee": emp, "date": str(br.d)})
+                            continue
+                        bback = 0
+                        bspan = 1
                     bs = frappe.utils.add_days(bdd, -bback)
-                    be = frappe.utils.add_days(bs, bw_len - 1)
+                    be = frappe.utils.add_days(bs, bspan - 1)
                     if frappe.utils.getdate(be) < bw_today or bw_part_ok:
                         bwk[str(bs)] = {"week_from": str(bs), "week_to": str(be)}
                 for wk in sorted(bwk.values(), key=lambda x: x["week_from"]):
@@ -1785,6 +1805,8 @@ def wm_payment(**kwargs):
             out["sent"] = sent
             out["sent_total"] = sent_total
             out["errors"] = len([r for r in results if r.get("error")])
+            # never silent again: a date the pay week leaves out is named, not dropped
+            out["outside_pay_week"] = bw_outside
 
     elif action == "pay_absent_conflicts":
         # AUDIT: every confirmed worker-day with money recorded on a day that
