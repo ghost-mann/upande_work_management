@@ -76,7 +76,7 @@
   "pay_week_starts_on",
   "pay_week_ends_on",
   "pay_day",
-  "send_per_day",
+  "allow_day_range",
   "sb_branding",
   "project_logo"
  ],
@@ -461,10 +461,10 @@
    "description": "The weekday payment is expected. Defaults to the closing day."
   },
   {
-   "fieldname": "send_per_day",
+   "fieldname": "allow_day_range",
    "fieldtype": "Check",
-   "label": "Send one payment per day instead of per pay week",
-   "description": "Off (the default): work is grouped into pay weeks -- one payment per worker per completed week, which is what payroll has always received. On: one payment per worker per day. Turn it on where a day has to be paid on its own, including a weekday the pay week above leaves out, which cannot be sent weekly at all."
+   "label": "Also allow sending a chosen range of days",
+   "description": "Pay weeks can always be sent -- one payment per worker per completed week, which is what payroll has always received. Tick this to additionally offer paying a range you choose: one day, five days, a fortnight, up to a month. The range is grouped from the first date selected rather than into pay weeks, so it can pay a weekday the pay week above leaves out, which cannot be sent weekly at all. Ticking this changes nothing on its own -- an ordinary send still groups into pay weeks."
   },
   {
    "fieldname": "sb_approvals",

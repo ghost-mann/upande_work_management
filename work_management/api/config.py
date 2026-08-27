@@ -89,26 +89,6 @@ def _stage_roles(settings, *keys):
 	return roles
 
 
-def payable_employee_columns():
-	"""The Employee columns the task-worker rule may read on THIS site.
-
-	employment_type and designation are standard fields. custom_category is a
-	custom field one site created, and naming a column the site has not got does
-	not degrade a query, it kills it:
-
-	    (1054, "Unknown column 'twe.custom_category' in 'WHERE'")
-
-	which took the whole payment screen down on a site that never had the field.
-	The three lists are ORed, so dropping the column a site lacks costs nothing --
-	there is no Settings list it could have matched anyway.
-	"""
-	columns = []
-	for column in ("employment_type", "designation", "custom_category"):
-		if frappe.db.has_column("Employee", column):
-			columns.append(column)
-	return columns
-
-
 def get_config():
 	farms, farm_project = _farms()
 	cfg = {

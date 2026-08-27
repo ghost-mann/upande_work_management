@@ -7,7 +7,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config, payable_employee_columns
+from work_management.api.config import get_config
 
 
 @frappe.whitelist()
@@ -50,12 +50,22 @@ def wm_payment(**kwargs):
         ("designation", "Work Management Payable Designation", "designation", "tw_designations"),
         ("custom_category", "Work Management Payable Category", "category", "tw_categories"),
     ]
+    # Only the Employee columns THIS site actually has. employment_type and
+    # designation are standard; custom_category is a custom field one site created,
+    # and naming a column the site has not got does not narrow the query, it kills
+    # it -- (1054, "Unknown column 'twe.custom_category' in 'WHERE'") took a whole
+    # screen down on a site that never had the field. frappe.db.has_column is not in
+    # the sandbox's globals, but the meta is, and it knows custom fields too.
+    TW_META = frappe.get_meta("Employee")
+    TW_COLUMNS = []
+    for tw_mc in ("employment_type", "designation", "custom_category"):
+        if TW_META.get_field(tw_mc):
+            TW_COLUMNS.append(tw_mc)
+
     TW_CLAUSES = []
-    # Only the columns this site's Employee actually has. custom_category is a
-    # custom field elsewhere, and naming it here is not a narrower match, it is
-    # (1054, "Unknown column ... in 'WHERE'") and a dead screen.
-    TW_COLUMNS = payable_employee_columns()
     for tw_col, tw_child, tw_cfield, tw_box in TW_SOURCES:
+        # the three lists are ORed, so dropping the column this site lacks costs
+        # nothing -- there is no Settings list it could have matched anyway
         if tw_col not in TW_COLUMNS:
             continue
         tw_vals = []
@@ -102,6 +112,45 @@ def wm_payment(**kwargs):
     for sr in SEND_ROLES:
         if sr in send_role_list:
             CAN_SEND = 1
+
+    # WHAT ONE SEND COVERS
+    # Pay weeks always. A range of days as well, when Settings offers it -- one day,
+    # five, a fortnight, up to a month. Whether a range may be sent at all is a
+    # Settings decision; what this particular send covers is the operator's, so it
+    # arrives as the `days` parameter and Settings only says whether it is allowed.
+    # Ticking the box changes nothing on its own: a send that asks for no range
+    # still groups into pay weeks, exactly as payroll has always received them.
+    # A bad ask is refused rather than rounded into something sendable -- paying a
+    # range nobody chose hands payroll documents covering the wrong dates, and a
+    # payment already sent is the expensive thing to undo.
+    MAX_SPAN_DAYS = 31
+
+
+    def wmpay_span(wsp_anchor):
+        """{"days": 0 for the pay week or 1..31, "error": message or ""}."""
+        wsp_raw = str(frappe.form_dict.get("days") or "").strip()
+        if wsp_raw in ("", "0"):
+            return {"days": 0, "error": ""}
+        if not frappe.utils.cint(frappe.db.get_single_value(
+                "Work Management Settings", "allow_day_range")):
+            return {"days": 0, "error": ("Sending a chosen range of days is switched off. Tick "
+                                         "\u201cAlso allow sending a chosen range of days\u201d in "
+                                         "Work Management Settings to use it.")}
+        wsp_n = frappe.utils.cint(wsp_raw)
+        if wsp_n < 1:
+            return {"days": 0, "error": str(wsp_raw) + " is not a number of days to cover."}
+        if wsp_n > MAX_SPAN_DAYS:
+            return {"days": 0, "error": ("One payment can cover at most " + str(MAX_SPAN_DAYS)
+                                         + " days; " + str(wsp_n) + " were asked for.")}
+        # A range longer than a day has to be tiled from somewhere. Choosing the
+        # anchor here -- today, or each worker's earliest work date -- would put one
+        # day on different payments for different people, and re-running the same
+        # send later would draw the boundaries somewhere else.
+        if wsp_n > 1 and not wsp_anchor:
+            return {"days": 0, "error": ("Choose the date range first -- a span of " + str(wsp_n)
+                                         + " days has to start somewhere.")}
+        return {"days": wsp_n, "error": ""}
+
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -525,6 +574,13 @@ def wm_payment(**kwargs):
         out["week_ends_on"] = r_end
         out["pay_day"] = r_pay
         out["week_days"] = ((r_ei - r_si) % 7) + 1
+        # whether the page may offer to send a chosen range as one payment, or only
+        # pay weeks. The page needs it to label the range picker honestly: sending a
+        # range on a site that does not offer them is refused server-side, and
+        # finding that out after ticking two hundred workers is no way to learn it.
+        out["allow_day_range"] = frappe.utils.cint(frappe.db.get_single_value(
+            "Work Management Settings", "allow_day_range"))
+        out["max_span_days"] = MAX_SPAN_DAYS
 
     elif action == "pay_audit":
         # Reconcile CONFIRMED actuals against assigner + payment, per task/block, for the range.
@@ -1265,8 +1321,11 @@ def wm_payment(**kwargs):
         emp = frappe.form_dict.get("employee")
         dfrom = frappe.form_dict.get("from_date")
         dto = frappe.form_dict.get("to_date")
+        wk_ask = wmpay_span(dfrom)
         if not emp:
             out["error"] = "employee is required"
+        elif wk_ask["error"]:
+            out["error"] = wk_ask["error"]
         else:
             # Workers are paid by the WEEK. One payment per worker per COMPLETED
             # pay week, so payroll receives one Additional Salary line per week
@@ -1305,22 +1364,27 @@ def wm_payment(**kwargs):
             wk_part_ok = frappe.utils.cint(frappe.db.get_single_value(
                 "Work Management Settings", "allow_part_week_send"))
             wk_map = {}
-            wk_per_day = frappe.utils.cint(frappe.db.get_single_value(
-                "Work Management Settings", "send_per_day"))
+            # 0 = the configured pay week; 1..31 = the range this send asked for
+            wk_days = wk_ask["days"]
             wk_outside = []
             for wr in wk_rows:
                 wdd = frappe.utils.getdate(wr.d)
                 wk_back = (wdd.weekday() - wk_start_wd) % 7
                 wk_span = wk_len
-                if wk_per_day:
-                    # send_per_day: every date is a window of its own, so the
-                    # configured week is not consulted at all
+                if wk_days:
+                    # a chosen range: the configured week is not consulted at all,
+                    # and the range tiles forward from the first date selected.
+                    # Anchoring each date's window on itself would overlap them --
+                    # with a range of five the 28th would open 28th-1st and the 29th
+                    # 29th-2nd, and both would claim the 30th.
+                    wk_span = wk_days
                     wk_back = 0
-                    wk_span = 1
+                    if wk_days > 1:
+                        wk_back = frappe.utils.date_diff(wdd, frappe.utils.getdate(dfrom)) % wk_days
                 elif wk_back >= wk_len:
                     # the pay week is shorter than seven days and this weekday sits
                     # in the gap, so it belongs to no week -- reported, never dropped,
-                    # and only sendable by switching to per-day
+                    # and sendable only as a chosen range
                     wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
                     continue
                 wk_s = frappe.utils.add_days(wdd, -wk_back)
@@ -1342,6 +1406,7 @@ def wm_payment(**kwargs):
             out["week_ends_on"] = wk_end_day
             out["pay_day"] = wk_pay_day
             out["week_days"] = wk_len
+            out["span_days"] = wk_days
             out["outside_any_week"] = wk_outside
             if frappe.utils.cint(frappe.form_dict.get("preview")):
                 out["preview"] = 1
@@ -1615,8 +1680,11 @@ def wm_payment(**kwargs):
                 ev = e.strip()
                 if ev and ev not in emp_list:
                     emp_list.append(ev)
+        bw_ask = wmpay_span(dfrom)
         if not emp_list:
             out["error"] = "employees is required (CSV)"
+        elif bw_ask["error"]:
+            out["error"] = bw_ask["error"]
         else:
             results = []
             sent = 0
@@ -1634,8 +1702,8 @@ def wm_payment(**kwargs):
             bw_today = frappe.utils.getdate(frappe.utils.today())
             bw_part_ok = frappe.utils.cint(frappe.db.get_single_value(
                 "Work Management Settings", "allow_part_week_send"))
-            bw_per_day = frappe.utils.cint(frappe.db.get_single_value(
-                "Work Management Settings", "send_per_day"))
+            # 0 = the configured pay week; 1..31 = the range this send asked for
+            bw_days = bw_ask["days"]
             # what the pay week leaves over. The single send has always reported
             # these; the bulk send dropped them without a word, which is how 5,027
             # Monday lines went unpayable and unnoticed on a Tuesday-to-Sunday week.
@@ -1666,9 +1734,13 @@ def wm_payment(**kwargs):
                     bdd = frappe.utils.getdate(br.d)
                     bback = (bdd.weekday() - bw_start_wd) % 7
                     bspan = bw_len
-                    if bw_per_day:
+                    if bw_days:
+                        # a chosen range, tiled forward from the first date
+                        # selected so two windows never claim the same day
+                        bspan = bw_days
                         bback = 0
-                        bspan = 1
+                        if bw_days > 1:
+                            bback = frappe.utils.date_diff(bdd, frappe.utils.getdate(bw_from)) % bw_days
                     elif bback >= bw_len:
                         bw_outside.append({"employee": emp, "date": str(br.d)})
                         continue
@@ -1813,6 +1885,7 @@ def wm_payment(**kwargs):
             out["errors"] = len([r for r in results if r.get("error")])
             # never silent again: a date the pay week leaves out is named, not dropped
             out["outside_pay_week"] = bw_outside
+            out["span_days"] = bw_days
 
     elif action == "pay_absent_conflicts":
         # AUDIT: every confirmed worker-day with money recorded on a day that
