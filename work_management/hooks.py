@@ -79,6 +79,7 @@ after_migrate = [
 	"work_management.install.adopt_existing_custom_doctypes",
 	"work_management.approvals.after_migrate",
 	"work_management.install.upgrade_business_unit_link",
+	"work_management.install.drop_stale_link_options",
 	"work_management.taxonomy.apply_labels",
 	"work_management.taxonomy.apply_business_unit_visibility",
 	"work_management.desk.sync",
