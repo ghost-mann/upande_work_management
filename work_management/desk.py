@@ -66,7 +66,9 @@ COUNTED = ("links", "shortcuts", "custom_blocks")
 # link_to rather than on the label, because after the first relabel the label is
 # no longer the shipped one and would not be found again.
 NAV_LABELS = {
-	"Work Management Farm": "{top_plural}",
+	# Upande Core's doctype. Listed so the sidebar entry pointing at its list
+	# carries the project's own word for the level.
+	"Farm": "{top_plural}",
 	"Work Management Section": "{section_plural}",
 }
 

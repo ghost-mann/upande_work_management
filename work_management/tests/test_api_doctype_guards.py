@@ -25,7 +25,11 @@ API = os.path.join(HERE, "api")
 # Doctypes this app ships that a legacy site genuinely may not have. Settings is
 # left out: it is read through get_single_value, which answers None on a site
 # without it rather than raising.
-FRAGILE = ["Work Management Farm", "Work Management Section", "Work Management Section Block",
+# Farm is deliberately absent: it belongs to Upande Core, which hooks.py now
+# declares a required app, so a site running these screens has it by definition.
+# A guard there would answer "no farms" on the one site shape that cannot work
+# without them.
+FRAGILE = ["Work Management Section", "Work Management Section Block",
            "Work Management Payable Employment Type", "Work Management Payable Designation",
            "Work Management Payable Category"]
 

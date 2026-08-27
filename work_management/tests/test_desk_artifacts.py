@@ -31,7 +31,9 @@ HOOKS = os.path.join(APP, "hooks.py")
 
 # Core doctypes the desk surfaces are allowed to link. Task earns its place:
 # the Task list is where rates are edited day to day.
-CORE_DOCTYPES = {"Task"}
+# Doctypes the navigation points at that this app does not ship: Task is
+# ERPNext's, Farm is Upande Core's.
+CORE_DOCTYPES = {"Task", "Farm"}
 
 # The five screens are www routes, not desk pages, so they can only be reached
 # by URL. Anything claiming to be one of these must match a real .html file.

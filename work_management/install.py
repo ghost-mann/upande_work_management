@@ -211,7 +211,6 @@ def drop_shadowing_custom_fields():
 
 def after_install():
 	create_core_custom_fields()
-	upgrade_business_unit_link()
 	drop_stale_link_options()
 	seed_approvals()
 	sync_desk_surfaces()
@@ -353,73 +352,11 @@ def create_core_custom_fields():
 	frappe.db.commit()
 
 
-def plan_business_unit_field(doctype_present, current_fieldtype, current_options):
-	"""What to do to Work Management Farm.business_unit, or "noop".
-
-	Pure, so both directions are testable without a site. Gated on both
-	properties rather than just `fieldtype`: a migrate can be interrupted
-	between the two property-setter writes an upgrade makes (killed, OOM,
-	timeout), leaving `fieldtype=Link, options=None` on the site forever if
-	only `fieldtype` were checked -- every later run would see "Link" and
-	short-circuit, never writing the missing `options`. Checking both lets a
-	half-finished upgrade repair itself on the next run.
-
-	Bidirectional because the reverse can happen too: if upande_core is later
-	uninstalled, a field left as a Link to a doctype that no longer exists
-	breaks desk meta lookups (title fields in list views and reports), so an
-	absent doctype always wins and puts the field back to Data.
-	"""
-	if not doctype_present:
-		linked = current_fieldtype == "Link" or current_options == "Business Unit"
-		return "downgrade" if linked else "noop"
-	if current_fieldtype == "Link" and current_options == "Business Unit":
-		return "noop"
-	return "upgrade"
-
-
-def upgrade_business_unit_link():
-	"""Make Work Management Farm.business_unit a Link where the target exists.
-
-	`Business Unit` belongs to upande_core. The field ships as Data so this app
-	installs on a site without it; where the doctype is present, a property
-	setter turns it into a proper link so the existing records are reachable.
-	This mirrors the Link-to-Data degradation create_core_custom_fields() does
-	for the fields on Employee and Warehouse. Runs at every after_migrate (not
-	just after_install), so it also repairs an interrupted upgrade and reverts
-	the field if upande_core is later removed from the site.
-	"""
-	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
-
-	doctype_present = bool(frappe.db.exists("DocType", "Business Unit"))
-	filters = {"doc_type": "Work Management Farm", "field_name": "business_unit"}
-	current_fieldtype = frappe.db.get_value(
-		"Property Setter", {**filters, "property": "fieldtype"}, "value"
-	)
-	current_options = frappe.db.get_value(
-		"Property Setter", {**filters, "property": "options"}, "value"
-	)
-
-	plan = plan_business_unit_field(doctype_present, current_fieldtype, current_options)
-	if plan == "upgrade":
-		make_property_setter("Work Management Farm", "business_unit", "fieldtype", "Link", "Data",
-			validate_fields_for_doctype=False)
-		make_property_setter("Work Management Farm", "business_unit", "options", "Business Unit", "Text",
-			validate_fields_for_doctype=False)
-		frappe.clear_cache(doctype="Work Management Farm")
-	elif plan == "downgrade":
-		for prop in ("fieldtype", "options"):
-			name = frappe.db.get_value("Property Setter", {**filters, "property": prop}, "name")
-			if name:
-				frappe.delete_doc("Property Setter", name, force=True, ignore_permissions=True)
-		frappe.clear_cache(doctype="Work Management Farm")
-	return doctype_present
-
-
 def is_stale_link_option(is_link_field, value, target_exists):
 	"""Does this `options` override leave a Link field pointing at nothing?
 
 	Pulled out of drop_stale_link_options() so the decision can be tested without
-	a site, the way plan_business_unit_field() is. An override on a Select is that
+	a site. An override on a Select is that
 	field's option list and none of this app's business; an override naming a real
 	doctype is a deliberate repoint. Only the third case -- a Link aimed at a
 	doctype that does not exist -- is the leftover worth deleting.

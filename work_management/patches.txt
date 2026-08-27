@@ -4,4 +4,3 @@
 work_management.patches.v1_0.migrate_farms_and_approvers
 work_management.patches.v1_0.backfill_farms_in_use
 work_management.patches.v1_0.seed_sections_from_cost_centres
-work_management.patches.v1_0.enable_business_unit_level_if_used

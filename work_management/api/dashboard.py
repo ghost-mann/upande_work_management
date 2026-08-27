@@ -2803,15 +2803,14 @@ def wm_dashboard(**kwargs):
             te["area"] = te["area"] + parea
             te["mandays"] = te["mandays"] + frappe.utils.cint(r.mandays)
             te["cost"] = te["cost"] + frappe.utils.flt(r.pay)
-        # The area of each farm, as configured. Work Management Farm carries it
-        # where the app is installed; the farms table on Settings carries it
-        # everywhere else, which is the only shape the legacy deployment has.
-        # frappe.get_all() on an absent doctype raises, so ask before looking.
+        # The area of each farm, as configured. Upande Core's `Farm` carries it in
+        # hectares; the farms table on Settings overrides it where the farm's own
+        # figure is not the one to divide by. Core's field is the default because a
+        # farm's area is a property of the farm, not of this app's configuration.
         farm_area = {}
-        if frappe.db.exists("DocType", "Work Management Farm"):
-            for fa in frappe.get_all("Work Management Farm", fields=["name", "area_ha"]):
-                if frappe.utils.flt(fa.get("area_ha")) > 0:
-                    farm_area[fa.get("name")] = frappe.utils.flt(fa.get("area_ha"))
+        for fa in frappe.get_all("Farm", fields=["name", "area"]):
+            if frappe.utils.flt(fa.get("area")) > 0:
+                farm_area[fa.get("name")] = frappe.utils.flt(fa.get("area"))
         if frappe.db.exists("DocType", "WM Farm"):
             for fa in frappe.get_all("WM Farm",
                     filters={"parenttype": "Work Management Settings"},

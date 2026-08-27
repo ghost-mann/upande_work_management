@@ -28,8 +28,10 @@ class TestWhatTheAppShips(unittest.TestCase):
 		"Work Management Task", "Work Payment Line", "Work Planner Block",
 	]
 	# Added after the list was frozen; these are what the staleness cost.
+	# "Work Management Farm" was one of these until farms became Upande Core's
+	# records; it is not listed because the app no longer ships it.
 	ADDED_SINCE = [
-		"Work Management Farm", "Work Management Section", "Work Management Section Block",
+		"Work Management Section", "Work Management Section Block",
 		"Work Management Settings", "Work Management Master Plan",
 	]
 

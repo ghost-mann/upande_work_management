@@ -53,7 +53,7 @@ KAITET_DOCPERMS = [
 
 def execute():
 	created_roles = ensure_roles()
-	created_farms = ensure_farms()
+	written_projects, missing_farms = ensure_farm_projects()
 	restore_docperms()
 	carried = carry_hr_manager_kaitet()
 	rows = seed_stage_approvers()
@@ -61,9 +61,14 @@ def execute():
 
 	frappe.db.commit()
 	print(
-		f"Kaitet seed: {created_roles} role(s), {created_farms} farm(s), "
+		f"Kaitet seed: {created_roles} role(s), {written_projects} cost project(s), "
 		f"{rows} approver row(s), {carried} user(s) given HR Manager"
 	)
+	if missing_farms:
+		print(
+			"  no Farm record in Upande Core for: " + ", ".join(missing_farms)
+			+ " -- create them there and re-run to give them their cost project"
+		)
 
 
 def ensure_roles():
@@ -78,18 +83,41 @@ def ensure_roles():
 	return created
 
 
-def ensure_farms():
-	created = 0
+def ensure_farm_projects():
+	"""Give each Kaitet farm its cost project. Returns (written, missing).
+
+	This used to create the farms themselves. It does not any more: farms are
+	Upande Core's records, and a farm invented here would be missing the company,
+	farm type and abbreviation Core requires. What is still Kaitet's own is which
+	project each farm's costs land in -- the mapping live runs on -- and that
+	lives on the farms table in Settings.
+
+	A farm Core has not got is reported rather than skipped silently: the cost
+	project is what the Rates tab reads to decide which tasks exist, so a farm
+	quietly without one shows an empty task list and no reason why.
+	"""
+	settings = frappe.get_doc("Work Management Settings")
+	existing = {row.farm: row for row in settings.get("farms") or []}
+	written, missing = 0, []
+
 	for farm, project in FARMS:
-		if frappe.db.exists("Work Management Farm", farm):
+		if not frappe.db.exists("Farm", farm):
+			missing.append(farm)
 			continue
-		frappe.get_doc({
-			"doctype": "Work Management Farm",
-			"farm_name": farm,
-			"project": project if frappe.db.exists("Project", project) else None,
-		}).insert(ignore_permissions=True)
-		created += 1
-	return created
+		if not frappe.db.exists("Project", project):
+			continue
+		row = existing.get(farm)
+		if row:
+			if row.project == project:
+				continue
+			row.project = project
+		else:
+			settings.append("farms", {"farm": farm, "project": project})
+		written += 1
+
+	if written:
+		settings.save(ignore_permissions=True)
+	return written, missing
 
 
 def restore_docperms():
@@ -153,7 +181,7 @@ def seed_stage_approvers():
 	created = 0
 
 	for farm, role in FARM_APPROVER_ROLE.items():
-		if not frappe.db.exists("Work Management Farm", farm):
+		if not frappe.db.exists("Farm", farm):
 			continue
 		users = frappe.get_all(
 			"Has Role",

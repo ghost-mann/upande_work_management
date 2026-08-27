@@ -10,9 +10,6 @@ import unittest
 import frappe
 
 from work_management import install, taxonomy
-from work_management.patches.v1_0 import (
-	enable_business_unit_level_if_used as bu_patch,
-)
 
 
 def settings(**overrides):
@@ -175,115 +172,12 @@ class TestFieldLabelCatalogue(unittest.TestCase):
 		self.assertEqual(rendered[("Work Management Settings", "disc_multi_farm")], "Two Estates, one day")
 
 
-class TestBusinessUnitField(unittest.TestCase):
-	@classmethod
-	def setUpClass(cls):
-		import json
-		import os
-
-		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-		path = os.path.join(
-			here, "work_management", "doctype", "work_management_farm",
-			"work_management_farm.json",
-		)
-		with open(path) as handle:
-			cls.doc = json.load(handle)
-		cls.fields = {f["fieldname"]: f for f in cls.doc["fields"]}
-
-	def test_the_farm_carries_a_business_unit(self):
-		self.assertIn("business_unit", self.fields)
-
-	def test_it_ships_as_data_so_a_standalone_install_works(self):
-		"""upande_core owns the Business Unit doctype; it may not be installed."""
-		self.assertEqual(self.fields["business_unit"]["fieldtype"], "Data")
-		self.assertFalse(self.fields["business_unit"].get("options"))
-
-	def test_it_is_on_the_form(self):
-		self.assertIn("business_unit", self.doc["field_order"])
-
-	def test_it_ships_hidden_because_the_level_ships_off(self):
-		"""tax_bu_enabled is off by default, so a project that has never heard
-		of business units must not find the field waiting on every farm."""
-		self.assertEqual(self.fields["business_unit"].get("hidden"), 1)
-
-
-class TestTheLevelAboveTheFarmCanBeSwitchedOff(unittest.TestCase):
-	"""tax_bu_enabled was read by nothing at all: ticking it did literally
-	nothing, while its own description promised a level above the farm. It now
-	decides whether that level's field is on the form.
-	"""
-
-	def test_the_field_stays_hidden_while_the_level_is_off(self):
-		self.assertEqual(taxonomy.business_unit_hidden(taxonomy.resolve(settings())), 1)
-
-	def test_turning_the_level_on_reveals_the_field(self):
-		names = taxonomy.resolve(settings(tax_bu_enabled=1))
-		self.assertEqual(taxonomy.business_unit_hidden(names), 0)
-
-	def test_naming_the_level_without_turning_it_on_reveals_nothing(self):
-		"""Typing a name is not the same as saying the level exists."""
-		names = taxonomy.resolve(settings(tax_bu_singular="Division"))
-		self.assertEqual(taxonomy.business_unit_hidden(names), 1)
-
-
-class TestTurningTheLevelOnForASiteAlreadyUsingIt(unittest.TestCase):
-	"""The field shipped visible and only later grew an enable flag that
-	defaults to off, so hiding it on the next migrate would take a filled-in
-	field off the form of every site that had started using it, with nothing
-	saying where it went. The one-time patch turns the level on where the data
-	says it is already in use.
-	"""
-
-	def test_a_site_with_business_units_recorded_gets_the_level_turned_on(self):
-		self.assertTrue(bu_patch.should_enable(farms_with_a_unit=4, already_enabled=False))
-
-	def test_a_site_that_already_turned_it_on_is_left_alone(self):
-		"""Not rewritten: the flag is the admin's, and this runs once."""
-		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=4, already_enabled=True))
-
-	def test_a_site_that_never_used_the_field_keeps_the_level_off(self):
-		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=0, already_enabled=False))
-
-	def test_a_site_with_no_data_and_the_level_on_is_left_alone(self):
-		self.assertFalse(bu_patch.should_enable(farms_with_a_unit=0, already_enabled=True))
-
-
-class TestBusinessUnitFieldPlan(unittest.TestCase):
-	"""install.plan_business_unit_field() -- pure, no site, no database.
-
-	Covers both directions of the Data<->Link degradation and the
-	interrupted-write case a partial upgrade can leave behind.
-	"""
-
-	def test_doctype_absent_and_field_already_data_needs_nothing(self):
-		self.assertEqual(install.plan_business_unit_field(False, "Data", None), "noop")
-
-	def test_doctype_present_and_field_already_linked_needs_nothing(self):
-		self.assertEqual(
-			install.plan_business_unit_field(True, "Link", "Business Unit"), "noop"
-		)
-
-	def test_doctype_present_and_field_still_data_is_upgraded(self):
-		self.assertEqual(install.plan_business_unit_field(True, "Data", None), "upgrade")
-
-	def test_an_interrupted_upgrade_is_repaired_not_skipped(self):
-		"""fieldtype flipped to Link but the options write never landed."""
-		self.assertEqual(install.plan_business_unit_field(True, "Link", None), "upgrade")
-
-	def test_doctype_removed_while_field_is_still_linked_is_downgraded(self):
-		self.assertEqual(
-			install.plan_business_unit_field(False, "Link", "Business Unit"), "downgrade"
-		)
-
-	def test_an_interrupted_downgrade_is_also_repaired(self):
-		"""Same half-written state, but the doctype has since disappeared."""
-		self.assertEqual(install.plan_business_unit_field(False, "Link", None), "downgrade")
-
-	def test_an_interrupted_downgrade_leaves_options_behind_but_is_still_caught(self):
-		"""fieldtype's Property Setter is gone but options's survived the interruption."""
-		self.assertEqual(
-			install.plan_business_unit_field(False, None, "Business Unit"), "downgrade"
-		)
+# The business-unit field on the farm, the visibility machinery that showed and
+# hid it, and the patch that turned the level on for a site already using it all
+# went when farms became Upande Core's records: Core's Farm carries no business
+# unit, and this app adds no field to it. The template still names the level --
+# Employee records and reports use the name -- so TestSettingsTemplate above
+# still covers the naming. What is gone is anything that wrote to a farm.
 
 
 class TestStaleLinkOption(unittest.TestCase):

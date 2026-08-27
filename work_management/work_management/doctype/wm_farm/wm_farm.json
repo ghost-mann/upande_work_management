@@ -17,7 +17,7 @@
    "in_list_view": 1,
    "label": "Farm",
    "reqd": 1,
-   "options": "Work Management Farm"
+   "options": "Farm"
   },
   {
    "fieldname": "area_ha",

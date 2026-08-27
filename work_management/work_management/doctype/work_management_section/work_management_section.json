@@ -22,7 +22,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Farm",
-   "options": "Work Management Farm",
+   "options": "Farm",
    "reqd": 1
   },
   {"fieldname": "column_break_main", "fieldtype": "Column Break"},

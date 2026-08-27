@@ -81,7 +81,7 @@
    "in_standard_filter": 1,
    "label": "Farm",
    "read_only": 1,
-   "options": "Work Management Farm"
+   "options": "Farm"
   },
   {
    "fetch_from": "assignment.planner_request",

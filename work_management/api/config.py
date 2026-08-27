@@ -1,9 +1,9 @@
 """Deployment configuration for Work Management.
 
 Nothing about a particular customer belongs in this file. Farms and their cost
-projects are records of "Work Management Farm"; who approves what comes from the
-approval stages in "Work Management Settings"; the company falls back to the
-site's own default. An unconfigured install therefore has no farms and no
+projects are Upande Core's records of "Farm", with each farm's cost project on
+the farms table in "Work Management Settings"; who approves what comes from the
+approval stages there too; the company falls back to the site's own default. An unconfigured install therefore has no farms and no
 approvers, and the screens say so rather than quietly offering someone else's.
 
 Kaitet's own values are applied by work_management.seed.kaitet on that site alone.
@@ -29,16 +29,23 @@ def _default_company():
 
 
 def _farms():
-	"""Active farms, with their cost projects, in the order they were created."""
-	if not frappe.db.exists("DocType", "Work Management Farm"):
-		return [], {}
-	rows = frappe.get_all(
-		"Work Management Farm",
-		filters={"disabled": 0},
-		fields=["name", "project"],
-		order_by="creation asc",
-	)
-	return [row.name for row in rows], {row.name: row.project for row in rows if row.project}
+	"""Active farms, in the order they were created, from Upande Core.
+
+	Which farms exist is Core's answer, not this app's. hooks.py requires that
+	app, so `Farm` is unambiguous and no exists() check stands here -- on a site
+	whose `Farm` came from somewhere else the install would have failed, which is
+	the only defence against reading the wrong records rather than none.
+
+	`disabled` is not a field Core ships. Where a site has added one this
+	respects it; where none exists every farm is active. upande_scp reads it the
+	same way, behind the same check.
+
+	Cost projects are not Core's business and do not live on its doctype: they
+	come from the farms table on Settings, in get_config() below.
+	"""
+	filters = {"disabled": 0} if frappe.db.has_column("Farm", "disabled") else {}
+	rows = frappe.get_all("Farm", filters=filters, fields=["name"], order_by="creation asc")
+	return [row.name for row in rows], {}
 
 
 def _farm_approver_role(settings, farms):
@@ -117,12 +124,16 @@ def get_config():
 		if keywords:
 			cfg["block_exclude"] = keywords
 
-	# Sites that have not yet run the Work Management Farm migration still keep
-	# their farms in the deprecated Settings table.
-	if not cfg["farms"]:
-		legacy = settings.get("farms") or []
-		cfg["farms"] = [row.farm for row in legacy if row.farm]
-		cfg["farm_project"] = {row.farm: row.project for row in legacy if row.farm and row.project}
+	# Each farm's cost project, and an area override, come from the farms table on
+	# Settings -- the one thing this app knows about a farm that Upande Core does
+	# not track. Rows naming a farm Core has not got are ignored rather than
+	# added to the list: which farms exist is Core's answer alone.
+	rows = settings.get("farms") or []
+	cfg["farm_project"] = {
+		row.farm: row.project
+		for row in rows
+		if row.farm and row.project and row.farm in cfg["farms"]
+	}
 
 	cfg["farm_approver_role"] = _farm_approver_role(settings, cfg["farms"])
 	cfg["hr_head_roles"] = _stage_roles(settings, "assigner_hr_head", "actuals_hr_head")

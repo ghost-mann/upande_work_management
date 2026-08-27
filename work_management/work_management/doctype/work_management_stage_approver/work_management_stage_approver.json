@@ -27,7 +27,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Farm",
-   "options": "Work Management Farm",
+   "options": "Farm",
    "description": "Leave empty to let this person act on every farm. Only the farm-scoped stages read it."
   },
   {
