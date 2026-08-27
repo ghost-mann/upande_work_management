@@ -76,7 +76,7 @@
   "pay_week_starts_on",
   "pay_week_ends_on",
   "pay_day",
-  "allow_single_day_send",
+  "send_per_day",
   "sb_branding",
   "project_logo"
  ],
@@ -275,7 +275,7 @@
    "fieldname": "master_plan_post_approval_editors",
    "fieldtype": "Small Text",
    "label": "Master plan post-approval editors (comma-separated emails)",
-   "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in \u2014 an administrator who must intervene already has the Desk form."
+   "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in — an administrator who must intervene already has the Desk form."
   },
   {
    "fieldname": "sb_rates",
@@ -461,10 +461,10 @@
    "description": "The weekday payment is expected. Defaults to the closing day."
   },
   {
-   "fieldname": "allow_single_day_send",
+   "fieldname": "send_per_day",
    "fieldtype": "Check",
-   "label": "Allow sending a day that falls outside the pay week",
-   "description": "On: a work date left over by a pay week shorter than seven days is sent on its own, as a one-day week, instead of never. Off: such a date cannot be sent -- which is how Monday work on a Tuesday-to-Sunday week became unpayable. Does not change how any date that already has a week is grouped."
+   "label": "Send one payment per day instead of per pay week",
+   "description": "Off (the default): work is grouped into pay weeks -- one payment per worker per completed week, which is what payroll has always received. On: one payment per worker per day. Turn it on where a day has to be paid on its own, including a weekday the pay week above leaves out, which cannot be sent weekly at all."
   },
   {
    "fieldname": "sb_approvals",

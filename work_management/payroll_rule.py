@@ -134,23 +134,23 @@ def pay_week_length(start_day, end_day):
     return start, ((end - start) % 7) + 1
 
 
-def pay_week_for(weekday, start_weekday, week_len, allow_single_day):
-    """(days back to the week start, days the week spans) for one work date.
+def pay_week_for(weekday, start_weekday, week_len, per_day):
+    """(days back to the window start, days the window spans) for one work date.
 
-    None when the date falls in the gap of a pay week shorter than seven days
-    and single-day sending is off. That gap is why Monday work on a
-    Tuesday-to-Sunday week could never be sent: the bulk send dropped those
-    dates without a word, and the single send could only list them as
-    "outside".
+    Two grouping modes, and the caller picks with `per_day`:
 
-    With single-day sending on, such a date becomes a one-day week of its own
-    rather than nothing. A date that already has a week is returned unchanged
-    either way -- turning the setting on must not regroup work that was already
-    being sent correctly.
+    * weekly (default) -- the date joins its pay week, which is what payroll
+      has always received. Returns None when the date falls in the gap of a
+      pay week shorter than seven days: that gap is why Monday work on a
+      Tuesday-to-Sunday week could never be sent, and the caller is expected to
+      report those dates rather than drop them.
+    * per day -- every date is a window of its own. No gap exists, so the
+      orphan weekday sends like any other, and the configured week is ignored
+      entirely; letting the two interact would make the grouping unpredictable.
     """
+    if per_day:
+        return 0, 1
     back = (weekday - start_weekday) % 7
     if back < week_len:
         return back, week_len
-    if allow_single_day:
-        return 0, 1
     return None

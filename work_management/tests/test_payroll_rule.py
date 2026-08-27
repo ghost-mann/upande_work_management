@@ -175,44 +175,52 @@ class TestReadingEitherShape(unittest.TestCase):
 
 
 class TestWhichPayWeekADayBelongsTo(unittest.TestCase):
-	"""A pay week shorter than seven days leaves a weekday belonging to no week
-	at all. On the live Tuesday-to-Sunday week that is Monday, and the bulk send
-	dropped those dates silently: 5,027 lines, KES 1.78m, 943 workers, unsendable
-	and unreported. The single send at least listed them as "outside".
+	"""Two ways to send: grouped into pay weeks, which is the default and what
+	payroll has always received, or one payment per day when somebody ticks the
+	box in Settings.
 
-	The new setting lets such a day be sent on its own rather than never. It
-	changes nothing for a day that already has a week.
+	Weekly grouping has a hole. A pay week shorter than seven days leaves a
+	weekday belonging to no week at all -- on the live Tuesday-to-Sunday week
+	that is Monday, and the bulk send dropped those dates silently: 5,027 lines,
+	KES 1.78m, 943 workers, unsendable and unreported. Per-day sending has no
+	such hole, because every date is its own week.
 	"""
 
-	# weekday indices: Mon=0 .. Sun=6. The live config is start=Tuesday(1),
-	# end=Sunday(6), so the week spans six days and Monday is the orphan.
+	# weekday indices: Mon=0 .. Sun=6. Live config is start=Tuesday(1),
+	# end=Sunday(6) -- six days, so Monday is the orphan.
 	TUE_START, SIX_DAYS = 1, 6
 
-	def test_a_day_inside_the_week_gets_its_week(self):
+	# ---- weekly, the default ------------------------------------------------
+	def test_weekly_puts_a_day_in_its_week(self):
 		self.assertEqual(rule.pay_week_for(1, self.TUE_START, self.SIX_DAYS, False), (0, 6))
 		self.assertEqual(rule.pay_week_for(6, self.TUE_START, self.SIX_DAYS, False), (5, 6))
 
-	def test_the_orphan_weekday_belongs_to_nothing_by_default(self):
-		"""Monday, on a Tuesday-to-Sunday week. This is the reported bug."""
+	def test_weekly_cannot_place_the_orphan_weekday(self):
+		"""Monday, on a Tuesday-to-Sunday week. This is the reported bug, and
+		weekly mode still cannot send it -- but the caller now reports it."""
 		self.assertIsNone(rule.pay_week_for(0, self.TUE_START, self.SIX_DAYS, False))
 
-	def test_the_orphan_weekday_becomes_its_own_one_day_week_when_allowed(self):
-		self.assertEqual(rule.pay_week_for(0, self.TUE_START, self.SIX_DAYS, True), (0, 1))
-
-	def test_the_setting_does_not_disturb_a_day_that_already_has_a_week(self):
-		"""It must not regroup work that was already being sent correctly."""
-		for wd in range(7):
-			off = rule.pay_week_for(wd, self.TUE_START, self.SIX_DAYS, False)
-			if off is not None:
-				self.assertEqual(rule.pay_week_for(wd, self.TUE_START, self.SIX_DAYS, True), off, wd)
-
-	def test_a_full_seven_day_week_orphans_nobody(self):
-		"""Monday-to-Sunday: every weekday has a week, setting or not."""
+	def test_a_seven_day_week_orphans_nobody(self):
 		for wd in range(7):
 			self.assertIsNotNone(rule.pay_week_for(wd, 0, 7, False), wd)
 
-	def test_a_one_day_pay_week_still_works(self):
-		"""Degenerate but legal: only the start weekday is in the week."""
+	# ---- per day, when the box is ticked ------------------------------------
+	def test_per_day_gives_every_day_its_own_payment(self):
+		for wd in range(7):
+			self.assertEqual(rule.pay_week_for(wd, self.TUE_START, self.SIX_DAYS, True), (0, 1), wd)
+
+	def test_per_day_reaches_the_day_weekly_could_not(self):
+		"""Monday sends under per-day, which is the point of the checkbox."""
+		self.assertIsNone(rule.pay_week_for(0, self.TUE_START, self.SIX_DAYS, False))
+		self.assertEqual(rule.pay_week_for(0, self.TUE_START, self.SIX_DAYS, True), (0, 1))
+
+	def test_per_day_ignores_the_configured_week_entirely(self):
+		"""Whatever the week is set to, per-day is one day. Otherwise the two
+		settings would interact and nobody could predict the grouping."""
+		for start in range(7):
+			for length in (1, 3, 6, 7):
+				self.assertEqual(rule.pay_week_for(4, start, length, True), (0, 1))
+
+	def test_a_one_day_pay_week_still_works_weekly(self):
 		self.assertEqual(rule.pay_week_for(3, 3, 1, False), (0, 1))
 		self.assertIsNone(rule.pay_week_for(4, 3, 1, False))
-		self.assertEqual(rule.pay_week_for(4, 3, 1, True), (0, 1))
