@@ -7,7 +7,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config
+from work_management.api.config import get_config, payable_employee_columns
 
 
 @frappe.whitelist()
@@ -88,11 +88,15 @@ def wm_payroll_recompute(**kwargs):
             rc_params["f"] = rc_from
             rc_params["t"] = rc_to
 
+        # Only the columns this site's Employee has -- see payable_employee_columns().
+        # One it lacks reads back as None, which the qualification test below already
+        # treats the way it treats a blank.
+        rc_cols = ", ".join("e." + c for c in payable_employee_columns())
         rc_rows = frappe.db.sql("""
             SELECT we.name, we.parent, we.employee, we.employee_name, we.work_date,
                    we.actual_quantity, we.amount, ac.rate, IFNULL(ac.paid,0) doc_paid,
-                   ac.workflow_state, ac.planned_cost,
-                   e.employment_type, e.designation, e.custom_category
+                   ac.workflow_state, ac.planned_cost""" + \
+                   (", " + rc_cols if rc_cols else "") + """
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             LEFT JOIN `tabEmployee` e ON e.name = we.employee
