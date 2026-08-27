@@ -8,6 +8,13 @@ app_description = (
 app_email = "dev@upande.com"
 app_license = "mit"
 
+# Farms are records of "Farm", which belongs to Upande Core. A doctype name is
+# global, and Upande Kaitet ships a `Farm` of its own -- so on a site carrying
+# that one, an unguarded read would quietly find the wrong records rather than
+# none. Requiring the app that owns the name is what makes reading it safe;
+# there is no exists() check anywhere that could tell the two apart.
+required_apps = ["upande_core"]
+
 # The apps screen entry. Routed at the dashboard rather than the desk
 # workspace, because the dashboard is the front door people are sent to.
 # Which workspace the app opens on. Without this, boot.load_desktop_data falls
