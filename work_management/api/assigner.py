@@ -7,7 +7,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config, payable_employee_columns
+from work_management.api.config import get_config
 
 
 @frappe.whitelist()
@@ -49,12 +49,22 @@ def wm_assigner(**kwargs):
         ("designation", "Work Management Payable Designation", "designation", "tw_designations"),
         ("custom_category", "Work Management Payable Category", "category", "tw_categories"),
     ]
+    # Only the Employee columns THIS site actually has. employment_type and
+    # designation are standard; custom_category is a custom field one site created,
+    # and naming a column the site has not got does not narrow the query, it kills
+    # it -- (1054, "Unknown column 'twe.custom_category' in 'WHERE'") took a whole
+    # screen down on a site that never had the field. frappe.db.has_column is not in
+    # the sandbox's globals, but the meta is, and it knows custom fields too.
+    TW_META = frappe.get_meta("Employee")
+    TW_COLUMNS = []
+    for tw_mc in ("employment_type", "designation", "custom_category"):
+        if TW_META.get_field(tw_mc):
+            TW_COLUMNS.append(tw_mc)
+
     TW_CLAUSES = []
-    # Only the columns this site's Employee actually has. custom_category is a
-    # custom field elsewhere, and naming it here is not a narrower match, it is
-    # (1054, "Unknown column ... in 'WHERE'") and a dead screen.
-    TW_COLUMNS = payable_employee_columns()
     for tw_col, tw_child, tw_cfield, tw_box in TW_SOURCES:
+        # the three lists are ORed, so dropping the column this site lacks costs
+        # nothing -- there is no Settings list it could have matched anyway
         if tw_col not in TW_COLUMNS:
             continue
         tw_vals = []

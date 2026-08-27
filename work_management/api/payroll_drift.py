@@ -7,7 +7,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config, payable_employee_columns
+from work_management.api.config import get_config
 
 
 @frappe.whitelist()
@@ -85,16 +85,23 @@ def wm_payroll_drift(**kwargs):
         dconds = dconds + " AND we.employee = %(e)s"
         dparams["e"] = one_emp
 
-    # Selecting a column this site's Employee has not got is not a blank value, it
-    # is (1054, "Unknown column ...") and no drift report at all. A column left out
-    # here reads back as None, which is what the classification test already does
-    # with a blank one.
-    d_cols = ", ".join("e." + c for c in payable_employee_columns())
+    # Only the Employee columns THIS site actually has. Selecting one it has not got
+    # is not a blank value, it is (1054, "Unknown column ...") and no drift report at all.
+    # A column left out here reads back as None, which is exactly what the
+    # qualification test already does with a blank one. frappe.db.has_column is not
+    # in the sandbox's globals, but the meta is, and it knows custom fields too.
+    D_META = frappe.get_meta("Employee")
+    D_PICK = []
+    for d_mc in ("employment_type", "designation", "custom_category"):
+        if D_META.get_field(d_mc):
+            D_PICK.append("e." + d_mc)
+    D_COLS = ", ".join(D_PICK)
+
     drows = frappe.db.sql("""
         SELECT we.name, we.parent, we.employee, we.employee_name, we.work_date,
                we.actual_quantity, we.amount, IFNULL(we.count_in_payroll,0) stored,
                ac.rate, ac.task, ac.farm, ac.workflow_state, IFNULL(ac.paid,0) doc_paid""" + \
-               (", " + d_cols if d_cols else "") + """
+               (", " + D_COLS if D_COLS else "") + """
         FROM `tabWork Actuals Employee` we
         INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
         LEFT JOIN `tabEmployee` e ON e.name = we.employee

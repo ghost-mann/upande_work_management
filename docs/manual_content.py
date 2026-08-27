@@ -262,6 +262,20 @@ def sections():
 			  "included day-row."),
 		("b", "Bulk: tick several workers (workers with attendance conflicts carry a red flag "
 			  "with the day count) and use Send to accounts — each still gets their own entry."),
+		("h3", "What one payment covers"),
+		("p", "By default work is grouped into pay weeks: one payment per worker per completed "
+			  "week, which is what payroll has always received. The boundary comes from Pay "
+			  "week starts on / Pay week ends on in Settings. A pay week set shorter than "
+			  "seven days leaves a weekday belonging to no week — on a Tuesday-to-Sunday week "
+			  "that is Monday — and those days cannot be sent weekly at all; they are listed "
+			  "rather than dropped."),
+		("p", "Ticking Also allow sending a chosen range of days in Settings adds a second "
+			  "option without removing the first. With it on, the Custom range button stops "
+			  "being only a review filter: the dates picked are sent as one payment per worker "
+			  "covering exactly that range — one day, five days, a fortnight, up to a month — "
+			  "which is how a weekday the pay week leaves out gets paid. With it off, a custom "
+			  "range only filters what is on screen and sending groups into pay weeks as "
+			  "before. The confirmation dialog says which of the two is about to happen."),
 		("h3", "Awaiting accounts"),
 		("b", "Accounts releases an entry with Mark paid — every included day row is stamped "
 			  "paid."),

@@ -134,23 +134,84 @@ def pay_week_length(start_day, end_day):
     return start, ((end - start) % 7) + 1
 
 
-def pay_week_for(weekday, start_weekday, week_len, per_day):
+# Open-ended, but not unbounded. A mistyped 3650 would sweep ten years of work
+# into one payment, and a payment already sent is the expensive thing to undo. A
+# month is longer than any pay period this app pays on.
+MAX_SPAN_DAYS = 31
+
+
+def send_window(weekday, start_weekday, week_len, days=None, since_anchor=0):
     """(days back to the window start, days the window spans) for one work date.
 
-    Two grouping modes, and the caller picks with `per_day`:
+    Two things a send can cover, and the caller picks by passing `days` or not:
 
-    * weekly (default) -- the date joins its pay week, which is what payroll
-      has always received. Returns None when the date falls in the gap of a
-      pay week shorter than seven days: that gap is why Monday work on a
+    * the configured pay week (days is None) -- the default, and what payroll
+      has always received. The window is found from the weekday, and the
+      function returns None when the date falls in the gap of a pay week
+      shorter than seven days: that gap is why Monday work on a
       Tuesday-to-Sunday week could never be sent, and the caller is expected to
       report those dates rather than drop them.
-    * per day -- every date is a window of its own. No gap exists, so the
-      orphan weekday sends like any other, and the configured week is ignored
-      entirely; letting the two interact would make the grouping unpredictable.
+    * a chosen span of `days` -- one day, five, a fortnight. The weekday is not
+      consulted at all: the operator picked the range, and snapping it to a
+      configured week would pay days they did not choose and leave out days they
+      did. There is no gap, so the orphan weekday sends like any other.
+
+    A span tiles forward from the start of the range chosen, which is what
+    `since_anchor` counts days from. Anchoring each date's window on itself
+    instead would overlap the windows -- with a span of five, the 28th would
+    open 28th-1st and the 29th would open 29th-2nd, and both would claim the
+    30th. Only the first would get it, and which rows landed on which payment
+    would depend on the order the dates came back from the database. A span of
+    one is the same window whatever the anchor, so a single day needs none.
     """
-    if per_day:
-        return 0, 1
+    if days:
+        return int(since_anchor or 0) % int(days), int(days)
     back = (weekday - start_weekday) % 7
     if back < week_len:
         return back, week_len
     return None
+
+
+def send_span(requested_days, allowed, anchored=True):
+    """(days or None, error or None) -- what one send should cover.
+
+    Two separate questions. Whether spans are offered at all belongs to
+    Settings; what this particular send covers belongs to whoever is sending. So
+    a site can offer both and let the operator choose, or offer pay weeks only.
+
+    Pay weeks stay available either way: offering spans adds an option, it never
+    removes the weekly one, and a send that asks for nothing in particular
+    behaves exactly as it always has.
+
+    None means "the configured pay week". A number means that many days tiled
+    from the start of the chosen range -- 1 for a single day, which is why a
+    single day needs no mode of its own. Anything that is not a usable number of
+    days is refused rather than rounded into one: the operator asked to pay a
+    particular range, and paying a different one would hand payroll documents
+    covering dates nobody chose.
+
+    A span of more than one day needs a range to tile from, so it is refused
+    when `anchored` is false. Picking an anchor on its behalf -- today, or the
+    earliest work date, which differs per worker -- would put the same day on
+    different payments for different people, and re-running the same send later
+    would draw the boundaries somewhere else.
+    """
+    text = str(requested_days if requested_days is not None else "").strip()
+    if text.lower() in ("", "0", "none", "false"):
+        return None, None
+    if str(allowed if allowed is not None else "").strip().lower() in ("", "0", "false", "none"):
+        return None, ("Sending a chosen range of days is switched off. Tick "
+                      "\u201cAlso allow sending a chosen range of days\u201d in Work "
+                      "Management Settings to use it.")
+    try:
+        days = int(float(text))
+    except (TypeError, ValueError):
+        return None, "%s is not a number of days." % text
+    if days < 1:
+        return None, "A send has to cover at least one day."
+    if days > MAX_SPAN_DAYS:
+        return None, "One payment can cover at most %d days; %d were asked for." % (MAX_SPAN_DAYS, days)
+    if days > 1 and not anchored:
+        return None, ("Choose the date range first -- a span of %d days has to start "
+                      "somewhere." % days)
+    return days, None

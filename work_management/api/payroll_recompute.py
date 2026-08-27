@@ -7,7 +7,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config, payable_employee_columns
+from work_management.api.config import get_config
 
 
 @frappe.whitelist()
@@ -33,6 +33,18 @@ def wm_payroll_recompute(**kwargs):
     #   ?employee=400617&apply=1             one person, written
     #   ?doc=WMAC-2388386&apply=1            one document
     #   ?from_date=&to_date=&apply=1         a window
+
+    # Only the Employee columns THIS site actually has. Selecting one it has not got
+    # is not a blank value, it is (1054, "Unknown column ...") and no recompute at all.
+    # A column left out here reads back as None, which is exactly what the
+    # qualification test already does with a blank one. frappe.db.has_column is not
+    # in the sandbox's globals, but the meta is, and it knows custom fields too.
+    R_META = frappe.get_meta("Employee")
+    R_PICK = []
+    for r_mc in ("employment_type", "designation", "custom_category"):
+        if R_META.get_field(r_mc):
+            R_PICK.append("e." + r_mc)
+    D_COLS = ", ".join(R_PICK)
 
     rc_apply = frappe.utils.cint(frappe.form_dict.get("apply"))
     rc_emp = frappe.form_dict.get("employee")
@@ -88,15 +100,11 @@ def wm_payroll_recompute(**kwargs):
             rc_params["f"] = rc_from
             rc_params["t"] = rc_to
 
-        # Only the columns this site's Employee has -- see payable_employee_columns().
-        # One it lacks reads back as None, which the qualification test below already
-        # treats the way it treats a blank.
-        rc_cols = ", ".join("e." + c for c in payable_employee_columns())
         rc_rows = frappe.db.sql("""
             SELECT we.name, we.parent, we.employee, we.employee_name, we.work_date,
                    we.actual_quantity, we.amount, ac.rate, IFNULL(ac.paid,0) doc_paid,
                    ac.workflow_state, ac.planned_cost""" + \
-                   (", " + rc_cols if rc_cols else "") + """
+                   (", " + D_COLS if D_COLS else "") + """
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             LEFT JOIN `tabEmployee` e ON e.name = we.employee

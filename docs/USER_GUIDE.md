@@ -75,6 +75,22 @@ each worker is sent to accounts with **their own payment entry**, exactly as
 when sent singly. Anyone whose earnings could not be reviewed is skipped and
 reported, never silently sent.
 
+**What one payment covers.** By default work is grouped into **pay weeks**:
+one payment per worker per completed week, which is what payroll has always
+received. The week boundary comes from *Pay week starts on* / *Pay week ends on*
+in Work Management Settings. A pay week set shorter than seven days leaves a
+weekday belonging to no week — on a Tuesday-to-Sunday week that is Monday — and
+those days cannot be sent weekly at all; they are listed rather than dropped.
+
+Ticking **Also allow sending a chosen range of days** in Settings adds a second
+option without removing the first. With it on, the **Custom range** button on
+this tab stops being only a review filter: the dates you pick are sent as one
+payment per worker covering exactly that range — one day, five days, a
+fortnight, up to a month. That is how a weekday the pay week leaves out gets
+paid. With it off, a custom range still only filters what you are looking at and
+sending groups into pay weeks as before. Either way the confirmation dialog
+says which of the two you are about to do.
+
 **Download Excel** (inside the worker review sheet, top-right): exports the
 worker's review as a workbook — a *Summary* sheet (worker, KPIs, per-task
 totals) and a *Tasks & days* sheet laid out like the Work & days view: one
