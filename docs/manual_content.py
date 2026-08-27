@@ -415,7 +415,8 @@ def sections():
 			  "than offering someone else's. Work through this part once, in order, and the "
 			  "pipeline in Part I becomes usable."),
 		("table", ("Setup order", ["Step", "Where", "Covered in"], [
-			["Create your farms and cost projects", "Work Management Farm", "Farms and cost projects"],
+			["Create your farms", "Upande Core → Farm", "Farms and cost projects"],
+			["Give each farm its cost project", "Settings → Farms", "Farms and cost projects"],
 			["Tag blocks, workers and tasks", "Warehouse, Employee, Task", "Farms and cost projects"],
 			["Set the roles and people for each approval step", "Settings → Approvals", "Approval stages and approvers"],
 			["Set company, attendance and payroll behaviour", "Settings", "Settings reference"],
@@ -423,13 +424,22 @@ def sections():
 
 		("h2", "Farms and cost projects"),
 		("p", "A farm is the unit work is planned against. Whatever your project calls it — "
-			  "farm, estate, site, division, block group — create one Work Management Farm "
-			  "record for each, and the rest of the module follows that naming."),
-		("b", "Farm — the name. It appears in every picker and is stored on every plan, "
-			  "assignment, actuals document and payment."),
-		("b", "Cost Project — costs recorded for this farm are attributed to this project."),
-		("b", "Disabled — hides the farm from pickers on new documents. Existing documents keep "
-			  "their farm, so disabling is safe for a site you have stopped working."),
+			  "farm, estate, site, division, block group — create one Farm record for each in "
+			  "Upande Core, and the rest of the module follows that naming. Farms belong to "
+			  "Upande Core rather than to this module, so one list of farms serves every "
+			  "Upande app on the site."),
+		("b", "Farm Name — it appears in every picker and is stored on every plan, assignment, "
+			  "actuals document and payment. Company, Farm Type and Abbreviation are Upande "
+			  "Core's own required fields."),
+		("p", "Two things this module needs are not on Core's farm record, and are set under "
+			  "Work Management Settings → Farms, one row per farm:"),
+		("b", "Cost Project — costs recorded for this farm are attributed to this project. The "
+			  "Rates tab reads it to decide which tasks exist, so a farm without one shows an "
+			  "empty task list."),
+		("b", "Area (HA) — an override, for the farms whose own area in Upande Core is not the "
+			  "figure the efficiency numbers should divide by. Leave it empty to use Core's."),
+		("note", "A row naming a farm Upande Core has not got is ignored. Which farms exist is "
+			  "Core's answer alone — create the farm there first."),
 		("p", "Three things on core records then have to be tagged, or the screens have nothing "
 			  "to offer:"),
 		("b", "Warehouses used as blocks — set Farm, and set Area (HA) if you want the "

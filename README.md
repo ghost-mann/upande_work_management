@@ -1,7 +1,11 @@
 # Work Management
 
-A portable Frappe app for task-work management — the full pipeline in five web
-pages backed by five API endpoints and a doctype family:
+A Frappe app for task-work management — the full pipeline in five web pages
+backed by five API endpoints and a doctype family. Portable between projects:
+nothing about any one customer is compiled in. It does require
+[**upande_core**](https://github.com/upandeltd/Upande-Core), whose `Farm`
+doctype is where farms live — `required_apps` in `hooks.py`, so
+`bench install-app` says so rather than half-installing.
 
 ```
 Plan (Work Management Planner) → Assign (… Assigner) → Capture (… Actuals) → Pay (… Payment)
@@ -26,19 +30,22 @@ approvers, and the screens say so rather than offering someone else's.
 ## What's in the app
 
 - **Doctypes** (module *Work Management*): Work Management Master Plan /
-  Planner / Assigner / Actuals / Payment, Work Management Farm, Work Task Rate,
-  Work Rate Recalc Run, and their child tables.
+  Planner / Assigner / Actuals / Payment, Work Task Rate, Work Rate Recalc Run,
+  and their child tables. Farms are **not** among them — see below.
 - **API** (`work_management/api/`): ports of the five Server Scripts, generated
   from the upstream mirror by its `port_app.py`. Edit the mirror script, not
   these files.
 - **Work Management Settings** (single): the approval stages and their
   approvers, default company, block-exclude keywords, attendance and
   discrepancy checks, rates and payroll settings, header logo.
-- **Work Management Farm**: the unit work is planned against — farm, estate,
-  site, division, whatever your project calls it — with its cost project.
-  Optionally belongs to a **Business Unit**, a level above the farm, switched
-  on and named in Settings. It records which unit a farm belongs to; no report
-  groups by it yet.
+- **Farm** (Upande Core's doctype, not this app's): the unit work is planned
+  against — farm, estate, site, division, whatever your project calls it.
+  Core owns it and this app treats it as read-only: no custom field of ours on
+  it, no Property Setter against it, and nothing here ever saves one. What Core
+  does not track — each farm's **cost project**, and an **area override** for
+  the farms whose own area is not the figure to divide by — lives on the farms
+  table in Work Management Settings. A row there naming a farm Core has not got
+  is ignored: which farms exist is Core's answer alone.
 - **Work Management Section**: an optional grouping of blocks (Warehouses),
   used only to let the dashboard's cost-centre view be read by section
   instead of block by block. A block belongs to at most one section.
@@ -93,11 +100,13 @@ Taxonomy** and every desk label, screen and column heading follows.
   app's own JSON never changes and clearing a name restores the original.
   The same names reach the five web screens via `get_config()["taxonomy"]`
   in `work_management/api/config.py`.
-- If **upande_core** is installed, `Work Management Farm.business_unit`
-  upgrades from a plain text field to a real Link to its `Business Unit`
-  doctype, validated on save; if upande_core is later removed, the field
-  reverts to Data with no leftover Property Setters. This runs on every
-  `bench migrate` (`work_management.install.upgrade_business_unit_link`).
+- The farm level is the one thing renaming does **not** reach: `Farm` is
+  Upande Core's doctype, and a Property Setter relabelling its fields would
+  rename them for every app that reads it — the spray plan, irrigation and
+  sales screens included. This app renames its own farm links (Planner,
+  Assigner, Actuals, Payment, Section, Settings) and leaves Core's record
+  alone. The **Business Unit** name still applies to Employee records and
+  reports; farms themselves carry no business unit.
 
 ### Sections
 
@@ -125,8 +134,9 @@ Supports Frappe 15 and 16.
 
 1. Install the app. Doctypes, roles, custom fields, the approval stages and the
    workflows are created.
-2. Create a **Work Management Farm** for each unit you plan work against, with
-   its cost project.
+2. Create a **Farm** (Upande Core) for each unit you plan work against —
+   company, farm type and abbreviation are Core's required fields. Then, under
+   **Work Management Settings → Farms**, give each one its cost project.
 3. Open **Work Management Settings**:
    - under **Approvals**, set the role for each stage and add the people to
      Stage Approvers;
@@ -135,17 +145,23 @@ Supports Frappe 15 and 16.
 4. Set `custom_farm` on Warehouses (blocks) and Employees (task workers), and
    `custom_uom` / `custom_daily_target` / `custom_rate` on Tasks.
 5. Optionally, under **Work Management Settings → Taxonomy**, rename the
-   levels to match the project's own words, and switch on the level above
-   the farm if it uses one. Optionally group blocks into **Work Management
-   Section** records for the dashboard's by-section cost view.
+   levels to match the project's own words. Optionally group blocks into
+   **Work Management Section** records for the dashboard's by-section cost
+   view.
 
 ### Migrating a site that ran the earlier version
 
 `work_management.patches.v1_0.migrate_farms_and_approvers` runs on migrate and
-carries the old configuration forward: the `WM Farm` rows in Settings become
-Work Management Farm records, and `approver_role` plus `consultant_users`
-become Stage Approver rows. Both source fields stay read-only for one release
-so the patch can read them.
+carries the old configuration forward: `approver_role` plus `consultant_users`
+become Stage Approver rows.
+
+`work_management.patches.v1_0.move_farms_to_upande_core` then retires this app's
+own farm doctype. It carries each farm's cost project and area onto the Settings
+farms table, clears any reference to a farm Upande Core has not got — naming it
+and what held it — and deletes the doctype. No farm value is rewritten: the
+fields hold names, and the names match. A farm Core lacks is **not** created,
+because that would mean guessing a company, farm type and abbreviation on Core's
+behalf; create it in Upande Core and re-run migrate to give it its cost project.
 
 One behaviour change to know about: the workflows this replaced carried an
 unconditional `Farm Manager` transition alongside the per-farm ones, so anyone

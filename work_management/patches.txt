@@ -4,3 +4,6 @@
 work_management.patches.v1_0.migrate_farms_and_approvers
 work_management.patches.v1_0.backfill_farms_in_use
 work_management.patches.v1_0.seed_sections_from_cost_centres
+# last of the farm patches: the three above all no-op once the doctype below
+# is gone, so this one runs after them
+work_management.patches.v1_0.move_farms_to_upande_core
