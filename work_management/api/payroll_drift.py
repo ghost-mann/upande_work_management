@@ -7,7 +7,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config
+from work_management.api.config import get_config, payable_employee_columns
 
 
 @frappe.whitelist()
@@ -85,11 +85,16 @@ def wm_payroll_drift(**kwargs):
         dconds = dconds + " AND we.employee = %(e)s"
         dparams["e"] = one_emp
 
+    # Selecting a column this site's Employee has not got is not a blank value, it
+    # is (1054, "Unknown column ...") and no drift report at all. A column left out
+    # here reads back as None, which is what the classification test already does
+    # with a blank one.
+    d_cols = ", ".join("e." + c for c in payable_employee_columns())
     drows = frappe.db.sql("""
         SELECT we.name, we.parent, we.employee, we.employee_name, we.work_date,
                we.actual_quantity, we.amount, IFNULL(we.count_in_payroll,0) stored,
-               ac.rate, ac.task, ac.farm, ac.workflow_state, IFNULL(ac.paid,0) doc_paid,
-               e.employment_type, e.designation, e.custom_category
+               ac.rate, ac.task, ac.farm, ac.workflow_state, IFNULL(ac.paid,0) doc_paid""" + \
+               (", " + d_cols if d_cols else "") + """
         FROM `tabWork Actuals Employee` we
         INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
         LEFT JOIN `tabEmployee` e ON e.name = we.employee

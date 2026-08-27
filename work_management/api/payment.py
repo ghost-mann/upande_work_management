@@ -7,7 +7,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config
+from work_management.api.config import get_config, payable_employee_columns
 
 
 @frappe.whitelist()
@@ -51,7 +51,13 @@ def wm_payment(**kwargs):
         ("custom_category", "Work Management Payable Category", "category", "tw_categories"),
     ]
     TW_CLAUSES = []
+    # Only the columns this site's Employee actually has. custom_category is a
+    # custom field elsewhere, and naming it here is not a narrower match, it is
+    # (1054, "Unknown column ... in 'WHERE'") and a dead screen.
+    TW_COLUMNS = payable_employee_columns()
     for tw_col, tw_child, tw_cfield, tw_box in TW_SOURCES:
+        if tw_col not in TW_COLUMNS:
+            continue
         tw_vals = []
         # frappe.get_all() on a doctype this site does not have raises rather than
         # returning nothing, so ask before looking.
