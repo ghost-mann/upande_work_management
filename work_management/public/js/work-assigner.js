@@ -1,6 +1,33 @@
 (function(){
   var ST = { plan:null, planDetail:null, employees:[], picked:{}, roles:null, planList:[] };
 
+  // Frappe answers a validation failure with HTTP 417 and puts the reason in the
+  // body -- as _server_messages, or exception, or exc_type. Throwing "HTTP 417" and
+  // letting the caller print "Failed to save" discarded exactly the sentence the
+  // person needed, and left every refusal looking like the same anonymous failure.
+  // Kept identical to serverMessage() in work-planner.js.
+  function serverMessage(body, status){
+    var j=null;
+    try{ j=JSON.parse(body); }catch(e){}
+    if(j){
+      var msgs=[];
+      try{
+        (JSON.parse(j._server_messages||"[]")).forEach(function(m){
+          var o=null; try{ o=JSON.parse(m); }catch(e2){ o={message:m}; }
+          if(o && o.message) msgs.push(String(o.message));
+        });
+      }catch(e3){}
+      if(msgs.length) return msgs.join(" ").replace(/<[^>]+>/g,"").trim();
+      if(j.message && typeof j.message==="string") return j.message;
+      if(j.exception) return String(j.exception).replace(/^[\w.]+Error:\s*/,"").trim();
+      if(j.exc_type) return String(j.exc_type);
+    }
+    return "The server refused it (HTTP "+status+")";
+  }
+  function readOr(r){
+    if(r.ok) return r.json();
+    return r.text().then(function(t){ throw new Error(serverMessage(t, r.status)); });
+  }
   function call(args){
     var writes = {a_submit:1, a_fm_approve:1, a_hr_approve:1, a_gm_approve:1, a_reject:1, a_substitute:1};
     var isWrite = writes[args.action] === 1;
@@ -9,14 +36,14 @@
     var token = (typeof frappe!=="undefined" && frappe.csrf_token) ? frappe.csrf_token : "";
     if(!isWrite){
       return fetch("/api/method/wm_assigner?" + p.toString(), { method:"GET", headers:{ "Accept":"application/json" }, credentials:"same-origin" })
-        .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(function(j){ return j.message || {}; });
+        .then(readOr).then(function(j){ return j.message || {}; });
     }
     return fetch("/api/method/wm_assigner", {
       method:"POST",
       headers:{ "Content-Type":"application/x-www-form-urlencoded", "X-Frappe-CSRF-Token":token, "Accept":"application/json" },
       body:p.toString(),
       credentials:"same-origin"
-    }).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(function(j){ return j.message || {}; });
+    }).then(readOr).then(function(j){ return j.message || {}; });
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
@@ -478,13 +505,13 @@
           call(args).then(function(d2){
             if(d2.error){ toast("Error: "+d2.error); refreshCounts(); return; }
             afterSubmit(d2, submitNow);
-          }).catch(function(){ toast("Failed to save"); refreshCounts(); });
+          }).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); refreshCounts(); });
         } else { refreshCounts(); }
         return;
       }
       if(d.error){ toast("Error: "+d.error); refreshCounts(); return; }
       afterSubmit(d, submitNow);
-    }).catch(function(e){ toast("Failed to save"); refreshCounts(); });
+    }).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); refreshCounts(); });
   }
 
   function afterSubmit(d, submitNow){

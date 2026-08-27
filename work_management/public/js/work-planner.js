@@ -1480,7 +1480,10 @@
       el("f-qty").value=""; ST.task=null; ST.taskInfo=null; ST.picked={}; el("f-task").value=""; el("f-kpi").textContent=""; syncBlockGrid();
       recalc();
       if(submitNow){ }
-    }).catch(function(e){ toast("Failed to save"); recalc(); });
+    // serverMessage() already dug the server's own sentence out of the 417 body.
+    // Printing "Failed to save" over it threw away the only thing that said why --
+    // "DocType \nKentrout not found", in the case that sent someone looking.
+    }).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); recalc(); });
   }
 
   function clearEdit(){
