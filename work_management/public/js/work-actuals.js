@@ -13,6 +13,33 @@
     if(m && m.getAttribute("content")) return m.getAttribute("content");
     return "";
   }
+  // Frappe answers a validation failure with HTTP 417 and puts the reason in the
+  // body -- as _server_messages, or exception, or exc_type. Throwing "HTTP 417" and
+  // letting the caller print "Failed to save" discarded exactly the sentence the
+  // person needed, and left every refusal looking like the same anonymous failure.
+  // Kept identical to serverMessage() in work-planner.js.
+  function serverMessage(body, status){
+    var j=null;
+    try{ j=JSON.parse(body); }catch(e){}
+    if(j){
+      var msgs=[];
+      try{
+        (JSON.parse(j._server_messages||"[]")).forEach(function(m){
+          var o=null; try{ o=JSON.parse(m); }catch(e2){ o={message:m}; }
+          if(o && o.message) msgs.push(String(o.message));
+        });
+      }catch(e3){}
+      if(msgs.length) return msgs.join(" ").replace(/<[^>]+>/g,"").trim();
+      if(j.message && typeof j.message==="string") return j.message;
+      if(j.exception) return String(j.exception).replace(/^[\w.]+Error:\s*/,"").trim();
+      if(j.exc_type) return String(j.exc_type);
+    }
+    return "The server refused it (HTTP "+status+")";
+  }
+  function readOr(r){
+    if(r.ok) return r.json();
+    return r.text().then(function(t){ throw new Error(serverMessage(t, r.status)); });
+  }
   function call(args){
     var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,act_close_confirm:1,act_close_request:1};
     var isWrite=writes[args.action]===1;
@@ -21,11 +48,11 @@
     var token=csrf();
     if(!isWrite){
       return fetch("/api/method/wm_actuals?"+p.toString(),{method:"GET",headers:{"Accept":"application/json","X-Frappe-CSRF-Token":token},credentials:"same-origin"})
-        .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(function(j){return j.message||{};});
+        .then(readOr).then(function(j){return j.message||{};});
     }
     return fetch("/api/method/wm_actuals",{method:"POST",
       headers:{"Content-Type":"application/x-www-form-urlencoded","X-Frappe-CSRF-Token":token,"Accept":"application/json"},
-      body:p.toString(),credentials:"same-origin"}).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(function(j){return j.message||{};});
+      body:p.toString(),credentials:"same-origin"}).then(readOr).then(function(j){return j.message||{};});
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
@@ -701,7 +728,7 @@
         }
         if(window.confirm("Attendance check — quantities entered for workers who were not supposed to be at work:\n\n"+lines.join("\n")+"\n\nRecord these actuals anyway? The override is recorded on the document.")){
           args.att_override=1;
-          call(args).then(handleResp).catch(function(){ toast("Failed to save"); refresh(); });
+          call(args).then(handleResp).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); refresh(); });
         } else { refresh(); onAsg(ST.asg); }
         return;
       }
@@ -721,7 +748,7 @@
         onAsg(ST.asg);
       }
     }
-    call(args).then(handleResp).catch(function(e){ toast("Failed to save"); refresh(); });
+    call(args).then(handleResp).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); refresh(); });
   }
 
   function refresh(){
