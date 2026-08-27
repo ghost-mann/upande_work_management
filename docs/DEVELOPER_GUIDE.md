@@ -12,11 +12,12 @@ work_management/
 ├── install.py                # adopts pre-existing custom doctypes, creates custom fields
 ├── api/
 │   ├── config.py             # get_config(): farms, projects, company, approver roles
-│   │                         #   from Work Management Farm + Work Management Settings
+│   │                         #   farms from Upande Core's Farm, their cost
+│   │                         #   projects from Work Management Settings
 │   ├── planner.py assigner.py actuals.py payment.py dashboard.py
 │   │                         # ported 1:1 from the live Server Scripts
 ├── approvals.py              # stage catalogue + workflow generator
-├── seed/kaitet.py            # one deployment's own farms, roles and company
+├── seed/kaitet.py            # one deployment's own cost projects, roles, company
 ├── patches/v1_0/             # carries old farm/approver config forward
 ├── work_management/doctype/  # WM doctypes (see below)
 ├── work_management/workspace/ # the desk workspace
@@ -164,15 +165,48 @@ found again. It runs from `desk.sync()` (so after every migrate, and after any
 force-import that puts the shipped labels back) and from
 `Settings.on_update`, so a rename does not wait for a migrate.
 
-### Business Unit — a real level, optional
+### Farms are Upande Core's, and read-only to this app
 
-`Work Management Farm.business_unit` ships as **Data** and upgrades to a
-**Link** to `upande_core`'s `Business Unit` doctype wherever that app is
-installed, degrading back to Data — with no leftover Property Setters — if it
-is removed. Both directions are verified on a real dual-app site, not inferred.
+`Farm` belongs to `upande_core`, which `hooks.py` declares a `required_apps`
+dependency. Three rules follow, all of them tested in
+`tests/test_farm_source.py` rather than left as habits:
 
-`tax_bu_enabled` decides whether the level exists on the form at all. The field
-ships `hidden: 1`; turning the level on writes a `hidden=0` setter, turning it
+1. **No guard around a `Farm` read.** A doctype name is global, and
+   `upande_kaitet` ships a `Farm` of its own — so a guard cannot tell the right
+   one from the wrong one, while requiring the owning app can. And a guard
+   around a doctype every screen depends on answers "no farms" rather than
+   failing, which reaches a person as a blank screen with no reason on it.
+2. **Nothing of ours goes on it.** No Custom Field, no Property Setter, no
+   saved document. Each farm's cost project and area override live on the farms
+   table in Settings instead. Relabelling `Farm.farm_name` from the taxonomy
+   would have renamed the field for the spray plan, irrigation and sales
+   screens too, which is why the farm level is the one name renaming cannot
+   reach.
+3. **Never `.save()` a `Farm`.** Every row on the live site is missing
+   `farm_type`, which Core marks `reqd`, so a saved document is rejected by
+   Core's own validation. Reads only; the migration patch writes with
+   `frappe.db.set_value` and never touches `Farm` at all.
+
+`disabled` is not a field Core ships. Where a site has added one (kaitet.local
+has, by hand) this app respects it; where none exists every farm is active.
+`upande_scp` reads it the same way, behind the same `has_column` check.
+
+One thing on that doctype is *not* ours and should not be read as ours:
+`upande_kaitet` owns a `field_order` Property Setter on `Farm` naming `farm` and
+`kephis_farm_id`, fields Core's `Farm` does not have. It is inert — Frappe falls
+back to Core's own order — but it is there.
+
+### Business Unit — a name, not a field on the farm
+
+`tax_bu_enabled` and the `tax_bu_*` names still exist, and still name the level
+above the farm for Employee records (`Employee.custom_business_unit`, a Link to
+`upande_core`'s `Business Unit`) and for reports. What went with the farm
+doctype is the *farm's* business unit: Core's `Farm` has no such field, and this
+app adds none.
+
+The paragraphs below describe the visibility machinery as it was before that.
+`tax_bu_enabled` decided whether the level existed on the form at all. The field
+shipped `hidden: 1`; turning the level on wrote a `hidden=0` setter, turning it
 off **deletes** that setter rather than writing `hidden=1` over a field that is
 hidden anyway. Naming the level is deliberately not the same as having one:
 typing "Division" into the template without ticking the box reveals nothing.
@@ -224,7 +258,8 @@ section because `roll_up` would merge the two.
 ### On the live site
 
 None of this exists there yet. `kaitet-group.upande.com` has **no `tax_*`
-fields**, and no `Work Management Farm` or `Work Management Section` doctype —
+fields**, and no `Work Management Section` doctype — its farms are records of
+its own `Farm`, which belongs to `upande_kaitet` rather than to Upande Core —
 its Work Management doctypes are custom records that the app has never been
 installed over. The taxonomy is app-only until that install happens, and the
 dashboard's Group toggle correctly falls back to block mode there.
@@ -298,9 +333,10 @@ bench --site <site> install-app work_management
 `before_install` adopts identically-named custom doctypes already on the site
 (sets `custom=0`, module Work Management); `after_install` creates the custom
 fields (Employee farm, actuals review/payment stamps, …) with a Link→Data
-fallback when a target doctype is missing. Configure farms/roles in
-**Work Management Settings** and **Work Management Farm**; blank settings mean no farms
-in `api/config.py`.
+fallback when a target doctype is missing. Farms are Upande Core's `Farm`
+records; their cost projects and roles are configured in **Work Management
+Settings**. No farms in Core means no farms in `api/config.py`, and the screens
+say so.
 
 ## The upstream live-site mirror
 
