@@ -1247,6 +1247,39 @@
     });
   }
 
+  // A master plan can budget a whole month; a request under it is usually a week.
+  // Choosing a plan therefore bounds the request rather than replacing it: the
+  // date inputs get the plan's period as min/max so the picker itself will not
+  // stray outside, and dates already inside the plan are left exactly as they
+  // were. Only dates that hang outside are moved, and only to the nearest edge.
+  //
+  // The server never asked for more than this -- `tasks` looks for a plan with
+  // period_from <= from_date AND period_to >= to_date, which is containment. The
+  // screen was the only thing insisting on the whole period.
+  function boundDatesToPlan(pf, pt){
+    ["f-from","f-to"].forEach(function(id){
+      var e=el(id); if(!e) return;
+      e.min=pf; e.max=pt;
+    });
+    var f=el("f-from"), t=el("f-to");
+    if(!f||!t) return;
+    if(!f.value || !t.value){
+      // nothing entered, so there is no intent to preserve
+      f.value=pf; t.value=pt; return;
+    }
+    if(f.value < pf) f.value=pf;
+    if(t.value > pt) t.value=pt;
+    if(t.value < f.value) t.value=f.value;
+  }
+
+  // The working-days slider sets `to` from `from` plus a count, which can run
+  // past the plan's end and drop the request back into "these dates cannot be
+  // planned" with nothing on screen saying which edge it crossed.
+  function clampToPlanEnd(){
+    var t=el("f-to");
+    if(t && t.max && t.value > t.max) t.value=t.max;
+  }
+
   function renderPeriodBar(d){
     var bar=el("f-mpperiod"), txt=el("f-mptext"), btn=el("f-usemp");
     if(!bar) return;
@@ -1272,7 +1305,7 @@
       ? "Plan period &mdash; the request must fit inside one:"
       : "<b>These dates cannot be planned.</b> A request has to sit wholly inside one "+
         "approved plan period, and "+esc(ST.farm||("this "+TX("top_singular","Farm").toLowerCase()))+"&rsquo;s plans are below. "+
-        "Pick one to snap the dates to it:") + "<div class=\"mp-buds\">";
+        "Pick one to plan inside it:") + "<div class=\"mp-buds\">";
     buds.forEach(function(b){
       var on = (active===b.name) || (b.period_from===f && b.period_to===t);
       h += '<button type="button" class="bud'+(on?" on":"")+'" data-bf="'+esc(b.period_from)+
@@ -1283,8 +1316,7 @@
     txt.innerHTML = h+"</div>";
     bar.querySelectorAll("[data-bf]").forEach(function(x){
       x.onclick=function(){
-        el("f-from").value=x.getAttribute("data-bf");
-        el("f-to").value=x.getAttribute("data-bt");
+        boundDatesToPlan(x.getAttribute("data-bf"), x.getAttribute("data-bt"));
         syncSlider(); recalc(); loadPlannableTasks();
       };
     });
@@ -1401,6 +1433,7 @@
     var wd=parseInt(this.value);
     el("f-wdlabel").textContent=wd;
     el("f-to").value=addDays(el("f-from").value||today(), wd-1);
+    clampToPlanEnd();
     recalc();
   }
 
