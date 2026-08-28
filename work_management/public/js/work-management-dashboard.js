@@ -130,6 +130,17 @@
       var f=el("mv-farm"); if(f) f.value=""; loadMasterPlanValue(); };
     loadMasterPlanValue();
   }
+  function mvPlanRow(r){
+    return '<tr><td><b>'+esc(r.plan)+'</b></td><td>'+esc(r.farm||"")+'</td>'+
+      '<td class="m" style="font-size:10px">'+esc(r.period_from)+' &rarr; '+esc(r.period_to)+'</td>'+
+      '<td class="n m">'+fmt(r.lines)+'</td>'+
+      '<td class="n m">'+fmt(r.planned,0)+'</td>'+
+      '<td class="n m" title="Planned minus what is still unclaimed on the plan\u2019s lines">'+fmt(r.committed,0)+'</td>'+
+      '<td class="n m" style="font-weight:700">'+fmt(r.delivered,0)+'</td>'+
+      '<td class="n">'+mvPct(r.achieved_pct)+'</td>'+
+      '<td class="n m" style="color:'+(r.variance<0?"#b45309":"#0a7a43")+'">'+fmt(r.variance,0)+'</td>'+
+      '<td style="font-size:10px">'+esc(r.state||"")+'</td></tr>';
+  }
   function mvPct(v){
     if(v===null||v===undefined) return '<span style="color:var(--mute)">&mdash;</span>';
     var c = v>=90?"#0a7a43":(v>=60?"#b45309":"#be123c");
@@ -146,23 +157,37 @@
       }
       var rows=d.plans||[];
       if(!rows.length){ box.innerHTML='<div class="empty">No master plan covers this window.</div>'; return; }
+      // A farm runs several plans across a window, and the question "how is
+      // Endebess doing" was only answerable by adding its rows up by eye. Grouped
+      // by farm, with the farm's own totals stated once above its plans -- the
+      // same shape the Plan completion card uses for its weeks. Plans keep the
+      // order the server sent, newest period first, within their farm.
+      var byFarm={}, farmOrder=[];
+      rows.forEach(function(r){
+        var f=r.farm||"";
+        if(!byFarm[f]){ byFarm[f]=[]; farmOrder.push(f); }
+        byFarm[f].push(r);
+      });
+      farmOrder.sort();
       var tp=0,tc=0,td=0;
       var h='<div class="tablewrap" style="max-height:460px;overflow-y:auto"><table><thead><tr>'+
         '<th>Master plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period</th>'+
         '<th class="n">Lines</th><th class="n">Planned KES</th><th class="n">Committed</th>'+
         '<th class="n">Delivered KES</th><th class="n">Achieved</th><th class="n">Variance</th>'+
         '<th>State</th></tr></thead><tbody>';
-      rows.forEach(function(r){
-        tp+=r.planned; tc+=r.committed; td+=r.delivered;
-        h+='<tr><td><b>'+esc(r.plan)+'</b></td><td>'+esc(r.farm||"")+'</td>'+
-           '<td class="m" style="font-size:10px">'+esc(r.period_from)+' &rarr; '+esc(r.period_to)+'</td>'+
-           '<td class="n m">'+fmt(r.lines)+'</td>'+
-           '<td class="n m">'+fmt(r.planned,0)+'</td>'+
-           '<td class="n m" title="Planned minus what is still unclaimed on the plan\u2019s lines">'+fmt(r.committed,0)+'</td>'+
-           '<td class="n m" style="font-weight:700">'+fmt(r.delivered,0)+'</td>'+
-           '<td class="n">'+mvPct(r.achieved_pct)+'</td>'+
-           '<td class="n m" style="color:'+(r.variance<0?"#b45309":"#0a7a43")+'">'+fmt(r.variance,0)+'</td>'+
-           '<td style="font-size:10px">'+esc(r.state||"")+'</td></tr>';
+      farmOrder.forEach(function(f){
+        var list=byFarm[f];
+        var fp=0,fc=0,fd=0,fl=0;
+        list.forEach(function(r){ fp+=r.planned; fc+=r.committed; fd+=r.delivered; fl+=r.lines; });
+        h+='<tr class="mv-farmrow" style="background:var(--wash);font-weight:700">'+
+           '<td colspan="3">'+esc(f||"\u2014")+' <span class="hint" style="font-weight:400">'+
+             fmt(list.length)+' plan'+(list.length===1?'':'s')+'</span></td>'+
+           '<td class="n m">'+fmt(fl)+'</td><td class="n m">'+fmt(fp,0)+'</td>'+
+           '<td class="n m">'+fmt(fc,0)+'</td><td class="n m">'+fmt(fd,0)+'</td>'+
+           '<td class="n">'+mvPct(fp>0?(fd/fp*100):null)+'</td>'+
+           '<td class="n m" style="color:'+((fd-fp)<0?"#b45309":"#0a7a43")+'">'+fmt(fd-fp,0)+'</td>'+
+           '<td></td></tr>';
+        list.forEach(function(r){ h+=mvPlanRow(r); tp+=r.planned; tc+=r.committed; td+=r.delivered; });
       });
       h+='</tbody><tfoot><tr><th colspan="4">TOTAL</th><th class="n">'+fmt(tp,0)+'</th>'+
          '<th class="n">'+fmt(tc,0)+'</th><th class="n">'+fmt(td,0)+'</th>'+
@@ -457,11 +482,16 @@
 
   // ── completion, plan by plan, week by week ───────────────────────────────
   // Three figures that get used interchangeably and mean different things: what a
-  // plan was PLANNED for, what was REQUESTED against it, and what was SPENT
-  // delivering it. A plan can be fully requested with nothing done, or barely
+  // plan was PLANNED for, what was REQUESTED against it, and what was DELIVERED
+  // against that. A plan can be fully requested with nothing done, or barely
   // requested and fully delivered. One track holds all three -- pale is requested,
   // solid is delivered, the tick is the planned value both are measured against --
   // so the relationship is read rather than reconstructed from three columns.
+  //
+  // A fourth, Spent, used to sit beside them: the part of delivered pay that had
+  // actually been paid out. It read zero on every site and always would, because
+  // it counted `paid=1` and nobody marks paid here -- a column whose only content
+  // was a nought. Removing it took a per-plan SQL query out of the endpoint too.
   var PC = { from:null, to:null, farm:"", quick:"8w" };
 
   function planCompletion(){
@@ -487,8 +517,8 @@
       order.sort().reverse();
       order.forEach(function(wk){
         var list=byWeek[wk];
-        var pv=0, rv=0, ev=0, sv=0;
-        list.forEach(function(r){ pv+=r.planned_value; rv+=r.requested_value; ev+=r.earned_value; sv+=r.spent_value; });
+        var pv=0, rv=0, ev=0;
+        list.forEach(function(r){ pv+=r.planned_value; rv+=r.requested_value; ev+=r.earned_value; });
         h+='<div class="pcwk">Week of '+esc(wk)+' &middot; '+fmt(list.length)+' plan'+
            (list.length===1?'':'s')+' &middot; planned '+money(pv)+' &middot; requested '+money(rv)+
            ' &middot; delivered '+money(ev)+'</div>';
@@ -544,7 +574,6 @@
       '<div class="pc-figs">'+
         '<div class="pc-fig"><i>Planned</i><b>'+money(r.planned_value)+'</b></div>'+
         '<div class="pc-fig"><i>Requested</i><b>'+money(r.requested_value)+'</b></div>'+
-        '<div class="pc-fig"><i>Spent</i><b>'+money(r.spent_value)+'</b></div>'+
         '<div class="pc-fig"><i>Complete</i><span class="pc-pct '+cls+'">'+fmt(r.completion,0)+'%</span></div>'+
       '</div>'+
     '</div>';

@@ -67,7 +67,11 @@
   //  TAB ROUTING
   // ════════════════════════════════════════════════
   function showTab(name){
-    ["build","accounts","mine","audit","insights"].forEach(function(n){
+    // "audit" is deliberately absent: the Payroll audit tab and its panel were
+    // taken out of the screen. Its code below still loads and its four server
+    // actions still answer, so restoring it is putting the tab back -- but
+    // nothing reaches it from the UI now.
+    ["build","accounts","mine","insights"].forEach(function(n){
       var p=el("p-"+n); if(p) p.classList.toggle("on", n===name);
     });
     document.querySelectorAll("#pay-tabs button").forEach(function(b){
@@ -76,7 +80,6 @@
     if(name==="build")    loadPayable();
     if(name==="accounts") loadAccounts();
     if(name==="mine")     loadMine();
-    if(name==="audit")    initAudit();
     if(name==="insights") initInsights();
   }
 

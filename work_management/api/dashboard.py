@@ -3381,18 +3381,6 @@ def wm_dashboard(**kwargs):
                   AND ac.workflow_state = 'CONFIRMED'
             """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
                   "tk": pc_tasks}, as_dict=True)[0]
-            pc_paid = frappe.db.sql("""
-                SELECT COALESCE(SUM(we.amount),0) c
-                FROM `tabWork Actuals Employee` we
-                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
-                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
-                WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
-                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
-                  AND pr.task IN %(tk)s
-                  AND IFNULL(we.paid,0) = 1
-            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
-                  "tk": pc_tasks}, as_dict=True)[0]
             # quantity completion is summed per activity so a line delivered twice over
             # cannot mask one never started -- each line contributes at most its own share
             pc_pq = 0.0
@@ -3426,7 +3414,6 @@ def wm_dashboard(**kwargs):
                 "requested_value": frappe.utils.flt(pc_req.c, 2),
                 "requested_count": frappe.utils.cint(pc_req.n),
                 "earned_value": frappe.utils.flt(pc_act.c, 2),
-                "spent_value": frappe.utils.flt(pc_paid.c, 2),
                 "actuals_count": frappe.utils.cint(pc_act.n),
                 "target_qty": pc_pq, "done_qty": pc_dq,
                 "completion": frappe.utils.flt(pc_dq / pc_pq * 100, 1) if pc_pq > 0 else 0,
