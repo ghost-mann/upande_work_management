@@ -197,7 +197,16 @@ class TestTheNavigationPointsAtCoreFarm(unittest.TestCase):
 		for relpath in self.PATHS:
 			self.assertNotIn(OLD, read(relpath), relpath)
 
-	def test_the_patch_repoints_the_entries_a_site_already_has(self):
-		source = read(os.path.join("patches", "v1_0", "move_farms_to_upande_core.py"))
-		self.assertIn("Workspace Link", source)
-		self.assertIn("Workspace Sidebar Item", source)
+	def test_an_entry_a_site_already_has_gets_repointed(self):
+		"""Not by the patch alone -- a patch runs once and cannot reach a site
+		that logged an earlier version of it. desk.repoint_retired_links() does
+		it at every after_migrate; the detail is in test_no_dangling_references.
+		"""
+		from work_management import desk
+
+		self.assertEqual(desk.RETIRED.get(OLD), "Farm")
+		self.assertIn(
+			"work_management.desk.sync",
+			read("hooks.py"),
+			"the repair must be reachable from after_migrate",
+		)

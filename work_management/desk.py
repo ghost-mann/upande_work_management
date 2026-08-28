@@ -210,6 +210,62 @@ def _adopt(name, shipped):
 	)
 
 
+# Doctypes this app used to ship, and what took their place. A navigation entry
+# on a site still names the old one long after the app has stopped shipping it,
+# and a Link whose target does not exist is a 404 with the doctype's name in it.
+RETIRED = {
+	# Farms became Upande Core's records; move_farms_to_upande_core retires ours.
+	"Work Management Farm": "Farm",
+}
+
+
+def plan_retired_repoint(rows, retired=None):
+	"""[(name, replacement)] for navigation rows naming a doctype we retired.
+
+	Pure, so the rule can be read and tested without a site.
+	"""
+	retired = RETIRED if retired is None else retired
+	return [
+		(row["name"], retired[row["link_to"]])
+		for row in rows
+		if row.get("link_to") in retired
+	]
+
+
+def repoint_retired_links():
+	"""Aim any navigation entry naming a retired doctype at its replacement.
+
+	This lives here, and runs from sync() at every after_migrate, rather than in
+	the patch that did the retiring -- because Frappe records a patch by name and
+	never runs it again. move_farms_to_upande_core shipped without this step and
+	gained it one commit later, so on a site that migrated in between the repair
+	could never arrive: the doctype was gone, the Setup workspace still had a
+	"Farms" link pointing at it, and clicking it said
+	`DocType Work Management Farm not found`. A once-only patch is the wrong home
+	for a repair; an idempotent after_migrate step is right, and fixes those
+	sites on their next migrate without anyone having to know they were affected.
+
+	Shortcuts are included, which the patch's own version missed: a Workspace
+	Shortcut carries link_to exactly as a Workspace Link does, and 404s the same.
+	"""
+	moved = 0
+	for doctype in ("Workspace Link", "Workspace Shortcut", "Workspace Sidebar Item"):
+		if not frappe.db.exists("DocType", doctype):
+			continue  # v15 has no Workspace Sidebar
+		rows = frappe.get_all(
+			doctype,
+			filters={"link_to": ["in", list(RETIRED)]},
+			fields=["name", "link_to"],
+		)
+		for name, replacement in plan_retired_repoint(rows):
+			frappe.db.set_value(doctype, name, "link_to", replacement, update_modified=False)
+			print(f"Work Management: repointed {doctype} {name} at {replacement}")
+			moved += 1
+	if moved:
+		frappe.clear_cache()
+	return moved
+
+
 def plan_link_visibility(rows, available):
 	"""(to hide, to show) for navigation links, by whether their doctype exists.
 
@@ -417,6 +473,9 @@ def sync():
 	repaired = sync_workspaces()
 	sync_sidebar()
 	ensure_desktop_icon()
+	# before hide_links_to_missing_doctypes(): a link repointed at a doctype that
+	# exists must not be hidden on the way past for naming one that does not
+	repoint_retired_links()
 	hide_links_to_missing_doctypes()
 	relabel_navigation()
 	if repaired:

@@ -27,7 +27,7 @@ farm type and an abbreviation on Core's behalf.
 
 import frappe
 
-from work_management import install
+from work_management import desk, install
 from work_management.patches.v1_0.backfill_farms_in_use import SOURCES
 
 OLD = "Work Management Farm"
@@ -125,21 +125,15 @@ def execute():
 			+ ", ".join(f'{doctype} "{docname}"' for doctype, docname in where)
 		)
 
-	install.drop_stale_link_options()
-
 	# The navigation entry has to come across too. desk.sync() re-imports the
 	# shipped workspace only when the site's copy has fallen behind in size, and
-	# a link whose target was renamed is the same size as one that was not -- so
-	# the site kept its "Farms" link pointing at the retired doctype, and
-	# hide_links_to_missing_doctypes() dutifully hid it, leaving the Setup
-	# workspace with no Farms link at all. Repointing is enough: that same
-	# function shows a link again once its target exists.
-	for doctype, key in (("Workspace Link", "link_to"), ("Workspace Sidebar Item", "link_to")):
-		if not frappe.db.exists("DocType", doctype):
-			continue  # v15 has no Workspace Sidebar
-		for name in frappe.get_all(doctype, filters={key: OLD}, pluck="name"):
-			frappe.db.set_value(doctype, name, key, "Farm", update_modified=False)
-			print(f"Work Management: repointed {doctype} {name} at Upande Core's Farm")
+	# a link whose target was renamed is the same size as one that was not, so
+	# the site keeps its "Farms" link pointing at the retired doctype. The repair
+	# itself lives in desk.repoint_retired_links(), which after_migrate runs every
+	# time -- this patch runs once and can never reach a site that logged an
+	# earlier version of it. Called here too so the link is right immediately
+	# rather than at the end of this same migrate.
+	desk.repoint_retired_links()
 
 	for kind, filters in (
 		("Property Setter", {"doc_type": OLD}),
@@ -161,5 +155,10 @@ def execute():
 	# a v16 site it did not, and an orphan `tab` table outlives every tool that
 	# would otherwise notice it.
 	frappe.db.sql_ddl(f"drop table if exists `tab{OLD}`")
+
+	# After the delete, not before. drop_stale_link_options() only removes an
+	# `options` override whose target doctype is missing -- run while the doctype
+	# was still there, it looked at every one of these and correctly did nothing.
+	install.drop_stale_link_options()
 	frappe.db.commit()
 	print(f"Work Management: {OLD} retired; farms are Upande Core's records now")

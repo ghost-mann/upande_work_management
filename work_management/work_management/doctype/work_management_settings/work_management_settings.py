@@ -24,7 +24,6 @@ class WorkManagementSettings(Document):
 		approvals.sync_roles(self, previous=self.get_doc_before_save())
 		approvals.build_workflows(self)
 		taxonomy.apply_labels(self)
-		taxonomy.apply_business_unit_visibility(self)
 		# The desk navigation carries level names too, and no Property Setter
 		# reaches a Workspace Link -- without this a rename shows on the forms
 		# immediately and down the side of the desk only after a migrate.
