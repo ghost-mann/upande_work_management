@@ -211,3 +211,62 @@ class TestTheNavigationPointsAtCoreFarm(unittest.TestCase):
 			read("hooks.py"),
 			"the repair must be reachable from after_migrate",
 		)
+
+
+class TestTheNavigationBlockNamesNothingRetired(unittest.TestCase):
+	"""The workspace's body is hand-written HTML, and it had the dead route in it.
+
+	The Work Management workspace is a Custom HTML Block of tiles, each carrying
+	`href`, `data-desk` (the route, rewritten per desk version) and `data-count`
+	(the doctype whose row count the tile shows). None of that is a Workspace
+	Link, so every structured scan came back clean while the "Farms" tile went on
+	pointing at /app/work-management-farm -- `DocType Work Management Farm not
+	found`, straight off the workspace's own landing page.
+
+	Checked against what the app actually ships rather than against a list, so
+	retiring any doctype in future fails here until its tile is dealt with.
+	"""
+
+	def block(self, suffix):
+		path = os.path.join(HERE, "custom_html_block", "work_management_navigation" + suffix)
+		with open(path) as handle:
+			return handle.read()
+
+	def test_no_tile_routes_to_the_retired_doctype(self):
+		html = self.block(".html")
+		self.assertNotIn("work-management-farm", html)
+		self.assertNotIn(OLD, html)
+
+	def test_every_counted_doctype_is_one_a_site_will_have(self):
+		"""data-count drives a row-count query, so a stale name is a failing call.
+
+		Allowed: a doctype this app ships, or one of the core/Upande doctypes the
+		tiles deliberately point at.
+		"""
+		from work_management import install
+
+		outside = {"Task", "Farm"}
+		allowed = set(install.shipped_doctypes()) | outside
+		counted = set(re.findall(r'data-count="([^"]+)"', self.block(".html")))
+		self.assertTrue(counted, "no counted tiles found -- has the markup changed?")
+		self.assertEqual(sorted(counted - allowed), [])
+
+	def test_every_route_matches_the_doctype_the_tile_counts(self):
+		"""href, data-desk and data-count must describe the same doctype.
+
+		They drifted apart exactly once, and it took the Farms tile with it.
+		"""
+		from work_management.install import scrub
+
+		pattern = re.compile(
+			r'data-count="(?P<dt>[^"]+)"\s+data-desk="(?P<desk>[^"]+)"\s+href="/app/(?P<href>[^"]+)"'
+		)
+		mismatched = []
+		for match in pattern.finditer(self.block(".html")):
+			slug = scrub(match.group("dt")).replace("_", "-")
+			if match.group("desk") != slug or match.group("href") != slug:
+				mismatched.append(
+					f'{match.group("dt")}: desk={match.group("desk")} href={match.group("href")} '
+					f'expected {slug}'
+				)
+		self.assertEqual(mismatched, [])
