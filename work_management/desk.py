@@ -42,6 +42,10 @@ import pathlib
 import frappe
 
 from work_management import taxonomy
+# hooks.py imports nothing, so this is safe -- and taking the route from there
+# rather than repeating it means the apps-screen entry and the Desktop Icon
+# record cannot drift apart into two different destinations.
+from work_management.hooks import app_home as APP_HOME
 from work_management.migrating import DESK_STEP, without_aborting_the_migrate
 
 APP = "work_management"
@@ -322,29 +326,49 @@ def hide_links_to_missing_doctypes():
 	return changed
 
 
-def desktop_icon_fields(label=None):
-	"""The Desktop Icon row that actually works on a v16 apps screen.
+# The apps-screen logo. Shipped by this app rather than borrowed from a
+# neighbour: upande_sensors and upande_ta each carry their own copy of the Upande
+# logo instead of pointing at one another, and an icon that pointed at
+# /assets/upande_webshop/... would break on a site without webshop. hooks.py
+# add_to_apps_screen names the same file, so the apps screen and the desk's app
+# switcher draw the same picture.
+LOGO_URL = "/assets/work_management/images/work-management-logo.svg"
 
-	Read off the one working example on a real 16.27 site (frappe's own "My
-	Workspaces"): link_type "Workspace Sidebar", with link_to AND sidebar both
-	naming a Workspace Sidebar record, and an icon name that resolves. Ours had
-	link_type "External", link_to null and icon null -- so the apps screen had
-	nothing to draw and the click had nowhere to go.
+
+def desktop_icon_fields(label=None):
+	"""The Desktop Icon row, in the shape every other Upande app uses.
+
+	Read off the working icons on a real v16 site: Ecommerce (upande_webshop),
+	Upande Sensors and T&A all carry icon_type "App", link_type "External", a
+	real `link`, and a `logo_url` -- and all three draw their own logo on the
+	apps screen. Ours was icon_type "Link" with no logo_url at all, so it drew a
+	generic glyph while its neighbours drew themselves.
+
+	This did once sit on link_type "Workspace Sidebar", after an "External"
+	attempt showed nothing. That attempt had link_to and icon both null, which is
+	why there was nothing to draw; those three icons are the evidence that the
+	shape is fine once the link and the logo are really there.
 
 	Pure, so the shape can be checked without a site.
 	"""
-	header_icon = ""
-	if SIDEBAR_JSON.exists():
-		header_icon = (json.loads(SIDEBAR_JSON.read_text()).get("header_icon") or "").strip()
 	return {
 		"label": label or WORKSPACE,
-		"link_type": "Workspace Sidebar",
-		"link_to": SIDEBAR,
-		"sidebar": SIDEBAR,
+		"icon_type": "App",
+		"link_type": "External",
+		"link": APP_HOME,
+		"logo_url": LOGO_URL,
 		"app": APP,
-		"icon": header_icon or "projects",
 		"standard": 1,
 		"hidden": 0,
+		# Explicitly vacated, not merely omitted. ensure_desktop_icon() updates the
+		# existing record rather than replacing it, so a field left out of this
+		# dict keeps whatever the old shape put there -- and a stale `link_to`
+		# beside link_type "External" makes Frappe resolve it as a doctype:
+		# `DocType External not found`, on a record that had just been written
+		# correctly in every other respect.
+		"link_to": "",
+		"sidebar": "",
+		"icon": "",
 	}
 
 
