@@ -305,27 +305,75 @@ class TestTheAppsScreenIcon(unittest.TestCase):
 	    own Workspace Sidebar record, and an icon name that actually resolves.
 	"""
 
-	def test_it_points_at_the_apps_own_sidebar(self):
-		f = desk.desktop_icon_fields()
-		self.assertEqual(f["link_type"], "Workspace Sidebar")
-		self.assertEqual(f["link_to"], desk.SIDEBAR)
-		self.assertEqual(f["sidebar"], desk.SIDEBAR)
+	def test_it_is_the_shape_every_other_upande_app_uses(self):
+		"""App + External + a real link + a real logo.
 
-	def test_it_carries_an_icon_so_something_renders(self):
-		"""A null icon is why the apps screen showed nothing at all."""
-		self.assertTrue((desk.desktop_icon_fields().get("icon") or "").strip())
+		Read off the working icons on a real v16 site: Ecommerce (upande_webshop),
+		Upande Sensors and T&A all carry exactly this, and all three render their
+		own logo on the apps screen. Ours was icon_type "Link" with no logo_url at
+		all, so it drew a generic glyph while its neighbours drew themselves.
+
+		The earlier note here warned that "External" had been tried and shown
+		nothing -- but that attempt had link_to and icon both null, which is the
+		actual reason it had nothing to draw. These three prove the shape works
+		when the link and the logo are really there.
+		"""
+		f = desk.desktop_icon_fields()
+		self.assertEqual(f["icon_type"], "App")
+		self.assertEqual(f["link_type"], "External")
+		self.assertEqual(f["link"], "/app/work-management")
+
+	def test_the_link_is_the_route_the_apps_screen_hook_sends_people_to(self):
+		"""Two destinations for one app is how the icon and the apps screen part."""
+		from work_management import hooks
+
+		self.assertEqual(desk.desktop_icon_fields()["link"], hooks.app_home)
+		self.assertEqual(hooks.add_to_apps_screen[0]["route"], hooks.app_home)
+
+	def test_it_carries_a_logo_so_it_draws_itself(self):
+		"""The one field whose absence made this icon look unlike the others."""
+		logo = desk.desktop_icon_fields().get("logo_url") or ""
+		self.assertTrue(logo.startswith("/assets/work_management/"), logo)
+
+	def test_the_logo_is_a_file_this_app_actually_ships(self):
+		"""Each Upande app ships its own asset rather than pointing at another's,
+		so the icon cannot break when a neighbour is absent or renames a file."""
+		import os
+
+		logo = desk.desktop_icon_fields()["logo_url"]
+		here = os.path.dirname(os.path.dirname(os.path.abspath(desk.__file__)))
+		path = os.path.join(here, "work_management",
+			logo.replace("/assets/work_management/", "public/"))
+		self.assertTrue(os.path.exists(path), path)
+
+	def test_the_logo_is_the_one_the_apps_screen_hook_already_names(self):
+		"""hooks.py add_to_apps_screen and this record must agree, or the apps
+		screen and the desk switcher show two different pictures."""
+		from work_management import hooks
+
+		self.assertEqual(
+			desk.desktop_icon_fields()["logo_url"],
+			hooks.add_to_apps_screen[0]["logo"],
+		)
+
+	def test_it_clears_the_fields_the_old_shape_used(self):
+		"""Omitting them is not enough, because the record is updated in place.
+
+		The previous shape set link_to, sidebar and icon. Leaving them out of this
+		dict left them behind, and a stale link_to beside link_type "External"
+		made Frappe resolve it as a doctype -- `DocType External not found` when
+		saving an otherwise correct record.
+		"""
+		f = desk.desktop_icon_fields()
+		for vacated in ("link_to", "sidebar", "icon"):
+			self.assertIn(vacated, f, vacated)
+			self.assertFalse(f[vacated], vacated)
 
 	def test_it_is_attributed_to_this_app(self):
 		self.assertEqual(desk.desktop_icon_fields()["app"], desk.APP)
 
 	def test_it_is_visible(self):
 		self.assertFalse(desk.desktop_icon_fields().get("hidden"))
-
-	def test_the_icon_name_is_the_one_the_sidebar_header_uses(self):
-		"""Same glyph in both places, so the apps screen and the sidebar agree."""
-		import json
-		shipped = json.loads(desk.SIDEBAR_JSON.read_text())
-		self.assertEqual(desk.desktop_icon_fields()["icon"], shipped.get("header_icon"))
 
 	def test_a_caller_can_override_the_label(self):
 		self.assertEqual(desk.desktop_icon_fields(label="Estates")["label"], "Estates")
