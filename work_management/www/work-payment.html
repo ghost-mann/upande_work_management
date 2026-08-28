@@ -612,7 +612,6 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <button data-tab="build" aria-selected="true">Pay workers</button>
     <button data-tab="accounts" aria-selected="false">Awaiting accounts <span class="cnt" id="tab-acc-cnt" style="display:none">0</span></button>
     <button data-tab="mine" aria-selected="false">History</button>
-    <button data-tab="audit" aria-selected="false">Audit</button>
     <button data-tab="insights" aria-selected="false">Insights</button>
   </nav>
 
@@ -680,43 +679,6 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   </div>
 
   <!-- ═══════════ AUDIT ═══════════ -->
-  <div class="panel" id="p-audit">
-    <div class="sech">Payroll audit <span class="hint">confirmed actuals reconciled against assigner &amp; payment &mdash; every task</span></div>
-
-    <div class="filters">
-      <div class="fgrp">
-        <label class="fl" for="au-from">Work done from</label>
-        <input type="date" id="au-from">
-      </div>
-      <div class="fgrp">
-        <label class="fl" for="au-to">to</label>
-        <input type="date" id="au-to">
-      </div>
-      <button class="btn" id="au-apply">Apply</button>
-      <button class="btn" id="au-reset" style="border-color:var(--line);color:var(--mute)">Reset</button>
-      <span style="flex:1"></span>
-      <div class="au-view" id="au-view" role="tablist" style="display:inline-flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden">
-        <button class="btn" id="au-v-summary" data-view="summary" style="border:0;border-radius:0;box-shadow:none">Summary</button>
-        <button class="btn" id="au-v-detail" data-view="detail" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Detail</button>
-        <button class="btn" id="au-v-workers" data-view="workers" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Workers</button>
-        <button class="btn" id="au-v-disc" data-view="disc" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Discrepancies</button>
-      </div>
-      <button class="btn" id="au-print">Print / PDF</button>
-      <button class="btn pay" id="au-xlsx">Export Excel</button>
-    </div>
-
-    <div class="farmchips" id="au-farmchips"></div>
-
-    <div class="kpis" id="au-kpis" style="display:none">
-      <div class="kpi" style="--kc:var(--blue)"><div class="k">Tasks</div><div class="v" id="au-k-tasks">&mdash;</div><div class="u">confirmed actuals docs</div></div>
-      <div class="kpi" style="--kc:var(--pay)"><div class="k">Total pay</div><div class="v" id="au-k-pay">&mdash;</div><div class="u">KES &middot; confirmed</div></div>
-      <div class="kpi" style="--kc:var(--good)"><div class="k">Paid</div><div class="v" id="au-k-paid">&mdash;</div><div class="u">KES</div></div>
-      <div class="kpi" style="--kc:var(--warn)"><div class="k">Unpaid</div><div class="v" id="au-k-unpaid">&mdash;</div><div class="u">KES</div></div>
-    </div>
-
-    <div id="audit-body"><div class="loading">Pick a date range and press Apply&hellip;</div></div>
-  </div>
-
   <!-- worker detail modal -->
   <div class="modal" id="pay-detail-modal">
     <div class="modal-card wide">
