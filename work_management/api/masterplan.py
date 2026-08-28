@@ -100,8 +100,7 @@ def wm_masterplan(**kwargs):
         # guard around a doctype every screen depends on answers "no farms" rather
         # than failing, which is how a dead Master Plan screen looks from the desk.
         # The mirror asks, because live owns a `Farm` of its own; the app does not.
-        out["farms"] = [f.name for f in frappe.db.get_all(
-                "Farm", fields=["name"], order_by="name")]
+        out["farms"] = sorted(FARMS)
         out["counts"] = frappe.db.sql("""
             SELECT workflow_state st, COUNT(*) n
             FROM `tabWork Management Master Plan` GROUP BY workflow_state
