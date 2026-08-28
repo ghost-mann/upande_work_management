@@ -508,8 +508,19 @@ def validate_configuration(settings):
 	# Upande Core's Farm, unguarded: hooks.py requires that app, so the doctype is
 	# there by definition. `disabled` is not a field Core ships -- respected where
 	# a site has added one, ignored where none has.
+	#
+	# Narrowed to the farms in use, because this check refuses a save that would
+	# leave a farm with nobody to approve for it. Core's list is every farm on the
+	# site, so without narrowing, a project working four of sixteen would be made
+	# to name approvers for twelve it never plans against -- including, on
+	# kaitet.local, one called `cheptiret` belonging to a company called `dummy`.
+	from work_management.api import config
+
 	filters = {"disabled": 0} if frappe.db.has_column("Farm", "disabled") else {}
-	farms = frappe.get_all("Farm", filters=filters, pluck="name")
+	farms = config.farms_in_use(
+		frappe.get_all("Farm", filters=filters, pluck="name"),
+		[row.farm for row in (settings.get("farms_in_use") or []) if row.farm],
+	)
 	if not farms:
 		return
 

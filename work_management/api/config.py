@@ -48,6 +48,32 @@ def _farms():
 	return [row.name for row in rows], {}
 
 
+def farms_in_use(all_farms, chosen):
+	"""The farms this app offers: the chosen ones, or all of them.
+
+	Upande Core's farm list serves every Upande app on the site, so it is wider
+	than any one of them needs -- sixteen farms across eight companies on
+	kaitet.local, where this app plans work against four. Settings names the ones
+	in use, and this is where that choice narrows the app.
+
+	Empty means all, deliberately. That is what every existing site has, and a
+	setting nobody has touched must not empty the pickers on five screens.
+
+	A chosen farm Core no longer has is dropped -- a farm can be renamed there
+	without telling this app, and a name that resolves to nothing is worse in a
+	picker than an absence. But if *every* choice has gone stale the answer is
+	all of them, not none: "no farms" would take the whole app dark over a
+	rename, with nothing on screen saying why.
+
+	Pure, so both directions can be read and tested without a site.
+	"""
+	wanted = {name for name in (chosen or []) if name}
+	if not wanted:
+		return list(all_farms)
+	kept = [name for name in all_farms if name in wanted]
+	return kept or list(all_farms)
+
+
 def _farm_approver_role(settings, farms):
 	"""{farm: role} — the role that approves work for each farm.
 
@@ -128,6 +154,11 @@ def get_config():
 	# Settings -- the one thing this app knows about a farm that Upande Core does
 	# not track. Rows naming a farm Core has not got are ignored rather than
 	# added to the list: which farms exist is Core's answer alone.
+	# Narrowed to the farms this project actually works, if it has said which.
+	cfg["farms"] = farms_in_use(
+		cfg["farms"], [row.farm for row in (settings.get("farms_in_use") or []) if row.farm]
+	)
+
 	rows = settings.get("farms") or []
 	cfg["farm_project"] = {
 		row.farm: row.project

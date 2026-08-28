@@ -7,6 +7,7 @@
   "default_company",
   "block_exclude",
   "farms_section",
+  "farms_in_use",
   "farms",
   "sb_approvals",
   "approval_stages",
@@ -98,6 +99,13 @@
    "fieldname": "farms_section",
    "fieldtype": "Section Break",
    "label": "Farms"
+  },
+  {
+   "description": "The farms this project plans work against. Leave it empty and every farm in Upande Core is offered \u2014 narrow it here and the planner, assigner, actuals, payment and master plan screens offer only these. It changes what this app shows; the farms themselves, and every other Upande app, are untouched.",
+   "fieldname": "farms_in_use",
+   "fieldtype": "Table MultiSelect",
+   "label": "Farms in use",
+   "options": "Work Management Farm In Use"
   },
   {
    "description": "Each farm's cost project, and an area override where the farm's own area is not the figure to divide by. The farms themselves are Upande Core's records; a row naming a farm Core has not got is ignored.",
