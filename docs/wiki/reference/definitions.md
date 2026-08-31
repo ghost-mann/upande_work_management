@@ -1,0 +1,11 @@
+- Man-day — one worker working one day (a worker on two tasks the same day is one man-day).
+- Ha / man-day — area of the blocks whose plans were worked, divided by the man-days spent on them: how much ground one worker-day covers.
+- Cost / Ha — confirmed pay divided by the area worked: what a hectare of work costs.
+- Available worker — an active employee with no live assignment covering the chosen date.
+- Standard — the plan's daily expectation, e.g. 150 Meter/day @ KES 2.2667.
+- Presence evidence — a biometric check-in time, a Present attendance record, an Absent record, or nothing (? — unknown).
+- Farm — the unit work is planned against, whatever your project calls it.
+- Block — a Warehouse record standing for a piece of ground, optionally with its area in hectares.
+- Section — a named group of blocks. It exists only to total cost by section instead of block by block; nothing else in the module refers to one.
+- Business unit — the optional level above the farm, off until switched on in Settings, recording which unit a farm belongs to.
+- Stage — one step of an approval chain, configured in Settings.
