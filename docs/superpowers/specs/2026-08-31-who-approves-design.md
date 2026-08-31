@@ -2,7 +2,16 @@
 
 *2026-08-31*
 
-> **Status: proposed, and not endorsed.** The person who asked for this said
+> **Status: SUPERSEDED by `2026-08-31-rbac-farm-scoping-design.md`.**
+> This document argued about whether Settings should name roles or people. That
+> was the wrong layer: Frappe's User Permissions already record which farms a
+> person may touch — 127 of them on staging, across 124 users, the newest created
+> the same day this was written — and the app ignores them, which is a
+> data-visibility gap rather than a design preference. Kept because the reasoning
+> is a useful record of a wrong turn, and because its findings about role
+> granting being *ineffective* (not merely impolite) carry over unchanged.
+>
+> **Original status: proposed, and not endorsed.** The person who asked for this said
 > plainly they are "not convinced this is the best solution". This document
 > records the decision, the evidence, and — at equal length — the case against
 > it, so it can be re-opened on the argument rather than re-derived from
