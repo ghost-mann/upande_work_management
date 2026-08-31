@@ -23,6 +23,8 @@ class WorkManagementSettings(Document):
 		frappe.clear_cache(doctype="Work Management Settings")
 		approvals.sync_roles(self, previous=self.get_doc_before_save())
 		approvals.build_workflows(self)
+		# a step added in this very save has to be choosable in the approver picker
+		approvals.apply_stage_picker_options(self)
 		taxonomy.apply_labels(self)
 		# The desk navigation carries level names too, and no Property Setter
 		# reaches a Workspace Link -- without this a rename shows on the forms
