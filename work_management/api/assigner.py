@@ -268,9 +268,14 @@ def wm_assigner(**kwargs):
         present_att = {}
         night_set = {}
         absent_today = {}
-        # today's presence is shown on every worker regardless of the work window —
-        # the assigner always sees who is on site / marked absent right now
-        if emps:
+        # Today's presence, when the project asks for it. Off by default: a site
+        # without biometric hardware, or keeping attendance somewhere else, gets "?"
+        # against every worker, which reads as a finding and is not. Off, none of
+        # these reads run at all -- three queries and a shift-type scan per load.
+        asg_presence_on = frappe.utils.cint(
+            frappe.db.get_single_value("Work Management Settings", "asg_show_today_presence"))
+        out["show_today"] = asg_presence_on
+        if emps and asg_presence_on:
             emp_names2 = tuple([e.name for e in emps])
             for r in frappe.db.sql("""
                 SELECT employee, MIN(`time`) t FROM `tabEmployee Checkin`

@@ -4,14 +4,19 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "tab_general",
+  "sb_general",
   "default_company",
   "block_exclude",
+  "tab_farms",
   "farms_section",
   "farms_restrict",
   "farms",
+  "tab_approvals",
   "sb_approvals",
   "approval_stages",
   "stage_approvers",
+  "tab_taxonomy",
   "sb_taxonomy",
   "tax_bu_enabled",
   "tax_bu_singular",
@@ -24,11 +29,13 @@
   "column_break_tax2",
   "tax_section_singular",
   "tax_section_plural",
+  "tab_attendance",
   "sb_att",
   "att_block_absent",
   "att_block_leave",
   "att_block_off",
   "att_require_scan",
+  "asg_show_today_presence",
   "att_scan_cutoff",
   "att_block_noscan_actuals",
   "att_off_window_rule",
@@ -49,6 +56,7 @@
   "require_consultant_approval",
   "consultant_users",
   "master_plan_post_approval_editors",
+  "tab_rates",
   "sb_rates",
   "current_daily_wage",
   "rate_periods_html",
@@ -78,6 +86,7 @@
   "pay_week_ends_on",
   "pay_day",
   "allow_day_range",
+  "tab_branding",
   "sb_branding",
   "project_logo"
  ],
@@ -94,6 +103,21 @@
    "fieldname": "block_exclude",
    "fieldtype": "Small Text",
    "label": "Block Exclude Keywords"
+  },
+  {
+   "fieldname": "tab_general",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "sb_general",
+   "fieldtype": "Section Break",
+   "label": "Defaults"
+  },
+  {
+   "fieldname": "tab_farms",
+   "fieldtype": "Tab Break",
+   "label": "Farms"
   },
   {
    "fieldname": "farms_section",
@@ -113,6 +137,11 @@
    "fieldtype": "Table",
    "label": "Farms in use",
    "options": "WM Farm"
+  },
+  {
+   "fieldname": "tab_attendance",
+   "fieldtype": "Tab Break",
+   "label": "Attendance"
   },
   {
    "fieldname": "sb_att",
@@ -147,6 +176,13 @@
    "label": "Require a morning scan for day-of assignment",
    "default": "1",
    "description": "When an assignment window includes today (and the cutoff has passed), workers with no biometric scan and no Present attendance today need an override. Night-shift workers are exempt."
+  },
+  {
+   "fieldname": "asg_show_today_presence",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Show today's presence on the assigner",
+   "description": "On: each worker on the assigner carries a chip for today \u2014 P with the scan time when an Employee Checkin or a submitted Attendance says they are on site, A when marked Absent, ? when there is neither. Off by default, because a site without biometric hardware or with attendance kept elsewhere gets ? on every worker, which reads as information and is not. Off, the reads do not run."
   },
   {
    "fieldname": "att_scan_cutoff",
@@ -283,6 +319,11 @@
    "fieldtype": "Small Text",
    "label": "Master plan post-approval editors (comma-separated emails)",
    "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in \u2014 an administrator who must intervene already has the Desk form."
+  },
+  {
+   "fieldname": "tab_rates",
+   "fieldtype": "Tab Break",
+   "label": "Rates & Payroll"
   },
   {
    "fieldname": "sb_rates",
@@ -474,6 +515,11 @@
    "description": "Pay weeks can always be sent -- one payment per worker per completed week, which is what payroll has always received. Tick this to additionally offer paying a range you choose: one day, five days, a fortnight, up to a month. The range is grouped from the first date selected rather than into pay weeks, so it can pay a weekday the pay week above leaves out, which cannot be sent weekly at all. Ticking this changes nothing on its own -- an ordinary send still groups into pay weeks."
   },
   {
+   "fieldname": "tab_approvals",
+   "fieldtype": "Tab Break",
+   "label": "Approvals"
+  },
+  {
    "fieldname": "sb_approvals",
    "fieldtype": "Section Break",
    "label": "Approvals",
@@ -494,6 +540,11 @@
    "description": "One row per person per stage. Leave Farm empty for someone who approves every farm. On a farm-scoped stage, give each farm its own role override to stop one farm's manager approving another's."
   },
   {
+   "fieldname": "tab_branding",
+   "fieldtype": "Tab Break",
+   "label": "Branding"
+  },
+  {
    "fieldname": "sb_branding",
    "fieldtype": "Section Break",
    "label": "Branding"
@@ -503,6 +554,11 @@
    "fieldtype": "Attach Image",
    "label": "Header Logo",
    "description": "Shown in the header of the five work screens. Leave empty for the module's own wordmark."
+  },
+  {
+   "fieldname": "tab_taxonomy",
+   "fieldtype": "Tab Break",
+   "label": "Naming"
   },
   {
    "fieldname": "sb_taxonomy",
