@@ -1,0 +1,117 @@
+Farm permission audit -- last 90 days
+read from: Work Management Actuals (owner), Work Management Assigner (owner), Work Management Master Plan (owner), Work Management Payment (owner), Work Management Planner (requested_by)
+
+95 users restricted to particular farms; 0 of them worked a farm they are not permitted.
+
+RESTRICTED AND WITHIN THEIR PERMISSION -- 95 users, unaffected by enforcement
+  a.rotich@karenroses.com                  permitted Kapkolia                     worked nothing in this window
+  abbycheruto99@gmail.com                  permitted Karen                        worked nothing in this window
+  abrahamcheboi124@gmail.com               permitted Kapkolia                     worked nothing in this window
+  akiptoo@karenroses.com                   permitted Kapkolia                     worked nothing in this window
+  akiptoo@westwooddairies.com              permitted Kapkolia                     worked nothing in this window
+  amos.ndiema@karenroses.com               permitted Vale                         worked nothing in this window
+  anerima@karenroses.com                   permitted Torongo                      worked nothing in this window
+  anthony.kiptoo@westwooddairies.com       permitted Kapkolia                     worked nothing in this window
+  benard.wanyonyi@karenroses.com           permitted Vale                         worked nothing in this window
+  bnyariki@karenroses.com                  permitted Kapkolia                     worked nothing in this window
+  bramuel@lokitelaorchards.com             permitted Lokitela, Saboti, Vale       worked nothing in this window
+  brendaw@lokitelaorchards.com             permitted Saboti                       worked Saboti
+  brian.chumba@karenroses.com              permitted Chepsito, Kapkolia, Kaptumbo, Karen, Post Harvest, Simotwo, Torongo worked nothing in this window
+  caroline.kiplagat@karenroses.com         permitted Vale                         worked nothing in this window
+  carolynejepkorir24@gmail.com             permitted Endebess, Lokitela, Saboti, Vale worked nothing in this window
+  carrolynejepkorir24@gmail.com            permitted Endebess, Vale               worked nothing in this window
+  chemutairotich@karenroses.com            permitted Post Harvest                 worked nothing in this window
+  cheptoo.monicah@karenroses.com           permitted Torongo                      worked nothing in this window
+  cnafula@karenroses.com                   permitted Kapkolia                     worked nothing in this window
+  dchebii@karenroses.com                   permitted Kapkolia                     worked nothing in this window
+  dickson@westwooddairies.com              permitted Kapkolia, Torongo            worked nothing in this window
+  djoseph@karenroses.com                   permitted Chepsito                     worked nothing in this window
+  dmwiti@karenroses.com                    permitted Torongo                      worked nothing in this window
+  echeplengin@karenroses.com               permitted Torongo                      worked nothing in this window
+  ekemoi@karenroses.com                    permitted Karen                        worked nothing in this window
+  ekoech@westwooddairies.com               permitted Kapkolia, Torongo            worked nothing in this window
+  elangat@karenroses.com                   permitted Chepsito, Eldama, Kapkolia, Kaptumbo, Post Harvest, Simotwo, Torongo worked nothing in this window
+  elizabethkiplagat75@gmail.com            permitted Saboti                       worked Saboti
+  emily.masiako@karenroses.com             permitted Vale                         worked nothing in this window
+  eojal@karenroses.com                     permitted Torongo                      worked nothing in this window
+  evans.kemei@karenroses.com               permitted Kapkolia, Torongo            worked nothing in this window
+  export@karenroses.com                    permitted Karen                        worked nothing in this window
+  filex.kayecha@karenroses.com             permitted Vale                         worked nothing in this window
+  fredrick.kemboi@karenroses.com           permitted Simotwo                      worked nothing in this window
+  gachanja@lokitelaorchards.com            permitted Vale                         worked nothing in this window
+  geoffrey.mwangi@karenroses.com           permitted Kapkolia, Post Harvest       worked nothing in this window
+  gilbert.lagat@karenroses.com             permitted Kapkolia                     worked nothing in this window
+  gloria@lokitelaorchards.com              permitted Lokitela, Saboti, Vale       worked Lokitela
+  guchu@endebesscoffee.com                 permitted Endebess, Vale               worked Endebess
+  heveria@karenroses.com                   permitted Chepsito                     worked nothing in this window
+  hildacheptekei@outlook.com               permitted Endebess, Lokitela, Saboti, Vale worked Endebess
+  hkiprop@karenroses.com                   permitted Karen                        worked nothing in this window
+  hro@endebesscoffee.com                   permitted Endebess, Lokitela, Saboti, Vale worked Endebess, Lokitela, Vale, Saboti
+  imelda.mutua@karenroses.com              permitted Kapkolia                     worked nothing in this window
+  japheth.owino@karenroses.com             permitted Chepsito                     worked nothing in this window
+  jepkemoi.biwott@karenroses.com           permitted Simotwo                      worked nothing in this window
+  jkiprop@karenroses.com                   permitted Kaptumbo                     worked nothing in this window
+  jmutai@karenroses.com                    permitted Chepsito, Eldama, Kapkolia, Kaptumbo, Post Harvest, Simotwo, Torongo worked nothing in this window
+  joan.tallam@karenroses.com               permitted Chepsito, Kapkolia, Kaptumbo, Post Harvest, Simotwo, Torongo worked nothing in this window
+  jobkapten@gmail.com                      permitted Endebess                     worked nothing in this window
+  johanasolit@gmail.com                    permitted Post Harvest                 worked nothing in this window
+  john.mosigisi@karenroses.com             permitted Kapkolia                     worked nothing in this window
+  jsimiyu@karenroses.com                   permitted Chepsito, Kapkolia, Kaptumbo, Simotwo, Torongo worked nothing in this window
+  judy.karani@karenroses.com               permitted Kapkolia                     worked nothing in this window
+  justine.were@karenroses.com              permitted Chepsito, Kapkolia           worked nothing in this window
+  kibett@lokitelaorchards.com              permitted Endebess, Lokitela, Saboti, Vale worked Vale
+  kibettcheruiyot@gmail.com                permitted Lokitela, Saboti, Vale       worked nothing in this window
+  kipronov333@gmail.com                    permitted Kapkolia                     worked nothing in this window
+  kipsiseijohn@gmail.com                   permitted Endebess, Lokitela, Saboti, Vale worked nothing in this window
+  koros@westwooddairies.com                permitted Kapkolia                     worked nothing in this window
+  kstores@karenroses.com                   permitted Chepsito, Kapkolia, Kaptumbo, Karen, Post Harvest, Simotwo, Torongo worked nothing in this window
+  loice.kibet@karenroses.com               permitted Chepsito                     worked nothing in this window
+  lwadeya@karenroses.com                   permitted Torongo                      worked nothing in this window
+  maurice.koech@karenroses.com             permitted Chepsito, Kapkolia, Kaptumbo, Simotwo, Torongo worked nothing in this window
+  mercy.sang@karenroses.com                permitted Chepsito                     worked nothing in this window
+  micah.kiprotich@karenroses.com           permitted Vale                         worked nothing in this window
+  mikemilayi@gmail.com                     permitted Simotwo                      worked nothing in this window
+  mutinda@karenroses.com                   permitted Eldama, Simotwo              worked nothing in this window
+  nellymbugua6@gmail.com                   permitted Chepsito, Kapkolia, Kaptumbo, Karen, Post Harvest, Simotwo, Torongo, Westwood worked nothing in this window
+  nicholaskigen59@gmail.com                permitted Kapkolia                     worked nothing in this window
+  nicholusmutai158@gmail.com               permitted Kapkolia                     worked nothing in this window
+  ogola@lokitelaorchards.com               permitted Lokitela, Saboti, Vale       worked Saboti
+  pamela.nasimiyu@karenroses.com           permitted Vale                         worked nothing in this window
+  pjepchirchir@karenroses.com              permitted Chepsito                     worked nothing in this window
+  poultry@karenroses.com                   permitted Torongo                      worked nothing in this window
+  protus@endebesscoffee.com                permitted Endebess, Vale               worked nothing in this window
+  raymond.mulwo@karenroses.com             permitted Chepsito, Simotwo            worked nothing in this window
+  rcherutich@karenroses.com                permitted Chepsito                     worked nothing in this window
+  reuben.ruto@karenroses.com               permitted Chepsito, Kapkolia, Kaptumbo, Simotwo, Torongo worked nothing in this window
+  sabaifabian22@gmail.com                  permitted Endebess, Lokitela, Vale     worked nothing in this window
+  serem@endebesscoffee.com                 permitted Endebess, Lokitela, Saboti, Vale worked nothing in this window
+  shadrack.rotich@karenroses.com           permitted Chepsito                     worked nothing in this window
+  sheila.ayabei@karenroses.com             permitted Chepsito, Kapkolia, Kaptumbo, Simotwo, Torongo worked nothing in this window
+  srono@karenroses.com                     permitted Simotwo                      worked nothing in this window
+  stephensongok76@gmail.com                permitted Vale                         worked nothing in this window
+  susan.kibor@karenroses.com               permitted Kaptumbo                     worked nothing in this window
+  tarus@endebesscoffee.com                 permitted Endebess, Vale               worked Endebess
+  teresia.masiro@karenroses.com            permitted Kapkolia, Kaptumbo           worked nothing in this window
+  vickson.wakoli@karenroses.com            permitted Post Harvest                 worked nothing in this window
+  victorkiplabatt@gmail.com                permitted Endebess, Lokitela, Saboti, Vale worked nothing in this window
+  vlabat@karenroses.com                    permitted Chepsito, Kapkolia           worked nothing in this window
+  vngetich@karenroses.com                  permitted Kaptumbo                     worked nothing in this window
+  wakinyi@karenroses.com                   permitted Chepsito, Kapkolia, Kaptumbo, Post Harvest, Simotwo, Torongo worked nothing in this window
+  wycliffeakeza@gmail.com                  permitted Chepsito, Kapkolia, Kaptumbo, Post Harvest, Simotwo, Torongo worked nothing in this window
+  yammah@westwooddairies.com               permitted Kapkolia                     worked nothing in this window
+
+UNRESTRICTED AND ACTIVE -- 14 users, who see every farm by Frappe's own default
+  austin@upande.com                        worked Lokitela, Vale, Endebess, Saboti
+  ewachira@lokitelaorchards.com            worked Lokitela
+  gibertcheptinde@endebesscoffee.com       worked Endebess
+  godfreykisaka@endebesscoffee.com         worked Endebess
+  hlel@endebesscoffee.com                  worked Endebess
+  janetogom@endebesscoffee.com             worked Endebess
+  kkimathi@endebesscoffee.com              worked Endebess
+  philemon@endebesscoffee.com              worked Endebess
+  pkatule@lokitelaorchards.com             worked Lokitela
+  rsoita@lokitelaorchards.com              worked Saboti
+  sharonchelangat@lokitelaorchards.com     worked Vale
+  teresia@upande.com                       worked Endebess, Vale, Lokitela, Saboti
+  vincentnyawade@endebesscoffee.com        worked Endebess
+  willypius@endebesscoffee.com             worked Endebess

@@ -91,7 +91,35 @@ def wm_masterplan(**kwargs):
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
-    if action == "meta":
+    # A farm this caller is not offered is not a farm they may ask about. FARMS is
+    # the project's farm list, narrowed to the farms this person is permitted where
+    # the site has asked for that -- so the picker has already stopped offering the
+    # rest. What the picker cannot close is the request itself, and every action
+    # below reads its farm from the request: `?farm=Endebess` from somebody
+    # restricted to Saboti was answered in full, picker or no picker.
+    #
+    # So the guard sits ahead of the dispatch rather than inside the actions. There
+    # are thirty-odd places that read a farm and one that could be forgotten is one
+    # that leaks, and an action added next year gets this for free.
+    #
+    # Two things it deliberately does not refuse. A request naming no farm is a
+    # request across everything the caller may see, and FARMS already bounds that --
+    # refusing it would break the default view of every screen for everybody. And an
+    # empty FARMS means the site is unconfigured, not that this person is permitted
+    # nothing: the pickers are empty there anyway, so there is nothing to defend and
+    # a guard that fired would only break a fresh install.
+    FARM_ASKED = (frappe.form_dict.get("farm") or "").strip()
+    FARM_DENIED = ""
+    if FARM_ASKED and FARMS and FARM_ASKED not in FARMS:
+        # The farm they asked for, and no others: listing the ones they may not see
+        # would hand back exactly what the guard withholds.
+        FARM_DENIED = (FARM_ASKED + " is not a farm you are working. If it should be,"
+            " it needs adding to the farms this project works, or to the farms you"
+            " are permitted.")
+
+    if FARM_DENIED:
+        out["error"] = FARM_DENIED
+    elif action == "meta":
         out["user"] = frappe.session.user
         out["can_edit"] = CAN_EDIT
         out["can_create"] = CAN_CREATE

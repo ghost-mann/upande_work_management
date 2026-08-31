@@ -189,3 +189,76 @@ visibility gap into a loud access problem, and blames the fix.
    about to depend on them being right.
 3. **Should the pickers narrow even for unrestricted users**, to the farms in
    `farms_in_use`? They already do; this design must not undo that.
+
+---
+
+## Rollout status — 2026-08-31
+
+**Step 1, measure before enforcing: done, and it changes the risk picture.**
+
+`work_management/farm_permission_audit.py`, run against the live site over a
+90-day window, reading every Work Management record that carries both a farm and
+a person (Actuals, Assigner, Master Plan, Payment by `owner`; Planner by
+`requested_by`):
+
+> 95 users restricted to particular farms; **0 of them worked a farm they are not
+> permitted.**
+
+Nine of the 95 were active in the window and every one stayed inside their
+permission. 14 unrestricted users were active and see every farm, which is
+Frappe's own default and unchanged. The full report is in
+`docs/superpowers/farm-permission-audit-live.txt`.
+
+So the risk this spec was most worried about — "enforcement removes access
+somebody depends on" — is measured at zero on live. That answers open question 1
+for that site: no restricted user is relying on the gap.
+
+It does **not** answer it for staging, whose credentials no longer authorise
+REST, and where a consultant holds a Lokitela-only permission while working more
+than Lokitela. Staging must run the audit before enforcing:
+
+    bench --site <site> execute work_management.farm_permission_audit.print_report
+
+**Step 2, enforce the pickers: done, behind a switch that ships off.**
+
+Settings gains `farms_respect_user_permissions`, default 0. On, `get_config()`
+narrows the farm list by `permitted_farms()`. Off is today's behaviour exactly,
+on every site, with no migration to get wrong.
+
+This turned out to reach much further than "the pickers". The port strips the
+mirror's hardcoded module constants and rebuilds them from `get_config()`, so in
+the app `FARMS` *is* the config's farm list — and every per-farm loop, every
+`out["farms"]`, and the `FARM_TUPLE` `IN` queries all read it. One edit at the
+choke point narrows all of them. The spec's estimate of 103 query edits was
+measuring the wrong thing.
+
+**Step 3, the request itself: done, same switch.**
+
+Narrowing a picker does not defend an API. All six screens read their farm from
+the request, and `?farm=Endebess` from somebody restricted to Saboti was answered
+in full. Each script now carries one guard ahead of its dispatch — ahead, so that
+an action added later cannot skip it, and so that thirty-odd separate farm reads
+do not each need remembering.
+
+Verified on `kaitet.local` with a restricted probe user:
+
+| | farms offered | `?farm=Endebess` |
+|---|---|---|
+| switch off | 16 | answered, 135 pipeline rows |
+| switch on | 1 (Saboti) | refused |
+| switch on, Administrator | 16 | answered — exempt, as in Frappe |
+
+**What is still open.**
+
+- **Live is not enforcing.** Live runs Server Scripts, where `FARMS` is a
+  hardcoded four-farm list rather than `get_config()`, so the switch does nothing
+  there. Wiring it means inlining the User Permission read at the top of each
+  mirror script, since the sandbox has neither imports nor `def` — and
+  `frappe.get_all` inside a Server Script is forced to `ignore_permissions=True`
+  (`frappe/utils/safe_exec.py:307`), which is the mechanism behind the whole leak.
+  The guard added in step 3 *is* live now and does refuse a farm outside live's
+  four, which is correct but is not per-person scoping.
+- **Removing the switch** (step 4) waits on every site's audit coming back clean.
+- The three items under "What this does not solve" are unchanged: the stage
+  catalogue is still code, the job titles are still compiled in, and raw SQL is
+  still raw.
