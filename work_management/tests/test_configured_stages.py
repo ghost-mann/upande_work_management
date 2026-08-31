@@ -142,3 +142,74 @@ class TestSeedingNoLongerDeletesWhatItDoesNotRecognise(unittest.TestCase):
 		block = block[:block.index("\ndef ")]
 		self.assertIn("keep", block.lower())
 		self.assertNotIn("Rows for\n\tstages that no longer exist are dropped", block)
+
+
+class TestTheStagePickerOffersEveryConfiguredStep(unittest.TestCase):
+	"""The picker on Stage Approver was a Select with fifteen labels compiled in.
+
+	Now that a step can be added, that Select is the next thing that lies: the
+	step exists, drives a real workflow transition, and cannot be chosen in the
+	one table that names who takes it. `stage_labels()` was written for exactly
+	this -- its docstring says "Select options for Work Management Stage
+	Approver.stage_label" -- and nothing ever called it.
+	"""
+
+	def test_the_labels_come_from_the_configured_chain(self):
+		s = Settings(rows(
+			{"stage": "planner_submit", "stage_label": "Planner: Submit",
+			 "document_type": "Work Management Planner", "kind": "Submit",
+			 "state": "Draft", "action": "Go", "enabled": 1, "required": 1},
+			{"stage": "planner_finance", "stage_label": "Planner: Finance",
+			 "document_type": "Work Management Planner", "kind": "Approval",
+			 "state": "Pending Finance", "action": "Finance Approve", "enabled": 1},
+		))
+		self.assertEqual(
+			approvals.stage_labels(s), ["Planner: Submit", "Planner: Finance"]
+		)
+
+	def test_an_added_step_is_offered(self):
+		"""The whole point: a step the app never shipped is choosable."""
+		s = Settings(rows(
+			{"stage": "planner_finance", "stage_label": "Planner: Finance",
+			 "document_type": "Work Management Planner", "kind": "Approval",
+			 "state": "Pending Finance", "action": "Finance Approve", "enabled": 1},
+		))
+		self.assertIn("Planner: Finance", approvals.stage_labels(s))
+
+	def test_two_steps_may_not_share_a_label(self):
+		"""The picker stores a label, so a duplicate makes it ambiguous -- an
+		approver row would resolve to whichever step sorted first."""
+		self.assertIsNotNone(approvals.duplicate_stage_labels(
+			["Planner: Finance", "Planner: Finance"]
+		))
+		self.assertIsNone(approvals.duplicate_stage_labels(
+			["Planner: Submit", "Planner: Finance"]
+		))
+
+	def test_the_duplicate_report_names_the_label(self):
+		bad = approvals.duplicate_stage_labels(["A", "B", "A", "B", "C"])
+		self.assertIn("A", bad)
+		self.assertIn("B", bad)
+		self.assertNotIn("C", bad)
+
+	def test_the_options_are_written_where_frappe_reads_them(self):
+		"""Named once, in PICKER, rather than spelled into the function body."""
+		self.assertEqual(approvals.PICKER, ("Work Management Stage Approver", "stage_label"))
+		source = open(os.path.join(HERE, "approvals.py")).read()
+		self.assertIn("def apply_stage_picker_options", source)
+		block = source[source.index("def apply_stage_picker_options"):][:1400]
+		self.assertIn("PICKER", block)
+		self.assertIn('"options"', block)
+
+	def test_it_runs_when_the_chain_changes(self):
+		"""Adding a step and not refreshing the picker leaves the same lie in a
+		different place, so it is wired to the same events that rebuild workflows."""
+		hooks = open(os.path.join(HERE, "hooks.py")).read()
+		controller = open(os.path.join(
+			HERE, "work_management", "doctype", "work_management_settings",
+			"work_management_settings.py")).read()
+		self.assertTrue(
+			"apply_stage_picker_options" in hooks
+			or "apply_stage_picker_options" in controller,
+			"nothing refreshes the picker",
+		)

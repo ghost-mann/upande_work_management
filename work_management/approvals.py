@@ -181,9 +181,80 @@ def by_label(label, settings=None):
 	return None
 
 
-def stage_labels():
+def stage_labels(settings=None):
 	"""Select options for Work Management Stage Approver.stage_label."""
-	return [stage.label for stage in configured_stages(_settings_or_none())]
+	return [stage.label for stage in configured_stages(settings or _settings_or_none())]
+
+
+def duplicate_stage_labels(labels):
+	"""The labels used more than once, or None. Pure.
+
+	The picker stores a *label*, so two steps sharing one make it ambiguous: an
+	approver row would resolve to whichever step sorted first, and nothing would
+	say so. Cheap to refuse on save; impossible to diagnose later.
+	"""
+	seen = set()
+	twice = []
+	for label in labels:
+		name = (label or "").strip()
+		if not name:
+			continue
+		if name in seen and name not in twice:
+			twice.append(name)
+		seen.add(name)
+	return ", ".join(twice) if twice else None
+
+
+PICKER = ("Work Management Stage Approver", "stage_label")
+
+
+def apply_stage_picker_options(settings=None):
+	"""Offer every configured step in the picker that names who takes it.
+
+	The Select shipped with fifteen labels compiled into its JSON. Once a step can
+	be added, that Select lies: the step exists, drives a real transition, and
+	cannot be chosen in the one table that names its approvers.
+
+	A Property Setter rather than an edit to the shipped JSON, following what
+	taxonomy.apply_labels() does -- the app's own files stay identical on every
+	site, and a site whose chain is the shipped one carries no setter at all.
+
+	Returns the options written, or None when nothing needed changing.
+	"""
+	import frappe
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	doctype, fieldname = PICKER
+	if not frappe.db.exists("DocType", doctype):
+		return None
+
+	labels = stage_labels(settings)
+	if not labels:
+		return None
+	wanted = "\n".join(labels)
+
+	shipped = "\n".join(stage.label for stage in CATALOGUE)
+	filters = {"doc_type": doctype, "field_name": fieldname, "property": "options"}
+	existing = frappe.db.get_value("Property Setter", filters, ["name", "value"], as_dict=True)
+
+	if wanted == shipped:
+		# the chain is the shipped one, so the JSON already says this. Remove the
+		# setter rather than writing the original back over it -- a site that never
+		# added a step ends up carrying nothing, which is how the taxonomy does it.
+		if existing:
+			frappe.delete_doc("Property Setter", existing.name, force=True,
+				ignore_permissions=True)
+			frappe.clear_cache(doctype=doctype)
+			return None
+		return None
+
+	if existing and existing.value == wanted:
+		return labels
+
+	make_property_setter(doctype, fieldname, "options", wanted, "Text",
+		validate_fields_for_doctype=False)
+	frappe.clear_cache(doctype=doctype)
+	return labels
 
 
 def chain_for(document_type):
@@ -591,7 +662,23 @@ def validate_configuration(settings):
 	transition per farm. A farm nobody approves for has no transition at all, so
 	its documents would sit in that state with no way out. Better to say so on
 	save than to discover it when a plan cannot be approved.
+
+	And two steps may not share a name. The table that names who takes a step
+	stores its *label*, so a duplicate makes it ambiguous -- an approver row would
+	resolve to whichever step sorted first, silently. Cheap to refuse here;
+	impossible to diagnose later.
 	"""
+	clash = duplicate_stage_labels(
+		[row.stage_label for row in (settings.get("approval_stages") or [])]
+	)
+	if clash:
+		frappe.throw(
+			_("More than one approval step is called {0}. The table that names who takes a step stores its name, so two steps sharing one cannot be told apart — give each step its own.").format(
+				frappe.bold(clash)
+			),
+			title=_("Two steps with the same name"),
+		)
+
 	rows = stage_rows(settings)
 	# Upande Core's Farm, unguarded: hooks.py requires that app, so the doctype is
 	# there by definition. `disabled` is not a field Core ships -- respected where
@@ -643,4 +730,6 @@ def after_migrate():
 	seed_stages()
 	frappe.clear_cache(doctype="Work Management Settings")
 	build_workflows()
+	# the picker that names who takes a step must offer the steps that exist
+	apply_stage_picker_options()
 	frappe.db.commit()
