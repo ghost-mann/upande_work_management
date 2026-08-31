@@ -80,3 +80,34 @@ class TestResolution(unittest.TestCase):
 		a = resolve_master_plan("", ["WMMP-2", "WMMP-1"])[1]
 		b = resolve_master_plan("", ["WMMP-1", "WMMP-2"])[1]
 		self.assertEqual(a, b)
+
+
+class TestTheFields(unittest.TestCase):
+	def test_the_plan_carries_a_purpose(self):
+		"""Two Saboti plans for August are otherwise two numbers in a picker."""
+		f = field("work_management_master_plan", "plan_name")
+		self.assertIsNotNone(f)
+		self.assertEqual(f["fieldtype"], "Data")
+		self.assertFalse(f.get("reqd"), "a plan raised before this field existed has none")
+
+	def test_the_purpose_is_what_a_plan_is_titled_by(self):
+		"""title_field was `farm`, so two plans for one farm rendered identically
+		in every link field and list. Frappe falls back to the docname where the
+		purpose is empty, which is the old behaviour for older plans."""
+		self.assertEqual(shipped("work_management_master_plan").get("title_field"), "plan_name")
+
+	def test_the_request_carries_its_plan(self):
+		f = field("work_management_planner", "master_plan")
+		self.assertIsNotNone(f)
+		self.assertEqual(f["fieldtype"], "Link")
+		self.assertEqual(f["options"], "Work Management Master Plan")
+
+	def test_the_link_is_not_reqd_on_the_doctype(self):
+		"""Enforced in save(), where it can be conditional: a farm with no plan at
+		all must still raise requests, and 1,578 rows predate the field."""
+		self.assertFalse(field("work_management_planner", "master_plan").get("reqd"))
+
+	def test_the_request_does_not_let_someone_type_it_in(self):
+		"""The screen sets it from the plan that was chosen. Typed by hand it
+		would name a budget nobody picked."""
+		self.assertTrue(field("work_management_planner", "master_plan").get("read_only"))

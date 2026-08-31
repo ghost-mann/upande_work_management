@@ -9,6 +9,7 @@
  "field_order": [
   "naming_series",
   "farm",
+  "plan_name",
   "workflow_state",
   "cb_mp_top",
   "period_from",
@@ -47,6 +48,13 @@
    "label": "Farm",
    "options": "Farm",
    "reqd": 1
+  },
+  {
+   "fieldname": "plan_name",
+   "fieldtype": "Data",
+   "label": "Purpose",
+   "in_list_view": 1,
+   "description": "What this plan is for \u2014 Field operations, Replanting. A farm may hold more than one plan over the same dates, and this is how a person tells them apart."
   },
   {
    "fieldname": "workflow_state",
@@ -216,6 +224,6 @@
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
- "title_field": "farm",
+ "title_field": "plan_name",
  "track_changes": 1
 }
