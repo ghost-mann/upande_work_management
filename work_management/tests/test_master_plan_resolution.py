@@ -145,3 +145,33 @@ class TestOverlapNoLongerBlocks(unittest.TestCase):
 		block = self.src[self.src.index('action == "period_free"'):][:1800]
 		self.assertIn('out["free"] = 1', block)
 		self.assertNotIn('out["free"] = 0', block)
+
+
+class TestThePlannerStoresIt(unittest.TestCase):
+	"""save() and tasks() take the plan from the request, not from its dates."""
+
+	def setUp(self):
+		self.src = ported("planner")
+
+	def test_it_reads_a_named_plan_from_the_request(self):
+		self.assertIn('frappe.form_dict.get("master_plan")', self.src)
+
+	def test_it_writes_the_link_onto_the_document(self):
+		self.assertIn("d.master_plan =", self.src)
+
+	def test_the_cap_lookup_no_longer_takes_the_first_plan_by_period(self):
+		"""`ORDER BY period_from DESC LIMIT 1` is the bug once two plans overlap:
+		it picks one silently, and draws the work down against it."""
+		block = self.src[self.src.index("MASTER PLAN CAP"):][:1600]
+		self.assertNotIn("LIMIT 1", block)
+
+	def test_the_task_list_no_longer_takes_the_first_plan_by_period(self):
+		block = self.src[self.src.index('action == "tasks"'):][:1600]
+		self.assertNotIn("LIMIT 1", block)
+
+	def test_it_refuses_when_two_plans_cover_the_dates_and_none_is_named(self):
+		"""Mirrors resolve_master_plan(). The wording has to name both plans."""
+		self.assertIn("More than one approved master plan covers these dates", self.src)
+
+	def test_it_refuses_a_named_plan_that_does_not_cover_the_dates(self):
+		self.assertIn("does not cover this request's farm and dates", self.src)
