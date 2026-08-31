@@ -694,7 +694,8 @@ def validate_configuration(settings):
 	filters = {"disabled": 0} if frappe.db.has_column("Farm", "disabled") else {}
 	farms = config.farms_in_use(
 		frappe.get_all("Farm", filters=filters, pluck="name"),
-		[row.farm for row in (settings.get("farms_in_use") or []) if row.farm],
+		[row.farm for row in (settings.get("farms") or []) if row.farm],
+		restrict=bool(settings.get("farms_restrict")),
 	)
 	if not farms:
 		return

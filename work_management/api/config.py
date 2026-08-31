@@ -48,8 +48,14 @@ def _farms():
 	return [row.name for row in rows], {}
 
 
-def farms_in_use(all_farms, chosen):
-	"""The farms this app offers: the chosen ones, or all of them.
+def farms_in_use(all_farms, chosen, restrict=True):
+	"""The farms this app offers: the listed ones when restricted, else all.
+
+	`restrict` is the Settings checkbox. Off -- the default -- the rows exist only
+	to carry each farm's cost project and area, and every farm in Upande Core is
+	offered. That matters: a row added to give Lokitela its cost project must not
+	hide the fifteen farms nobody mentioned, and when the list and the narrowing
+	were one and the same it did exactly that.
 
 	Upande Core's farm list serves every Upande app on the site, so it is wider
 	than any one of them needs -- sixteen farms across eight companies on
@@ -67,6 +73,8 @@ def farms_in_use(all_farms, chosen):
 
 	Pure, so both directions can be read and tested without a site.
 	"""
+	if not restrict:
+		return list(all_farms)
 	wanted = {name for name in (chosen or []) if name}
 	if not wanted:
 		return list(all_farms)
@@ -154,12 +162,15 @@ def get_config():
 	# Settings -- the one thing this app knows about a farm that Upande Core does
 	# not track. Rows naming a farm Core has not got are ignored rather than
 	# added to the list: which farms exist is Core's answer alone.
-	# Narrowed to the farms this project actually works, if it has said which.
+	rows = settings.get("farms") or []
+	# One table, and one visible switch over whether it narrows. The rows always
+	# carry the cost project; they only decide which farms exist when asked to.
 	cfg["farms"] = farms_in_use(
-		cfg["farms"], [row.farm for row in (settings.get("farms_in_use") or []) if row.farm]
+		cfg["farms"],
+		[row.farm for row in rows if row.farm],
+		restrict=bool(settings.get("farms_restrict")),
 	)
 
-	rows = settings.get("farms") or []
 	cfg["farm_project"] = {
 		row.farm: row.project
 		for row in rows

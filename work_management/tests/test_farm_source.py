@@ -130,10 +130,10 @@ class TestTheFarmDoctypeIsGone(unittest.TestCase):
 		"""The count is asserted so a field cannot quietly stop being a farm.
 
 		A future field that should carry a farm and does not would otherwise pass
-		every other test here. Eleven: the nine on this app's own doctypes, the
-		Settings farms table, and the farms-in-use picker.
+		every other test here. Ten: the nine on this app's own doctypes and the
+		Settings farms table, which is now the only place farms are configured.
 		"""
-		self.assertEqual(len(links_to("Farm")), 11)
+		self.assertEqual(len(links_to("Farm")), 10)
 
 	def test_the_app_no_longer_ships_a_farm_doctype(self):
 		from work_management import install
