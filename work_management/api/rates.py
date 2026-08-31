@@ -21,6 +21,12 @@ def wm_rates(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
 
     # ==================================================================
+    # Master plan attribution: reads a plan's own budget lines, and deliberately
+    # takes every plan whose period overlaps the rate window. A rate change should
+    # revalue every plan's lines for that task in that window -- so a farm holding
+    # two plans over the same days gets both revalued, which is correct rather than
+    # doubled. Nothing here attributes a REQUEST to a plan, which is the read that
+    # needed the stored link.
     # SERVER SCRIPT — "WM Rates" (API, api_method=wm_rates)
     # Effective-dated task rates + wage recalculation.
     #

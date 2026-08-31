@@ -3477,9 +3477,11 @@ def wm_dashboard(**kwargs):
                 SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c, COUNT(*) n
                 FROM `tabWork Management Planner`
                 WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
-                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                  AND (master_plan = %(plan)s
+                       OR (IFNULL(master_plan,'') = ''
+                           AND from_date >= %(pfrom)s AND to_date <= %(pto)s))
                 GROUP BY task
-            """, {"f": at_p.farm, "pfrom": at_p.period_from, "pto": at_p.period_to}, as_dict=True):
+            """, {"f": at_p.farm, "plan": at_p.name, "pfrom": at_p.period_from, "pto": at_p.period_to}, as_dict=True):
                 at_req[at_r.task] = at_r
             at_done = {}
             for at_d in frappe.db.sql("""
@@ -3489,10 +3491,12 @@ def wm_dashboard(**kwargs):
                 INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
                 INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
                 WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
-                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                  AND (pr.master_plan = %(plan)s
+                       OR (IFNULL(pr.master_plan,'') = ''
+                           AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s))
                   AND ac.workflow_state = 'CONFIRMED'
                 GROUP BY pr.task
-            """, {"f": at_p.farm, "pfrom": at_p.period_from, "pto": at_p.period_to}, as_dict=True):
+            """, {"f": at_p.farm, "plan": at_p.name, "pfrom": at_p.period_from, "pto": at_p.period_to}, as_dict=True):
                 at_done[at_d.task] = at_d
             for at_a in frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": at_p.name, "consultant_state": "OK"},
@@ -3559,20 +3563,24 @@ def wm_dashboard(**kwargs):
                 INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
                 WHERE pr.farm = %(f)s AND pr.task = %(t)s
                   AND IFNULL(pr.workflow_state,'') != 'Rejected'
-                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                  AND (pr.master_plan = %(plan)s
+                       OR (IFNULL(pr.master_plan,'') = ''
+                           AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s))
                   AND ac.workflow_state = 'CONFIRMED'
                 GROUP BY ac.from_date ORDER BY ac.from_date
             """, {"f": as_p.farm, "t": as_a.task,
-                  "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
+                  "plan": as_a.parent, "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
             out["requests"] = frappe.db.sql("""
                 SELECT name, from_date, to_date, quantity, total_cost, workflow_state, block_section
                 FROM `tabWork Management Planner`
                 WHERE farm = %(f)s AND task = %(t)s
                   AND IFNULL(workflow_state,'') != 'Rejected'
-                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                  AND (master_plan = %(plan)s
+                       OR (IFNULL(master_plan,'') = ''
+                           AND from_date >= %(pfrom)s AND to_date <= %(pto)s))
                 ORDER BY from_date
             """, {"f": as_p.farm, "t": as_a.task,
-                  "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
+                  "plan": as_a.parent, "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
 
     elif action == "task_names":
         # {task docname: subject}, so a screen can print what a task is called rather
