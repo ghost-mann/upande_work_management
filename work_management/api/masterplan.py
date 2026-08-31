@@ -1083,7 +1083,9 @@ def wm_masterplan(**kwargs):
         if not pt_farm:
             out["error"] = "farm is required"
         elif not pt_proj:
-            out["error"] = "no project is mapped for farm: " + str(pt_farm)
+            out["error"] = (str(pt_farm) + " has no cost project, so there are no tasks "
+                            "to offer: a plan's activities come from its farm's project. "
+                            "Set one in Work Management Settings, in the Farms table.")
         else:
             out["project"] = pt_proj
             pt_out = []
