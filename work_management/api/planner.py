@@ -90,15 +90,28 @@ def wm_planner(**kwargs):
         # The named plan decides which activities are on offer. Two plans can cover
         # these dates and budget the same activity from different money, so taking the
         # first by period would offer the wrong list -- and let a request draw down a
-        # budget nobody chose. Nothing named with one candidate is unambiguous and is
-        # used, which keeps a farm with a single budget working exactly as before.
+        # budget nobody chose. resolve_master_plan(), inlined; keep in step with
+        # work_management/master_plan.py.
+        tk_names = []
+        for tk_c in tk_all:
+            if tk_c.name:
+                tk_names.append(tk_c.name)
+        tk_pick = None
+        tk_ambiguous = None
+        if tk_named:
+            if tk_named in tk_names:
+                tk_pick = tk_named
+        elif len(tk_names) > 1:
+            # Nothing named and more than one budget: which activities are on offer
+            # genuinely depends on which one, so the screen has to ask. Offering the
+            # first plan's list would be a guess dressed up as an answer.
+            tk_ambiguous = sorted(tk_names)
+        elif tk_names:
+            tk_pick = tk_names[0]
         tk_mp = []
         for tk_c in tk_all:
-            if not tk_named or tk_c.name == tk_named:
+            if tk_c.name == tk_pick:
                 tk_mp.append(tk_c)
-                break
-        if tk_named and len(tk_all) > 1 and not tk_mp:
-            tk_mp = []
         tasks = []
         if not tk_mp:
             out["master_plan"] = None
@@ -118,7 +131,12 @@ def wm_planner(**kwargs):
             # "no approved master plan" about a plan that is plainly approved reads as
             # the system losing it. Name the period and what to do instead.
             tk_a = tk_any[0] if tk_any else None
-            if tk_a and tk_a.workflow_state == "Approved":
+            if tk_ambiguous:
+                tk_why = (str(farm) + " has more than one approved master plan over " +
+                          str(tk_from) + " to " + str(tk_to) + ": " +
+                          ", ".join(tk_ambiguous) +
+                          ". Pick the one this work is planned against.")
+            elif tk_a and tk_a.workflow_state == "Approved":
                 tk_why = ("This request runs " + str(tk_from) + " to " + str(tk_to) + ", but " +
                           tk_a.name + " budgets " + str(farm) + " only from " +
                           str(tk_a.period_from) + " to " + str(tk_a.period_to) + ". Plan within "
@@ -185,7 +203,7 @@ def wm_planner(**kwargs):
             out["budgets"] = []
         else:
             out["budgets"] = frappe.db.sql("""
-                SELECT mp.name, mp.period_from, mp.period_to, mp.total_cost,
+                SELECT mp.name, mp.plan_name, mp.period_from, mp.period_to, mp.total_cost,
                        (SELECT COUNT(*) FROM `tabWork Management Master Plan Activity` a
                          WHERE a.parent = mp.name AND a.consultant_state = 'OK') activities
                 FROM `tabWork Management Master Plan` mp

@@ -1136,7 +1136,8 @@
   function loadPlannableTasks(){
     var sel=el("f-task"); if(!sel || !ST.farm) return;
     var f=el("f-from").value, t=el("f-to").value;
-    call({action:"tasks", farm:ST.farm, from_date:f||"", to_date:t||""}).then(function(d){
+    call({action:"tasks", farm:ST.farm, from_date:f||"", to_date:t||"",
+          master_plan:ST.masterPlan||""}).then(function(d){
       ST.tasks=d.tasks||[];
       ST.lastTasks=d;
       ST.blocked = d.blocked_reason || null;
@@ -1307,7 +1308,14 @@
       return;
     }
     bar.style.display=""; btn.style.display="none";
-    var inside = buds.filter(function(b){ return (!f||f>=b.period_from) && (!t||t<=b.period_to); }).length>0;
+    var covering = buds.filter(function(b){ return (!f||f>=b.period_from) && (!t||t<=b.period_to); });
+    var inside = covering.length>0;
+    // Exactly one plan covers these dates, so there is nothing to choose and
+    // nothing changes for a farm with a single budget. Two or more and the choice
+    // is the person's; leaving it unset is what makes the server ask for it.
+    if(covering.length===1) ST.masterPlan = covering[0].name;
+    else if(covering.length!==1 && ST.masterPlan &&
+            !covering.filter(function(b){ return b.name===ST.masterPlan; }).length) ST.masterPlan = "";
     bar.className = inside ? "mp-period" : "mp-period out";
     var h = (inside
       ? "Plan period &mdash; the request must fit inside one:"
@@ -1317,13 +1325,19 @@
     buds.forEach(function(b){
       var on = (active===b.name) || (b.period_from===f && b.period_to===t);
       h += '<button type="button" class="bud'+(on?" on":"")+'" data-bf="'+esc(b.period_from)+
-           '" data-bt="'+esc(b.period_to)+'">'+esc(b.name)+
+           '" data-bt="'+esc(b.period_to)+'" data-bn="'+esc(b.name)+'">'+
+           esc(b.plan_name||b.name)+
            '<span>'+esc(b.period_from)+' &rarr; '+esc(b.period_to)+
            ' · '+fmt(b.activities)+' activit'+(b.activities===1?"y":"ies")+'</span></button>';
     });
     txt.innerHTML = h+"</div>";
     bar.querySelectorAll("[data-bf]").forEach(function(x){
       x.onclick=function(){
+        // Which plan, not only which dates. A farm may hold two plans over the
+        // same days, budgeting the same activity from different money, so the
+        // dates cannot say which budget this request draws down -- the person
+        // choosing the chip can, and the answer travels with the request.
+        ST.masterPlan = x.getAttribute("data-bn") || "";
         boundDatesToPlan(x.getAttribute("data-bf"), x.getAttribute("data-bt"));
         syncSlider(); recalc(); loadPlannableTasks();
       };
@@ -1508,7 +1522,8 @@
   function doSubmit(submitNow){
     var args={ action:"submit", farm:ST.farm, blocks:pickedList().join(","), task:ST.task,
       quantity:parseFloat(el("f-qty").value)||0,
-      from_date:el("f-from").value, to_date:el("f-to").value };
+      from_date:el("f-from").value, to_date:el("f-to").value,
+      master_plan:ST.masterPlan||"" };
     if(submitNow) args.submit_now=1;
     if(ST.editingPlan) args.plan=ST.editingPlan;
     el("b-draft").disabled=true; el("b-submit").disabled=true;
