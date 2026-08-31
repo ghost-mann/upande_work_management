@@ -80,12 +80,25 @@ def wm_planner(**kwargs):
         farm = frappe.form_dict.get("farm")
         tk_from = frappe.form_dict.get("from_date") or frappe.utils.today()
         tk_to = frappe.form_dict.get("to_date") or tk_from
-        tk_mp = frappe.db.sql("""
+        tk_named = frappe.form_dict.get("master_plan") or ""
+        tk_all = frappe.db.sql("""
             SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
             WHERE farm = %(f)s AND workflow_state = 'Approved'
               AND period_from <= %(from)s AND period_to >= %(to)s
-            ORDER BY period_from DESC LIMIT 1
+            ORDER BY period_from DESC
         """, {"f": farm, "from": tk_from, "to": tk_to}, as_dict=True)
+        # The named plan decides which activities are on offer. Two plans can cover
+        # these dates and budget the same activity from different money, so taking the
+        # first by period would offer the wrong list -- and let a request draw down a
+        # budget nobody chose. Nothing named with one candidate is unambiguous and is
+        # used, which keeps a farm with a single budget working exactly as before.
+        tk_mp = []
+        for tk_c in tk_all:
+            if not tk_named or tk_c.name == tk_named:
+                tk_mp.append(tk_c)
+                break
+        if tk_named and len(tk_all) > 1 and not tk_mp:
+            tk_mp = []
         tasks = []
         if not tk_mp:
             out["master_plan"] = None
@@ -342,19 +355,47 @@ def wm_planner(**kwargs):
             # A plan may only be raised for an activity the approved master plan
             # allows, and only up to its budgeted quantity and cost. Mirrors
             # check_plan_allowed() in upande_work_management/master_plan.py.
-            cap_mp = frappe.db.sql("""
+            mp_named = frappe.form_dict.get("master_plan") or ""
+            cap_all = frappe.db.sql("""
                 SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
                 WHERE farm = %(f)s AND workflow_state = 'Approved'
                   AND period_from <= %(from)s AND period_to >= %(to)s
-                ORDER BY period_from DESC LIMIT 1
+                ORDER BY period_from DESC
             """, {"f": farm, "from": from_date, "to": to_date}, as_dict=True)
+            cap_names = []
+            for cap_c in cap_all:
+                if cap_c.name:
+                    cap_names.append(cap_c.name)
+            # resolve_master_plan(), inlined -- no def in the sandbox. Keep in step
+            # with work_management/master_plan.py, which is unit-tested. The link the
+            # request carries wins; nothing named with one candidate resolves to it,
+            # which is how requests raised before the field keep working; two
+            # candidates refuses rather than guesses, because guessing which budget
+            # work came from is the whole error this exists to prevent.
+            cap_pick = None
             cap_err = None
             cap_line = None
-            if not cap_mp:
+            if mp_named:
+                if mp_named in cap_names:
+                    cap_pick = mp_named
+                else:
+                    cap_err = (mp_named + " does not cover this request's farm and dates. "
+                               "Choose a master plan whose period contains them.")
+            elif not cap_names:
                 cap_err = ("No approved master plan covers " + str(from_date) + " to " +
                            str(to_date) + " for " + str(farm) +
                            ". A master plan must be approved before work can be planned.")
+            elif len(cap_names) > 1:
+                cap_err = ("More than one approved master plan covers these dates: " +
+                           ", ".join(sorted(cap_names)) +
+                           ". Say which one this work is planned against.")
             else:
+                cap_pick = cap_names[0]
+            cap_mp = []
+            for cap_c in cap_all:
+                if cap_c.name == cap_pick:
+                    cap_mp.append(cap_c)
+            if not cap_err:
                 cm = cap_mp[0]
                 cap_rows = frappe.db.sql("""
                     SELECT name, work_qty, cost FROM `tabWork Management Master Plan Activity`
@@ -417,6 +458,9 @@ def wm_planner(**kwargs):
                 else:
                     d = frappe.new_doc("Work Management Planner")
                 d.farm = farm; d.company = DEFAULT_COMPANY; d.block_section = primary
+                # The budget this request draws against, recorded rather than inferred.
+                # Once two plans can cover one period the dates no longer identify one.
+                d.master_plan = cap_pick
                 i = 0
                 for b in block_list:
                     if i > 0:
