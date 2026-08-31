@@ -208,3 +208,41 @@ class TestTheDashboardDoesNotDoubleCount(unittest.TestCase):
 		self.assertIn("pr.master_plan mp", block)
 		self.assertIn("dv.mp == mp.name", block)
 		self.assertIn("LEFT JOIN", block)
+
+
+class TestTheRemainingScriptsWereAudited(unittest.TestCase):
+	"""Each of these either attributes work to a plan or does not.
+
+	The conclusion is recorded in the module so a future reader knows the question
+	was asked and answered, rather than that nobody looked. Two of the five places
+	I expected to be harmless were not -- activity_table and activity_series both
+	iterate per plan and summed planner rows by containment -- which is the reason
+	this is a test and not a note in a commit message.
+	"""
+
+	AUDITED = ("payment", "payroll", "rates")
+
+	def test_each_audited_module_records_what_it_concluded(self):
+		for module in self.AUDITED:
+			self.assertIn("Master plan attribution:", ported(module), module)
+
+	def test_the_two_per_plan_dashboard_actions_use_the_link(self):
+		"""Both iterate one plan at a time, so containment alone counted a request
+		against every plan whose period contained it."""
+		src = ported("dashboard")
+		for marker in ('action == "activity_table"', 'action == "activity_series"'):
+			block = src[src.index(marker):][:5000]
+			self.assertIn("master_plan", block, marker)
+
+	def test_every_query_using_the_plan_parameter_is_passed_it(self):
+		"""The same query appears at several indentations, and a pattern that
+		matched one silently missed the others. This is what caught the last three."""
+		import re
+
+		src = ported("dashboard")
+		sqls = re.findall(r"frappe\.db\.sql\((.*?as_dict=True\)|.*?\)\[0\])", src, re.S)
+		mismatched = [
+			q.replace("\n", " ")[:90] for q in sqls
+			if ("%(plan)s" in q) != ('"plan":' in q)
+		]
+		self.assertEqual(mismatched, [], "\n".join(mismatched))

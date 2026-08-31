@@ -21,6 +21,11 @@ def wm_payment(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
 
     # ==================================================================
+    # Master plan attribution: none. Every period_from/period_to in this script is
+    # the PAYMENT's own pay period -- the week a run covers -- not a master plan's.
+    # Nothing here attributes work to a budget, so nothing changed when a farm became
+    # able to hold two plans over the same days. Checked line by line rather than
+    # assumed.
     # SERVER SCRIPT — "WM Payment" (API, api_method=wm_payment)
     # Powers: Planner + Assigner (a_) + Actuals (act_) + Payment (pay_) + dash
     # Multi-block planner (Option A) + fast grouped-query dashboard.

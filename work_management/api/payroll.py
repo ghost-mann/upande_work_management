@@ -21,6 +21,8 @@ def wm_payroll(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
 
     # ==================================================================
+    # Master plan attribution: none. period_to here is the PAYMENT's pay week, which
+    # is what a payroll date is derived from. No master plan is read at all.
     # SERVER SCRIPT — "WM Payroll" (API, api_method=wm_payroll)
     #
     # Work Management Payment -> ERPNext payroll.
