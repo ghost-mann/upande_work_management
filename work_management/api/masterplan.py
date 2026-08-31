@@ -27,8 +27,11 @@ def wm_masterplan(**kwargs):
     # period, how much work each may cover and what it may cost.
     #
     # These are CUSTOM doctypes on live and therefore carry no Python controller,
-    # so every invariant -- no overlapping approved plans for a farm, one line per
-    # task, totals, and who may do what -- is enforced here.
+    # so every invariant -- one line per task, totals, and who may do what -- is
+    # enforced here. "No overlapping plans for a farm" used to be on that list. It
+    # was only ever load-bearing because nothing recorded which plan a request
+    # belonged to; now that the request carries the link, a farm may hold separate
+    # budgets over the same days and an overlap is reported rather than refused.
     #
     # The cap arithmetic mirrors upande_work_management/master_plan.py, which is
     # unit-tested. Keep the two in step.
@@ -125,7 +128,12 @@ def wm_masterplan(**kwargs):
                   AND period_from <= %(to)s AND period_to >= %(from)s
                 LIMIT 1
             """, {"f": pf_farm, "me": pf_me, "to": pf_to, "from": pf_from}, as_dict=True)
-            out["free"] = 0 if pf_c else 1
+            # Always free. A farm may hold more than one plan over the same days --
+            # separate streams of work, each with its own budget -- and which plan a
+            # request draws against is now recorded on the request rather than
+            # inferred from its dates. The clash is still reported below, because a
+            # second plan raised by accident looks exactly like one raised on purpose.
+            out["free"] = 1
             if pf_c:
                 out["clash"] = pf_c[0].name
                 out["clash_from"] = str(pf_c[0].period_from)
@@ -294,10 +302,12 @@ def wm_masterplan(**kwargs):
                 else:
                     sv_err = ("Only a farm manager, the HR head or the general manager can "
                               "raise a new master plan.")
-            # ONE PLAN PER FARM PER PERIOD, and it is refused here -- at the moment of
-            # writing -- rather than at approval. Checking only against Approved plans
-            # let several people raise competing budgets for the same dates, take them
-            # all through review, and lose all but one at the GM's desk. Every plan that
+            # AN OVERLAPPING PLAN IS REPORTED HERE -- at the moment of writing, rather
+            # than at approval, because that is when it is cheapest to notice. This
+            # used to refuse: checking only against Approved plans let several people
+            # raise competing budgets for the same dates, take them all through review,
+            # and lose all but one at the GM's desk. It no longer refuses, because a
+            # farm running two streams of work needs two budgets. Every plan that
             # is not Rejected holds its period: a farm's budget for a stretch of days is
             # one cumulative document, and a second one for the same days cannot exist.
             if not sv_err:
@@ -311,11 +321,18 @@ def wm_masterplan(**kwargs):
                 """, {"f": sv_farm, "me": sv_name or "", "to": sv_to, "from": sv_from}, as_dict=True)
                 if sv_clash:
                     sv_c = sv_clash[0]
-                    sv_err = (str(sv_farm) + " already has a master plan covering those dates: " +
-                              sv_c.name + " (" + str(sv_c.period_from) + " to " +
-                              str(sv_c.period_to) + ", " + str(sv_c.workflow_state) + "). " +
-                              "A farm has one budget per period — put this work on " + sv_c.name +
-                              " instead of raising a second plan, or choose dates outside it.")
+                    # Reported, not refused. This was an invariant because nothing
+                    # recorded which plan a request belonged to, so one budget per
+                    # period was what made that inference safe. The request carries the
+                    # answer now. What is left is worth saying anyway: raising the same
+                    # plan twice by mistake looks identical to raising a deliberate
+                    # second one, and this is the cheapest moment to notice.
+                    out["clash_warning"] = (
+                        str(sv_farm) + " already has a master plan over these dates: " +
+                        sv_c.name + " (" + str(sv_c.period_from) + " to " +
+                        str(sv_c.period_to) + ", " + str(sv_c.workflow_state) +
+                        "). A second one is allowed — give each a purpose so they can "
+                        "be told apart.")
                     out["clash"] = sv_c.name
                     out["clash_from"] = str(sv_c.period_from)
                     out["clash_to"] = str(sv_c.period_to)
