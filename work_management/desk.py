@@ -326,13 +326,20 @@ def hide_links_to_missing_doctypes():
 	return changed
 
 
-# The apps-screen logo. Shipped by this app rather than borrowed from a
-# neighbour: upande_sensors and upande_ta each carry their own copy of the Upande
-# logo instead of pointing at one another, and an icon that pointed at
-# /assets/upande_webshop/... would break on a site without webshop. hooks.py
-# add_to_apps_screen names the same file, so the apps screen and the desk's app
-# switcher draw the same picture.
-LOGO_URL = "/assets/work_management/images/work-management-logo.svg"
+# The apps-screen logo: the Upande mark, not an app-specific one. This is
+# Upande's tile on Upande's apps screen, and every sibling app uses the same
+# picture -- upande_core, upande_sensors, upande_ta and upande_webshop all do.
+#
+# Shipped as this app's own copy rather than pointed at a neighbour's. Each of
+# those apps carries its own too, and an icon aimed at /assets/upande_core/...
+# would break on a site without Core -- which cannot happen today, since
+# required_apps names it, but the icon should not depend on that staying true.
+#
+# hooks.py add_to_apps_screen names the same file, so the apps screen and the
+# desk's app switcher draw the same picture. The app's own wordmark is still the
+# header logo on the five screens (see api/config.DEFAULT_HEADER_LOGO): that is
+# a title inside the app, where naming the app is the point.
+LOGO_URL = "/assets/work_management/images/upande-logo.png"
 
 
 def desktop_icon_fields(label=None):
