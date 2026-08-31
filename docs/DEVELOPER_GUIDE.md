@@ -206,6 +206,39 @@ One thing on that doctype is *not* ours and should not be read as ours:
 `kephis_farm_id`, fields Core's `Farm` does not have. It is inert — Frappe falls
 back to Core's own order — but it is there.
 
+### A request records which budget it drew against
+
+A farm may hold more than one master plan over the same days — field operations
+and a replanting project, each with its own budget. That was impossible until
+`Work Management Planner` gained `master_plan`, and the two facts are the same
+fact: nothing recorded which plan a request belonged to, so "one budget per
+period" was what made resolving it from `farm` + dates safe.
+
+The rule is `master_plan.resolve_master_plan(stored, candidates)`:
+
+1. the link the request carries wins;
+2. nothing stored with **one** covering plan resolves to it — which is how every
+   request written before the field keeps working;
+3. nothing stored with **two** refuses, and names both, because guessing which
+   budget somebody's work came from is the error the whole design prevents.
+
+The mirror inlines that rule in `wm_planner`'s `tasks` and `save` — a Server
+Script sandbox allows no `def` — so keep the two in step.
+
+Every read that attributes work to a plan prefers the stored link and falls back
+to date containment **only** where it is null. Not both, or a linked request is
+counted twice: once for naming the plan, once for sitting inside its period. Five
+reads do this (`plan_completion`, `activity_table`, `activity_series`, and
+`mp_value`, which attributed delivery by farm and work date and never touched the
+Planner at all). `wm_payment`, `wm_payroll` and `wm_rates` attribute nothing to a
+plan, and each records that conclusion in its own header so the question is not
+re-asked from scratch.
+
+`tests/test_master_plan_resolution.py` asserts one thing worth knowing about:
+every query using `%(plan)s` is also passed it. The same query appears at four
+indentations in `wm_dashboard`, and a pattern replacement that matched one
+silently missed three.
+
 ### Business Unit — a name, not a field on the farm
 
 `tax_bu_enabled` and the `tax_bu_*` names still exist, and still name the level
