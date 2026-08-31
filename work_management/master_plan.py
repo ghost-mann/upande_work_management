@@ -35,6 +35,46 @@ def line_headroom(work_qty, cost, planned_qty, planned_cost):
 	}
 
 
+def resolve_master_plan(stored, candidates):
+	"""Which master plan a request draws against. Returns ``(name, reason)``.
+
+	The link the request carries wins. It has to: once two plans can cover the
+	same days -- a farm running field operations and a replanting project at once,
+	each with its own budget -- the dates no longer identify a budget, and taking
+	the first by period would silently draw somebody's work down against the wrong
+	money.
+
+	Nothing stored is the shape of every request written before the field existed.
+	One candidate is then unambiguous and is used, which is what keeps those rows
+	working. Two is refused rather than guessed: guessing which budget work came
+	from is the error this whole change exists to prevent, and the person reading
+	the message is the one who knows the answer -- so both names are in it.
+
+	Pure, so both sides can be tested without a site. The mirror inlines this,
+	because a Server Script sandbox allows no ``def``; keep the two in step.
+	"""
+	names = [n for n in (candidates or []) if n]
+	if stored:
+		if stored in names:
+			return stored, None
+		return None, (
+			f"{stored} does not cover this request's farm and dates. "
+			"Choose a master plan whose period contains them."
+		)
+	if not names:
+		return None, (
+			"No approved master plan covers these dates for this farm. "
+			"A master plan must be approved before work can be planned."
+		)
+	if len(names) > 1:
+		return None, (
+			"More than one approved master plan covers these dates: "
+			+ ", ".join(sorted(names))
+			+ ". Say which one this work is planned against."
+		)
+	return names[0], None
+
+
 def check_plan_allowed(work_qty, cost, planned_qty, planned_cost, new_qty, new_cost):
 	"""May a plan for ``new_qty`` / ``new_cost`` be raised against this line?
 
