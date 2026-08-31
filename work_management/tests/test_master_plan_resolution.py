@@ -286,3 +286,52 @@ class TestTheScreenSendsTheChoice(unittest.TestCase):
 			self.skipTest("mirror not present")
 		with open(mirror) as handle:
 			self.assertEqual(handle.read(), self.screen())
+
+
+class TestTheLinkIsSettableAfterSubmission(unittest.TestCase):
+	"""Planner is submittable, and most requests are already submitted.
+
+	Live refused the first backfill write with UpdateAfterSubmitError -- "Not
+	allowed to change Master Plan after submission" -- because 663 of the 664 are
+	submitted documents. The field records which budget an already-submitted
+	request drew from, so it has to be settable then: by the backfill, and by any
+	later correction. It stays read_only, so only a script can set it.
+	"""
+
+	def test_the_field_allows_a_write_after_submit(self):
+		self.assertTrue(field("work_management_planner", "master_plan").get("allow_on_submit"))
+
+	def test_it_stays_read_only_so_nobody_types_it(self):
+		self.assertTrue(field("work_management_planner", "master_plan").get("read_only"))
+
+
+class TestTheMasterPlanFormCanNameItsPurpose(unittest.TestCase):
+	"""Two plans over one period are two numbers unless one of them can be named.
+
+	The purpose field existed on the doctype and in the chips, and there was
+	nowhere to type it -- so the feature shipped half usable: you could hold two
+	plans and not tell them apart.
+	"""
+
+	def screen(self):
+		with open(os.path.join(HERE, "public", "js", "work-planner.js")) as handle:
+			return handle.read()
+
+	def test_the_form_has_a_purpose_input(self):
+		self.assertIn("mpf-plan-name", self.screen())
+
+	def test_saving_sends_it(self):
+		src = self.screen()
+		block = src[src.index('action:"save", farm:p.farm'):][:200]
+		self.assertIn("plan_name", block)
+
+	def test_opening_an_existing_plan_shows_it(self):
+		"""Otherwise editing a named plan silently clears its name."""
+		src = self.screen()
+		self.assertIn('el("mpf-plan-name").value=p.plan_name', src)
+
+	def test_the_endpoint_persists_and_returns_it(self):
+		src = ported("masterplan")
+		self.assertIn('frappe.form_dict.get("plan_name")', src)
+		self.assertIn("d.plan_name = ", src)
+		self.assertIn('"plan_name"', src)

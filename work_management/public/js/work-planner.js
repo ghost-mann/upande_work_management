@@ -944,6 +944,9 @@
       '<div class="mpf-body">'+
         '<div class="mpf-grid">'+
           '<div><label class="fl" for="mpf-farm">'+esc(TX("top_singular","Farm"))+'</label><select id="mpf-farm"><option value="">— select '+esc(TX("top_singular","Farm")).toLowerCase()+' —</option></select></div>'+
+          // A farm may hold more than one plan over the same dates, and the number
+          // alone cannot tell them apart. Optional: a farm with one plan needs none.
+          '<div><label class="fl" for="mpf-plan-name">Purpose</label><input type="text" id="mpf-plan-name" placeholder="Field operations, Replanting&hellip;" autocomplete="off"></div>'+
           '<div><label class="fl" for="mpf-from">Period from</label><input type="date" id="mpf-from"></div>'+
           '<div><label class="fl" for="mpf-to">Period to</label><input type="date" id="mpf-to"></div>'+
         '</div>'+
@@ -991,7 +994,8 @@
     var acts=MPF.rows.filter(function(r){ return r.task; }).map(function(r){
       return { task:r.task, man_days:r.man_days||0, days:r.days||0, work_qty:r.work_qty||0 };
     });
-    return { farm:farm, period_from:from, period_to:to, acts:acts };
+    return { farm:farm, period_from:from, period_to:to, acts:acts,
+             plan_name:((el("mpf-plan-name")||{}).value||"").trim() };
   }
   function mpDoSave(submitAfter, saveBtn, submitBtn){
     var p=mpCollectPayload();
@@ -1001,7 +1005,8 @@
     if(!p.acts.length) missing.push("add at least one activity with a task");
     if(missing.length){ toast("To save: "+missing.join(" · ")); return; }
     saveBtn.disabled=true; submitBtn.disabled=true;
-    var args={ action:"save", farm:p.farm, period_from:p.period_from, period_to:p.period_to,
+    var args={ action:"save", farm:p.farm, plan_name:p.plan_name,
+               period_from:p.period_from, period_to:p.period_to,
                activities:JSON.stringify(p.acts) };
     if(MPF.editing) args.name=MPF.editing;
     // the server is the only real gate here -- overlap with an approved plan,
@@ -1115,6 +1120,7 @@
           mpCanSubmit() ? ("Edit "+existingName)
                         : ("Correct "+existingName+" · "+(p.workflow_state||""));
         fs.value=p.farm;
+        if(el("mpf-plan-name")) el("mpf-plan-name").value=p.plan_name||"";
         el("mpf-from").value=isodate(p.period_from);
         el("mpf-to").value=isodate(p.period_to);
         MPF.rows=(d.activities||[]).map(function(a){

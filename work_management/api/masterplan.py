@@ -152,7 +152,7 @@ def wm_masterplan(**kwargs):
         out["can_decide"] = 1 if (IS_CONSULTANT or CAN_GM) else 0
         out["plans"] = frappe.db.get_all("Work Management Master Plan",
             filters=mp_filters,
-            fields=["name", "farm", "period_from", "period_to", "workflow_state",
+            fields=["name", "farm", "plan_name", "period_from", "period_to", "workflow_state",
                     "total_activities", "total_man_days", "total_cost",
                     "raised_by", "raised_on", "gm_approved_by", "gm_approved_on"],
             order_by="period_from desc", limit=200)
@@ -163,7 +163,7 @@ def wm_masterplan(**kwargs):
             out["error"] = "name is required"
         else:
             mp = frappe.db.get_value("Work Management Master Plan", mp_name,
-                ["name", "farm", "period_from", "period_to", "workflow_state", "company",
+                ["name", "farm", "plan_name", "period_from", "period_to", "workflow_state", "company",
                  "total_activities", "total_man_days", "total_cost",
                  "raised_by", "raised_on", "gm_approved_by", "gm_approved_on"], as_dict=True)
             if not mp:
@@ -249,6 +249,9 @@ def wm_masterplan(**kwargs):
         else:
             sv_name = frappe.form_dict.get("name")
             sv_farm = frappe.form_dict.get("farm")
+            # What the plan is for. A farm may hold more than one over the same dates,
+            # and this is the only thing that tells a person which is which.
+            sv_plan_name = (frappe.form_dict.get("plan_name") or "").strip()
             sv_from = frappe.form_dict.get("period_from")
             sv_to = frappe.form_dict.get("period_to")
             sv_rows = json.loads(frappe.form_dict.get("activities") or "[]")
@@ -381,6 +384,7 @@ def wm_masterplan(**kwargs):
                     d.raised_on = frappe.utils.now()
                     d.workflow_state = "Draft"
                 d.farm = sv_farm
+                d.plan_name = sv_plan_name
                 d.period_from = sv_from
                 d.period_to = sv_to
                 if not d.company:

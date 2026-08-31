@@ -78,7 +78,8 @@
    "label": "Master Plan",
    "options": "Work Management Master Plan",
    "read_only": 1,
-   "description": "The budget this request draws against. Set from the plan chosen on the planner screen; where it is empty the request's dates still resolve it, which is how requests raised before this field keep working."
+   "description": "The budget this request draws against. Set from the plan chosen on the planner screen; where it is empty the request's dates still resolve it, which is how requests raised before this field keep working. Settable after submission, because it records which budget an already-submitted request drew from \u2014 the backfill needs that, and so does correcting a plan later.",
+   "allow_on_submit": 1
   },
   {
    "fieldname": "company",
