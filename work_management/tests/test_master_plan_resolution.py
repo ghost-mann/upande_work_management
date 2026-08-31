@@ -246,3 +246,43 @@ class TestTheRemainingScriptsWereAudited(unittest.TestCase):
 			if ("%(plan)s" in q) != ('"plan":' in q)
 		]
 		self.assertEqual(mismatched, [], "\n".join(mismatched))
+
+
+class TestTheScreenSendsTheChoice(unittest.TestCase):
+	"""The chips already listed a farm's plans; now they record which was chosen.
+
+	Without this the screen bounds the dates to a plan and then lets the server
+	guess which one -- and once two plans cover those dates the server refuses,
+	correctly, with a message the person cannot act on because the screen never
+	asked them to choose.
+	"""
+
+	def screen(self):
+		with open(os.path.join(HERE, "public", "js", "work-planner.js")) as handle:
+			return handle.read()
+
+	def test_the_chip_records_which_plan_was_chosen(self):
+		self.assertIn("ST.masterPlan", self.screen())
+
+	def test_the_submit_payload_carries_it(self):
+		src = self.screen()
+		block = src[src.index('action:"submit"'):][:500]
+		self.assertIn("master_plan", block)
+
+	def test_the_task_list_asks_against_the_chosen_plan(self):
+		"""Two plans can budget the same activity from different money, so which
+		activities are on offer depends on which plan is being drawn down."""
+		src = self.screen()
+		block = src[src.index('action:"tasks"'):][:300]
+		self.assertIn("master_plan", block)
+
+	def test_the_chip_shows_the_plans_purpose(self):
+		"""Two plans over one period are otherwise two numbers."""
+		self.assertIn("plan_name", self.screen())
+
+	def test_the_app_and_mirror_copies_agree(self):
+		mirror = "/home/austin/vscodeProjects/kaitet-work-management/web_pages/work-planner.js"
+		if not os.path.exists(mirror):
+			self.skipTest("mirror not present")
+		with open(mirror) as handle:
+			self.assertEqual(handle.read(), self.screen())
