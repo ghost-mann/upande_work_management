@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "task",
+  "task_subject",
   "man_days",
   "days",
   "work_qty",
@@ -29,10 +30,18 @@
    "columns": 2,
    "fieldname": "task",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Activity",
    "options": "Task",
    "reqd": 1
+  },
+  {
+   "fieldname": "task_subject",
+   "fieldtype": "Data",
+   "label": "Activity",
+   "fetch_from": "task.subject",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "What the task is called. Fetched from the task, which owns it."
   },
   {
    "columns": 1,

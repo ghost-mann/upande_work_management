@@ -19,6 +19,7 @@
   "extra_blocks",
   "sb_work",
   "task",
+  "task_subject",
   "task_kpi",
   "cb_work",
   "uom",
@@ -139,6 +140,14 @@
    "label": "Task",
    "options": "Task",
    "reqd": 1
+  },
+  {
+   "fieldname": "task_subject",
+   "fieldtype": "Data",
+   "label": "Activity",
+   "fetch_from": "task.subject",
+   "read_only": 1,
+   "description": "What the task is called. Fetched from the task, which owns it."
   },
   {
    "fieldname": "task_kpi",
