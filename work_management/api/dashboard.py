@@ -1371,16 +1371,23 @@ def wm_dashboard(**kwargs):
             """, (tuple([mp.name for mp in plans]),), as_dict=True):
                 budget[ba.parent] = ba
 
-        # delivery, read once by farm and day and then attributed to whichever
-        # plan's period contains it -- one query rather than one per plan.
+        # Delivery, read once and then attributed to a plan -- one query rather than
+        # one per plan. It is carried back to the request it came from, because the
+        # request records which budget it drew against: farm and day alone cannot
+        # attribute it once two plans cover the same days, and would credit the same
+        # pay to both. LEFT JOINs so delivery that cannot be traced to a request still
+        # falls back to farm-and-period, which is how everything recorded before the
+        # master_plan field keeps counting.
         delivered = frappe.db.sql("""
-            SELECT ac.farm farm, we.work_date d,
+            SELECT ac.farm farm, we.work_date d, pr.master_plan mp,
                    COALESCE(SUM(we.amount),0) pay,
                    COALESCE(SUM(we.actual_quantity),0) qty
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            LEFT JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+            LEFT JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
             WHERE ac.workflow_state = 'CONFIRMED'
-            GROUP BY ac.farm, we.work_date
+            GROUP BY ac.farm, we.work_date, pr.master_plan
         """, as_dict=True)
 
         mrows = []
@@ -1392,7 +1399,12 @@ def wm_dashboard(**kwargs):
             dpay = 0
             dqty = 0
             for dv in delivered:
-                if dv.farm == mp.farm and mp.period_from <= dv.d <= mp.period_to:
+                # the request's own answer first; farm and period only where it has none
+                if dv.mp:
+                    dv_mine = dv.mp == mp.name
+                else:
+                    dv_mine = dv.farm == mp.farm and mp.period_from <= dv.d <= mp.period_to
+                if dv_mine:
                     dpay = dpay + frappe.utils.flt(dv.pay)
                     dqty = dqty + frappe.utils.flt(dv.qty)
             mrows.append({
@@ -3357,17 +3369,21 @@ def wm_dashboard(**kwargs):
                 SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c, COUNT(*) n
                 FROM `tabWork Management Planner`
                 WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
-                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                  AND (master_plan = %(plan)s
+                       OR (IFNULL(master_plan,'') = ''
+                           AND from_date >= %(pfrom)s AND to_date <= %(pto)s))
                   AND task IN %(tk)s
-            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
+            """, {"f": pc.farm, "plan": pc.name, "pfrom": pc.period_from, "pto": pc.period_to,
                   "tk": pc_tasks}, as_dict=True)[0]
             pc_off = frappe.db.sql("""
                 SELECT COALESCE(SUM(total_cost),0) c, COUNT(*) n
                 FROM `tabWork Management Planner`
                 WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
-                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                  AND (master_plan = %(plan)s
+                       OR (IFNULL(master_plan,'') = ''
+                           AND from_date >= %(pfrom)s AND to_date <= %(pto)s))
                   AND task NOT IN %(tk)s
-            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
+            """, {"f": pc.farm, "plan": pc.name, "pfrom": pc.period_from, "pto": pc.period_to,
                   "tk": pc_tasks}, as_dict=True)[0]
             pc_act = frappe.db.sql("""
                 SELECT COALESCE(SUM(ac.total_actual_qty),0) q,
@@ -3376,10 +3392,12 @@ def wm_dashboard(**kwargs):
                 INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
                 INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
                 WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
-                  AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                  AND (pr.master_plan = %(plan)s
+                       OR (IFNULL(pr.master_plan,'') = ''
+                           AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s))
                   AND pr.task IN %(tk)s
                   AND ac.workflow_state = 'CONFIRMED'
-            """, {"f": pc.farm, "pfrom": pc.period_from, "pto": pc.period_to,
+            """, {"f": pc.farm, "plan": pc.name, "pfrom": pc.period_from, "pto": pc.period_to,
                   "tk": pc_tasks}, as_dict=True)[0]
             # quantity completion is summed per activity so a line delivered twice over
             # cannot mask one never started -- each line contributes at most its own share
@@ -3398,10 +3416,16 @@ def wm_dashboard(**kwargs):
                     INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
                     WHERE pr.farm = %(f)s AND pr.task = %(t)s
                       AND IFNULL(pr.workflow_state,'') != 'Rejected'
-                      AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
+                      AND (pr.master_plan = %(plan)s
+                           OR (IFNULL(pr.master_plan,'') = ''
+                               AND (pr.master_plan = %(plan)s
+                               OR (IFNULL(pr.master_plan,'') = ''
+                                   AND (pr.master_plan = %(plan)s
+                        OR (IFNULL(pr.master_plan,'') = ''
+                            AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s))))))
                       AND ac.workflow_state = 'CONFIRMED'
                 """, {"f": pc.farm, "t": pc_a.task,
-                      "pfrom": pc.period_from, "pto": pc.period_to}, as_dict=True)[0]
+                      "plan": pc.name, "pfrom": pc.period_from, "pto": pc.period_to}, as_dict=True)[0]
                 pc_dqi = frappe.utils.flt(pc_ad.q)
                 pc_pq = pc_pq + pc_bq
                 pc_dq = pc_dq + (pc_bq if pc_dqi > pc_bq else pc_dqi)
