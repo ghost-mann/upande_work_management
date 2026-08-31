@@ -111,3 +111,37 @@ class TestTheFields(unittest.TestCase):
 		"""The screen sets it from the plan that was chosen. Typed by hand it
 		would name a budget nobody picked."""
 		self.assertTrue(field("work_management_planner", "master_plan").get("read_only"))
+
+
+def ported(module):
+	with open(os.path.join(HERE, "api", module + ".py")) as handle:
+		return handle.read()
+
+
+class TestOverlapNoLongerBlocks(unittest.TestCase):
+	"""A farm may hold two budgets over the same days.
+
+	The rule that prevented it was not arbitrary -- nothing recorded which plan a
+	request belonged to, so one plan per period was what made the inference safe.
+	The link makes it unnecessary, and what is left is worth keeping as a note:
+	raising the same plan twice by mistake looks exactly like raising a deliberate
+	second one, and creation is the cheapest moment to notice.
+	"""
+
+	def setUp(self):
+		self.src = ported("masterplan")
+
+	def test_a_clash_no_longer_becomes_an_error(self):
+		self.assertNotIn("already has a master plan covering those dates", self.src)
+		self.assertNotIn("A farm has one budget per period", self.src)
+
+	def test_a_clash_is_still_reported(self):
+		self.assertIn('out["clash"]', self.src)
+		self.assertIn("clash_warning", self.src)
+
+	def test_period_free_stops_saying_a_period_is_taken(self):
+		"""The form asked this the moment a farm and period were chosen, and used
+		the answer to refuse. It now reports the neighbour and lets you continue."""
+		block = self.src[self.src.index('action == "period_free"'):][:1800]
+		self.assertIn('out["free"] = 1', block)
+		self.assertNotIn('out["free"] = 0', block)
