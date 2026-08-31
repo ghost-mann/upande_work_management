@@ -175,3 +175,36 @@ class TestThePlannerStoresIt(unittest.TestCase):
 
 	def test_it_refuses_a_named_plan_that_does_not_cover_the_dates(self):
 		self.assertIn("does not cover this request's farm and dates", self.src)
+
+
+class TestTheDashboardDoesNotDoubleCount(unittest.TestCase):
+	"""Both cards joined planner rows to plans by date containment.
+
+	Once two plans cover the same days, a request inside both is counted against
+	both -- so planned-against-delivered would silently double. The stored link
+	decides; containment is the fallback only where no link exists.
+	"""
+
+	def setUp(self):
+		self.src = ported("dashboard")
+
+	def test_both_cards_prefer_the_stored_link(self):
+		for marker in ('action == "mp_value"', 'action == "plan_completion"'):
+			block = self.src[self.src.index(marker):][:7000]
+			self.assertIn("master_plan", block, marker)
+
+	def test_plan_completion_falls_back_only_where_no_link_is_stored(self):
+		"""Not both together, or a linked request is counted twice again -- once
+		for naming the plan and once for sitting inside its period."""
+		block = self.src[self.src.index('action == "plan_completion"'):][:7000]
+		self.assertIn("IFNULL(pr.master_plan,'') = ''", block)
+
+	def test_mp_value_carries_delivery_back_to_the_request_that_earned_it(self):
+		"""This card is the worse of the two. It attributed delivery by farm and
+		work_date, never touching the Planner -- so two plans over one farm would
+		each be credited the same pay in full. It now reads the request's own
+		answer, and only falls back to farm and period where there is none."""
+		block = self.src[self.src.index('action == "mp_value"'):][:7000]
+		self.assertIn("pr.master_plan mp", block)
+		self.assertIn("dv.mp == mp.name", block)
+		self.assertIn("LEFT JOIN", block)
