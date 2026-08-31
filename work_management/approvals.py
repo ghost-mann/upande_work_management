@@ -123,18 +123,59 @@ CHAIN_ENDS = {
 DEFAULT_REJECT_ACTION = "Reject"
 
 
+# ------------------------------------------------------- the configured chain
+
+
+def configured_stages(settings=None):
+	"""The chain this installation runs, read from Settings, in its own order.
+
+	CATALOGUE used to *be* the chain. Settings looked like it held it -- fifteen
+	editable rows -- but only rows whose key the code recognised were honoured and
+	seed_stages() deleted the rest, so a step somebody added was thrown away by
+	the next migrate. Switching a step off was configuration; adding one was a
+	release. That is the wall this app hits at a second company.
+
+	Now the catalogue is the seed and this is the chain. A row with a key the code
+	has never heard of is a step like any other: it carries its own state, action,
+	kind and role, which is everything the workflow generator needs.
+
+	Order is the rows' own order, so dragging a row in the grid moves the step.
+	A row with no key is skipped rather than raising -- a half-typed row in an
+	open grid must not take a migrate down. No rows at all means a site mid-install,
+	which falls back to the shipped chain so workflows can still be generated.
+	"""
+	rows = (settings.get("approval_stages") if settings else None) or []
+	stages = []
+	for row in sorted(rows, key=lambda r: r.get("idx") or 0):
+		key = (row.get("stage") or "").strip()
+		if not key:
+			continue
+		stages.append(Stage(
+			key=key,
+			label=(row.get("stage_label") or key),
+			document_type=row.get("document_type"),
+			kind=row.get("kind") or "Approval",
+			state=row.get("state"),
+			action=row.get("action"),
+			role=row.get("role"),
+			scoped=bool(row.get("scoped")),
+			required=bool(row.get("required")),
+		))
+	return stages or list(CATALOGUE)
+
+
 # ---------------------------------------------------------------- catalogue
 
 
-def by_key(key):
-	for stage in CATALOGUE:
+def by_key(key, settings=None):
+	for stage in configured_stages(settings or _settings_or_none()):
 		if stage.key == key:
 			return stage
 	return None
 
 
-def by_label(label):
-	for stage in CATALOGUE:
+def by_label(label, settings=None):
+	for stage in configured_stages(settings or _settings_or_none()):
 		if stage.label == label:
 			return stage
 	return None
@@ -142,13 +183,13 @@ def by_label(label):
 
 def stage_labels():
 	"""Select options for Work Management Stage Approver.stage_label."""
-	return [stage.label for stage in CATALOGUE]
+	return [stage.label for stage in configured_stages(_settings_or_none())]
 
 
 def chain_for(document_type):
 	"""The workflow steps of one document type, in order. Gates are not steps."""
 	return [
-		stage for stage in CATALOGUE
+		stage for stage in configured_stages(_settings_or_none())
 		if stage.document_type == document_type and stage.kind in ("Submit", "Approval")
 	]
 
@@ -160,26 +201,68 @@ def _settings():
 	return frappe.get_cached_doc("Work Management Settings")
 
 
-def seed_stages(settings=None, save=True):
-	"""Ensure Settings holds one row per catalogue stage, in catalogue order.
+def _settings_or_none():
+	"""Settings, or None on a site that has not got it yet.
 
-	Existing rows keep the role and the on/off flag someone chose. Rows for
-	stages that no longer exist are dropped. Called on install and on every
-	migrate, so adding a stage to the catalogue is all it takes to ship it.
+	configured_stages() is called from module-level helpers that run during
+	install, before the single doctype exists. Falling back to the shipped
+	catalogue there is correct; raising is not.
+	"""
+	try:
+		return frappe.get_cached_doc("Work Management Settings")
+	except Exception:
+		return None
+
+
+def seed_stages(settings=None, save=True):
+	"""Ensure Settings holds a row for every shipped step, and **keep the rest**.
+
+	The catalogue is the default chain a fresh install starts with. It is no
+	longer the chain: a step somebody added is a step, and this must not delete
+	it. It used to -- the table was rebuilt from the catalogue on every migrate,
+	so a Finance sign-off added on Monday was gone by Tuesday, silently. That is
+	the reason adding a step needed a release.
+
+	So: shipped rows are refreshed in place, keeping the role, the on/off flag and
+	the wording somebody chose. Rows the catalogue does not know are left exactly
+	as they are, in their own position. Nothing is dropped.
 	"""
 	settings = settings or frappe.get_doc("Work Management Settings")
-	existing = {row.stage: row for row in (settings.get("approval_stages") or [])}
+	existing = list(settings.get("approval_stages") or [])
+	by_stage = {row.stage: row for row in existing if row.stage}
+	shipped = {stage.key for stage in CATALOGUE}
 
 	rows = []
 	for stage in CATALOGUE:
-		previous = existing.get(stage.key)
+		previous = by_stage.get(stage.key)
 		rows.append({
 			"stage": stage.key,
-			"stage_label": stage.label,
+			"stage_label": (previous.stage_label if previous and previous.stage_label
+			                else stage.label),
 			"document_type": stage.document_type,
 			"kind": stage.kind,
+			"state": stage.state,
+			"action": stage.action,
+			"scoped": 1 if stage.scoped else 0,
+			"required": 1 if stage.required else 0,
 			"enabled": 1 if stage.required else (previous.enabled if previous else 1),
 			"role": (previous.role if previous and previous.role else stage.role),
+		})
+
+	# every row this app did not ship, in the order it already had
+	added = [row for row in existing if row.stage and row.stage not in shipped]
+	for row in added:
+		rows.append({
+			"stage": row.stage,
+			"stage_label": row.stage_label,
+			"document_type": row.document_type,
+			"kind": row.kind,
+			"state": row.state,
+			"action": row.action,
+			"scoped": 1 if row.scoped else 0,
+			"required": 1 if row.required else 0,
+			"enabled": row.enabled,
+			"role": row.role,
 		})
 
 	settings.set("approval_stages", [])
@@ -194,11 +277,16 @@ def seed_stages(settings=None, save=True):
 
 
 def stage_rows(settings=None):
-	"""{stage key: settings row}, for the stages the catalogue still knows."""
+	"""{stage key: settings row} for every configured step.
+
+	Every row with a key counts, including one this app never shipped. It used to
+	filter against the catalogue, which is what made an added step invisible to
+	everything downstream even before the seed deleted it.
+	"""
 	settings = settings or _settings()
 	rows = {}
 	for row in settings.get("approval_stages") or []:
-		if by_key(row.stage):
+		if (row.stage or "").strip():
 			rows[row.stage] = row
 	return rows
 

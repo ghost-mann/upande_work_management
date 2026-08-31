@@ -10,6 +10,10 @@
   "stage_label",
   "document_type",
   "kind",
+  "state",
+  "action",
+  "scoped",
+  "required",
   "enabled",
   "role"
  ],
@@ -20,15 +24,14 @@
    "label": "Stage Key",
    "read_only": 1,
    "hidden": 1,
-   "description": "Catalogue key. Set by the app, not by hand."
+   "description": "Identifies the step. Set by the app for shipped steps and typed once for a step you add; changing it later would orphan documents already sitting in this step."
   },
   {
    "columns": 3,
    "fieldname": "stage_label",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Stage",
-   "read_only": 1
+   "label": "Stage"
   },
   {
    "columns": 2,
@@ -36,15 +39,39 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Document",
-   "options": "DocType",
-   "read_only": 1
+   "options": "DocType"
   },
   {
    "fieldname": "kind",
    "fieldtype": "Select",
    "label": "Kind",
-   "options": "Submit\nApproval\nGate",
-   "read_only": 1
+   "options": "Submit\nApproval\nGate"
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Data",
+   "label": "Waits In",
+   "description": "The workflow state a document sits in at this step. New steps need a state of their own; two steps sharing one would be indistinguishable to the workflow."
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Data",
+   "label": "Action",
+   "description": "The button that leaves this step, as an approver sees it."
+  },
+  {
+   "fieldname": "scoped",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Per Unit",
+   "description": "On: this step is taken separately for each unit work is scoped by, so one unit's approvals cannot reach another's."
+  },
+  {
+   "fieldname": "required",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Required",
+   "description": "On: this step cannot be switched off. A chain needs a way in, so its first step is always required."
   },
   {
    "columns": 1,
