@@ -349,6 +349,8 @@ class TestASiteThatRenamedNothingCarriesNothing(unittest.TestCase):
 				("Work Management Settings", "farms"): "Estates in use",
 				("Work Management Settings", "tab_farms"): "Estates",
 				("Work Management Settings", "farms_restrict"): "Only work the Estates listed below",
+				("Work Management Settings", "farms_respect_user_permissions"):
+					"Only show each person the Estates they are permitted",
 				("Work Management Settings", "farms_section"): "Estates",
 				("Work Management Settings", "disc_multi_farm"): "Two Estates, one day",
 			},

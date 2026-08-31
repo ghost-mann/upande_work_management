@@ -82,6 +82,77 @@ def farms_in_use(all_farms, chosen, restrict=True):
 	return kept or list(all_farms)
 
 
+def farms_from_permissions(rows, doctype=None):
+	"""The farms these User Permission rows allow, or None for no restriction.
+
+	Frappe's semantics, not softer ones: a row whose `applicable_for` is set
+	restricts only that doctype, and rows that all filter out leave the person
+	unrestricted -- which is what Frappe concludes when its own filter returns
+	nothing (`frappe/permissions.py:782`, and the `if allowed_docs:` that guards
+	its use). Behaving differently here than the list view does would be worse
+	than either behaviour alone, because then nobody could reason about the site.
+
+	`None` for unrestricted and a non-empty set for restricted, so that
+	"permitted no farms" can never be read as "permitted every farm". That
+	confusion turns a gate into a leak, and an empty set on both sides is how it
+	would happen.
+	"""
+	allowed = set()
+	for row in rows or []:
+		scope = row.get("applicable_for")
+		if scope and scope != doctype:
+			continue
+		farm = row.get("for_value")
+		if farm:
+			allowed.add(farm)
+	return allowed or None
+
+
+def permitted_farms(user=None, doctype=None):
+	"""Farms this user may act on, or None if they are not restricted at all.
+
+	Farm scoping already has an owner on these sites, and it is not this app:
+	the live site carries 202 Farm User Permissions across 96 users, the newest
+	created the day this was written. 362 of its 458 enabled users have none and
+	so see every farm, which is Frappe's own default and the behaviour to keep.
+
+	Read straight from the table rather than through
+	`frappe.permissions.get_user_permissions`, for two reasons. The helper is not
+	in the Server Script sandbox's globals, and live runs Server Scripts -- so a
+	second implementation would be needed there anyway, and two implementations
+	of a permission rule is how a site ends up with two answers. And
+	`frappe.get_all` inside a Server Script is forced to `ignore_permissions=True`
+	(`frappe/utils/safe_exec.py:307`), which is the mechanism behind the leak this
+	closes; a read that must be explicit is better written explicitly.
+
+	Administrator and Guest are never restricted, matching Frappe.
+	"""
+	user = user or frappe.session.user
+	if not user or user in ("Administrator", "Guest"):
+		return None
+	rows = frappe.get_all(
+		"User Permission",
+		filters={"allow": "Farm", "user": user},
+		fields=["for_value", "applicable_for"],
+		limit_page_length=0,
+	)
+	return farms_from_permissions([dict(r) for r in rows], doctype=doctype)
+
+
+def narrow_to_permitted(farms, permitted):
+	"""`farms` less the ones this person may not act on, order preserved.
+
+	Permission never widens a list: a farm somebody is permitted that this
+	project does not work still does not appear. And a person permitted only
+	farms outside the project gets an empty list rather than a fallback to all --
+	an honest empty is a screen saying "nothing here for you", where the fallback
+	would be the leak itself.
+	"""
+	if permitted is None:
+		return list(farms)
+	return [f for f in farms if f in permitted]
+
+
 def _farm_approver_role(settings, farms):
 	"""{farm: role} — the role that approves work for each farm.
 
@@ -170,6 +241,23 @@ def get_config():
 		[row.farm for row in rows if row.farm],
 		restrict=bool(settings.get("farms_restrict")),
 	)
+
+	# Then, if this site has asked for it, narrow again to the farms this person
+	# may act on. Two switches, read in this order and doing different jobs: the
+	# one above asks which farms the project works, this one asks which of those
+	# this person is permitted.
+	#
+	# Off by default and off on every existing site, because turning it on changes
+	# what 95 restricted people on the live site can reach. The audit says none of
+	# them is currently working a farm they are not permitted, so enforcing there
+	# costs nobody anything -- but that is a fact about one site, established by
+	# running `farm_permission_audit`, and it is not a fact this app may assume
+	# about the next one.
+	#
+	# `settings.get(...)` rather than an attribute, so a Settings doc saved before
+	# the field existed reads as off instead of raising.
+	if settings.get("farms_respect_user_permissions"):
+		cfg["farms"] = narrow_to_permitted(cfg["farms"], permitted_farms())
 
 	cfg["farm_project"] = {
 		row.farm: row.project
