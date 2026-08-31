@@ -2815,14 +2815,35 @@ def wm_dashboard(**kwargs):
             te["area"] = te["area"] + parea
             te["mandays"] = te["mandays"] + frappe.utils.cint(r.mandays)
             te["cost"] = te["cost"] + frappe.utils.flt(r.pay)
-        # The area of each farm, as configured. Upande Core's `Farm` carries it in
-        # hectares; the farms table on Settings overrides it where the farm's own
-        # figure is not the one to divide by. Core's field is the default because a
-        # farm's area is a property of the farm, not of this app's configuration.
+        # The area of each farm, in hectares. A farm's area is a property of the farm,
+        # so it is read from the farm -- but which column holds it differs by site.
+        # Upande Core's `Farm` calls it `area`; the retired Work Management Farm called
+        # it `area_ha`; a site that added it by hand gets `custom_area_ha`.
+        #
+        # Ask the meta rather than assuming, because assuming is how live ended up
+        # unable to hold an area at all: its `Farm` belongs to Upande Kaitet and
+        # carries none of the three, so both doctypes the old block asked for were
+        # absent, farm_area came back empty on every request, and the four areas
+        # somebody was asked to enter had nowhere to go.
+        #
+        # frappe.db.has_column is not in the sandbox's globals; the meta is, and it
+        # knows custom fields -- which is the whole point on a site where the column
+        # arrived as one. Naming a column the site has not got does not narrow a
+        # query, it kills it, so Farm is not read at all until a column is found.
         farm_area = {}
-        for fa in frappe.get_all("Farm", fields=["name", "area"]):
-            if frappe.utils.flt(fa.get("area")) > 0:
-                farm_area[fa.get("name")] = frappe.utils.flt(fa.get("area"))
+        fa_col = ""
+        fa_meta = frappe.get_meta("Farm")
+        for fa_cand in ("area", "area_ha", "custom_area_ha"):
+            if fa_meta.get_field(fa_cand):
+                fa_col = fa_cand
+                break
+        if fa_col:
+            for fa in frappe.get_all("Farm", fields=["name", fa_col + " as ha"]):
+                if frappe.utils.flt(fa.get("ha")) > 0:
+                    farm_area[fa.get("name")] = frappe.utils.flt(fa.get("ha"))
+        # The farms table on Settings overrides that, where the farm's own figure is
+        # not the one to divide by. frappe.get_all() on an absent doctype raises, so
+        # ask before looking.
         if frappe.db.exists("DocType", "WM Farm"):
             for fa in frappe.get_all("WM Farm",
                     filters={"parenttype": "Work Management Settings"},
