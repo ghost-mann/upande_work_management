@@ -35,6 +35,17 @@ def _stage(key, label, document_type, kind, state, action, role, scoped=False, r
 	return Stage(key, label, document_type, kind, state, action, role, scoped, required)
 
 
+# The default chain a fresh install starts with -- the seed, not the chain: see
+# configured_stages(). Every step defaults to System Manager, deliberately. This
+# app used to default to Kaitet's own job titles and ship five Roles as fixtures
+# so they would exist, which meant installing at any company created that
+# company's hierarchy for them. A default has to name a role that exists, because
+# a Workflow Transition's role is a Link; System Manager is the only one Frappe
+# guarantees. So a fresh install arrives with every approval sitting with System
+# Manager -- visible, safe, and obviously not final -- and the project points each
+# step at its own role. An existing deployment is untouched: seed_stages() keeps
+# whatever role was configured.
+#
 # Order matters: within a document type these are the steps of the chain, and a
 # stage approves into the next enabled one.
 #
@@ -45,39 +56,39 @@ def _stage(key, label, document_type, kind, state, action, role, scoped=False, r
 #               reads its approvers from the same table.
 CATALOGUE = [
 	_stage("masterplan_submit", "Master Plan: Submit", "Work Management Master Plan",
-		"Submit", "Draft", "Send for Consultant Review", "Farm Manager", required=True),
+		"Submit", "Draft", "Send for Consultant Review", "System Manager", required=True),
 	_stage("masterplan_consultant", "Master Plan: Consultant", "Work Management Master Plan",
 		"Approval", "Pending Consultant", "Send to GM", "System Manager"),
 	_stage("masterplan_gm", "Master Plan: GM", "Work Management Master Plan",
-		"Approval", "Pending GM", "GM Approve", "General Manager"),
+		"Approval", "Pending GM", "GM Approve", "System Manager"),
 
 	_stage("planner_submit", "Planner: Submit", "Work Management Planner",
-		"Submit", "Draft", "Submit for Approval", "Production Section Head", required=True),
+		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
 	_stage("planner_farm_approval", "Planner: Farm Approval", "Work Management Planner",
-		"Approval", "Pending Approval", "Approve", "Farm Manager", scoped=True),
+		"Approval", "Pending Approval", "Approve", "System Manager", scoped=True),
 	_stage("planner_weekly_consultant", "Planner: Weekly Consultant", "Work Management Planner",
 		"Gate", None, None, "System Manager"),
 
 	_stage("assigner_submit", "Assigner: Submit", "Work Management Assigner",
-		"Submit", "Draft", "Submit for Approval", "HR User", required=True),
+		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
 	_stage("assigner_farm_manager", "Assigner: Farm Manager", "Work Management Assigner",
-		"Approval", "Pending Farm Manager", "FM Approve", "Farm Manager", scoped=True),
+		"Approval", "Pending Farm Manager", "FM Approve", "System Manager", scoped=True),
 	_stage("assigner_hr_head", "Assigner: HR Head", "Work Management Assigner",
-		"Approval", "Pending HR Head", "HR Approve", "HOD HR"),
+		"Approval", "Pending HR Head", "HR Approve", "System Manager"),
 	_stage("assigner_gm", "Assigner: GM", "Work Management Assigner",
-		"Approval", "Pending GM", "GM Approve", "General Manager"),
+		"Approval", "Pending GM", "GM Approve", "System Manager"),
 
 	_stage("actuals_submit", "Actuals: Submit", "Work Management Actuals",
-		"Submit", "Draft", "Submit for Approval", "HR Clerk", required=True),
+		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
 	_stage("actuals_farm_manager", "Actuals: Farm Manager", "Work Management Actuals",
-		"Approval", "Pending Farm Manager", "FM Approve", "Farm Manager", scoped=True),
+		"Approval", "Pending Farm Manager", "FM Approve", "System Manager", scoped=True),
 	_stage("actuals_hr_head", "Actuals: HR Head", "Work Management Actuals",
-		"Approval", "Pending HR Head", "HR Approve", "HOD HR"),
+		"Approval", "Pending HR Head", "HR Approve", "System Manager"),
 	_stage("actuals_gm", "Actuals: GM", "Work Management Actuals",
-		"Approval", "Pending GM", "GM Approve", "General Manager"),
+		"Approval", "Pending GM", "GM Approve", "System Manager"),
 
 	_stage("payment_accounts", "Payment: Accounts", "Work Management Payment",
-		"Approval", "Unpaid", "Mark Paid", "Accounts Manager", required=True),
+		"Approval", "Unpaid", "Mark Paid", "System Manager", required=True),
 ]
 
 # Where each chain ends, and where a rejection lands. Taken from the workflows

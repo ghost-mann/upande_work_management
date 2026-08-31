@@ -95,6 +95,12 @@ after_migrate = [
 # then imports the workspace that references it.
 before_migrate = "work_management.desk.ensure_nav_block"
 
+# No Role fixture. This app used to ship five -- Farm Manager, General Manager,
+# HOD HR, HR Clerk, Production Section Head -- because the shipped approval steps
+# defaulted to them and a Workflow Transition's role must exist. Installing at any
+# company therefore created Kaitet's hierarchy on their site. The steps now default
+# to System Manager, which Frappe guarantees, so nothing is created and a new
+# company maps the steps onto its own roles.
 fixtures = [
 	{
 		"dt": "Workflow State",
@@ -143,23 +149,8 @@ fixtures = [
 				],
 			]
 		],
-	},
-	{
-		"dt": "Role",
-		"filters": [
-			[
-				"name",
-				"in",
-				[
-					"Farm Manager",
-					"General Manager",
-					"HOD HR",
-					"HR Clerk",
-					"Production Section Head",
-				],
-			]
-		],
-	},
+	}
+
 ]
 
 website_route_rules = []

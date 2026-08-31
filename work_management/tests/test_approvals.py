@@ -71,6 +71,21 @@ def moves(plan_dict):
 	]
 
 
+def role_of(key):
+	"""The role a shipped step defaults to.
+
+	Read rather than hardcoded: these tests are about the *shape* of a chain --
+	which states exist and what leads where -- and the role is an incidental
+	element of each transition tuple. Spelling it out tied every shape test to
+	one organisation's job titles, so changing the shipped defaults broke nine
+	tests that had nothing to say about roles.
+	"""
+	for stage in approvals.CATALOGUE:
+		if stage.key == key:
+			return stage.role
+	raise AssertionError("no such shipped step: " + key)
+
+
 class TestChainShape(unittest.TestCase):
 	def test_full_assigner_chain(self):
 		result = plan("Work Management Assigner", settings())
@@ -79,11 +94,11 @@ class TestChainShape(unittest.TestCase):
 			["Draft", "Pending Farm Manager", "Pending HR Head", "Pending GM", "Assigned", "Rejected"],
 		)
 		self.assertIn(
-			("Draft", "Submit for Approval", "Pending Farm Manager", "HR User", ""),
+			("Draft", "Submit for Approval", "Pending Farm Manager", role_of("assigner_submit"), ""),
 			moves(result),
 		)
 		self.assertIn(
-			("Pending GM", "GM Approve", "Assigned", "General Manager", ""),
+			("Pending GM", "GM Approve", "Assigned", role_of("assigner_gm"), ""),
 			moves(result),
 		)
 
@@ -91,7 +106,7 @@ class TestChainShape(unittest.TestCase):
 		result = plan("Work Management Assigner", settings({"assigner_gm": {"enabled": 0}}))
 		self.assertNotIn("Pending GM", states_of(result))
 		self.assertIn(
-			("Pending HR Head", "HR Approve", "Assigned", "HOD HR", ""),
+			("Pending HR Head", "HR Approve", "Assigned", role_of("assigner_hr_head"), ""),
 			moves(result),
 		)
 
@@ -99,7 +114,7 @@ class TestChainShape(unittest.TestCase):
 		result = plan("Work Management Assigner", settings({"assigner_hr_head": {"enabled": 0}}))
 		self.assertNotIn("Pending HR Head", states_of(result))
 		self.assertIn(
-			("Pending Farm Manager", "FM Approve", "Pending GM", "Farm Manager", ""),
+			("Pending Farm Manager", "FM Approve", "Pending GM", role_of("assigner_farm_manager"), ""),
 			moves(result),
 		)
 
@@ -111,7 +126,7 @@ class TestChainShape(unittest.TestCase):
 		}))
 		self.assertEqual(states_of(result), ["Draft", "Assigned", "Rejected"])
 		self.assertIn(
-			("Draft", "Submit for Approval", "Assigned", "HR User", ""),
+			("Draft", "Submit for Approval", "Assigned", role_of("assigner_submit"), ""),
 			moves(result),
 		)
 
@@ -165,7 +180,7 @@ class TestTerminalStates(unittest.TestCase):
 	def test_a_paid_payment_can_still_be_cancelled(self):
 		"""The workflow this replaced allowed it, and accounts rely on it."""
 		self.assertIn(
-			("Paid", "Cancel", "Cancelled", "Accounts Manager", ""),
+			("Paid", "Cancel", "Cancelled", role_of("payment_accounts"), ""),
 			moves(plan("Work Management Payment", settings())),
 		)
 
@@ -175,7 +190,7 @@ class TestTerminalStates(unittest.TestCase):
 		self.assertEqual(len(resubmits), 1)
 		self.assertEqual(resubmits[0]["state"], "Rejected")
 		self.assertEqual(resubmits[0]["next_state"], "Pending Farm Manager")
-		self.assertEqual(resubmits[0]["allowed"], "HR User")
+		self.assertEqual(resubmits[0]["allowed"], role_of("assigner_submit"))
 
 
 class TestRejection(unittest.TestCase):
@@ -197,7 +212,7 @@ class TestFarmScoping(unittest.TestCase):
 	def test_no_approvers_means_the_stage_role_covers_every_farm(self):
 		result = plan("Work Management Assigner", settings())
 		fm = [t for t in moves(result) if t[0] == "Pending Farm Manager" and t[1] == "FM Approve"]
-		self.assertEqual(fm, [("Pending Farm Manager", "FM Approve", "Pending HR Head", "Farm Manager", "")])
+		self.assertEqual(fm, [("Pending Farm Manager", "FM Approve", "Pending HR Head", role_of("assigner_farm_manager"), "")])
 
 	def test_per_farm_approvers_generate_one_conditional_transition_each(self):
 		config = settings(approvers=[
@@ -274,7 +289,7 @@ class TestRoles(unittest.TestCase):
 			approver("Assigner: Farm Manager", "sam@example.com", "Saboti", "Farm Manager Saboti"),
 		])
 		grants = approvals._desired_grants(config)
-		self.assertEqual(grants["ann@example.com"], {"HOD HR"})
+		self.assertEqual(grants["ann@example.com"], {role_of("assigner_hr_head")})
 		self.assertEqual(grants["sam@example.com"], {"Farm Manager Saboti"})
 
 	def test_a_role_only_the_removed_row_named_is_still_revocable(self):
@@ -301,7 +316,7 @@ class TestRoles(unittest.TestCase):
 			approver("Assigner: GM", "gm@example.com", role="Group MD"),
 		])
 		self.assertIn("Group MD", approvals.managed_roles(config))
-		self.assertIn("HOD HR", approvals.managed_roles(config))
+		self.assertIn(role_of("assigner_hr_head"), approvals.managed_roles(config))
 
 
 class TestIdempotence(unittest.TestCase):

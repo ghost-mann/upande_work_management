@@ -365,6 +365,9 @@
     call({action:"a_employees",farm:farm,from_date:pd.from_date,to_date:pd.to_date,exclude_assignment:(ST.editingAsg||"")}).then(function(d){
       ST.employees=d.employees||[];
       ST.scanInfo=d.scan_info||{};
+      // whether the project asked for today's presence -- the endpoint answers,
+      // because off it does not run the reads and there is nothing to draw
+      ST.showToday=!!d.show_today;
       el("a-emfilter").disabled=false;
       renderEmployees();
     });
@@ -394,8 +397,14 @@
       var offbadge = (e.off_days>0) ? ' <span class="offb">'+e.off_days+' off</span>' : '';
       var aw=attReasons(e);
       var attbadge = aw.length? ' <span class="offb" style="background:rgba(185,28,28,.12);color:#b91c1c">⚠ '+esc(aw[0].split(" on 2")[0])+'</span>' : '';
-      // today's presence chip, always shown: P · time = on site, A = marked absent, ? = no record yet
-      if(e.is_night){
+      // Today's presence chip, only where the project asked for it. Off -- the
+      // default -- the endpoint runs none of the attendance reads and there is
+      // nothing to draw; "?" against every worker on a site without biometric
+      // hardware reads as a finding and is not. Everything else on the row, and
+      // the warning badge from the att_block_* checks above, is unaffected.
+      if(!ST.showToday){
+        /* no presence chip */
+      } else if(e.is_night){
         attbadge += ' <span class="offb" style="background:rgba(37,99,235,.1);color:#2563eb">night shift</span>';
       } else if(e.present_today){
         attbadge += ' <span class="offb" style="background:rgba(10,122,67,.14);color:#0a7a43;font-weight:700" title="On site today'+(e.scan_in?(' — scanned in '+esc(e.scan_in)):'')+'">P'+(e.scan_in?(' · '+esc(e.scan_in)):'')+'</span>';
