@@ -1,0 +1,99 @@
+{
+  "space_name": "Work Management User Guide",
+  "route": "work-management-guide",
+  "groups": [
+    {
+      "title": "Getting Started",
+      "pages": [
+        {
+          "title": "The Pipeline at a Glance",
+          "file": "getting-started/pipeline-at-a-glance.md"
+        },
+        {
+          "title": "Finding Your Way Around",
+          "file": "getting-started/finding-your-way-around.md"
+        }
+      ]
+    },
+    {
+      "title": "Daily Work",
+      "pages": [
+        {
+          "title": "Planner",
+          "file": "daily-work/planner.md"
+        },
+        {
+          "title": "Assigner",
+          "file": "daily-work/assigner.md"
+        },
+        {
+          "title": "Actuals",
+          "file": "daily-work/actuals.md"
+        },
+        {
+          "title": "Payment",
+          "file": "daily-work/payment.md"
+        }
+      ]
+    },
+    {
+      "title": "Oversight",
+      "pages": [
+        {
+          "title": "Dashboard",
+          "file": "oversight/dashboard.md"
+        },
+        {
+          "title": "Discrepancies — the Standing Audit",
+          "file": "oversight/discrepancies.md"
+        },
+        {
+          "title": "Field Intelligence",
+          "file": "oversight/field-intelligence.md"
+        },
+        {
+          "title": "Time & Attendance Protection",
+          "file": "oversight/time-and-attendance-protection.md"
+        }
+      ]
+    },
+    {
+      "title": "Setup & Administration",
+      "pages": [
+        {
+          "title": "Setting Up a New Project",
+          "file": "setup/setting-up-a-new-project.md"
+        },
+        {
+          "title": "Farms and Cost Projects",
+          "file": "setup/farms-and-cost-projects.md"
+        },
+        {
+          "title": "Naming the Levels",
+          "file": "setup/naming-the-levels.md"
+        },
+        {
+          "title": "Sections and Cost by Section",
+          "file": "setup/sections-and-cost-by-section.md"
+        },
+        {
+          "title": "Approval Stages and Approvers",
+          "file": "setup/approval-stages-and-approvers.md"
+        },
+        {
+          "title": "Settings Reference",
+          "file": "setup/settings-reference.md"
+        }
+      ]
+    },
+    {
+      "title": "Reference",
+      "pages": [
+        {
+          "title": "Definitions",
+          "file": "reference/definitions.md"
+        }
+      ]
+    }
+  ]
+}

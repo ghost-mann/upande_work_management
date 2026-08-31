@@ -1795,6 +1795,49 @@ def wm_payment(**kwargs):
                         results.append({"employee": emp, "error": "no unpaid confirmed earnings in window"})
                         continue
                     ename = agg[0].nm or frappe.db.get_value("Employee", emp, "employee_name") or emp
+                    # Payroll preconditions, checked BEFORE the payment is written -- the
+                    # same block the single send has always run. A worker ERPNext would
+                    # refuse must not get a payment document either: otherwise the work is
+                    # stamped "sent to accounts" with no payroll record behind it, and the
+                    # Issues tab cannot show it, because that tab only lists UNSENT work.
+                    bw_pay_on = dto
+                    bw_guard = 0
+                    while frappe.utils.getdate(bw_pay_on).weekday() != bw_pay_idx and bw_guard < 7:
+                        bw_pay_on = frappe.utils.add_days(bw_pay_on, 1)
+                        bw_guard = bw_guard + 1
+                    bw_emp = frappe.db.get_value("Employee", emp,
+                        ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
+                    bw_block = None
+                    if bw_emp and bw_emp.status == "Inactive":
+                        bw_block = "employee is Inactive"
+                    elif bw_emp and bw_emp.relieving_date and str(bw_pay_on) > str(bw_emp.relieving_date):
+                        bw_block = ("pay date " + str(bw_pay_on) + " is after the relieving date "
+                                    + str(bw_emp.relieving_date))
+                    elif bw_emp and bw_emp.date_of_joining and str(bw_pay_on) < str(bw_emp.date_of_joining):
+                        bw_block = ("pay date " + str(bw_pay_on) + " is before the joining date "
+                                    + str(bw_emp.date_of_joining))
+                    else:
+                        bw_ssa = frappe.db.sql("""
+                            SELECT name FROM `tabSalary Structure Assignment`
+                            WHERE employee = %(e)s AND docstatus = 1 AND from_date <= %(d)s LIMIT 1
+                        """, {"e": emp, "d": bw_pay_on}, as_dict=True)
+                        if not bw_ssa:
+                            bw_later = frappe.db.sql("""
+                                SELECT MIN(from_date) d FROM `tabSalary Structure Assignment`
+                                WHERE employee = %(e)s AND docstatus = 1
+                            """, {"e": emp}, as_dict=True)
+                            if bw_later and bw_later[0].d:
+                                bw_block = ("salary structure starts " + str(bw_later[0].d)
+                                            + ", after the pay date " + str(bw_pay_on))
+                            else:
+                                bw_block = "no submitted Salary Structure Assignment"
+                    if bw_block:
+                        results.append({"employee": emp, "employee_name": ename,
+                                        "week_from": str(dfrom), "week_to": str(dto),
+                                        "pay_date": str(bw_pay_on),
+                                        "amount": frappe.utils.flt(total_owed),
+                                        "skipped": 1, "reason": bw_block})
+                        continue
                     d = frappe.new_doc("Work Management Payment")
                     d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                     d.company = DEFAULT_COMPANY
@@ -1888,6 +1931,8 @@ def wm_payment(**kwargs):
             out["sent"] = sent
             out["sent_total"] = sent_total
             out["errors"] = len([r for r in results if r.get("error")])
+            out["skipped"] = len([r for r in results if r.get("skipped")])
+            out["skipped_total"] = sum(frappe.utils.flt(r.get("amount")) for r in results if r.get("skipped"))
             # never silent again: a date the pay week leaves out is named, not dropped
             out["outside_pay_week"] = bw_outside
             out["span_days"] = bw_days
@@ -2695,6 +2740,12 @@ def wm_payment(**kwargs):
         #   pay date past relieving    -> Additional Salary.validate_dates
         #   pay date before joining    -> Additional Salary.validate_dates
         #   no structure by that date  -> Additional Salary.validate_salary_structure
+        #
+        # The range is bucketed into PAY WEEKS and each week is judged against its
+        # OWN pay day, because that is what sending does. Judging a multi-week range
+        # against one pay day -- the last one -- silently clears anyone whose joining
+        # date falls inside the range: 21 Jul..23 Aug reported 0 blocked while the
+        # same span, week by week, found 3.
         is_from = frappe.form_dict.get("from_date")
         is_to = frappe.form_dict.get("to_date")
         is_farms = (frappe.form_dict.get("farms") or "").strip()
@@ -2702,16 +2753,14 @@ def wm_payment(**kwargs):
         if not is_from or not is_to:
             out["error"] = "from_date and to_date are required"
         else:
-            # the pay day the sender will stamp: walk forward from the window end
             is_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            is_startday = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
             is_endday = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
             is_payday = frappe.db.get_single_value("Work Management Settings", "pay_day") or is_endday
-            is_payidx = is_names.index(is_payday) if is_payday in is_names else 5
-            is_pd = is_to
-            is_guard = 0
-            while frappe.utils.getdate(is_pd).weekday() != is_payidx and is_guard < 7:
-                is_pd = frappe.utils.add_days(is_pd, 1)
-                is_guard = is_guard + 1
+            is_start_wd = is_names.index(is_startday) if is_startday in is_names else 6
+            is_end_idx = is_names.index(is_endday) if is_endday in is_names else 5
+            is_payidx = is_names.index(is_payday) if is_payday in is_names else is_end_idx
+            is_len = ((is_end_idx - is_start_wd) % 7) + 1
             is_cond = ("ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
                        " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
                        " AND IFNULL(we.payment_ref,'')=''"
@@ -2723,63 +2772,118 @@ def wm_payment(**kwargs):
             if is_one:
                 is_cond = is_cond + " AND we.employee = %(e)s"
                 is_args["e"] = is_one
-            is_rows = frappe.db.sql("""
+            # one row per employee per DAY, so the day can be placed in its pay week
+            is_days = frappe.db.sql("""
                 SELECT we.employee emp, MAX(we.employee_name) nm, MAX(ac.farm) farm,
-                       COALESCE(SUM(we.amount),0) owed, COUNT(DISTINCT we.work_date) days,
-                       MIN(we.work_date) wfrom, MAX(we.work_date) wto
+                       we.work_date d, COALESCE(SUM(we.amount),0) owed
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 WHERE """ + is_cond + """
-                GROUP BY we.employee
+                GROUP BY we.employee, we.work_date
             """, is_args, as_dict=True)
+
+            is_groups = {}
+            is_outside = []
+            for dr in is_days:
+                ddate = frappe.utils.getdate(dr.d)
+                dback = (ddate.weekday() - is_start_wd) % 7
+                if dback >= is_len:
+                    # the pay week is shorter than seven days and this weekday sits in
+                    # the gap, so no send will ever pick it up -- named, never dropped
+                    is_outside.append({"employee": dr.emp, "employee_name": dr.nm,
+                                       "farm": dr.farm, "date": str(dr.d),
+                                       "amount": frappe.utils.flt(dr.owed)})
+                    continue
+                wstart = frappe.utils.add_days(ddate, -dback)
+                wend = frappe.utils.add_days(wstart, is_len - 1)
+                gkey = str(dr.emp) + "|" + str(wstart)
+                if gkey not in is_groups:
+                    wpay = wend
+                    wguard = 0
+                    while frappe.utils.getdate(wpay).weekday() != is_payidx and wguard < 7:
+                        wpay = frappe.utils.add_days(wpay, 1)
+                        wguard = wguard + 1
+                    is_groups[gkey] = {"emp": dr.emp, "nm": dr.nm, "farm": dr.farm,
+                                       "week_from": str(wstart), "week_to": str(wend),
+                                       "pay_date": str(wpay), "owed": 0.0, "days": 0,
+                                       "wfrom": str(dr.d), "wto": str(dr.d)}
+                g = is_groups[gkey]
+                g["owed"] = g["owed"] + frappe.utils.flt(dr.owed)
+                g["days"] = g["days"] + 1
+                if str(dr.d) < g["wfrom"]:
+                    g["wfrom"] = str(dr.d)
+                if str(dr.d) > g["wto"]:
+                    g["wto"] = str(dr.d)
+
+            is_emp_cache = {}
             is_out = []
             is_blocked_amt = 0
-            for ir in is_rows:
-                ie = frappe.db.get_value("Employee", ir.emp,
-                    ["employee_name", "status", "date_of_joining", "relieving_date"], as_dict=True)
+            is_keys = sorted(is_groups.keys())
+            for gk in is_keys:
+                g = is_groups[gk]
+                ie = is_emp_cache.get(g["emp"])
+                if ie is None:
+                    ie = frappe.db.get_value("Employee", g["emp"],
+                        ["employee_name", "status", "date_of_joining", "relieving_date"], as_dict=True) or {}
+                    is_emp_cache[g["emp"]] = ie
+                is_pd = g["pay_date"]
                 why = []
                 fix = []
-                if ie and ie.status == "Inactive":
+                if ie and ie.get("status") == "Inactive":
                     why.append("Employee is Inactive")
                     fix.append("Set the employee back to Active, or decide they should not be paid")
-                if ie and ie.relieving_date and str(is_pd) > str(ie.relieving_date):
-                    why.append("Pay date " + str(is_pd) + " falls after the relieving date " + str(ie.relieving_date))
+                if ie and ie.get("relieving_date") and str(is_pd) > str(ie.get("relieving_date")):
+                    why.append("Pay date " + str(is_pd) + " falls after the relieving date " + str(ie.get("relieving_date")))
                     fix.append("Correct the relieving date, or pay this work through payroll directly")
-                if ie and ie.date_of_joining and str(is_pd) < str(ie.date_of_joining):
-                    why.append("Pay date " + str(is_pd) + " falls before the joining date " + str(ie.date_of_joining))
+                if ie and ie.get("date_of_joining") and str(is_pd) < str(ie.get("date_of_joining")):
+                    why.append("Pay date " + str(is_pd) + " falls before the joining date " + str(ie.get("date_of_joining")))
                     fix.append("Correct the date of joining")
                 issa = frappe.db.sql("""
                     SELECT name FROM `tabSalary Structure Assignment`
                     WHERE employee = %(e)s AND docstatus = 1 AND from_date <= %(d)s LIMIT 1
-                """, {"e": ir.emp, "d": is_pd}, as_dict=True)
+                """, {"e": g["emp"], "d": is_pd}, as_dict=True)
                 if not issa:
-                    ilater = frappe.db.sql("""
-                        SELECT MIN(from_date) d FROM `tabSalary Structure Assignment`
-                        WHERE employee = %(e)s AND docstatus = 1
-                    """, {"e": ir.emp}, as_dict=True)
-                    if ilater and ilater[0].d:
-                        why.append("Salary structure starts " + str(ilater[0].d) + ", after the pay date " + str(is_pd))
-                        fix.append("Backdate the Salary Structure Assignment, or move the pay date")
-                    else:
-                        why.append("No submitted Salary Structure Assignment")
-                        fix.append("Assign and submit a Salary Structure for this employee")
+                    why.append("No submitted Salary Structure Assignment effective on or before " + str(is_pd))
+                    fix.append("Assign and submit a Salary Structure for this employee")
                 if why:
-                    is_blocked_amt = is_blocked_amt + frappe.utils.flt(ir.owed)
-                    is_out.append({"employee": ir.emp, "employee_name": ie.employee_name if ie else ir.nm,
-                                   "farm": ir.farm, "amount": frappe.utils.flt(ir.owed), "days": ir.days,
-                                   "work_from": str(ir.wfrom), "work_to": str(ir.wto),
-                                   "status": ie.status if ie else None,
-                                   "date_of_joining": str(ie.date_of_joining) if ie and ie.date_of_joining else None,
-                                   "relieving_date": str(ie.relieving_date) if ie and ie.relieving_date else None,
-                                   "reasons": why, "fixes": fix})
-            is_out = sorted(is_out, key=lambda x: -x["amount"])
-            out["pay_date"] = str(is_pd)
-            out["considered"] = len(is_rows)
+                    is_blocked_amt = is_blocked_amt + frappe.utils.flt(g["owed"])
+                    is_out.append({
+                        "employee": g["emp"],
+                        "employee_name": (ie.get("employee_name") if ie else None) or g["nm"] or g["emp"],
+                        "farm": g["farm"],
+                        "amount": frappe.utils.flt(g["owed"]),
+                        "days": g["days"],
+                        "work_from": g["wfrom"],
+                        "work_to": g["wto"],
+                        "week_from": g["week_from"],
+                        "week_to": g["week_to"],
+                        "pay_date": is_pd,
+                        "status": ie.get("status") if ie else None,
+                        "date_of_joining": ie.get("date_of_joining") if ie else None,
+                        "relieving_date": ie.get("relieving_date") if ie else None,
+                        "reasons": why,
+                        "fixes": fix,
+                    })
+            # the strictest pay date among the blocked weeks, so the row-level
+            # "Mark solved" re-check cannot report cleared on a laxer date
+            is_pd_top = None
+            for r in is_out:
+                if is_pd_top is None or str(r["pay_date"]) < str(is_pd_top):
+                    is_pd_top = r["pay_date"]
+            if is_pd_top is None:
+                is_pd_top = is_to
+            out["pay_date"] = str(is_pd_top)
+            out["week_days"] = is_len
+            out["weeks_checked"] = len(set([is_groups[k]["week_from"] for k in is_keys]))
+            out["considered"] = len(is_groups)
             out["blocked"] = len(is_out)
             out["blocked_amount"] = is_blocked_amt
-            out["clear"] = len(is_rows) - len(is_out)
+            out["clear"] = len(is_groups) - len(is_out)
+            out["blocked_employees"] = len(set([r["employee"] for r in is_out]))
+            out["considered_employees"] = len(set([is_groups[k]["emp"] for k in is_keys]))
+            out["outside_pay_week"] = is_outside
+            out["outside_pay_week_amount"] = sum(frappe.utils.flt(x["amount"]) for x in is_outside)
             out["issues"] = is_out
-
     elif action == "pay_recheck":
         # Re-run one worker's checks on the spot. "Mark solved" calls this, so a row
         # can only leave the list when the data behind it is genuinely fixed --
