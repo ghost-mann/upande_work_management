@@ -3550,6 +3550,28 @@ def wm_dashboard(**kwargs):
             """, {"f": as_p.farm, "t": as_a.task,
                   "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
 
+    elif action == "task_names":
+        # {task docname: subject}, so a screen can print what a task is called rather
+        # than what it is filed under. Every read that returns work carries a Task
+        # docname, and on a site whose Task autoname is a series that docname is
+        # `TASK-2026-00031` -- which is what the master plan, the dashboard and the
+        # pipeline explorer were all showing. The subject is what a person recognises.
+        #
+        # One map for the screen rather than a subject threaded through the eleven
+        # places that emit a task: those would each need their own lookup, and most
+        # read from tables that do not carry the subject at all.
+        #
+        # Group tasks are excluded -- nothing is ever planned against one -- and rows
+        # whose subject equals the docname are dropped, because the screens fall back
+        # to the docname anyway. On a site named by subject that leaves an empty map,
+        # which is the correct answer there and costs nothing to send.
+        tn_out = {}
+        for tn in frappe.db.get_all("Task", filters={"is_group": 0},
+                fields=["name", "subject"], limit_page_length=0):
+            if tn.subject and tn.subject != tn.name:
+                tn_out[tn.name] = tn.subject
+        out["task_names"] = tn_out
+
     else:
         out["error"] = "unknown action: " + str(action)
 
