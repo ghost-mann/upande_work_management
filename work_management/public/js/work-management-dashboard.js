@@ -272,7 +272,7 @@
       var open=AT.open===r.row;
       h+='<tr class="at-row'+(open?' on':'')+'" data-r="'+esc(r.row)+'">'+
          '<td>'+esc(r.farm)+'</td>'+
-         '<td><b>'+esc(r.task)+'</b></td>'+
+         '<td><b>'+esc(taskName(r.task))+'</b></td>'+
          '<td style="font-size:10.5px;color:var(--mute)">'+esc(r.plan)+'<br>'+esc(r.period_from)+' → '+esc(r.period_to)+'</td>'+
          '<td class="n">'+fmt(r.planned_qty)+'</td>'+
          '<td class="n">'+fmt(r.requested_qty)+'</td>'+
@@ -493,6 +493,14 @@
   // it counted `paid=1` and nobody marks paid here -- a column whose only content
   // was a nought. Removing it took a per-plan SQL query out of the endpoint too.
   var PC = { from:null, to:null, farm:"", quick:"8w" };
+
+  // What a task is called, not what it is filed under. Every read returns a Task
+  // docname, and where Task autoname is a series that docname is
+  // "TASK-2026-00031" -- which is what these tables were showing. TASK_NAMES is
+  // fetched once per screen load; the fallback keeps a site whose tasks are named
+  // by subject looking exactly as it did.
+  var TASK_NAMES = {};
+  function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
 
   function planCompletion(){
     var box=el("wm-plancomp"); if(!box) return;
@@ -1156,7 +1164,7 @@
     h+='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Stage</th><th class="n">Pay KES</th></tr></thead><tbody>';
     rows.forEach(function(r){
       var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
-      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td></tr>';
+      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td></tr>';
     });
     return h+'</tbody></table></div></div>';
   }
@@ -1279,7 +1287,7 @@
       var leak = x.planned_v>0 && x.confirmed_v<x.planned_v*0.5;
       h+='<tr>'+
         '<td class="m" style="font-size:10.5px">'+esc(x.plan)+'<div style="font-size:9px;color:var(--mute)">'+esc(x.state||"")+'</div></td>'+
-        '<td style="white-space:normal;max-width:190px"><b>'+esc(x.farm||"—")+'</b> · '+esc(x.task||"—")+'<div style="font-size:9.5px;color:var(--mute)">'+esc(lbl(x.block)||"")+' · '+fmt(x.qty)+' '+esc(x.uom||"")+' @ '+fmt(x.rate,2)+'</div></td>'+
+        '<td style="white-space:normal;max-width:190px"><b>'+esc(x.farm||"—")+'</b> · '+esc(taskName(x.task)||"—")+'<div style="font-size:9.5px;color:var(--mute)">'+esc(lbl(x.block)||"")+' · '+fmt(x.qty)+' '+esc(x.uom||"")+' @ '+fmt(x.rate,2)+'</div></td>'+
         '<td class="m" style="font-size:10px;white-space:nowrap">'+esc(x.from_date||"")+'<br>'+esc(x.to_date||"")+'</td>'+
         '<td>'+hbar(x.planned_v,"#a06000","planned")+hbar(x.assigned_v,"#2563eb","assigned")+hbar(x.confirmed_v,"#0a7a43","confirmed")+'</td>'+
         '<td style="font-size:10.5px">'+esc(vfShort(x.created_by))+'</td>'+
@@ -1554,11 +1562,11 @@
       var dt = stage==="plans"?"Work Management Planner":(stage==="assignments"?"Work Management Assigner":(stage==="actuals"?"Work Management Actuals":"Work Management Payment"));
       var openId=r.name;
       if(stage==="plans"){
-        h+='<tr data-open="'+esc(r.name)+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td>'+lifePill(r)+'</td><td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+money(r.total_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-open="'+esc(r.name)+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td>'+lifePill(r)+'</td><td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+money(r.total_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       } else if(stage==="assignments"){
-        h+='<tr data-open="'+esc(r.planner_request||"")+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+money(r.planned_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-open="'+esc(r.planner_request||"")+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+money(r.planned_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       } else if(stage==="actuals"){
-        h+='<tr data-actual="'+esc(r.name)+'"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+money(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.entered_by||"—")+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-actual="'+esc(r.name)+'"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+money(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.entered_by||"—")+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       } else {
         h+='<tr data-payment="'+esc(r.name)+'"><td><b>'+esc(r.run_title||r.name)+'</b></td><td class="n m">'+money(r.amount)+'</td><td>'+esc(r.period_from||"?")+' → '+esc(r.period_to||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       }
@@ -1579,7 +1587,7 @@
       h+='<div class="pex-sec">PLAN</div><div class="pex-kv">'+
          '<div><span>'+esc(TX("top_singular","Farm"))+'</span><b>'+esc(p.farm||"—")+'</b></div>'+
          '<div><span>'+esc(TX("unit_singular","Block"))+'</span><b>'+esc(lbl(p.block_section)||"—")+'</b></div>'+
-         '<div><span>Task</span><b>'+esc(p.task||"—")+'</b></div>'+
+         '<div><span>Task</span><b>'+esc(taskName(p.task)||"—")+'</b></div>'+
          '<div><span>Target</span><b>'+fmt(p.quantity)+' '+esc(p.uom||"")+'</b></div>'+
          '<div><span>Qty done</span><b>'+fmt(p.done_qty)+' '+esc(p.uom||"")+(p.is_complete?' <span class="pex-cmp">complete</span>':'')+'</b></div>'+
          '<div><span>Qty remaining</span><b>'+(p.over_qty>0?('<span class="pex-over">over by '+fmt(p.over_qty)+'</span>'):(fmt(p.remaining_qty)+' '+esc(p.uom||"")))+(p.pending_qty>0?(' <span class="pex-pend">+'+fmt(p.pending_qty)+' pending</span>'):'')+'</b></div>'+
@@ -1662,7 +1670,7 @@
       h+='<div class="pex-sec">ACTUAL</div><div class="pex-kv">'+
          '<div><span>'+esc(TX("top_singular","Farm"))+'</span><b>'+esc(a.farm||"—")+'</b></div>'+
          '<div><span>'+esc(TX("unit_singular","Block"))+'</span><b>'+esc(lbl(a.block_section)||"—")+'</b></div>'+
-         '<div><span>Task</span><b>'+esc(a.task||"—")+'</b></div>'+
+         '<div><span>Task</span><b>'+esc(taskName(a.task)||"—")+'</b></div>'+
          '<div><span>Qty done</span><b>'+fmt(a.total_actual_qty)+'</b></div>'+
          '<div><span>Workers (payroll)</span><b>'+fmt(a.payroll_people)+'</b></div>'+
          '<div><span>Payment</span><b>'+money(a.total_payment)+' KES</b></div>'+
@@ -1715,7 +1723,7 @@
         h+='<table class="pex"><thead><tr><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Period</th><th>State</th><th>Worker</th><th></th></tr></thead><tbody>';
         asg.forEach(function(r){
           var wtag=(r.wstatus==="Left")?'<span class="pex-st" style="background:#b91c1c">left</span>':'<span class="pex-st" style="background:#0a7a43">active</span>';
-          h+='<tr><td>'+esc(r.task||"")+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(lbl(r.block_section)||"")+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.state)+'</td><td>'+wtag+'</td><td>'+(r.plan?('<a href="#" class="et-planlink" data-plan="'+esc(r.plan)+'">plan ↗</a>'):'')+'</td></tr>';
+          h+='<tr><td>'+esc(taskName(r.task))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(lbl(r.block_section)||"")+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.state)+'</td><td>'+wtag+'</td><td>'+(r.plan?('<a href="#" class="et-planlink" data-plan="'+esc(r.plan)+'">plan ↗</a>'):'')+'</td></tr>';
         });
         h+='</tbody></table>';
       }
@@ -1724,7 +1732,7 @@
       else {
         h+='<table class="pex-daily"><thead><tr><th>Date</th><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Qty</th><th class="n">Amount</th><th>Payroll</th><th>Paid</th><th>State</th></tr></thead><tbody>';
         acts.slice(0,500).forEach(function(r){
-          h+='<tr><td>'+esc(r.work_date||"")+'</td><td>'+esc(r.task||"")+'</td><td>'+esc(r.farm||"")+'</td><td class="n">'+fmt(r.qty)+'</td><td class="n">'+money(r.amount)+'</td><td>'+(r.in_payroll?"✓":"")+'</td><td>'+(r.paid?("✓"+(r.payment_ref?(" "+esc(r.payment_ref)):"")):"")+'</td><td>'+stateTag(r.state)+'</td></tr>';
+          h+='<tr><td>'+esc(r.work_date||"")+'</td><td>'+esc(taskName(r.task))+'</td><td>'+esc(r.farm||"")+'</td><td class="n">'+fmt(r.qty)+'</td><td class="n">'+money(r.amount)+'</td><td>'+(r.in_payroll?"✓":"")+'</td><td>'+(r.paid?("✓"+(r.payment_ref?(" "+esc(r.payment_ref)):"")):"")+'</td><td>'+stateTag(r.state)+'</td></tr>';
         });
         h+='</tbody></table>';
       }
@@ -1756,7 +1764,7 @@
       else {
         var tot=0;
         h+='<table class="pex-daily"><thead><tr><th>Worker</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Days</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead><tbody>';
-        lines.slice(0,2000).forEach(function(x){ tot+=(x.amount||0); h+='<tr><td>'+esc(x.employee_name||x.employee||"")+'</td><td>'+esc(x.farm||"")+'</td><td>'+esc(x.task||"")+'</td><td class="n m">'+fmt(x.days)+'</td><td class="n m">'+fmt(x.qty)+'</td><td class="n m">'+money(x.amount)+'</td></tr>'; });
+        lines.slice(0,2000).forEach(function(x){ tot+=(x.amount||0); h+='<tr><td>'+esc(x.employee_name||x.employee||"")+'</td><td>'+esc(x.farm||"")+'</td><td>'+esc(taskName(x.task))+'</td><td class="n m">'+fmt(x.days)+'</td><td class="n m">'+fmt(x.qty)+'</td><td class="n m">'+money(x.amount)+'</td></tr>'; });
         h+='</tbody><tfoot><tr><td><b>Total</b></td><td></td><td></td><td></td><td></td><td class="n m"><b>'+money(tot)+'</b></td></tr></tfoot></table>';
       }
       body.innerHTML=h;
@@ -1845,7 +1853,7 @@
       var wtag=(r.wstatus==="Left")?'<span class="pex-st" style="background:#b91c1c">left</span>':'<span class="pex-st" style="background:#0a7a43">active</span>';
       var ov=r.overlap?' <span class="et-ovtag" title="Overlaps another live assignment">⚠ overlap</span>':'';
       h+='<tr'+(r.plan?(' data-open="'+esc(r.plan)+'" data-dt="plan" style="cursor:pointer"'):'')+'>'+
-         '<td>'+esc(r.task||"")+ov+'</td>'+
+         '<td>'+esc(taskName(r.task))+ov+'</td>'+
          '<td>'+esc(r.farm||"")+'</td>'+
          '<td>'+esc(lbl(r.block_section)||"")+'</td>'+
          '<td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td>'+
@@ -2311,7 +2319,7 @@
          '<td>'+kindTag+'</td>'+
          '<td>'+esc(r.plan)+'</td>'+
          '<td>'+esc(r.farm)+'</td>'+
-         '<td>'+esc(r.task)+'</td>'+
+         '<td>'+esc(taskName(r.task))+'</td>'+
          '<td>'+leftCell+'</td>'+
          '<td class="n">'+esc(r.left_date||"—")+'</td>'+
          '<td>'+repCell+'</td>'+
@@ -2433,16 +2441,16 @@
     if(QT.tab==="plans"){
       box.innerHTML=qTable(D.plan_pending||[],
         [["Ref"],[esc(TX("top_singular","Farm"))],[esc(TX("unit_singular","Block"))],["Task"],["People/day",1],["Cost KES",1]],
-        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(lbl(r.block_section)||"—")+'</td><td>'+esc(r.task||"—")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.total_cost)+'</td>'; });
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(lbl(r.block_section)||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.total_cost)+'</td>'; });
     } else if(QT.tab==="asg"){
       box.innerHTML=qTable(D.asg_pending||[],
         [["Ref"],[esc(TX("top_singular","Farm"))],["Task"],["Planned",1],["Assigned",1],["Variance",1]],
-        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(r.task||"—")+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+fmt(r.variance)+'</td>'; });
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+fmt(r.variance)+'</td>'; });
     } else if(QT.tab==="act"){
       box.innerHTML=qTable(D.act_pending||[],
         [["Ref"],[esc(TX("top_singular","Farm"))],["Task"],["Stage"],["Pay KES",1]],
         function(r){ var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
-          return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(r.task||"—")+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
+          return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
     } else {
       box.innerHTML=qTable(D.pay_pending_list||[],
         [["Ref"],["Run"],["Workers",1],["Total KES",1]],
@@ -2657,7 +2665,7 @@
       h+='<div class="sech" style="margin-top:12px;font-size:10px">By task &middot; top by man-days</div>'+
         '<div class="tablewrap" style="max-height:220px;overflow-y:auto"><table><thead><tr><th>Task</th><th class="n">Man-days</th><th class="n">Ha/md</th><th class="n">Cost/Ha</th></tr></thead><tbody>';
       tasks.forEach(function(x){
-        h+='<tr><td>'+esc(x.task)+'</td><td class="n m">'+fmt(x.mandays)+'</td><td class="n m">'+hpm(x.ha_per_manday)+'</td><td class="n m">'+cph(x.cost_per_ha)+'</td></tr>';
+        h+='<tr><td>'+esc(taskName(x.task))+'</td><td class="n m">'+fmt(x.mandays)+'</td><td class="n m">'+hpm(x.ha_per_manday)+'</td><td class="n m">'+cph(x.cost_per_ha)+'</td></tr>';
       });
       h+='</tbody></table></div>';
     }
@@ -3088,7 +3096,7 @@
         (isEnt?'':'<th class="n">Target</th>')+'<th class="n">Actual</th>'+
         (isEnt?'':'<th class="n">Achieved</th>')+'<th class="n">'+(role==="creator"?"Spent":"Spent KES")+'</th><th>Status</th></tr></thead><tbody>';
       rows.forEach(function(r){
-        h+='<tr><td class="m" style="font-size:10px">'+esc(r.doc)+'</td><td>'+esc(r.task||"")+'</td><td>'+esc(r.farm||"")+'</td>'+
+        h+='<tr><td class="m" style="font-size:10px">'+esc(r.doc)+'</td><td>'+esc(taskName(r.task))+'</td><td>'+esc(r.farm||"")+'</td>'+
           '<td class="m" style="font-size:10px">'+esc(r.period||"")+'</td>'+
           (isEnt?'<td class="m" style="font-size:10px">'+esc(r.entered||"")+'</td>':'')+
           (role==="assigner"?'<td class="n m">'+esc(r.crew||"")+'</td>':'')+
@@ -3117,7 +3125,13 @@
   }
   function boot(){
     var rb=el("wm-refresh"); if(rb) rb.onclick=function(){ load(); toast("Refreshed"); };
-    load();
+    // Fetched before the first render so tables draw subjects rather than
+    // docnames, but never blocking: a failure here costs readable task names on
+    // one screen, and a dashboard that will not load at all costs everything.
+    // taskName() falls back to the docname, which is exactly the old behaviour.
+    call({action:"task_names"}).then(function(d){
+      TASK_NAMES=(d && d.task_names) || {};
+    }).catch(function(){}).then(load, load);
   }
   // No window.frappe check here. This page reads only -- every call is a
   // cookie-authenticated GET with no CSRF token to fetch -- and the route already

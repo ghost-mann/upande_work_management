@@ -575,12 +575,12 @@
            '<ul style="margin:6px 0 0 16px">';
         res.rate_drift.forEach(function(x){
           if(x.kind==="unit"){
-            h+='<li><b>'+esc(x.task)+' changed unit.</b> Priced per '+esc(x.budget_uom||"—")+
+            h+='<li><b>'+esc(taskName(x.task))+' changed unit.</b> Priced per '+esc(x.budget_uom||"—")+
                ' at '+fmt(x.budget_rate,6)+'; the task is now priced per '+esc(x.live_uom||"—")+
                ' at '+fmt(x.live_rate,6)+'. The quantity has to be re-entered in the new unit — '+
                'one '+esc(x.budget_uom||"unit")+' is not one '+esc(x.live_uom||"unit")+'.</li>';
           } else {
-            h+='<li>'+esc(x.task)+' — planned at '+fmt(x.budget_rate,6)+', now '+fmt(x.live_rate,6)+
+            h+='<li>'+esc(taskName(x.task))+' — planned at '+fmt(x.budget_rate,6)+', now '+fmt(x.live_rate,6)+
                ' (same work would cost '+fmt(x.cost_at_live_rate,2)+')</li>';
           }
         });
@@ -596,7 +596,7 @@
            'within — the rule the planner applies when one is raised. '+
            'Older requests can straddle two periods:<ul style="margin:6px 0 0 16px">';
         res.spanning.forEach(function(x){
-          h+='<li>'+esc(x.name)+' — '+esc(x.task)+', '+fmt(x.quantity)+' over '+
+          h+='<li>'+esc(x.name)+' — '+esc(taskName(x.task))+', '+fmt(x.quantity)+' over '+
              esc(x.from_date)+' → '+esc(x.to_date)+' ('+esc(x.workflow_state||'')+')</li>';
         });
         h+='</ul></div>';
@@ -609,7 +609,7 @@
       acts.forEach(function(a,i){
         var exhausted = (a.remaining_qty!=null && a.remaining_qty<=0.005) ||
                         (a.remaining_cost!=null && a.remaining_cost<=0.005);
-        h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(a.task)+'</td><td class="n m">'+fmt(a.man_days)+'</td>'+
+        h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(taskName(a.task))+'</td><td class="n m">'+fmt(a.man_days)+'</td>'+
            '<td class="n m">'+fmt(a.days)+'</td><td class="n m">'+fmt(a.work_qty)+'</td>'+
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
            '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
@@ -1280,6 +1280,14 @@
     if(t && t.max && t.value > t.max) t.value=t.max;
   }
 
+  // What a task is called, not what it is filed under. Every read returns a Task
+  // docname, and where Task autoname is a series that docname is
+  // "TASK-2026-00031" -- which is what these tables were showing. TASK_NAMES is
+  // fetched once per screen load; the fallback keeps a site whose tasks are named
+  // by subject looking exactly as it did.
+  var TASK_NAMES = {};
+  function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
+
   function renderPeriodBar(d){
     var bar=el("f-mpperiod"), txt=el("f-mptext"), btn=el("f-usemp");
     if(!bar) return;
@@ -1596,7 +1604,7 @@
         var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th></tr></thead><tbody>';
         var cols=fs?12:11;
         list.forEach(function(r, i){
-          h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
+          h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
           h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="'+cols+'" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
@@ -1638,7 +1646,7 @@
       var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th><th></th></tr></thead><tbody>';
       var cols=fs?11:10;
       rows.forEach(function(r, i){
-        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td>'+
+        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td>'+
           '<td><div class="btns"><button class="btn solid" data-edit="'+esc(r.name)+'">Edit &amp; resubmit</button><button class="btn" data-close="'+esc(r.name)+'">'+closeLabel+'</button></div></td></tr>';
         h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="'+cols+'" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
       });
@@ -1698,7 +1706,7 @@
     if(!r.budget_plan)
       return '<span class="gg-alt" style="font-size:10.5px">No approved master plan covers these dates</span>';
     if(r.budget_qty==null)
-      return '<span class="gg-alt" style="font-size:10.5px">'+esc(r.task)+' is not budgeted in '+
+      return '<span class="gg-alt" style="font-size:10.5px">'+esc(taskName(r.task))+' is not budgeted in '+
              esc(r.budget_plan)+'</span>';
     return gauge({size:"sm", cap:true, uom:r.budget_uom,
                   qty_total:r.budget_qty, qty_left:r.budget_remaining_qty,
@@ -1719,7 +1727,7 @@
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
       var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r, i){
-        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td><td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td><td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
         h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="13" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
@@ -1902,7 +1910,7 @@
     box.innerHTML='<div class="loading">Loading…</div>';
     call({action:"periods", task:RT.task}, "wm_rates").then(function(d){
       var ps=d.periods||[], tm=d.task_master||{};
-      var h='<div class="rt-cur"><b>'+esc(RT.task)+'</b> — now '+fmt(tm.custom_rate,6)+
+      var h='<div class="rt-cur"><b>'+esc(taskName(RT.task))+'</b> — now '+fmt(tm.custom_rate,6)+
             ' per '+esc(tm.custom_uom||"—")+', target '+fmt(tm.custom_daily_target)+'/day</div>';
       h+='<div class="rt-acts">'+
          '<button type="button" class="btn sm solid" id="rt-new">New rate from a date</button>'+
@@ -2004,7 +2012,7 @@
   }
 
   function renderImpact(d){
-    var h='<div class="rt-impact"><h4>Correcting '+esc(d.task)+' · '+fmt(d.old_rate,6)+' → '+
+    var h='<div class="rt-impact"><h4>Correcting '+esc(taskName(d.task))+' · '+fmt(d.old_rate,6)+' → '+
           fmt(d.new_rate,6)+' for '+esc(d.valid_from)+' → '+esc(d.valid_to||"open")+'</h4>';
     if((d.master_plans||[]).length){
       h+='<div style="margin:8px 0 4px"><label><input type="checkbox" id="rt-allmp" checked> '+
@@ -2064,6 +2072,12 @@
   }
 
   function boot(){
+    // task_names rides along with the two the screen already makes, and resolves
+    // to {} on failure: unreadable task names are a nuisance, a planner that will
+    // not open is not. taskName() falls back to the docname either way.
+    call({action:"task_names"}, "wm_dashboard").then(function(d){
+      TASK_NAMES=(d && d.task_names) || {};
+    }).catch(function(){});
     Promise.all([ call({action:"meta"}), call({action:"roles"}) ]).then(function(res){
       var meta=res[0], roles=res[1];
       ST.roles=roles;
