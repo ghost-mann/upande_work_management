@@ -346,8 +346,8 @@ class TestASiteThatRenamedNothingCarriesNothing(unittest.TestCase):
 		self.assertEqual(
 			{k: v for k, v in plan.items() if v is not None},
 			{
-				("Work Management Settings", "farms"): "Estates",
-				("Work Management Settings", "farms_in_use"): "Estates in use",
+				("Work Management Settings", "farms"): "Estates in use",
+				("Work Management Settings", "farms_restrict"): "Only work the Estates listed below",
 				("Work Management Settings", "farms_section"): "Estates",
 				("Work Management Settings", "disc_multi_farm"): "Two Estates, one day",
 			},

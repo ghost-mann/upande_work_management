@@ -63,7 +63,6 @@ def label_for(template, names):
 FIELD_LABELS = (
 	("WM Farm", "farm", "{top_singular}"),
 	("Work Management Actuals", "farm", "{top_singular}"),
-	("Work Management Farm In Use", "farm", "{top_singular}"),
 	("Work Management Actuals", "block_section", "{unit_singular} / {section_singular}"),
 	("Work Management Assigner", "farm", "{top_singular}"),
 	("Work Management Assigner", "block_section", "{unit_singular} / {section_singular}"),
@@ -78,8 +77,8 @@ FIELD_LABELS = (
 	("Work Management Section", "section_name", "{section_singular}"),
 	("Work Management Section Block", "block", "{unit_singular}"),
 	("Work Management Settings", "block_exclude", "{unit_singular} Exclude Keywords"),
-	("Work Management Settings", "farms", "{top_plural}"),
-	("Work Management Settings", "farms_in_use", "{top_plural} in use"),
+	("Work Management Settings", "farms", "{top_plural} in use"),
+	("Work Management Settings", "farms_restrict", "Only work the {top_plural} listed below"),
 	("Work Management Settings", "farms_section", "{top_plural}"),
 	("Work Management Settings", "disc_multi_farm", "Two {top_plural}, one day"),
 	("Work Management Settings", "rate_recalc_farm", "{top_singular} Scope"),

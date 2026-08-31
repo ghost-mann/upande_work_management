@@ -7,7 +7,7 @@
   "default_company",
   "block_exclude",
   "farms_section",
-  "farms_in_use",
+  "farms_restrict",
   "farms",
   "sb_approvals",
   "approval_stages",
@@ -101,17 +101,17 @@
    "label": "Farms"
   },
   {
-   "description": "The farms this project plans work against. Leave it empty and every farm in Upande Core is offered \u2014 narrow it here and the planner, assigner, actuals, payment and master plan screens offer only these. It changes what this app shows; the farms themselves, and every other Upande app, are untouched.",
-   "fieldname": "farms_in_use",
-   "fieldtype": "Table MultiSelect",
-   "label": "Farms in use",
-   "options": "Work Management Farm In Use"
+   "fieldname": "farms_restrict",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Only work the Farms listed below",
+   "description": "Off: every farm in Upande Core is available, and the table below only supplies cost projects and area overrides. On: the screens offer just the farms listed. Off by default, so adding a row to give a farm its cost project never hides the others."
   },
   {
-   "description": "Each farm's cost project, and an area override where the farm's own area is not the figure to divide by. The farms themselves are Upande Core's records; a row naming a farm Core has not got is ignored.",
+   "description": "One row per farm this project works: its cost project \u2014 which is where a plan's activities come from \u2014 and an area override where the farm's own area is not the figure to divide by. The farms themselves are Upande Core's records. Whether this list also narrows the screens is the checkbox above.",
    "fieldname": "farms",
    "fieldtype": "Table",
-   "label": "Farms",
+   "label": "Farms in use",
    "options": "WM Farm"
   },
   {
@@ -153,7 +153,7 @@
    "fieldtype": "Time",
    "label": "Morning scan cutoff",
    "default": "09:00:00",
-   "description": "Before this time, missing scans are shown as a grey chip only — no override dialog."
+   "description": "Before this time, missing scans are shown as a grey chip only \u2014 no override dialog."
   },
   {
    "fieldname": "att_block_noscan_actuals",
@@ -173,7 +173,7 @@
   {
    "fieldname": "sb_disc",
    "fieldtype": "Section Break",
-   "label": "Discrepancy checks (Audit → Discrepancies)"
+   "label": "Discrepancy checks (Audit \u2192 Discrepancies)"
   },
   {
    "fieldname": "disc_absent_paid",
@@ -206,9 +206,9 @@
   {
    "fieldname": "disc_rate_mismatch",
    "fieldtype": "Check",
-   "label": "Amount doesn't match qty × rate",
+   "label": "Amount doesn't match qty \u00d7 rate",
    "default": "1",
-   "description": "Flags a row whose amount is not quantity times rate — usually an edited or corrupted value."
+   "description": "Flags a row whose amount is not quantity times rate \u2014 usually an edited or corrupted value."
   },
   {
    "fieldname": "disc_multi_farm",
@@ -282,16 +282,16 @@
    "fieldname": "master_plan_post_approval_editors",
    "fieldtype": "Small Text",
    "label": "Master plan post-approval editors (comma-separated emails)",
-   "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in — an administrator who must intervene already has the Desk form."
+   "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in \u2014 an administrator who must intervene already has the Desk form."
   },
   {
    "fieldname": "sb_rates",
    "fieldtype": "Section Break",
    "label": "Rates",
-   "description": "Task rates are effective-dated in Work Task Rate. Task.custom_rate is mirrored from whichever period is active today, so the Task list stays the place you edit rates day to day — an edit there is recorded as a period starting today. Backdated changes belong to a rate card."
+   "description": "Task rates are effective-dated in Work Task Rate. Task.custom_rate is mirrored from whichever period is active today, so the Task list stays the place you edit rates day to day \u2014 an edit there is recorded as a period starting today. Backdated changes belong to a rate card."
   },
   {
-   "description": "The daily wage most active rate periods are derived from. Read-only — change it by applying a rate card, not by typing here.",
+   "description": "The daily wage most active rate periods are derived from. Read-only \u2014 change it by applying a rate card, not by typing here.",
    "fieldname": "current_daily_wage",
    "fieldtype": "Currency",
    "label": "Current Daily Wage",
@@ -311,7 +311,7 @@
    "description": "Revalues UNPAID day-rows at the rate in force on each work date. Never touches paid rows, tasks that are not wage-derived, or tasks whose unit or daily target changed at the boundary. Always dry-run it first."
   },
   {
-   "description": "Revalue work dated on or after this day, e.g. 2026-07-21 for the 340 → 387 rate card.",
+   "description": "Revalue work dated on or after this day, e.g. 2026-07-21 for the 340 \u2192 387 rate card.",
    "fieldname": "rate_recalc_from",
    "fieldtype": "Date",
    "label": "Recalculate From"
@@ -395,7 +395,7 @@
    "fieldname": "sb_whopays",
    "fieldtype": "Section Break",
    "label": "Who this system pays",
-   "description": "This system pays task work only. Salaried staff are paid through payroll, so their recorded work must never become a payment here. An employee qualifies if ANY of the three lists below matches — that way a blank employment type on a new hire does not quietly make them unpayable."
+   "description": "This system pays task work only. Salaried staff are paid through payroll, so their recorded work must never become a payment here. An employee qualifies if ANY of the three lists below matches \u2014 that way a blank employment type on a new hire does not quietly make them unpayable."
   },
   {
    "fieldname": "tw_employment_type_rows",
@@ -537,7 +537,7 @@
    "fieldname": "tax_top_singular",
    "fieldtype": "Data",
    "label": "Farm level (singular)",
-   "description": "Default: Farm. Estate, site, division — whatever your project calls it."
+   "description": "Default: Farm. Estate, site, division \u2014 whatever your project calls it."
   },
   {
    "fieldname": "tax_top_plural",
