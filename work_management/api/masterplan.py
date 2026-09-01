@@ -38,6 +38,17 @@ def wm_masterplan(**kwargs):
     #
     # No def/return allowed in the sandbox, so everything is inline.
     # ==================================================================
+    # The farms this screen may be asked about. Every other script has this at module
+    # top and this one did not, which is how a guard referencing it took the whole
+    # Master Plan screen down with a NameError -- caught on live, before anyone else
+    # hit it, and now covered by a test that reads these files rather than the ported
+    # copies (the port gives every module a FARMS whether the mirror had one or not,
+    # so testing the app could never have caught it).
+    #
+    # One `FARMS =` line, because port_app.py strips exactly those and rebuilds them
+    # from get_config(). Here that is every farm the site has; there it is the farms
+    # this project works, narrowed to the ones this person is permitted.
+
     MP_EDIT_ROLES = ["Farm Manager", "HOD HR", "General Manager", "System Manager"]
     MP_GM_ROLES = ["General Manager", "System Manager"]
     TOLERANCE = 0.005

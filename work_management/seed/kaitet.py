@@ -42,10 +42,17 @@ KAITET_ROLES = list(FARM_APPROVER_ROLE.values()) + [
 # DocPerms that left the shipped doctype JSON with those roles. Re-added here as
 # Custom DocPerms so nobody on this site loses access they had.
 KAITET_DOCPERMS = [
+	# No `submit` on the two child tables. A child row is submitted by submitting
+	# its parent, so a child table has no submit of its own to grant -- and Frappe
+	# refuses the grant when anything saves that doctype's permissions, not when
+	# the grant is added. The shipped JSON carried it for nine roles each, so
+	# adding one Coffee Clerk row here revalidated the whole doctype and died on
+	# Farm Manager. That killed the seed, which is what gives each farm its cost
+	# project, which is why a Master Plan screen said Lokitela had none.
 	("Work Actuals Employee", "Coffee Clerk",
-		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
 	("Work Assignment Employee", "Coffee Clerk",
-		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
 	("Work Management Planner", "Agriculture Manager",
 		["read", "write", "create", "submit", "cancel", "amend", "report", "export", "share", "print", "email"]),
 ]
@@ -53,7 +60,7 @@ KAITET_DOCPERMS = [
 
 def execute():
 	created_roles = ensure_roles()
-	written_projects, missing_farms = ensure_farm_projects()
+	written_projects, missing_farms, missing_projects = ensure_farm_projects()
 	restore_docperms()
 	carried = carry_hr_manager_kaitet()
 	rows = seed_stage_approvers()
@@ -68,6 +75,16 @@ def execute():
 		print(
 			"  no Farm record in Upande Core for: " + ", ".join(missing_farms)
 			+ " -- create them there and re-run to give them their cost project"
+		)
+	if missing_projects:
+		# Said out loud because it used to be swallowed, and a farm without a cost
+		# project is a Master Plan screen that offers no activities and cannot say
+		# why. On a site that is not Kaitet the mapping in this file names the
+		# wrong projects, and that is the thing to fix.
+		print(
+			"  no Project on this site for: " + ", ".join(missing_projects)
+			+ " -- create those projects, or set each farm's own cost project in"
+			  " Work Management Settings, Farms tab"
 		)
 
 
@@ -84,7 +101,13 @@ def ensure_roles():
 
 
 def ensure_farm_projects():
-	"""Give each Kaitet farm its cost project. Returns (written, missing).
+	"""Give each Kaitet farm its cost project.
+
+	Returns (written, missing_farms, missing_projects), the last two being what
+	this could not do and why -- one list per cause, because the fixes differ: a
+	farm Upande Core has not got is created there, while a project this site has
+	not got is either created here or means the mapping above names another
+	site's projects.
 
 	This used to create the farms themselves. It does not any more: farms are
 	Upande Core's records, and a farm invented here would be missing the company,
@@ -92,19 +115,21 @@ def ensure_farm_projects():
 	project each farm's costs land in -- the mapping live runs on -- and that
 	lives on the farms table in Settings.
 
-	A farm Core has not got is reported rather than skipped silently: the cost
-	project is what the Rates tab reads to decide which tasks exist, so a farm
-	quietly without one shows an empty task list and no reason why.
+	Neither skip is silent, and the missing project used to be. The cost project
+	is what the Master Plan screen reads to decide which tasks exist, so a farm
+	quietly without one shows "no cost project" and no reason why -- which this
+	function's own docstring warned about while causing it.
 	"""
 	settings = frappe.get_doc("Work Management Settings")
 	existing = {row.farm: row for row in settings.get("farms") or []}
-	written, missing = 0, []
+	written, missing_farms, missing_projects = 0, [], []
 
 	for farm, project in FARMS:
 		if not frappe.db.exists("Farm", farm):
-			missing.append(farm)
+			missing_farms.append(farm)
 			continue
 		if not frappe.db.exists("Project", project):
+			missing_projects.append("%s (wanted %s)" % (farm, project))
 			continue
 		row = existing.get(farm)
 		if row:
@@ -115,9 +140,24 @@ def ensure_farm_projects():
 			settings.append("farms", {"farm": farm, "project": project})
 		written += 1
 
-	if written:
+	# And narrow the app to them, which is the other half of naming them. Kaitet
+	# works four of the sixteen farms Upande Core carries on this site; without
+	# this, the four rows above supply cost projects and nothing else, and every
+	# screen still offers all sixteen.
+	#
+	# Not cosmetic. The per-farm approvers seeded below cover exactly these four,
+	# and the stranded-farm check refuses a save where some farms in scope have an
+	# approver and others do not. Leaving the scope at sixteen made the seed write
+	# a configuration its own validation rejected -- it threw, the transaction
+	# rolled back, and the cost projects written above were lost with it.
+	restricted = 0
+	if not settings.get("farms_restrict"):
+		settings.farms_restrict = 1
+		restricted = 1
+
+	if written or restricted:
 		settings.save(ignore_permissions=True)
-	return written, missing
+	return written, missing_farms, missing_projects
 
 
 def restore_docperms():
