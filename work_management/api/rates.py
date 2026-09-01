@@ -46,6 +46,10 @@ def wm_rates(**kwargs):
     #
     # No def/return allowed in the sandbox, so everything is inline.
     # ==================================================================
+    # Each farm's cost project. rate_meta reads this to work out which tasks carry a
+    # rate, and this script never defined it -- so that action answered
+    # `NameError: name 'FARM_PROJECT' is not defined` on live from the day it was
+    # added. Invisible from the app, where the port supplies it from get_config().
 
     # Daily wage tiers that legitimately existed before the 2026-07-21 rate card.
     # 340 is the general wage; 350 is a distinct tier covering packhouse, greenhouse,
@@ -72,15 +76,16 @@ def wm_rates(**kwargs):
     # System Manager, and nobody else.
     rt_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
     CAN_RATE = 1 if "System Manager" in rt_roles else 0
-    for rr in CAPABILITIES.get("set_rates") or []:
-        if rr in rt_roles:
-            CAN_RATE = 1
-
     # Who may do what, beyond approving. In the app, port_app.py strips this and
     # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
     # it is what this site has always allowed -- these were four lists compiled into
     # the code, naming this company's job titles, so a farm could say who approves a
     # plan and not who may change a rate.
+
+    for rr in CAPABILITIES.get("set_rates") or []:
+        if rr in rt_roles:
+            CAN_RATE = 1
+
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -88,7 +93,18 @@ def wm_rates(**kwargs):
     # ==================================================================
     # META — what the Settings screen shows before you do anything
     # ==================================================================
-    if action == "meta":
+    # A farm this caller is not offered is not a farm they may ask about. Same guard
+    # the other screens carry -- this one reads a farm on `recalc` and had none.
+    FARM_ASKED = (frappe.form_dict.get("farm") or "").strip()
+    FARM_DENIED = ""
+    if FARM_ASKED and FARMS and FARM_ASKED not in FARMS:
+        FARM_DENIED = (FARM_ASKED + " is not a farm you are working. If it should be,"
+            " it needs adding to the farms this project works, or to the farms you"
+            " are permitted.")
+
+    if FARM_DENIED:
+        out["error"] = FARM_DENIED
+    elif action == "meta":
         today = frappe.utils.today()
         out["today"] = today
         out["legacy_daily_wage"] = LEGACY_DAILY_WAGE

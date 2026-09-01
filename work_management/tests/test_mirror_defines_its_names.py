@@ -24,23 +24,32 @@ Skipped when the mirror is not checked out beside the app, following
         work_management.tests.test_mirror_defines_its_names -v
 """
 
+import glob
 import os
 import re
 import unittest
 
 MIRROR = "/home/austin/vscodeProjects/kaitet-work-management/server_scripts"
 
-# The screens whose farm dimension the guard defends. Named rather than globbed:
-# a new script appearing should be a deliberate addition here, not silently
-# covered or silently missed.
-SCRIPTS = ("wm_dashboard", "wm_planner", "wm_masterplan", "wm_assigner",
-	"wm_actuals", "wm_payment")
+# Every mirror script, globbed rather than listed.
+#
+# It was a hand-written list of the six screens, and that is how `wm_rates` went
+# uncovered: it grew a CAPABILITIES reference above its definition, the fault
+# reached live, and this file reported OK because the script was not in the list.
+# A test whose coverage is a list somebody has to remember to update is a test
+# that quietly stops covering things. The assertions below skip a script that
+# does not use the name in question, so globbing costs nothing.
+SCRIPTS = tuple(sorted(
+	os.path.splitext(os.path.basename(path))[0]
+	for path in glob.glob(os.path.join(MIRROR, "*.py"))
+))
 
 # Names the port's header supplies to the app and the mirror must therefore
 # supply itself. These are exactly the ones `port_app.py` strips and rebuilds,
 # which is why their absence in the mirror is invisible from the app side.
 PORTED_CONSTANTS = ("FARMS", "FARM_PROJECT", "DEFAULT_COMPANY", "BLOCK_EXCLUDE",
-	"FARM_APPROVER_ROLE", "HR_HEAD_ROLES", "STAGE_ROWS", "STAGE_STATES")
+	"FARM_APPROVER_ROLE", "HR_HEAD_ROLES", "STAGE_ROWS", "STAGE_STATES",
+	"CAPABILITIES")
 
 
 def source(script):
@@ -138,6 +147,54 @@ class TestTheGuardHasSomethingToCheckAgainst(unittest.TestCase):
 				continue
 			with self.subTest(script=script):
 				self.assertIn("FARM_ASKED =", text)
+
+
+class TestNothingIsUsedBeforeItIsDefined(unittest.TestCase):
+	"""Order, not just presence.
+
+	A Server Script has no functions -- the whole file is module level, run top to
+	bottom -- so a name used above its assignment is a NameError the moment the
+	request arrives. That is a runtime fault, so compiling the script cannot see
+	it; the sandbox compile test passes happily on code that dies on every call.
+
+	It has already happened: `CAPABILITIES` was read at module top in three
+	scripts while its definition sat a hundred lines below, and three screens
+	returned 500 until it was moved. Frappe refused the next push itself, which
+	is the only reason it was brief.
+	"""
+
+	def setUp(self):
+		if not os.path.isdir(MIRROR):
+			self.skipTest("mirror not present")
+
+	def first_use(self, lines, name, skip):
+		for i, line in enumerate(lines):
+			if i == skip:
+				continue
+			stripped = line.strip()
+			if stripped.startswith("#"):
+				continue
+			code = line.split("#")[0]
+			if re.search(r"\b%s\b" % re.escape(name), code):
+				return i
+		return None
+
+	def test_every_constant_is_defined_above_its_first_use(self):
+		offenders = []
+		for script in SCRIPTS:
+			text = source(script)
+			lines = text.splitlines()
+			for name in PORTED_CONSTANTS:
+				defined = next((i for i, l in enumerate(lines)
+					if re.match(r"^%s\s*=" % re.escape(name), l)), None)
+				if defined is None:
+					continue
+				used = self.first_use(lines, name, defined)
+				if used is not None and used < defined:
+					offenders.append(
+						"%s uses %s on line %d and defines it on line %d"
+						% (script, name, used + 1, defined + 1))
+		self.assertEqual(offenders, [], "\n".join(offenders))
 
 
 class TestTheDefinitionSurvivesThePort(unittest.TestCase):
