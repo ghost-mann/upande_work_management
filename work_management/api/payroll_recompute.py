@@ -19,6 +19,8 @@ def wm_payroll_recompute(**kwargs):
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
+    STAGE_ROWS = _cfg["stage_rows"]
+    STAGE_STATES = _cfg["stage_states"]
 
     # Re-answer count_in_payroll / amount for rows a superseded rule froze.
     #

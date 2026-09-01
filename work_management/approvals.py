@@ -52,8 +52,13 @@ def _stage(key, label, document_type, kind, state, action, role, scoped=False, r
 # kind:
 #   Submit   -- moves a draft into the chain. Cannot be switched off.
 #   Approval -- a step with an approve action and a reject action.
-#   Gate     -- not a workflow transition at all. A screen-level check that
-#               reads its approvers from the same table.
+#
+# There used to be a third, `Gate`: "not a workflow transition at all, a
+# screen-level check". Nothing ever read it. The one Gate stage shipped -- a
+# weekly consultant review on the planner -- was inert, and so was the Settings
+# checkbox that promised the same rule. Both are gone. The consultant control that
+# works is `consultant_state` on each Master Plan Activity: a consultant settles
+# individual activities and the planner only offers ones marked OK.
 CATALOGUE = [
 	_stage("masterplan_submit", "Master Plan: Submit", "Work Management Master Plan",
 		"Submit", "Draft", "Send for Consultant Review", "System Manager", required=True),
@@ -66,8 +71,6 @@ CATALOGUE = [
 		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
 	_stage("planner_farm_approval", "Planner: Farm Approval", "Work Management Planner",
 		"Approval", "Pending Approval", "Approve", "System Manager", scoped=True),
-	_stage("planner_weekly_consultant", "Planner: Weekly Consultant", "Work Management Planner",
-		"Gate", None, None, "System Manager"),
 
 	_stage("assigner_submit", "Assigner: Submit", "Work Management Assigner",
 		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
@@ -344,39 +347,64 @@ def effective_chain(settings=_UNSET, rows=None, document_type=None):
 
 
 def pipeline_states(settings=_UNSET, rows=None, document_type=None):
-	"""Every state a document of this type can be carrying. For reads only.
+	"""The states of one pipeline, grouped by what a read actually means.
 
-	Deliberately not the mirror image of `effective_chain()`. Writes follow the
-	enabled chain; reads match everything, including the states of steps that are
-	switched off -- otherwise a list filter narrows the moment somebody changes a
-	setting, and documents that passed through the old chain drop out of reports.
-	That would look like data loss caused by a checkbox.
+	For reads only, and deliberately not the mirror image of `effective_chain()`.
+	Writes follow the enabled chain; reads match every state a document could be
+	carrying, the states of switched-off steps included -- otherwise a list filter
+	narrows the moment somebody ticks a box, and documents that went through the
+	old chain drop out of reports. That would look like data loss caused by a
+	setting.
 
-	The union of every *known* state rather than of states found in the data: it
-	needs no query, and unlike a snapshot of the data it cannot go stale. A state
-	nobody is using costs a read nothing -- no row matches it.
+	The union of every *known* state rather than a snapshot of the data: it needs
+	no query, and unlike a snapshot it cannot go stale. A state nobody uses costs
+	a read nothing -- no row matches it.
+
+	Grouped because the screens' filters mean different things, and a flat list
+	would silently widen them:
+
+	    waiting   the approval steps -- somebody has to act
+	    active    waiting plus the terminal state -- submitted and not rejected,
+	              which is what the screens' `IN (...)` lists have always meant
+	    open      draft and rejected as well -- everything still editable
+	    all       every state, for a filter that must not exclude anything
+	    draft / terminal / reject   the individual ones, by name
+
+	`draft` is the Submit step's own state, since that is where a document sits
+	before it enters the chain.
 	"""
 	settings = _settings_or_none() if settings is _UNSET else settings
 	rows = rows if rows is not None else stage_rows(settings)
 
-	states = []
+	steps = effective_chain(settings, rows=rows, document_type=document_type)
+	ends = CHAIN_ENDS.get(document_type) if document_type else None
 
-	def add(state):
-		if state and state not in states:
-			states.append(state)
+	def uniq(*groups):
+		out = []
+		for group in groups:
+			for state in group:
+				if state and state not in out:
+					out.append(state)
+		return out
 
-	for step in effective_chain(settings, rows=rows, document_type=document_type):
-		add(step["state"])
-	for doctype, ends in CHAIN_ENDS.items():
-		if document_type and doctype != document_type:
-			continue
-		add(ends["terminal"][0])
-		add(ends["reject"])
-	return states
+	draft = [step["state"] for step in steps if step["kind"] == "Submit"]
+	waiting = [step["state"] for step in steps if step["kind"] == "Approval"]
+	terminal = [ends["terminal"][0]] if ends else []
+	reject = [ends["reject"]] if ends else []
+
+	return {
+		"draft": draft[0] if draft else None,
+		"terminal": terminal[0] if terminal else None,
+		"reject": reject[0] if reject else None,
+		"waiting": uniq(waiting),
+		"active": uniq(waiting, terminal),
+		"open": uniq(draft, reject, waiting),
+		"all": uniq(draft, waiting, terminal, reject),
+	}
 
 
 def chain_for(document_type):
-	"""The workflow steps of one document type, in order. Gates are not steps."""
+	"""The workflow steps of one document type, in order."""
 	return [
 		stage for stage in configured_stages(_settings_or_none())
 		if stage.document_type == document_type and stage.kind in ("Submit", "Approval")

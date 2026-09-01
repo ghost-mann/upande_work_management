@@ -19,6 +19,8 @@ def wm_assigner(**kwargs):
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
+    STAGE_ROWS = _cfg["stage_rows"]
+    STAGE_STATES = _cfg["stage_states"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Assigner" (API, api_method=wm_assigner)
@@ -98,6 +100,31 @@ def wm_assigner(**kwargs):
         # never leave the gate wide open if Settings is blank or unusable
         TW_CLAUSES = ["e.employment_type = 'Task Worker'"]
     TW_MATCH = "(" + " OR ".join(TW_CLAUSES) + ")"
+
+    # The approval chain this screen advances. Where the chain comes from differs by
+    # world; the derivation below does not.
+    #
+    # In the app, port_app.py strips this assignment and rebuilds STAGE_ROWS from
+    # get_config() -- so it is whatever Settings holds, with every On switch honoured.
+    #
+    # On live it is this literal, which is the chain that has always run here. Live
+    # carries no Work Management Approval Stage table, so there is nothing to read and
+    # nothing to switch, and this keeps today's behaviour exactly. Reading the table
+    # here instead would mean resolving "what comes after this step" a second time, in
+    # a sandbox with no imports and no def -- and two implementations of that rule is
+    # the bug this change exists to remove. Giving live the switches is a separate
+    # job: hand it the table and the app's config, not a copy of the arithmetic.
+
+    # Read the same way in both worlds, so no action below ever touches a raw row.
+    # STAGE_STATE is where a step waits, STAGE_NEXT is where approving it goes, and
+    # STAGE_ON says whether the step is in the chain at all.
+    STAGE_STATE = {}
+    STAGE_NEXT = {}
+    STAGE_ON = {}
+    for _sr in STAGE_ROWS:
+        STAGE_STATE[_sr["key"]] = _sr["state"]
+        STAGE_NEXT[_sr["key"]] = _sr["next_state"]
+        STAGE_ON[_sr["key"]] = _sr["on"]
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -595,8 +622,8 @@ def wm_assigner(**kwargs):
             d.save(ignore_permissions=True)
             if submit_now and not editing_pending:
                 # bypass workflow engine transition-role gate
-                frappe.db.set_value("Work Management Assigner", d.name, "workflow_state", "Pending Farm Manager", update_modified=False)
-                d.workflow_state = "Pending Farm Manager"
+                frappe.db.set_value("Work Management Assigner", d.name, "workflow_state", STAGE_NEXT["assigner_submit"], update_modified=False)
+                d.workflow_state = STAGE_NEXT["assigner_submit"]
             # audit trail: an attendance override is always logged on the document
             if att_conflicts and att_override:
                 ov_lines = []
@@ -618,7 +645,11 @@ def wm_assigner(**kwargs):
         fmbypass = ("System Manager" in fmrl) or ("General Manager" in fmrl)
         if not cur:
             out["error"] = "Record not found"
-        elif cur.workflow_state != "Pending Farm Manager":
+        elif not STAGE_ON["assigner_farm_manager"]:
+            # The step is switched off, so no document waits here and approving it
+            # would write a state nothing is watching.
+            out["error"] = "The Farm Manager step is switched off for this project."
+        elif cur.workflow_state != STAGE_STATE["assigner_farm_manager"]:
             out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
         elif not fmbypass and cur.farm not in fmallowed:
             if not fmallowed:
@@ -626,35 +657,39 @@ def wm_assigner(**kwargs):
             else:
                 out["error"] = "You can only approve records for your farm(s): " + ", ".join(fmallowed) + ". This record is for " + str(cur.farm) + "."
         else:
-            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", "Pending HR Head", update_modified=False)
+            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_farm_manager"], update_modified=False)
             try:
                 frappe.db.set_value("Work Management Assigner", nm, "fm_approved_by", frappe.session.user, update_modified=False)
                 frappe.db.set_value("Work Management Assigner", nm, "fm_approval_date", frappe.utils.today(), update_modified=False)
             except Exception:
                 pass
-            out["name"] = nm; out["workflow_state"] = "Pending HR Head"
+            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_farm_manager"]
 
     elif action == "a_hr_approve":
         nm = frappe.form_dict.get("name")
         cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
-        if cur_ws != "Pending HR Head":
+        if not STAGE_ON["assigner_hr_head"]:
+            out["error"] = "The HR Head step is switched off for this project."
+        elif cur_ws != STAGE_STATE["assigner_hr_head"]:
             out["error"] = "Not at HR stage (state: " + str(cur_ws) + ")"
         else:
-            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", "Pending GM", update_modified=False)
+            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_hr_head"], update_modified=False)
             try:
                 frappe.db.set_value("Work Management Assigner", nm, "hr_approved_by", frappe.session.user, update_modified=False)
                 frappe.db.set_value("Work Management Assigner", nm, "hr_approval_date", frappe.utils.today(), update_modified=False)
             except Exception:
                 pass
-            out["name"] = nm; out["workflow_state"] = "Pending GM"
+            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_hr_head"]
 
     elif action == "a_gm_approve":
         nm = frappe.form_dict.get("name")
         cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
-        if cur_ws != "Pending GM":
+        if not STAGE_ON["assigner_gm"]:
+            out["error"] = "The GM step is switched off for this project."
+        elif cur_ws != STAGE_STATE["assigner_gm"]:
             out["error"] = "Not at GM stage (state: " + str(cur_ws) + ")"
         else:
-            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", "Assigned", update_modified=False)
+            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_gm"], update_modified=False)
             frappe.db.set_value("Work Management Assigner", nm, "docstatus", 1, update_modified=False)
             for kid in frappe.db.get_all("Work Assignment Employee", filters={"parent": nm}, pluck="name"):
                 frappe.db.set_value("Work Assignment Employee", kid, "docstatus", 1, update_modified=False)
@@ -665,7 +700,7 @@ def wm_assigner(**kwargs):
                 frappe.db.set_value("Work Management Assigner", nm, "gm_approval_date", frappe.utils.today(), update_modified=False)
             except Exception:
                 pass
-            out["name"] = nm; out["workflow_state"] = "Assigned"
+            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_gm"]
 
     elif action == "a_reject":
         nm = frappe.form_dict.get("name")

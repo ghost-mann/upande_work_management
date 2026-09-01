@@ -40,7 +40,7 @@ SCRIPTS = ("wm_dashboard", "wm_planner", "wm_masterplan", "wm_assigner",
 # supply itself. These are exactly the ones `port_app.py` strips and rebuilds,
 # which is why their absence in the mirror is invisible from the app side.
 PORTED_CONSTANTS = ("FARMS", "FARM_PROJECT", "DEFAULT_COMPANY", "BLOCK_EXCLUDE",
-	"FARM_APPROVER_ROLE", "HR_HEAD_ROLES")
+	"FARM_APPROVER_ROLE", "HR_HEAD_ROLES", "STAGE_ROWS", "STAGE_STATES")
 
 
 def source(script):
@@ -150,16 +150,31 @@ class TestTheDefinitionSurvivesThePort(unittest.TestCase):
 		if not os.path.isdir(MIRROR):
 			self.skipTest("mirror not present")
 
-	def test_farms_is_defined_on_one_line(self):
+	def test_every_stripped_constant_can_be_found_and_ended(self):
+		"""The strip drops the assignment line and keeps dropping until the
+		brackets opened on it have closed. So a value may span lines -- the chain
+		fallback is a list of dicts and reads better over several -- but its
+		brackets must balance, and it must not be continued with a backslash,
+		which the strip has no way to follow."""
 		for script in SCRIPTS:
 			text = source(script)
-			if not defines(text, "FARMS"):
-				continue
-			line = next(l for l in text.splitlines() if re.match(r"^FARMS\s*=", l))
-			with self.subTest(script=script):
-				# a continuation would leave its tail behind when the line is dropped
-				self.assertFalse(line.rstrip().endswith(("\\", "(", "[", "{")),
-					"%s's FARMS spans lines; the port strips only the first" % script)
+			lines = text.splitlines()
+			for name in PORTED_CONSTANTS:
+				if not defines(text, name):
+					continue
+				start = next(i for i, l in enumerate(lines)
+					if re.match(r"^%s\s*=" % re.escape(name), l))
+				with self.subTest(script=script, name=name):
+					self.assertFalse(lines[start].rstrip().endswith("\\"),
+						"%s.%s uses a backslash continuation" % (script, name))
+					depth = 0
+					for line in lines[start:]:
+						depth += sum(line.count(c) for c in "([{")
+						depth -= sum(line.count(c) for c in ")]}")
+						if depth <= 0:
+							break
+					self.assertLessEqual(depth, 0,
+						"%s.%s never closes its brackets" % (script, name))
 
 	def test_the_app_gets_farms_from_config_not_from_the_mirror(self):
 		import inspect

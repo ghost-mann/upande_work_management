@@ -19,7 +19,7 @@
    "in_list_view": 1,
    "label": "Stage",
    "reqd": 1,
-   "options": "Master Plan: Submit\nMaster Plan: Consultant\nMaster Plan: GM\nPlanner: Submit\nPlanner: Farm Approval\nPlanner: Weekly Consultant\nAssigner: Submit\nAssigner: Farm Manager\nAssigner: HR Head\nAssigner: GM\nActuals: Submit\nActuals: Farm Manager\nActuals: HR Head\nActuals: GM\nPayment: Accounts"
+   "options": "Master Plan: Submit\nMaster Plan: Consultant\nMaster Plan: GM\nPlanner: Submit\nPlanner: Farm Approval\nAssigner: Submit\nAssigner: Farm Manager\nAssigner: HR Head\nAssigner: GM\nActuals: Submit\nActuals: Farm Manager\nActuals: HR Head\nActuals: GM\nPayment: Accounts"
   },
   {
    "columns": 2,

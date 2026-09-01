@@ -19,6 +19,8 @@ def wm_planner(**kwargs):
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
+    STAGE_ROWS = _cfg["stage_rows"]
+    STAGE_STATES = _cfg["stage_states"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Planner" (API, api_method=wm_planner)
@@ -47,6 +49,31 @@ def wm_planner(**kwargs):
     for _farm_, _role_ in FARM_APPROVER_ROLE.items():
         if _role_ in ap_roles:
             AP_FARMS.append(_farm_)
+
+    # The approval chain this screen advances. Where the chain comes from differs by
+    # world; the derivation below does not.
+    #
+    # In the app, port_app.py strips this assignment and rebuilds STAGE_ROWS from
+    # get_config() -- so it is whatever Settings holds, with every On switch honoured.
+    #
+    # On live it is this literal, which is the chain that has always run here. Live
+    # carries no Work Management Approval Stage table, so there is nothing to read and
+    # nothing to switch, and this keeps today's behaviour exactly. Reading the table
+    # here instead would mean resolving "what comes after this step" a second time, in
+    # a sandbox with no imports and no def -- and two implementations of that rule is
+    # the bug this change exists to remove. Giving live the switches is a separate
+    # job: hand it the table and the app's config, not a copy of the arithmetic.
+
+    # Read the same way in both worlds, so no action below ever touches a raw row.
+    # STAGE_STATE is where a step waits, STAGE_NEXT is where approving it goes, and
+    # STAGE_ON says whether the step is in the chain at all.
+    STAGE_STATE = {}
+    STAGE_NEXT = {}
+    STAGE_ON = {}
+    for _sr in STAGE_ROWS:
+        STAGE_STATE[_sr["key"]] = _sr["state"]
+        STAGE_NEXT[_sr["key"]] = _sr["next_state"]
+        STAGE_ON[_sr["key"]] = _sr["on"]
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -253,7 +280,7 @@ def wm_planner(**kwargs):
     elif action == "pending":
         # FARM SCOPING: a farm manager only sees plans awaiting approval for their own farm(s).
         # GM / System Manager / HR see all. Uses farm-specific roles (same signal as Assigner/Actuals).
-        pflt = {"workflow_state": "Pending Approval"}
+        pflt = {"workflow_state": STAGE_STATE["planner_farm_approval"]}
         prl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         pbypass = ("System Manager" in prl) or ("General Manager" in prl) or any(_r_ in prl for _r_ in HR_HEAD_ROLES) or (frappe.session.user == "Administrator")
         if not pbypass:
@@ -547,7 +574,7 @@ def wm_planner(**kwargs):
                 else:
                     d.insert(ignore_permissions=True)
                 if submit_now:
-                    d.workflow_state = "Pending Approval"; d.save(ignore_permissions=True)
+                    d.workflow_state = STAGE_NEXT["planner_submit"]; d.save(ignore_permissions=True)
                 out["name"] = d.name; out["workflow_state"] = d.workflow_state
                 out["total_cost"] = d.total_cost; out["people_per_day"] = d.people_per_day
                 out["blocks"] = block_list
@@ -564,14 +591,16 @@ def wm_planner(**kwargs):
             out["error"] = ("You cannot approve plans for " + str(ap_doc.farm) +
                             ". A farm manager decides their own farm; the general manager "
                             "and the HR head decide any farm.")
-        elif cur_ws != "Pending Approval":
+        elif not STAGE_ON["planner_farm_approval"]:
+            out["error"] = "The Farm Approval step is switched off for this project."
+        elif cur_ws != STAGE_STATE["planner_farm_approval"]:
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
         else:
-            frappe.db.set_value("Work Management Planner", nm, "workflow_state", "Approved", update_modified=False)
+            frappe.db.set_value("Work Management Planner", nm, "workflow_state", STAGE_NEXT["planner_farm_approval"], update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "docstatus", 1, update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approved_by", frappe.session.user, update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approval_date", frappe.utils.today(), update_modified=False)
-            out["name"] = nm; out["workflow_state"] = "Approved"
+            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["planner_farm_approval"]
 
     elif action == "reject":
         nm = frappe.form_dict.get("name")
@@ -584,7 +613,7 @@ def wm_planner(**kwargs):
             out["error"] = ("You cannot reject plans for " + str(rj_doc.farm) +
                             ". A farm manager decides their own farm; the general manager "
                             "and the HR head decide any farm.")
-        elif cur_ws != "Pending Approval":
+        elif cur_ws != STAGE_STATE["planner_farm_approval"]:
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
         else:
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", "Rejected", update_modified=False)

@@ -45,7 +45,7 @@
    "fieldname": "kind",
    "fieldtype": "Select",
    "label": "Kind",
-   "options": "Submit\nApproval\nGate"
+   "options": "Submit\nApproval"
   },
   {
    "fieldname": "state",
