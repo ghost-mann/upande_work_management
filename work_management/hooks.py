@@ -155,3 +155,8 @@ fixtures = [
 ]
 
 website_route_rules = []
+
+# Tried before the wiki app's own renderers -- this app installs ahead of wiki --
+# so a signed-out visitor asking for an internal guide is sent to sign in rather
+# than told the page does not exist. See work_management/wiki_guest_redirect.py.
+page_renderer = ["work_management.wiki_guest_redirect.WikiGuestLoginRedirect"]

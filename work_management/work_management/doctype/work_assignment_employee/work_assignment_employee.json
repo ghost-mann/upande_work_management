@@ -100,7 +100,6 @@
    "report": 1,
    "role": "HR User",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -113,7 +112,6 @@
    "report": 1,
    "role": "Farm Manager",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -126,7 +124,6 @@
    "report": 1,
    "role": "HR Clerk",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -139,7 +136,6 @@
    "report": 1,
    "role": "Production Section Head",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -152,7 +148,6 @@
    "report": 1,
    "role": "Accounts User",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -165,7 +160,6 @@
    "report": 1,
    "role": "Accounts Manager",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -178,7 +172,6 @@
    "report": 1,
    "role": "HR Manager",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -191,7 +184,6 @@
    "report": 1,
    "role": "HOD HR",
    "share": 1,
-   "submit": 1,
    "write": 1
   },
   {
@@ -204,7 +196,6 @@
    "report": 1,
    "role": "General Manager",
    "share": 1,
-   "submit": 1,
    "write": 1
   }
  ],
