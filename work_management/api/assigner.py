@@ -122,11 +122,11 @@ def wm_assigner(**kwargs):
     STAGE_NEXT = {}
     STAGE_ON = {}
     STAGE_ROLE = {}
-    for _sr in STAGE_ROWS:
-        STAGE_STATE[_sr["key"]] = _sr["state"]
-        STAGE_NEXT[_sr["key"]] = _sr["next_state"]
-        STAGE_ON[_sr["key"]] = _sr["on"]
-        STAGE_ROLE[_sr["key"]] = _sr.get("role")
+    for sr_row in STAGE_ROWS:
+        STAGE_STATE[sr_row["key"]] = sr_row["state"]
+        STAGE_NEXT[sr_row["key"]] = sr_row["next_state"]
+        STAGE_ON[sr_row["key"]] = sr_row["on"]
+        STAGE_ROLE[sr_row["key"]] = sr_row.get("role")
 
     # The caller's roles, read once. Each step's configured Role gates that step --
     # see may_take_step() in approvals.py, whose rule this mirrors: the step's own
