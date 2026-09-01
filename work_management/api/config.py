@@ -11,7 +11,7 @@ Kaitet's own values are applied by work_management.seed.kaitet on that site alon
 
 import frappe
 
-from work_management import taxonomy
+from work_management import approvals, taxonomy
 
 # Warehouse name fragments that are stores rather than places work happens.
 # Generic enough to be a useful starting point anywhere; override in Settings.
@@ -215,6 +215,22 @@ def get_config():
 		# own hardcoded wording on an empty dict, which is the same text -- but
 		# only until a screen forgets to pass a fallback.
 		"taxonomy": taxonomy.resolve(None),
+		# The approval chain, in the two shapes the screens need. Both default to
+		# the shipped chain rather than to empty: a screen reading an empty chain
+		# cannot advance anything, and one reading a missing key fails at module
+		# top and takes the whole page down instead of degrading.
+		#
+		# `stage_rows` is for WRITES -- every step in order, the state it waits in,
+		# the state approving it leads to, and whether it is on. `stage_states` is
+		# for READS, per document type, and deliberately includes the states of
+		# steps that are switched off: a list filter must not narrow because
+		# somebody changed a setting, or documents that went through the old chain
+		# vanish from reports.
+		"stage_rows": approvals.effective_chain(settings=None),
+		"stage_states": {
+			doctype: approvals.pipeline_states(settings=None, document_type=doctype)
+			for doctype in approvals.CHAIN_ENDS
+		},
 	}
 
 	try:
@@ -267,6 +283,12 @@ def get_config():
 
 	cfg["farm_approver_role"] = _farm_approver_role(settings, cfg["farms"])
 	cfg["hr_head_roles"] = _stage_roles(settings, "assigner_hr_head", "actuals_hr_head")
+
+	cfg["stage_rows"] = approvals.effective_chain(settings)
+	cfg["stage_states"] = {
+		doctype: approvals.pipeline_states(settings, document_type=doctype)
+		for doctype in approvals.CHAIN_ENDS
+	}
 
 	cfg["taxonomy"] = taxonomy.resolve(settings)
 	return cfg
