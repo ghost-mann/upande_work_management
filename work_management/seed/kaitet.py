@@ -33,22 +33,109 @@ FARM_APPROVER_ROLE = {
 }
 
 # Roles the shipped app no longer creates, because no other project has them.
+#
+# The five below used to arrive by accident: they were named in shipped doctype
+# permissions, and Frappe creates a Role it finds in a DocPerm. That is why
+# installing at any farm produced an `HOD HR`. The permissions moved here, so the
+# roles have to move here too -- otherwise a rebuilt Kaitet site would have the
+# grants and not the roles, and restore_docperms() skips a role that is absent,
+# silently.
 KAITET_ROLES = list(FARM_APPROVER_ROLE.values()) + [
 	"HR Manager Kaitet",
 	"Coffee Clerk",
 	"Agriculture Manager",
+	"Farm Manager",
+	"General Manager",
+	"HOD HR",
+	"HR Clerk",
+	"Production Section Head",
 ]
 
-# DocPerms that left the shipped doctype JSON with those roles. Re-added here as
-# Custom DocPerms so nobody on this site loses access they had.
+# DocPerms that left the shipped doctype JSONs, re-added here as Custom DocPerms
+# so nobody on this site loses access they had.
+#
+# They left because a shipped doctype naming a role makes Frappe create it, and
+# five of them are Kaitet's own job titles: installing the app at any farm was
+# creating `HOD HR` and `Production Section Head` in their role list. The app now
+# grants only to roles a stock ERPNext + HRMS site already has, so a fresh install
+# reaches System Manager and nothing else -- and each site grants its own.
+#
+# Kaitet is the site that had them, so Kaitet is where they are restored, exactly:
+# every grant that moved, with the rights it carried, and no more. Widening here
+# would be the opposite mistake and just as quiet.
+#
+# No `submit` on the two child tables. A child row is submitted by submitting its
+# parent, so a child table has no submit of its own to grant -- and Frappe refuses
+# the grant when anything saves that doctype's permissions, not when the grant is
+# added, which once killed this whole seed with an error naming an innocent role.
 KAITET_DOCPERMS = [
-	# No `submit` on the two child tables. A child row is submitted by submitting
-	# its parent, so a child table has no submit of its own to grant -- and Frappe
-	# refuses the grant when anything saves that doctype's permissions, not when
-	# the grant is added. The shipped JSON carried it for nine roles each, so
-	# adding one Coffee Clerk row here revalidated the whole doctype and died on
-	# Farm Manager. That killed the seed, which is what gives each farm its cost
-	# project, which is why a Master Plan screen said Lokitela had none.
+	# moved out of the shipped doctypes, so the app invents no job titles
+	("Work Actuals Employee", "Farm Manager",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Actuals Employee", "HR Clerk",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Actuals Employee", "Production Section Head",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Actuals Employee", "HOD HR",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Actuals Employee", "General Manager",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Assignment Employee", "Farm Manager",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Assignment Employee", "HR Clerk",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Assignment Employee", "Production Section Head",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Assignment Employee", "HOD HR",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Assignment Employee", "General Manager",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Management Actuals", "HR Clerk",
+		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Actuals", "HOD HR",
+		["read", "write", "create", "delete", "submit", "cancel", "amend", "report", "export", "share", "print", "email"]),
+	("Work Management Actuals", "General Manager",
+		["read", "write", "create", "delete", "submit", "cancel", "amend", "report", "export", "share", "print", "email"]),
+	("Work Management Actuals", "Farm Manager",
+		["select", "read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Actuals", "Production Section Head",
+		["select", "read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Assigner", "HOD HR",
+		["read", "write", "create", "delete", "submit", "cancel", "amend", "report", "export", "share", "print", "email"]),
+	("Work Management Assigner", "General Manager",
+		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Assigner", "Farm Manager",
+		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Assigner", "Production Section Head",
+		["select", "read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Master Plan", "General Manager",
+		["read", "write", "create", "report"]),
+	("Work Management Master Plan", "HOD HR",
+		["read", "write", "create", "report"]),
+	("Work Management Master Plan", "Farm Manager",
+		["read", "write", "create", "report"]),
+	("Work Management Payment", "HR Clerk",
+		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Payment", "HOD HR",
+		["read", "write", "create", "delete", "submit", "cancel", "report", "export", "share", "print", "email"]),
+	("Work Management Payment", "General Manager",
+		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
+	("Work Management Planner", "Production Section Head",
+		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Planner", "Farm Manager",
+		["read", "write", "create", "submit", "cancel", "amend", "report", "export", "share", "print", "email"]),
+	("Work Management Planner", "HOD HR",
+		["read", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Planner", "General Manager",
+		["read", "submit", "report", "export", "share", "print", "email"]),
+	("Work Management Section", "Farm Manager",
+		["select", "read", "report"]),
+	("Work Management Section", "General Manager",
+		["select", "read", "report"]),
+	("Work Task Rate", "Farm Manager",
+		["read", "report"]),
+
+	# always lived here: roles this seed creates, never shipped
 	("Work Actuals Employee", "Coffee Clerk",
 		["read", "write", "create", "delete", "report", "export", "share", "print", "email"]),
 	("Work Assignment Employee", "Coffee Clerk",
