@@ -342,8 +342,34 @@ def effective_chain(settings=_UNSET, rows=None, document_type=None):
 				"action": stage.action,
 				"next_state": following[0].state if following else terminal_state,
 				"on": 1 if is_enabled(stage, rows) else 0,
+				# who may take this step -- the configured role, or the shipped
+				# default. The screens had no access to this at all, so the Role
+				# column reached the desk workflow and nothing else.
+				"role": stage_role(stage, rows),
 			})
 	return out
+
+
+def may_take_step(step_role, user_roles):
+	"""May somebody holding `user_roles` take a step whose role is `step_role`?
+
+	The step's own role passes, and `System Manager` passes -- the bypass the
+	farm-scoped check already allowed, because somebody has to be able to unstick
+	a pipeline.
+
+	`General Manager` deliberately does NOT bypass. It is a sensible bypass for a
+	farm dimension, where the GM oversees every farm, and the wrong one for a
+	step: it would let the GM take the HR Head step, which is the separation the
+	chain exists to express.
+
+	A step with no role configured refuses everybody. A misconfigured gate must
+	close rather than open, and an empty Role in Settings is visible where a
+	silently open step is not.
+	"""
+	if not step_role:
+		return False
+	held = set(user_roles or [])
+	return step_role in held or "System Manager" in held
 
 
 def pipeline_states(settings=_UNSET, rows=None, document_type=None):
