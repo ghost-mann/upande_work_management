@@ -6,7 +6,13 @@
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
- "field_order": ["section_name", "farm", "column_break_main", "disabled", "blocks"],
+ "field_order": [
+  "section_name",
+  "farm",
+  "column_break_main",
+  "disabled",
+  "blocks"
+ ],
  "fields": [
   {
    "fieldname": "section_name",
@@ -25,7 +31,10 @@
    "options": "Farm",
    "reqd": 1
   },
-  {"fieldname": "column_break_main", "fieldtype": "Column Break"},
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
   {
    "default": "0",
    "fieldname": "disabled",
@@ -49,11 +58,24 @@
  "name": "Work Management Section",
  "owner": "Administrator",
  "permissions": [
-  {"create": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "read": 1,
-   "report": 1, "role": "System Manager", "share": 1, "write": 1},
-  {"read": 1, "report": 1, "role": "Farm Manager", "select": 1},
-  {"read": 1, "report": 1, "role": "General Manager", "select": 1},
-  {"read": 1, "report": 1, "role": "Accounts User", "select": 1}
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "select": 1
+  }
  ],
  "sort_field": "creation",
  "sort_order": "ASC",

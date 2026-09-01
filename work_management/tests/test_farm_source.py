@@ -62,7 +62,11 @@ class TestUpandeCoreIsRequired(unittest.TestCase):
 		the wrong records rather than none -- the failure that a guard cannot
 		catch and a required app prevents.
 		"""
-		self.assertIn('required_apps = ["upande_core"]', read("hooks.py"))
+		# membership, not the exact line: hrms joined it once the app's HRMS
+		# dependency was found undeclared, and pinning the literal made a correct
+		# addition look like a regression
+		self.assertIn('required_apps = [', read("hooks.py"))
+		self.assertIn('"upande_core"', read("hooks.py"))
 
 
 def core_field(dt, fieldname):

@@ -54,7 +54,7 @@
    "fieldtype": "Data",
    "label": "Purpose",
    "in_list_view": 1,
-   "description": "What this plan is for \u2014 Field operations, Replanting. A farm may hold more than one plan over the same dates, and this is how a person tells them apart."
+   "description": "What this plan is for — Field operations, Replanting. A farm may hold more than one plan over the same dates, and this is how a person tells them apart."
   },
   {
    "fieldname": "workflow_state",
@@ -197,27 +197,6 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
-   "write": 1
-  },
-  {
-   "create": 1,
-   "read": 1,
-   "report": 1,
-   "role": "General Manager",
-   "write": 1
-  },
-  {
-   "create": 1,
-   "read": 1,
-   "report": 1,
-   "role": "HOD HR",
-   "write": 1
-  },
-  {
-   "create": 1,
-   "read": 1,
-   "report": 1,
-   "role": "Farm Manager",
    "write": 1
   }
  ],
