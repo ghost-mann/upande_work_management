@@ -133,6 +133,12 @@ CHAIN_ENDS = {
 
 DEFAULT_REJECT_ACTION = "Reject"
 
+# Distinguishes "you did not say" from "there is no configuration". The first
+# reads Settings; the second falls back to the shipped chain without touching a
+# database -- which is what an unconfigured install needs, and what lets the pure
+# helpers below be tested without a site.
+_UNSET = object()
+
 
 # ------------------------------------------------------- the configured chain
 
@@ -156,18 +162,26 @@ def configured_stages(settings=None):
 	which falls back to the shipped chain so workflows can still be generated.
 	"""
 	rows = (settings.get("approval_stages") if settings else None) or []
+	shipped = {stage.key: stage for stage in CATALOGUE}
 	stages = []
 	for row in sorted(rows, key=lambda r: r.get("idx") or 0):
 		key = (row.get("stage") or "").strip()
 		if not key:
 			continue
+		# A blank column on a row whose key the catalogue knows falls back to the
+		# shipped value, the way the role already does. seed_stages() writes these
+		# in, so a blank one is a half-filled row rather than an intention -- and a
+		# step with no state is not a step, it is a hole the chain resolves through
+		# to nothing. The role fallback set this precedent; these follow it.
+		default = shipped.get(key)
 		stages.append(Stage(
 			key=key,
-			label=(row.get("stage_label") or key),
-			document_type=row.get("document_type"),
-			kind=row.get("kind") or "Approval",
-			state=row.get("state"),
-			action=row.get("action"),
+			label=(row.get("stage_label") or (default.label if default else key)),
+			document_type=(row.get("document_type")
+				or (default.document_type if default else None)),
+			kind=(row.get("kind") or (default.kind if default else "Approval")),
+			state=(row.get("state") or (default.state if default else None)),
+			action=(row.get("action") or (default.action if default else None)),
 			role=row.get("role"),
 			scoped=bool(row.get("scoped")),
 			required=bool(row.get("required")),
@@ -268,6 +282,99 @@ def apply_stage_picker_options(settings=None):
 	return labels
 
 
+def effective_chain(settings=_UNSET, rows=None, document_type=None):
+	"""Every configured step, in order, each knowing where approving it leads.
+
+	One rule, two callers. `plan_workflow()` builds the desk workflow from this
+	and `get_config()` hands it to the five web screens, so the two cannot
+	disagree about what follows a step -- which they did, and which stranded
+	documents: the workflow skipped a disabled step while the screen still wrote
+	that step's state, a state the regenerated workflow no longer contained.
+
+	Plain dicts, not the Stage namedtuple, because this travels through
+	`get_config()` into a Server Script where it has to survive serialising:
+
+	    {"key", "label", "document_type", "kind", "state", "action",
+	     "next_state", "on"}
+
+	A **disabled** step is still returned, with `on` false. The screens need to
+	know it exists so its action can refuse, rather than writing a state nothing
+	is waiting in. Its `next_state` points forward all the same, so a document
+	somehow sitting in it can still be moved on rather than being stuck because
+	its step was switched off underneath it.
+
+	`next_state` for the last enabled step of a document type is that type's
+	terminal state, from CHAIN_ENDS -- so a screen never needs to know how a
+	chain finishes, only what comes next.
+	"""
+	settings = _settings_or_none() if settings is _UNSET else settings
+	rows = rows if rows is not None else stage_rows(settings)
+
+	out = []
+	for doctype in CHAIN_ENDS:
+		if document_type and doctype != document_type:
+			continue
+		steps = [
+			stage for stage in configured_stages(settings)
+			if stage.document_type == doctype and stage.kind in ("Submit", "Approval")
+		]
+		if not steps:
+			continue
+		terminal_state = CHAIN_ENDS[doctype]["terminal"][0]
+		enabled = [stage for stage in steps if is_enabled(stage, rows)]
+
+		for stage in steps:
+			# Where the chain goes from here: the first ENABLED step positioned
+			# after this one, or the end of the chain. Computed by position in the
+			# full list rather than the enabled list, so a disabled step resolves
+			# to the same place its enabled neighbour would.
+			position = steps.index(stage)
+			following = [s for s in enabled if steps.index(s) > position]
+			out.append({
+				"key": stage.key,
+				"label": stage.label,
+				"document_type": doctype,
+				"kind": stage.kind,
+				"state": stage.state,
+				"action": stage.action,
+				"next_state": following[0].state if following else terminal_state,
+				"on": 1 if is_enabled(stage, rows) else 0,
+			})
+	return out
+
+
+def pipeline_states(settings=_UNSET, rows=None, document_type=None):
+	"""Every state a document of this type can be carrying. For reads only.
+
+	Deliberately not the mirror image of `effective_chain()`. Writes follow the
+	enabled chain; reads match everything, including the states of steps that are
+	switched off -- otherwise a list filter narrows the moment somebody changes a
+	setting, and documents that passed through the old chain drop out of reports.
+	That would look like data loss caused by a checkbox.
+
+	The union of every *known* state rather than of states found in the data: it
+	needs no query, and unlike a snapshot of the data it cannot go stale. A state
+	nobody is using costs a read nothing -- no row matches it.
+	"""
+	settings = _settings_or_none() if settings is _UNSET else settings
+	rows = rows if rows is not None else stage_rows(settings)
+
+	states = []
+
+	def add(state):
+		if state and state not in states:
+			states.append(state)
+
+	for step in effective_chain(settings, rows=rows, document_type=document_type):
+		add(step["state"])
+	for doctype, ends in CHAIN_ENDS.items():
+		if document_type and doctype != document_type:
+			continue
+		add(ends["terminal"][0])
+		add(ends["reject"])
+	return states
+
+
 def chain_for(document_type):
 	"""The workflow steps of one document type, in order. Gates are not steps."""
 	return [
@@ -358,16 +465,16 @@ def seed_stages(settings=None, save=True):
 	return settings
 
 
-def stage_rows(settings=None):
+def stage_rows(settings=_UNSET):
 	"""{stage key: settings row} for every configured step.
 
 	Every row with a key counts, including one this app never shipped. It used to
 	filter against the catalogue, which is what made an added step invisible to
 	everything downstream even before the seed deleted it.
 	"""
-	settings = settings or _settings()
+	settings = _settings_or_none() if settings is _UNSET else settings
 	rows = {}
-	for row in settings.get("approval_stages") or []:
+	for row in (settings.get("approval_stages") if settings else None) or []:
 		if (row.stage or "").strip():
 			rows[row.stage] = row
 	return rows
@@ -506,8 +613,17 @@ def plan_workflow(document_type, rows=None, settings=None):
 		if entry not in transitions:
 			transitions.append(entry)
 
-	for index, stage in enumerate(chain):
-		next_state = chain[index + 1].state if index + 1 < len(chain) else terminal_state
+	# Where each step leads comes from effective_chain(), not from this function's
+	# own arithmetic. It used to be resolved here and again -- differently -- by
+	# the screens, and that is precisely how a disabled step could vanish from the
+	# workflow while a screen still wrote its state.
+	leads_to = {
+		step["key"]: step["next_state"]
+		for step in effective_chain(settings, rows=rows, document_type=document_type)
+	}
+
+	for stage in chain:
+		next_state = leads_to.get(stage.key, terminal_state)
 		for scope, role in transition_groups(stage, rows, settings):
 			condition = f'doc.{SCOPE_FIELD} == "{scope}"' if scope else None
 			add_transition(stage.state, stage.action, next_state, role, condition)
@@ -666,6 +782,96 @@ def sync_roles(settings=None, previous=None):
 # -------------------------------------------------------------- validation
 
 
+def steps_switched_off(before, after):
+	"""Stage keys that were on and are now off, sorted.
+
+	`before` is the stored configuration and `after` the one being saved, each a
+	{stage key: on} mapping. Only the transition from on to off matters: a step
+	already off strands nothing new, and checking those would mean one stray
+	document in a retired state refuses every future Settings save -- locking
+	somebody out of the screen they would use to fix it.
+
+	A first save has no `before` at all, which arrives here as None.
+	"""
+	was = before or {}
+	return sorted(
+		key for key, on in (after or {}).items()
+		if not on and was.get(key)
+	)
+
+
+def busy_step_message(blocked):
+	"""Why a step could not be switched off. `blocked` is [(label, state, count)]."""
+	def one(label, count):
+		return _("{0} cannot be switched off while {1} {2} waiting for it").format(
+			frappe.bold(label),
+			count,
+			_("document is") if count == 1 else _("documents are"),
+		)
+
+	if len(blocked) == 1:
+		label, _state, count = blocked[0]
+		return one(label, count) + ". " + _(
+			"Approve or reject them first, or leave the step on."
+		)
+	return (
+		_("These steps cannot be switched off yet:")
+		+ "\n"
+		+ "\n".join("- " + one(label, count) for label, _state, count in blocked)
+		+ "\n"
+		+ _("Approve or reject them first, or leave those steps on.")
+	)
+
+
+def _waiting_in(document_type, state):
+	"""How many documents of this type sit in this state right now."""
+	if not state or not frappe.db.exists("DocType", document_type):
+		return 0
+	if not frappe.db.has_column(document_type, "workflow_state"):
+		return 0
+	return frappe.db.count(document_type, {"workflow_state": state})
+
+
+def _enabled_map(settings):
+	rows = (settings.get("approval_stages") if settings else None) or []
+	out = {}
+	for row in rows:
+		key = (row.get("stage") or "").strip()
+		if key:
+			out[key] = 1 if (row.get("required") or row.get("enabled")) else 0
+	return out
+
+
+def validate_switching_off(settings):
+	"""Refuse switching off a step that documents are waiting in.
+
+	Removing a step removes its state from the generated workflow, so a document
+	sitting there loses its way out. Advancing those documents automatically was
+	the alternative and was rejected: it passes an approval nobody gave, and the
+	audit trail then shows a step cleared with no approver.
+	"""
+	previous = settings.get_doc_before_save() if hasattr(settings, "get_doc_before_save") else None
+	going_off = steps_switched_off(
+		_enabled_map(previous) if previous else None,
+		_enabled_map(settings),
+	)
+	if not going_off:
+		return
+
+	steps = {step["key"]: step for step in effective_chain(settings)}
+	blocked = []
+	for key in going_off:
+		step = steps.get(key)
+		if not step:
+			continue
+		count = _waiting_in(step["document_type"], step["state"])
+		if count:
+			blocked.append((step["label"], step["state"], count))
+
+	if blocked:
+		frappe.throw(busy_step_message(blocked), title=_("Documents are waiting for this step"))
+
+
 def validate_configuration(settings):
 	"""Refuse a configuration that would strand a document.
 
@@ -689,6 +895,11 @@ def validate_configuration(settings):
 			),
 			title=_("Two steps with the same name"),
 		)
+
+	# A step being switched off with documents waiting in it is refused before
+	# anything else is checked, because it is the one failure that would strand
+	# work rather than merely misconfigure it.
+	validate_switching_off(settings)
 
 	rows = stage_rows(settings)
 	# Upande Core's Farm, unguarded: hooks.py requires that app, so the doctype is
