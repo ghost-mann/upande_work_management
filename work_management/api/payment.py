@@ -21,6 +21,7 @@ def wm_payment(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    CAPABILITIES = _cfg["capabilities"]
 
     # ==================================================================
     # Master plan attribution: none. Every period_from/period_to in this script is
@@ -113,10 +114,9 @@ def wm_payment(**kwargs):
     # the HR head, accounting and the general manager. Everyone else can review and
     # audit; the buttons are hidden for them and the actions refuse server-side, so
     # hiding the UI is not the only thing standing between a farm clerk and payroll.
-    SEND_ROLES = ["HOD HR", "Accounts Manager", "Accounts User", "General Manager", "System Manager"]
     send_role_list = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-    CAN_SEND = 0
-    for sr in SEND_ROLES:
+    CAN_SEND = 1 if "System Manager" in send_role_list else 0
+    for sr in CAPABILITIES.get("send_payment") or []:
         if sr in send_role_list:
             CAN_SEND = 1
 
@@ -158,6 +158,12 @@ def wm_payment(**kwargs):
                                          + " days has to start somewhere.")}
         return {"days": wsp_n, "error": ""}
 
+
+    # Who may do what, beyond approving. In the app, port_app.py strips this and
+    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
+    # it is what this site has always allowed -- these were four lists compiled into
+    # the code, naming this company's job titles, so a farm could say who approves a
+    # plan and not who may change a rate.
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -593,7 +599,8 @@ def wm_payment(**kwargs):
 
     elif action == "pay_roles":
         rl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        is_acc = ("Accounts User" in rl) or ("Accounts Manager" in rl) or ("System Manager" in rl)
+        is_acc = ("System Manager" in rl) or any(
+            r in rl for r in (CAPABILITIES.get("handle_payments") or []))
         out["user"] = frappe.session.user
         out["is_accounts"] = 1 if is_acc else 0
         out["can_send"] = CAN_SEND

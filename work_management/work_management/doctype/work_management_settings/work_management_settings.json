@@ -13,6 +13,8 @@
   "farms_restrict",
   "farms_respect_user_permissions",
   "farms",
+  "capabilities_section",
+  "capabilities",
   "tab_approvals",
   "sb_approvals",
   "approval_stages",
@@ -513,6 +515,18 @@
    "fieldtype": "Check",
    "label": "Also allow sending a chosen range of days",
    "description": "Pay weeks can always be sent -- one payment per worker per completed week, which is what payroll has always received. Tick this to additionally offer paying a range you choose: one day, five days, a fortnight, up to a month. The range is grouped from the first date selected rather than into pay weeks, so it can pay a weekday the pay week above leaves out, which cannot be sent weekly at all. Ticking this changes nothing on its own -- an ordinary send still groups into pay weeks."
+  },
+  {
+   "fieldname": "capabilities_section",
+   "fieldtype": "Section Break",
+   "label": "Who may do what"
+  },
+  {
+   "fieldname": "capabilities",
+   "fieldtype": "Table",
+   "label": "Capabilities",
+   "options": "Work Management Capability",
+   "description": "Who may do each thing the screens allow, beyond approving. Approving is set by the Approval Steps below; this covers the rest -- raising a budget, changing a rate, sending a payment run, entering work.\\n\\nOne row per capability per role. Add a second row with the same capability to grant it to another role. A capability with no row at all falls back to System Manager, so a site part-way through being configured is never locked out.\\n\\nThese used to be lists inside the code, naming one company's job titles, so a farm could say who approves a plan and not who may change a rate."
   },
   {
    "fieldname": "tab_approvals",

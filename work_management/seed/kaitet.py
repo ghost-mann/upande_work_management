@@ -16,6 +16,19 @@ from work_management import approvals
 
 COMPANY = "Kaitet Ltd."
 
+# What this site has always allowed, beyond approving. These were four lists
+# compiled into the app naming Kaitet's job titles; they are capabilities now,
+# and the shipped default is System Manager alone so no other farm inherits them.
+# Kaitet is the site that had them, so Kaitet is where they are set.
+CAPABILITY_ROLES = {
+	"edit_master_plan": ["Farm Manager", "HOD HR", "General Manager", "System Manager"],
+	"set_rates": ["General Manager", "HOD HR", "System Manager"],
+	"send_payment": ["HOD HR", "Accounts Manager", "Accounts User", "General Manager",
+		"System Manager"],
+	"enter_work": ["HR User", "HR Manager", "HR Clerk", "HOD HR"],
+	"handle_payments": ["Accounts Manager", "Accounts User", "System Manager"],
+}
+
 FARMS = [
 	("Saboti", "PROJ-0031"),
 	("Lokitela", "PROJ-0031"),
@@ -151,12 +164,14 @@ def execute():
 	restore_docperms()
 	carried = carry_hr_manager_kaitet()
 	rows = seed_stage_approvers()
+	caps = seed_capabilities()
 	set_company()
 
 	frappe.db.commit()
 	print(
 		f"Kaitet seed: {created_roles} role(s), {written_projects} cost project(s), "
-		f"{rows} approver row(s), {carried} user(s) given HR Manager"
+		f"{rows} approver row(s), {caps} capability row(s), "
+		f"{carried} user(s) given HR Manager"
 	)
 	if missing_farms:
 		print(
@@ -245,6 +260,50 @@ def ensure_farm_projects():
 	if written or restricted:
 		settings.save(ignore_permissions=True)
 	return written, missing_farms, missing_projects
+
+
+def seed_capabilities():
+	"""Give each capability the roles this site has always granted it.
+
+	The app ships every capability pointing at System Manager alone, so that a
+	farm installing it inherits nobody's org chart. That default would take these
+	away from Kaitet, where they have always been in force -- so they are restored
+	here, on this site, exactly as they were.
+
+	A role somebody has since added is kept: this fills gaps, it does not reset
+	the grid. Roles that do not exist on the site are skipped rather than written,
+	since a Link to a missing Role will not save.
+	"""
+	from work_management import capabilities
+
+	settings = frappe.get_doc("Work Management Settings")
+	capabilities.seed(settings=settings, save=False)
+
+	existing = set()
+	for row in settings.get("capabilities") or []:
+		if row.capability and row.role:
+			existing.add((row.capability, row.role))
+
+	added = 0
+	for key, roles in CAPABILITY_ROLES.items():
+		cap = capabilities.by_key(key)
+		if not cap:
+			continue
+		for role in roles:
+			if not frappe.db.exists("Role", role):
+				continue
+			if (cap.label, role) in existing:
+				continue
+			settings.append("capabilities", {"capability": cap.label, "role": role})
+			existing.add((cap.label, role))
+			added += 1
+
+	# The seeded default is System Manager, which every list above already
+	# contains where it should; where it does not, it stays -- System Manager may
+	# do everything anyway, so leaving the row is honest rather than misleading.
+	settings.flags.ignore_permissions = True
+	settings.save()
+	return added
 
 
 def restore_docperms():
