@@ -116,6 +116,12 @@ def wm_payment(**kwargs):
     # hiding the UI is not the only thing standing between a farm clerk and payroll.
     send_role_list = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
     CAN_SEND = 1 if "System Manager" in send_role_list else 0
+    # Who may do what, beyond approving. In the app, port_app.py strips this and
+    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
+    # it is what this site has always allowed -- these were four lists compiled into
+    # the code, naming this company's job titles, so a farm could say who approves a
+    # plan and not who may change a rate.
+
     for sr in CAPABILITIES.get("send_payment") or []:
         if sr in send_role_list:
             CAN_SEND = 1
@@ -159,11 +165,6 @@ def wm_payment(**kwargs):
         return {"days": wsp_n, "error": ""}
 
 
-    # Who may do what, beyond approving. In the app, port_app.py strips this and
-    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
-    # it is what this site has always allowed -- these were four lists compiled into
-    # the code, naming this company's job titles, so a farm could say who approves a
-    # plan and not who may change a rate.
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}

@@ -63,6 +63,12 @@ def wm_masterplan(**kwargs):
     CAN_EDIT = 0
     if "System Manager" in mp_roles:
         CAN_EDIT = 1
+    # Who may do what, beyond approving. In the app, port_app.py strips this and
+    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
+    # it is what this site has always allowed -- these were four lists compiled into
+    # the code, naming this company's job titles, so a farm could say who approves a
+    # plan and not who may change a rate.
+
     for mr in CAPABILITIES.get("edit_master_plan") or []:
         if mr in mp_roles:
             CAN_EDIT = 1
@@ -151,11 +157,6 @@ def wm_masterplan(**kwargs):
                                  pluck="role")
 
 
-    # Who may do what, beyond approving. In the app, port_app.py strips this and
-    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
-    # it is what this site has always allowed -- these were four lists compiled into
-    # the code, naming this company's job titles, so a farm could say who approves a
-    # plan and not who may change a rate.
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
