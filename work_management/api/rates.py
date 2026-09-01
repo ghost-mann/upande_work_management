@@ -21,6 +21,7 @@ def wm_rates(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    CAPABILITIES = _cfg["capabilities"]
 
     # ==================================================================
     # Master plan attribution: reads a plan's own budget lines, and deliberately
@@ -69,12 +70,17 @@ def wm_rates(**kwargs):
     # Changing a rate reaches money that has already been approved, so it is held
     # tighter than raising a master plan: the general manager, the HR head and a
     # System Manager, and nobody else.
-    RATE_ROLES = ["General Manager", "HOD HR", "System Manager"]
     rt_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-    CAN_RATE = 0
-    for rr in RATE_ROLES:
+    CAN_RATE = 1 if "System Manager" in rt_roles else 0
+    for rr in CAPABILITIES.get("set_rates") or []:
         if rr in rt_roles:
             CAN_RATE = 1
+
+    # Who may do what, beyond approving. In the app, port_app.py strips this and
+    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
+    # it is what this site has always allowed -- these were four lists compiled into
+    # the code, naming this company's job titles, so a farm could say who approves a
+    # plan and not who may change a rate.
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}

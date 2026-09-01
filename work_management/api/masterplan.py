@@ -21,6 +21,7 @@ def wm_masterplan(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    CAPABILITIES = _cfg["capabilities"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Master Plan" (API, api_method=wm_masterplan)
@@ -51,22 +52,29 @@ def wm_masterplan(**kwargs):
     # from get_config(). Here that is every farm the site has; there it is the farms
     # this project works, narrowed to the ones this person is permitted.
 
-    MP_EDIT_ROLES = ["Farm Manager", "HOD HR", "General Manager", "System Manager"]
-    MP_GM_ROLES = ["General Manager", "System Manager"]
     TOLERANCE = 0.005
 
     mp_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+
+    # Who may raise and edit a budget is a capability now, configured in Settings,
+    # not a list compiled in here. A farm-manager role is per farm on this site
+    # ("Farm Manager Saboti"), so a prefix match stands in for the plain role -- that
+    # is farm scope, which has its own mechanism coming, not a capability.
     CAN_EDIT = 0
-    for mr in MP_EDIT_ROLES:
-        if mr in mp_roles or mr == "Farm Manager":
-            # farm-manager roles may be per farm ("Farm Manager <farm>"), so match the prefix
-            for hr in mp_roles:
-                if hr == mr or hr.startswith("Farm Manager"):
-                    CAN_EDIT = 1
-    CAN_GM = 0
-    for mr in MP_GM_ROLES:
+    if "System Manager" in mp_roles:
+        CAN_EDIT = 1
+    for mr in CAPABILITIES.get("edit_master_plan") or []:
         if mr in mp_roles:
-            CAN_GM = 1
+            CAN_EDIT = 1
+        if mr == "Farm Manager":
+            for hr in mp_roles:
+                if hr.startswith("Farm Manager"):
+                    CAN_EDIT = 1
+
+    # Who decides a master plan is NOT a capability: it is the approval chain's own
+    # masterplan_gm step, and asking two places who the GM is here is the bug this
+    # codebase keeps hitting. STAGE_ROLE is defined below, so this is resolved there.
+    CAN_GM = 0
 
     # consultants are named in Work Management Settings, same list the weekly
     # review already uses
@@ -128,6 +136,11 @@ def wm_masterplan(**kwargs):
         STAGE_ON[sr_row["key"]] = sr_row["on"]
         STAGE_ROLE[sr_row["key"]] = sr_row.get("role")
 
+    # The GM of a master plan is whoever the chain's GM step names -- one answer, not
+    # a second list that could disagree with it.
+    if (STAGE_ROLE.get("masterplan_gm") in mp_roles) or ("System Manager" in mp_roles):
+        CAN_GM = 1
+
     # The caller's roles, read once. Each step's configured Role gates that step --
     # see may_take_step() in approvals.py, whose rule this mirrors: the step's own
     # role, or System Manager as the unstick-the-pipeline bypass. General Manager is
@@ -137,6 +150,12 @@ def wm_masterplan(**kwargs):
     MY_ROLES = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user},
                                  pluck="role")
 
+
+    # Who may do what, beyond approving. In the app, port_app.py strips this and
+    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
+    # it is what this site has always allowed -- these were four lists compiled into
+    # the code, naming this company's job titles, so a farm could say who approves a
+    # plan and not who may change a rate.
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}

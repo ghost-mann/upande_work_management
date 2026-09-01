@@ -1005,6 +1005,11 @@ def after_migrate():
 	if not frappe.db.exists("DocType", "Work Management Settings"):
 		return
 	seed_stages()
+	# The capability grid is seeded beside the stages, and for the same reason:
+	# an empty table tells a reader nothing about what can be granted.
+	from work_management import capabilities
+
+	capabilities.seed()
 	frappe.clear_cache(doctype="Work Management Settings")
 	build_workflows()
 	# the picker that names who takes a step must offer the steps that exist

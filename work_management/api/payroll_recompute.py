@@ -21,6 +21,7 @@ def wm_payroll_recompute(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    CAPABILITIES = _cfg["capabilities"]
 
     # Re-answer count_in_payroll / amount for rows a superseded rule froze.
     #

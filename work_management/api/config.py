@@ -11,7 +11,7 @@ Kaitet's own values are applied by work_management.seed.kaitet on that site alon
 
 import frappe
 
-from work_management import approvals, taxonomy
+from work_management import approvals, capabilities, taxonomy
 
 # Warehouse name fragments that are stores rather than places work happens.
 # Generic enough to be a useful starting point anywhere; override in Settings.
@@ -231,6 +231,10 @@ def get_config():
 			doctype: approvals.pipeline_states(settings=None, document_type=doctype)
 			for doctype in approvals.CHAIN_ENDS
 		},
+		# Who may do what, beyond approving: raise a budget, change a rate, send a
+		# payment run, enter work. These were four lists and a scatter of inline
+		# checks naming one company's job titles.
+		"capabilities": capabilities.configured(settings=None),
 	}
 
 	try:
@@ -289,6 +293,8 @@ def get_config():
 		doctype: approvals.pipeline_states(settings, document_type=doctype)
 		for doctype in approvals.CHAIN_ENDS
 	}
+
+	cfg["capabilities"] = capabilities.configured(settings)
 
 	cfg["taxonomy"] = taxonomy.resolve(settings)
 	return cfg

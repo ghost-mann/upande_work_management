@@ -21,6 +21,7 @@ def wm_assigner(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    CAPABILITIES = _cfg["capabilities"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Assigner" (API, api_method=wm_assigner)
@@ -137,6 +138,12 @@ def wm_assigner(**kwargs):
     MY_ROLES = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user},
                                  pluck="role")
 
+
+    # Who may do what, beyond approving. In the app, port_app.py strips this and
+    # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
+    # it is what this site has always allowed -- these were four lists compiled into
+    # the code, naming this company's job titles, so a farm could say who approves a
+    # plan and not who may change a rate.
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -741,10 +748,14 @@ def wm_assigner(**kwargs):
         for r in roles:
             rl.append(r.role)
         out["user"] = frappe.session.user
-        out["is_clerk"] = ("HR User" in rl) or ("HR Manager" in rl) or ("HR Clerk" in rl) or ("HOD HR" in rl)
+        # Who enters work, and who works with payments, are capabilities set in
+        # Settings -- they used to be these role names, compiled in.
+        out["is_clerk"] = 1 if (("System Manager" in rl) or any(
+            r in rl for r in (CAPABILITIES.get("enter_work") or []))) else 0
         out["is_hr_head"] = any(_r_ in rl for _r_ in HR_HEAD_ROLES)
         out["is_gm"] = "General Manager" in rl
-        out["is_accounts"] = ("Accounts Manager" in rl) or ("Accounts User" in rl)
+        out["is_accounts"] = 1 if (("System Manager" in rl) or any(
+            r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
         out["is_farm_manager"] = ("Farm Manager" in rl) or any(_r_ in rl for _r_ in FARM_APPROVER_ROLE.values())
 
     # ===== ACTUALS (act_) =====

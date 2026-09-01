@@ -21,6 +21,7 @@ def wm_planner(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    CAPABILITIES = _cfg["capabilities"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Planner" (API, api_method=wm_planner)
