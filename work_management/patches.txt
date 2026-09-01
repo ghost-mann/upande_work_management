@@ -10,3 +10,4 @@ work_management.patches.v1_0.move_farms_to_upande_core
 work_management.patches.v1_0.backfill_task_subjects
 work_management.patches.v1_0.link_planners_to_their_master_plan
 work_management.patches.v1_0.merge_farms_in_use_into_farms
+work_management.patches.v1_0.drop_dead_consultant_controls

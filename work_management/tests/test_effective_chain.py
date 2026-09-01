@@ -206,25 +206,70 @@ class TestStatesAReadShouldMatch(unittest.TestCase):
 	Note this is the union of every *known* state, not of states found in the
 	data -- so it needs no query, and it cannot be wrong the way a snapshot of
 	the data could be.
+
+	Grouped, because the screens' filters mean different things. A flat list of
+	everything would silently widen `IN (...)` to include drafts and rejects,
+	which is how a "live work" list starts showing abandoned drafts.
 	"""
 
-	def test_it_includes_a_switched_off_step(self):
+	def states(self, *specs):
+		return approvals.pipeline_states(chain(*specs), document_type=ASSIGNER)
+
+	def test_all_includes_a_switched_off_step(self):
 		states = approvals.pipeline_states(
 			chain(FULL[0], FULL[1],
 				step("assigner_hr_head", "Pending HR Head", "HR Approve", enabled=0),
 				FULL[3]),
 			document_type=ASSIGNER)
-		self.assertIn("Pending HR Head", states)
+		self.assertIn("Pending HR Head", states["all"])
 
-	def test_it_includes_the_terminal_and_reject_states(self):
-		states = approvals.pipeline_states(chain(*FULL), document_type=ASSIGNER)
-		self.assertIn(TERMINAL, states)
-		self.assertIn(approvals.CHAIN_ENDS[ASSIGNER]["reject"], states)
+	def test_waiting_includes_a_switched_off_step_too(self):
+		"""A read must still find a document parked in a retired state."""
+		states = approvals.pipeline_states(
+			chain(FULL[0], FULL[1],
+				step("assigner_hr_head", "Pending HR Head", "HR Approve", enabled=0),
+				FULL[3]),
+			document_type=ASSIGNER)
+		self.assertIn("Pending HR Head", states["waiting"])
 
-	def test_it_includes_the_enabled_waiting_states(self):
-		states = approvals.pipeline_states(chain(*FULL), document_type=ASSIGNER)
-		for state in ("Pending Farm Manager", "Pending HR Head", "Pending GM"):
-			self.assertIn(state, states)
+	def test_all_includes_the_terminal_and_reject_states(self):
+		states = self.states(*FULL)
+		self.assertIn(TERMINAL, states["all"])
+		self.assertIn(approvals.CHAIN_ENDS[ASSIGNER]["reject"], states["all"])
+
+	def test_waiting_is_the_approval_steps_only(self):
+		states = self.states(*FULL)
+		self.assertEqual(states["waiting"],
+			["Pending Farm Manager", "Pending HR Head", "Pending GM"])
+
+	def test_waiting_excludes_draft_and_the_terminal_state(self):
+		states = self.states(*FULL)
+		self.assertNotIn("Draft", states["waiting"])
+		self.assertNotIn(TERMINAL, states["waiting"])
+
+	def test_active_is_waiting_plus_the_terminal_state(self):
+		"""What the screens' IN lists have always meant: submitted, not rejected."""
+		states = self.states(*FULL)
+		self.assertEqual(states["active"],
+			["Pending Farm Manager", "Pending HR Head", "Pending GM", TERMINAL])
+
+	def test_active_excludes_draft_and_rejected(self):
+		states = self.states(*FULL)
+		self.assertNotIn("Draft", states["active"])
+		self.assertNotIn("Rejected", states["active"])
+
+	def test_open_is_everything_still_editable(self):
+		states = self.states(*FULL)
+		self.assertIn("Draft", states["open"])
+		self.assertIn("Rejected", states["open"])
+		self.assertIn("Pending GM", states["open"])
+		self.assertNotIn(TERMINAL, states["open"])
+
+	def test_the_individual_states_are_named(self):
+		states = self.states(*FULL)
+		self.assertEqual(states["draft"], "Draft")
+		self.assertEqual(states["terminal"], TERMINAL)
+		self.assertEqual(states["reject"], approvals.CHAIN_ENDS[ASSIGNER]["reject"])
 
 	def test_it_is_scoped_to_the_document_type_asked_about(self):
 		mixed = chain(
@@ -232,15 +277,16 @@ class TestStatesAReadShouldMatch(unittest.TestCase):
 			step("planner_farm_approval", "Pending Approval",
 				document_type="Work Management Planner"))
 		self.assertNotIn("Pending Approval",
-			approvals.pipeline_states(mixed, document_type=ASSIGNER))
+			approvals.pipeline_states(mixed, document_type=ASSIGNER)["all"])
 		self.assertIn("Pending Approval",
-			approvals.pipeline_states(mixed, document_type="Work Management Planner"))
+			approvals.pipeline_states(
+				mixed, document_type="Work Management Planner")["all"])
 
 	def test_no_duplicates_and_a_stable_order(self):
-		states = approvals.pipeline_states(chain(*FULL), document_type=ASSIGNER)
-		self.assertEqual(len(states), len(set(states)))
-		self.assertEqual(states, approvals.pipeline_states(
-			chain(*FULL), document_type=ASSIGNER))
+		states = self.states(*FULL)
+		for group in ("waiting", "active", "open", "all"):
+			self.assertEqual(len(states[group]), len(set(states[group])), group)
+		self.assertEqual(states, self.states(*FULL))
 
 
 class TestTheWorkflowGeneratorUsesTheSameRule(unittest.TestCase):

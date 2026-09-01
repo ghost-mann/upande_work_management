@@ -104,20 +104,38 @@ class TestTheReadableStatesCoverEveryDocumentType(unittest.TestCase):
 	def test_one_entry_per_pipeline_doctype(self):
 		for doctype in approvals.CHAIN_ENDS:
 			states = approvals.pipeline_states(settings=None, document_type=doctype)
-			self.assertTrue(states, "%s has no readable states" % doctype)
+			self.assertTrue(states["all"], "%s has no readable states" % doctype)
 
 	def test_each_includes_its_own_terminal_state(self):
 		for doctype, ends in approvals.CHAIN_ENDS.items():
 			states = approvals.pipeline_states(settings=None, document_type=doctype)
-			self.assertIn(ends["terminal"][0], states)
+			self.assertEqual(states["terminal"], ends["terminal"][0])
+			self.assertIn(ends["terminal"][0], states["all"])
 
 	def test_no_document_type_leaks_another_ones_states(self):
 		"""`CONFIRMED` belongs to Actuals and `Paid` to Payment; a filter that
 		mixed them would widen a list past its own pipeline."""
 		payment = approvals.pipeline_states(
 			settings=None, document_type="Work Management Payment")
-		self.assertIn("Paid", payment)
-		self.assertNotIn("CONFIRMED", payment)
+		self.assertIn("Paid", payment["all"])
+		self.assertNotIn("CONFIRMED", payment["all"])
+
+	def test_every_group_is_present_for_every_doctype(self):
+		"""A screen reading a missing group fails at module top and takes the
+		whole page with it."""
+		for doctype in approvals.CHAIN_ENDS:
+			states = approvals.pipeline_states(settings=None, document_type=doctype)
+			for group in ("draft", "terminal", "reject", "waiting", "active",
+					"open", "all"):
+				self.assertIn(group, states, "%s missing %s" % (doctype, group))
+
+	def test_payment_has_no_draft_state(self):
+		"""Its chain starts at Unpaid -- a payment run is created already in the
+		chain. So `draft` is honestly None rather than invented, and a screen
+		must not assume every pipeline has a draft."""
+		payment = approvals.pipeline_states(
+			settings=None, document_type="Work Management Payment")
+		self.assertIsNone(payment["draft"])
 
 
 if __name__ == "__main__":

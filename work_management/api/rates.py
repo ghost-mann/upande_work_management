@@ -19,6 +19,8 @@ def wm_rates(**kwargs):
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
+    STAGE_ROWS = _cfg["stage_rows"]
+    STAGE_STATES = _cfg["stage_states"]
 
     # ==================================================================
     # Master plan attribution: reads a plan's own budget lines, and deliberately

@@ -99,9 +99,9 @@ class TestTheChainComesFromSettings(unittest.TestCase):
 		self.assertEqual([st.key for st in chain], [st.key for st in approvals.CATALOGUE])
 
 	def test_the_shipped_catalogue_is_still_the_seed(self):
-		"""Nothing changes for an existing deployment: the fifteen steps Kaitet
+		"""Nothing changes for an existing deployment: the fourteen steps Kaitet
 		runs are the fifteen the app ships, and they are what a fresh install gets."""
-		self.assertEqual(len(approvals.CATALOGUE), 15)
+		self.assertEqual(len(approvals.CATALOGUE), 14)
 
 
 class TestTheChildTableCanCarryAStep(unittest.TestCase):
