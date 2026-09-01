@@ -17,7 +17,8 @@
    "in_list_view": 1,
    "label": "Farm",
    "reqd": 1,
-   "options": "Farm"
+   "options": "Farm",
+   "description": "The farm, from Upande Core's own Farm list. One row per farm this project works -- adding a row does not hide the others unless \"Only work the Farms listed below\" is ticked."
   },
   {
    "fieldname": "area_ha",
@@ -31,7 +32,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Cost Project",
-   "options": "Project"
+   "options": "Project",
+   "description": "The project whose Tasks are this farm's plannable activities. This is the one thing this app knows about a farm that Upande Core does not track, so it lives here rather than on the Farm record.\n\nEvery activity a master plan can budget for this farm comes from this project's Task list, with each task's rate. So pick the project that holds the field activities -- on Kaitet those are \"Kaitet Avocado Tasks\" and \"Kaitet Coffee Tasks\", not a one-off job like a greenhouse build or an employee separation, which also have Tasks but are not things anybody plans a week's labour against.\n\nLeave this empty and the Master Plan screen says the farm has no cost project and offers no activities."
   },
   {
    "fieldname": "approver_role",
