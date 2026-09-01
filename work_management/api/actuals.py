@@ -121,10 +121,22 @@ def wm_actuals(**kwargs):
     STAGE_STATE = {}
     STAGE_NEXT = {}
     STAGE_ON = {}
+    STAGE_ROLE = {}
     for _sr in STAGE_ROWS:
         STAGE_STATE[_sr["key"]] = _sr["state"]
         STAGE_NEXT[_sr["key"]] = _sr["next_state"]
         STAGE_ON[_sr["key"]] = _sr["on"]
+        STAGE_ROLE[_sr["key"]] = _sr.get("role")
+
+    # The caller's roles, read once. Each step's configured Role gates that step --
+    # see may_take_step() in approvals.py, whose rule this mirrors: the step's own
+    # role, or System Manager as the unstick-the-pipeline bypass. General Manager is
+    # deliberately not a bypass here; it is one for the farm dimension, where the GM
+    # oversees every farm, and the wrong one for a step, where it would let the GM
+    # take the HR Head step and erase the separation the chain exists to express.
+    MY_ROLES = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user},
+                                 pluck="role")
+
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -944,6 +956,10 @@ def wm_actuals(**kwargs):
             out["error"] = "Record not found"
         elif not STAGE_ON["actuals_farm_manager"]:
             out["error"] = "The Farm Manager step is switched off for this project."
+        elif not (STAGE_ROLE["actuals_farm_manager"] in MY_ROLES
+                  or "System Manager" in MY_ROLES or fmbypass or fmallowed):
+            out["error"] = ("Only " + str(STAGE_ROLE["actuals_farm_manager"]) + " can take this step."
+                            " You do not hold it.")
         elif cur.workflow_state != STAGE_STATE["actuals_farm_manager"]:
             out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
         elif not fmbypass and cur.farm not in fmallowed:
@@ -965,6 +981,9 @@ def wm_actuals(**kwargs):
         cur_ws = frappe.db.get_value("Work Management Actuals", nm, "workflow_state")
         if not STAGE_ON["actuals_hr_head"]:
             out["error"] = "The HR Head step is switched off for this project."
+        elif not (STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
+            out["error"] = ("Only " + str(STAGE_ROLE["actuals_hr_head"]) + " can take this step."
+                            " You do not hold it.")
         elif cur_ws != STAGE_STATE["actuals_hr_head"]:
             out["error"] = "Not at HR stage (state: " + str(cur_ws) + ")"
         else:
@@ -978,6 +997,9 @@ def wm_actuals(**kwargs):
         cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","assignment"], as_dict=True)
         if not STAGE_ON["actuals_gm"]:
             out["error"] = "The GM step is switched off for this project."
+        elif not (STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
+            out["error"] = ("Only " + str(STAGE_ROLE["actuals_gm"]) + " can take this step."
+                            " You do not hold it.")
         elif not cur or cur.workflow_state != STAGE_STATE["actuals_gm"]:
             out["error"] = "Not at GM stage (state: " + str(cur.workflow_state if cur else "not found") + ")"
         else:
