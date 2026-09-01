@@ -244,3 +244,60 @@ agrees, then switch it back on and confirm the chain is restored.
    switch payment approval off, so this stays -- but it is the one step whose
    requiredness is a policy choice rather than a structural necessity, unlike the
    Submit steps.
+
+---
+
+## Built — 2026-09-01
+
+Three refinements to the design above, each because building it showed the spec
+was reaching for something more expensive than the problem needed.
+
+**The read filters were left alone.** The spec said reads need a superset that
+includes switched-off steps' states. They already are one: the filters name every
+state the shipped chain has, so switching a step off leaves its state listed and
+matching nothing. Converting a hundred and fifty SQL sites would have been risk
+without behaviour. What makes that safe is a test asserting the filters remain a
+superset of the configured states -- add a step with a new state and it fails,
+naming the filters that need it. `wm_dashboard` was dropped from the work
+entirely on the same reasoning: all 57 of its mentions are read filters.
+
+**`pipeline_states()` returns groups, not a list.** The screens' filters mean
+different things -- waiting, active, editable -- and handing them one flat list of
+every state would have silently widened `IN (...)` to include drafts and rejects.
+That is how a "live work" list starts showing abandoned drafts.
+
+**The mirror's fallback is a literal, not a read of the table.** The spec had it
+read the Approval Stage table where one exists. That would mean resolving "what
+comes after this step" a second time inside the sandbox, with no imports and no
+`def` -- two implementations of the rule this change exists to unify. So live gets
+a literal of the chain it runs today and its behaviour cannot change; giving live
+the switches means handing it the table and the app's config, still a separate job.
+
+`wm_payment` was also left out: its only step is `Payment: Accounts`, which is
+required and can never be switched off.
+
+**Verified on `kaitet.local`, against real documents:**
+
+| | result |
+|---|---|
+| HR Head on | FM approve to `Pending HR Head` |
+| switch off with 1 waiting | refused: *"cannot be switched off while 1 document is waiting for it"* |
+| HR Head off | FM approve to `Pending GM` |
+| the HR action, off | *"The HR Head step is switched off for this project."* |
+
+The screen and the generated workflow agree in every configuration, across all
+four chains, independently -- Master Plan, Planner, Assigner and Actuals each
+reshape without touching the others. 689 tests pass; the port reports all ten
+modules matching.
+
+**One bug caught in the building**, of the same shape as the outage the day
+before: a script failed partway and left `wm_planner` referencing `STAGE_NEXT`
+without defining it -- a NameError that would have appeared only on live. The
+mirror integrity test now covers these constants, confirmed by deleting the fix
+and watching it fail.
+
+**Still open**, unchanged: giving live the table so its switches work, and the
+full role matrix (HR Head on the Planner, FM on the Master Plan). The second is
+now much cheaper than it was, because the screens are driven by the chain rather
+than by fixed state names -- what remains is a generic approve action per screen
+in place of the three named ones.
