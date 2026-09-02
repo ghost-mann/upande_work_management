@@ -147,10 +147,33 @@ one click. Two different tasks do not collide, so a legitimate split is not
 flagged and cannot be auto-deleted. Worth stating explicitly because a change here
 would silently start deleting real work.
 
-**A new flag** joins them: a day whose recorded hours exceed its standard. That is
-where the warning above becomes visible as a pattern rather than one dismissed
-message -- the audit is the right home for "this keeps happening", and it inherits
-the on/off switch every other flag has.
+**Two new flags** join them, each with its own on/off switch like the other eleven.
+
+`disc_long_day` -- a day whose recorded hours exceed its standard. This is where
+the warning above becomes visible as a pattern rather than one dismissed message;
+the audit is the right home for "this keeps happening".
+
+`disc_short_day` -- a day whose **hours and output disagree**. Not a day that is
+merely short: four hours producing about half a target is an ordinary half day and
+must not be flagged, or the flag is noise. What is worth a look is three hours
+producing a full day's target -- either the hours are wrong or the quantity is,
+and the message says exactly that.
+
+    flag when   output share of daily_target
+                  minus hours share of the standard day
+                exceeds a tolerance
+
+The obvious design was to compare recorded hours against hours present, and it
+cannot be built: live holds 864,507 `Employee Checkin` records and almost no
+out-scans. In the newest 400, 390 are `IN` and 10 are `OUT`, and 394 of 397
+employee-days carry exactly one scan. The app has only ever read `MIN(time)` --
+when somebody arrived -- because that is all there is. Hours present is not a
+number this data can produce, and a flag that treated a missing out-scan as an
+early departure would accuse almost everybody.
+
+The tolerance is a constant to begin with rather than a setting. It can be
+exposed if it proves noisy; shipping a threshold nobody has a feel for yet invites
+somebody to tune it blind.
 
 ## Not in scope
 
@@ -198,11 +221,18 @@ both amounts paid, and no duplicate-day discrepancy.
 
 ## Open questions
 
-1. **Does a short day deserve a flag too?** A day recorded at two hours with no
-   explanation may be as interesting as one at ten. Left out for now: the
-   under-recorded case is indistinguishable from a legitimately short day, and a
-   flag nobody can act on is noise.
-2. **Should `person_days` on the planner be recomputed from delivered hours?** It
-   is a budget figure today (`people_per_day × working_days`). Leaving it as the
-   budget and comparing delivered hours against it is probably right, but it means
-   two numbers with similar names, which this codebase has been bitten by before.
+Both of the questions this spec opened are now answered, and the answers are in
+the design above.
+
+1. **A short day is flagged**, but on hours disagreeing with output rather than on
+   shortness -- see `disc_short_day`. The distinction matters because the naive
+   version cannot tell a half day from an under-recorded one, and the data cannot
+   settle it either.
+2. **`person_days` on the planner stays the budget.** It is
+   `people_per_day × working_days` -- five people for four days is twenty
+   man-days, decided when the plan is raised. Man-days *used* is a new, separate
+   figure computed from delivered hours. Overwriting the budget with the actual
+   would destroy the only comparison worth having: planned twenty, used
+   twenty-three. The two are labelled **Mandays planned** and **Mandays used**,
+   because similarly-named numbers meaning different things have already cost this
+   project a wrong dashboard column and a double-counting bug.
