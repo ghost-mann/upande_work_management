@@ -11,3 +11,7 @@ work_management.patches.v1_0.backfill_task_subjects
 work_management.patches.v1_0.link_planners_to_their_master_plan
 work_management.patches.v1_0.merge_farms_in_use_into_farms
 work_management.patches.v1_0.drop_dead_consultant_controls
+# Before after_migrate, which is what saves doctypes and so what trips over a
+# DocPerm granting submit without write. Position among the patches above does
+# not matter -- none of them writes permissions.
+work_management.patches.v1_0.repair_submit_without_write

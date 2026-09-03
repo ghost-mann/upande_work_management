@@ -137,10 +137,19 @@ KAITET_DOCPERMS = [
 		["read", "write", "create", "delete", "submit", "report", "export", "share", "print", "email"]),
 	("Work Management Planner", "Farm Manager",
 		["read", "write", "create", "submit", "cancel", "amend", "report", "export", "share", "print", "email"]),
+	# No `submit` on these two, nor on the Planner's shipped Accounts Manager and
+	# HR Manager rows. All four meant approve-but-do-not-edit, and Frappe has no
+	# way to express that: "Cannot set Submit, Cancel, Amend without Write". The
+	# rights are otherwise exactly what they carried.
+	#
+	# Nothing is lost on the approval path -- api/planner.py sets docstatus with
+	# frappe.db.set_value and never consults this grant; who may approve is
+	# decided by the stage's configured role and the farm check beside it. What
+	# these four give up is the desk form's own Submit button.
 	("Work Management Planner", "HOD HR",
-		["read", "submit", "report", "export", "share", "print", "email"]),
+		["read", "report", "export", "share", "print", "email"]),
 	("Work Management Planner", "General Manager",
-		["read", "submit", "report", "export", "share", "print", "email"]),
+		["read", "report", "export", "share", "print", "email"]),
 	("Work Management Section", "Farm Manager",
 		["select", "read", "report"]),
 	("Work Management Section", "General Manager",
