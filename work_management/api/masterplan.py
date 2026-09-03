@@ -22,6 +22,7 @@ def wm_masterplan(**kwargs):
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
+    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Master Plan" (API, api_method=wm_masterplan)
@@ -76,6 +77,18 @@ def wm_masterplan(**kwargs):
             for hr in mp_roles:
                 if hr.startswith("Farm Manager"):
                     CAN_EDIT = 1
+
+    # May a farm hold two APPROVED budgets over the same days?
+    #
+    # Off is what this site has always done, and the reason was real: nothing
+    # recorded which plan a request drew against, so one budget in force per farm
+    # per day was what made that inference safe. The request carries the link now,
+    # and the planner asks which budget when two cover the dates rather than
+    # guessing -- so this stopped being an invariant and became a site's decision.
+    #
+    # In the app, port_app.py strips this line and rebuilds it from get_config(), so
+    # it is whatever Work Management Settings holds. Here it is the literal, and
+    # false keeps live behaving exactly as it does today.
 
     # Who decides a master plan is NOT a capability: it is the approval chain's own
     # masterplan_gm step, and asking two places who the GM is here is the bug this
@@ -839,7 +852,7 @@ def wm_masterplan(**kwargs):
                               "to": pb_me.period_to, "from": pb_me.period_from}, as_dict=True)
                         if not pb_ok:
                             pb_failed.append({"name": pb_n, "why": "every line was rejected"})
-                        elif pb_clash:
+                        elif pb_clash and not ALLOW_CONCURRENT_PLANS:
                             # the same invariant gm_approve enforces: one budget in force per
                             # farm per day, or which ceiling applies is anyone's guess
                             pb_failed.append({"name": pb_n, "why": "overlaps approved " + pb_clash[0].name +
@@ -957,13 +970,26 @@ def wm_masterplan(**kwargs):
                 SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity`
                 WHERE parent = %(p)s AND consultant_state = 'OK'
             """, {"p": ga_name}, as_dict=True)[0].n
-            if ga_clash:
+            if ga_clash and not ALLOW_CONCURRENT_PLANS:
                 out["error"] = ("An approved master plan already covers those dates for " + str(ga_doc.farm) +
                                 ": " + ga_clash[0].name + " (" + str(ga_clash[0].period_from) +
-                                " to " + str(ga_clash[0].period_to) + ")")
+                                " to " + str(ga_clash[0].period_to) + ")" +
+                                ". Turn on 'Allow more than one approved master plan per farm at a time'"
+                                " in Work Management Settings if this farm runs two budgets.")
             elif not ga_ok:
                 out["error"] = "Every activity was rejected, so there is nothing to approve."
             else:
+                if ga_clash:
+                    # allowed is not the same as unmentioned. Raising the same plan
+                    # twice by mistake looks identical to raising a deliberate second
+                    # one, and the approver is the last person who can cheaply tell.
+                    out["clash_warning"] = (str(ga_doc.farm) + " now has two approved master plans over these"
+                                            " dates: this one and " + ga_clash[0].name + " (" +
+                                            str(ga_clash[0].period_from) + " to " +
+                                            str(ga_clash[0].period_to) + "). Each request records which"
+                                            " budget it draws down, and the planner asks when two cover"
+                                            " the dates.")
+                    out["clash"] = ga_clash[0].name
                 frappe.db.set_value("Work Management Master Plan", ga_name, {
                     "workflow_state": STAGE_NEXT["masterplan_gm"],
                     "gm_approved_by": frappe.session.user,
@@ -993,21 +1019,67 @@ def wm_masterplan(**kwargs):
         hd_farm = frappe.form_dict.get("farm")
         hd_from = frappe.form_dict.get("from_date") or frappe.utils.today()
         hd_to = frappe.form_dict.get("to_date") or hd_from
+        hd_named = frappe.form_dict.get("master_plan") or ""
         if not hd_farm:
             out["error"] = "farm is required"
         else:
-            hd_mp = frappe.db.sql("""
+            # EVERY approved plan covering the dates, not the one that starts latest.
+            #
+            # This took `ORDER BY period_from DESC LIMIT 1`, which was fine while a
+            # farm could hold only one approved budget per day. Once it can hold two
+            # -- see ALLOW_CONCURRENT_PLANS -- that query shows one ceiling, hides
+            # the other, and does not say which it picked. A headroom figure nobody
+            # can attribute to a budget is worse than none.
+            #
+            # resolve_master_plan(), inlined: a named plan wins if it is a candidate,
+            # one candidate resolves silently, and two with nothing named are handed
+            # back for the screen to ask about -- the same rule and the same shape the
+            # planner's task list uses. Keep in step with
+            # work_management/master_plan.py, which is unit-tested.
+            hd_all = frappe.db.sql("""
                 SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
                 WHERE farm = %(f)s AND workflow_state = 'Approved'
                   AND period_from <= %(from)s AND period_to >= %(to)s
-                ORDER BY period_from DESC LIMIT 1
+                ORDER BY period_from DESC
             """, {"f": hd_farm, "from": hd_from, "to": hd_to}, as_dict=True)
-            if not hd_mp:
+            hd_names = []
+            for hd_c in hd_all:
+                if hd_c.name:
+                    hd_names.append(hd_c.name)
+            hd_pick = None
+            hd_ambiguous = None
+            if hd_named:
+                if hd_named in hd_names:
+                    hd_pick = hd_named
+            elif len(hd_names) > 1:
+                hd_ambiguous = sorted(hd_names)
+            elif hd_names:
+                hd_pick = hd_names[0]
+            hd_mp = []
+            for hd_c in hd_all:
+                if hd_c.name == hd_pick:
+                    hd_mp.append(hd_c)
+            if hd_ambiguous:
                 out["master_plan"] = None
                 out["activities"] = []
-                out["blocked_reason"] = ("No approved master plan covers " + str(hd_from) +
-                                         " to " + str(hd_to) + " for " + str(hd_farm) +
-                                         ". Planning is blocked until one is approved.")
+                out["ambiguous"] = hd_ambiguous
+                out["blocked_reason"] = (str(hd_farm) + " has more than one approved master plan over " +
+                                         str(hd_from) + " to " + str(hd_to) + ": " +
+                                         ", ".join(hd_ambiguous) + ". Choose which budget to show --"
+                                         " two plans can budget the same activity from different money,"
+                                         " so the dates cannot say.")
+            elif not hd_mp:
+                out["master_plan"] = None
+                out["activities"] = []
+                if hd_named:
+                    # named something that does not cover these dates: say so rather
+                    # than falling back to a budget nobody asked for
+                    out["blocked_reason"] = (str(hd_named) + " is not an approved master plan covering " +
+                                             str(hd_from) + " to " + str(hd_to) + " for " + str(hd_farm) + ".")
+                else:
+                    out["blocked_reason"] = ("No approved master plan covers " + str(hd_from) +
+                                             " to " + str(hd_to) + " for " + str(hd_farm) +
+                                             ". Planning is blocked until one is approved.")
             else:
                 hd = hd_mp[0]
                 out["master_plan"] = hd.name

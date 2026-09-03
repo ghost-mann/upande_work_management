@@ -22,6 +22,7 @@ def wm_payment(**kwargs):
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
+    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
 
     # ==================================================================
     # Master plan attribution: none. Every period_from/period_to in this script is

@@ -22,6 +22,7 @@ def wm_rates(**kwargs):
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
+    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
 
     # ==================================================================
     # Master plan attribution: reads a plan's own budget lines, and deliberately

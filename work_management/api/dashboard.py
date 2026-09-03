@@ -22,6 +22,7 @@ def wm_dashboard(**kwargs):
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
+    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Dashboard" (API, api_method=wm_dashboard)

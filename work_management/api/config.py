@@ -235,6 +235,10 @@ def get_config():
 		# payment run, enter work. These were four lists and a scatter of inline
 		# checks naming one company's job titles.
 		"capabilities": capabilities.configured(settings=None),
+		# May a farm hold two approved budgets over the same days? Off unless a
+		# site says otherwise, so approving a second overlapping plan is refused
+		# exactly as it always has been.
+		"allow_concurrent_master_plans": False,
 	}
 
 	try:
@@ -242,6 +246,9 @@ def get_config():
 	except Exception:
 		return cfg
 
+	# `settings.get(...)` rather than an attribute: a Settings doc saved before
+	# this field existed has no such key, and an attribute would raise.
+	cfg["allow_concurrent_master_plans"] = bool(settings.get("allow_concurrent_master_plans"))
 	if settings.get("default_company"):
 		cfg["default_company"] = settings.default_company
 	if settings.get("block_exclude"):

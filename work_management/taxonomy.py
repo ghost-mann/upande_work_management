@@ -84,6 +84,8 @@ FIELD_LABELS = (
 		"Only show each person the {top_plural} they are permitted"),
 	("Work Management Settings", "farms_section", "{top_plural}"),
 	("Work Management Settings", "disc_multi_farm", "Two {top_plural}, one day"),
+	("Work Management Settings", "allow_concurrent_master_plans",
+		"Allow more than one approved master plan per {top_singular} at a time"),
 	("Work Management Settings", "rate_recalc_farm", "{top_singular} Scope"),
 	("Work Management Stage Approver", "scope", "{top_singular}"),
 	("Work Payment Line", "farm", "{top_singular}"),

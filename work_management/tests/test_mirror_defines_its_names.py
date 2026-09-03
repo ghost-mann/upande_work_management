@@ -49,7 +49,7 @@ SCRIPTS = tuple(sorted(
 # which is why their absence in the mirror is invisible from the app side.
 PORTED_CONSTANTS = ("FARMS", "FARM_PROJECT", "DEFAULT_COMPANY", "BLOCK_EXCLUDE",
 	"FARM_APPROVER_ROLE", "HR_HEAD_ROLES", "STAGE_ROWS", "STAGE_STATES",
-	"CAPABILITIES")
+	"CAPABILITIES", "ALLOW_CONCURRENT_PLANS")
 
 
 def source(script):

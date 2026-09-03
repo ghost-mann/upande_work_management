@@ -22,6 +22,7 @@ def wm_payroll_drift(**kwargs):
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
+    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
 
     # Rows whose stored payroll flag no longer matches the rule.
     #

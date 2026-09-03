@@ -22,6 +22,7 @@ def wm_payroll_recompute(**kwargs):
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
+    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
 
     # Re-answer count_in_payroll / amount for rows a superseded rule froze.
     #
