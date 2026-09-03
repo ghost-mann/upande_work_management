@@ -2,6 +2,23 @@
 
 *2026-09-03*
 
+> **Status: SUPERSEDED by `2026-09-03-the-farm-is-on-the-employee-design.md`**,
+> written the same day.
+>
+> This document is right that a role cannot express a farm, and its measurements
+> stand — they are the reason two of the four possible homes for that farm were
+> rejected, and they are why it is worth keeping. Its own proposal is the third
+> home: a farm column on a grants table, populated per person, with a
+> reconciliation report and a gate in front of it.
+>
+> It never asked whether the farm was already recorded somewhere. It is:
+> `Employee.custom_farm`, on 2,350 of 2,352 active employees, agreeing with the
+> per-farm roles for 16 of the 19 people who hold one — and holding the correct
+> spelling of `Vale` where the role says `Valle`. Reading it needs no new table,
+> no farm column, no per-person population, and no gate. Everything below about
+> merging the tables and scoping grants should be read as the more elaborate
+> answer that got discarded.
+>
 > **Amends** `2026-08-31-rbac-farm-scoping-design.md`. That spec's leak fix and
 > its User Permission work stand unchanged and are already shipped. What this
 > document changes is one of its conclusions: that farm scoping for *approval*
