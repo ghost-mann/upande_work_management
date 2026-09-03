@@ -29,7 +29,7 @@ import os
 import re
 import unittest
 
-MIRROR = "/home/austin/vscodeProjects/kaitet-work-management/server_scripts"
+from work_management.tests.mirror import SERVER_SCRIPTS as MIRROR
 
 # Every mirror script, globbed rather than listed.
 #

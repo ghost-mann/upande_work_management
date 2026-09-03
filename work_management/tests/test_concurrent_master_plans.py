@@ -30,7 +30,7 @@ import unittest
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS = os.path.join(APP, "work_management", "doctype",
 	"work_management_settings", "work_management_settings.json")
-MIRROR = "/home/austin/vscodeProjects/kaitet-work-management"
+from work_management.tests.mirror import ROOT as MIRROR
 SCRIPT = os.path.join(MIRROR, "server_scripts", "wm_masterplan.py")
 PORT = os.path.join(MIRROR, "port_app.py")
 
@@ -84,6 +84,8 @@ class TestItReachesTheScreens(unittest.TestCase):
 		self.assertIn(KEY, inspect.getsource(config))
 
 	def test_the_port_rebuilds_it_from_config(self):
+		if not os.path.exists(PORT):
+			self.skipTest("mirror not present")
 		with open(PORT) as handle:
 			text = handle.read()
 		self.assertRegex(text, r"%s = _cfg\[\"%s\"\]" % (CONST, KEY),
@@ -92,6 +94,8 @@ class TestItReachesTheScreens(unittest.TestCase):
 	def test_the_port_strips_the_mirror_literal(self):
 		"""Otherwise the mirror's own value would sit beside the header's and win,
 		pinning every site to whatever the mirror happens to say."""
+		if not os.path.exists(PORT):
+			self.skipTest("mirror not present")
 		with open(PORT) as handle:
 			text = handle.read()
 		self.assertIn('"%s ="' % CONST, text)

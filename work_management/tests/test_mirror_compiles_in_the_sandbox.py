@@ -43,7 +43,7 @@ import glob
 import os
 import unittest
 
-MIRROR = "/home/austin/vscodeProjects/kaitet-work-management/server_scripts"
+from work_management.tests.mirror import SERVER_SCRIPTS as MIRROR
 
 
 def sandbox_policy():

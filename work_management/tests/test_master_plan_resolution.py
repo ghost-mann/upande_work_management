@@ -20,6 +20,7 @@ import os
 import unittest
 
 from work_management.master_plan import resolve_master_plan
+from work_management.tests.mirror import WEB_PAGES
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -281,7 +282,7 @@ class TestTheScreenSendsTheChoice(unittest.TestCase):
 		self.assertIn("plan_name", self.screen())
 
 	def test_the_app_and_mirror_copies_agree(self):
-		mirror = "/home/austin/vscodeProjects/kaitet-work-management/web_pages/work-planner.js"
+		mirror = os.path.join(WEB_PAGES, "work-planner.js")
 		if not os.path.exists(mirror):
 			self.skipTest("mirror not present")
 		with open(mirror) as handle:
