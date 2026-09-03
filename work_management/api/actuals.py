@@ -178,19 +178,46 @@ def wm_actuals(**kwargs):
     if FARM_DENIED:
         out["error"] = FARM_DENIED
     elif action == "act_assigned":
+        # How many assignments the clerk is offered. The cap is applied at the END,
+        # after the closed-early and already-fulfilled ones have been dropped, so it
+        # means 200 assignments somebody can actually record against.
+        #
+        # It used to sit on the fetch instead, and the trimming ran after it -- so
+        # the budget was spent on rows that were then thrown away. On this site:
+        # 1,497 Assigned assignments, 200 fetched, 45 dropped as closed early and
+        # 115 as already fully recorded, leaving 40 offered. The other 1,297 were
+        # never looked at, and the actuals hanging off them could not be reached.
+        #
+        # The order is approval_date desc, which made it worse the day three weeks
+        # of v15 work was migrated in: the window moved from 20 August to 26 August
+        # and displaced 130 assignments people were still working on.
+        #
+        # Fetching every Assigned assignment is only affordable because the planner
+        # lookups below are now one query instead of two per assignment -- that
+        # N+1 was the reason a fetch cap existed at all.
+        SHOWN = 200
         asgs = frappe.db.get_all("Work Management Assigner", filters={"workflow_state":"Assigned"},
             fields=["name","farm","block_section","task","task_kpi","from_date","to_date",
                     "planned_people","planned_cost","planner_request","assigned_count"],
-            order_by="approval_date desc", limit=200)
+            order_by="approval_date desc")
         # plan target + fulfilled, so we can show remaining and only hide FULLY fulfilled assignments
         plan_target = {}
         plan_done = {}
         plan_closed = {}
+        plan_wanted = []
         for a in asgs:
             pr = a.planner_request
             if pr and pr not in plan_target:
-                plan_target[pr] = frappe.utils.flt(frappe.db.get_value("Work Management Planner", pr, "quantity"))
-                plan_closed[pr] = (frappe.db.get_value("Work Management Planner", pr, "custom_close_state") or "")
+                # 0 until the batch below says otherwise, which is also what the old
+                # per-row get_value returned for a planner that no longer exists
+                plan_target[pr] = 0
+                plan_wanted.append(pr)
+        if plan_wanted:
+            for p in frappe.db.get_all("Work Management Planner",
+                    filters={"name": ["in", plan_wanted]},
+                    fields=["name", "quantity", "custom_close_state"]):
+                plan_target[p.name] = frappe.utils.flt(p.quantity)
+                plan_closed[p.name] = p.custom_close_state or ""
         # sum confirmed actuals per plan
         for r in frappe.db.sql("""
             SELECT a2.planner_request pr, COALESCE(SUM(ac.total_actual_qty),0) q
@@ -244,6 +271,9 @@ def wm_actuals(**kwargs):
             if a["fulfilled_done"]:
                 continue
             rows.append(a)
+        # NOW the cap, on assignments that survived the trim rather than on the fetch
+        if len(rows) > SHOWN:
+            rows = rows[:SHOWN]
         # attach multi-block display (primary + plan extra_blocks) to each assignment in view
         pr_set = {}
         for a in rows:

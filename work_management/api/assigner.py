@@ -178,11 +178,27 @@ def wm_assigner(**kwargs):
     if FARM_DENIED:
         out["error"] = FARM_DENIED
     elif action == "a_approved_planners":
+        # How many plans the picker offers, applied at the END -- after the ones
+        # already assigned, closed early or fully delivered have been dropped.
+        #
+        # Both caps here were wrong, and in different ways.
+        #
+        # The 200 on the fetch was spent before the filtering: of the newest 200
+        # approved plans, 182 were already tied to a live assignment, so the picker
+        # offered 18 -- while 114 genuinely unassigned plans sat outside the window
+        # and could not be assigned at all.
+        #
+        # The 500 on `assigned` was worse than a display limit. It builds the map of
+        # which plans are already taken, and there are 1,543 live assignments, so it
+        # knew 496 of the 1,518 taken plans -- with no order_by, an arbitrary 496.
+        # Every plan it missed reads as free, which is how the same plan could be
+        # assigned twice. It takes one small field, so it now fetches all of them.
+        SHOWN = 200
         plans = frappe.db.get_all("Work Management Planner", filters={"workflow_state":"Approved"},
             fields=["name","farm","block_section","task","task_kpi","from_date","to_date","people_per_day","total_cost","quantity","custom_close_state"],
-            order_by="approval_date desc", limit=200)
+            order_by="approval_date desc")
         assigned = frappe.db.get_all("Work Management Assigner",
-            filters={"workflow_state":["in",["Pending Farm Manager","Pending HR Head","Pending GM","Assigned"]]}, fields=["planner_request"], limit=500)
+            filters={"workflow_state":["in",["Pending Farm Manager","Pending HR Head","Pending GM","Assigned"]]}, fields=["planner_request"])
         taken = {}
         for a in assigned:
             taken[a.planner_request] = 1
@@ -211,6 +227,9 @@ def wm_assigner(**kwargs):
                 continue
             p["already_assigned"] = 0
             rows.append(p)
+        # NOW the cap, on plans that are genuinely assignable rather than on the fetch
+        if len(rows) > SHOWN:
+            rows = rows[:SHOWN]
         # attach multi-block display (primary + extra_blocks) to each row in view
         pnames_bl = []
         for p in rows:
