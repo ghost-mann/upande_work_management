@@ -918,78 +918,105 @@ def wm_assigner(**kwargs):
         out["candidates"] = cands
 
     elif action == "a_release":
-        # Release ONE worker from the crew. No replacement, which is the whole point.
+        # Release workers from the crew. No replacement, which is the whole point.
         #
-        # Two ways to do this existed and neither fits. a_substitute below releases
-        # somebody only by naming who takes their place -- "Both the left date and
-        # the replacement start date are required" -- and closing the plan releases
-        # the entire crew at once. Neither says "this one has moved on, nobody is
-        # replacing them".
+        # The crew screen has offered this for a while -- checkboxes, a date, an
+        # FM/HR/GM gate -- and there was no such action here, so ticking somebody and
+        # confirming answered `unknown action: a_release`. This is that action, and
+        # its arguments are the ones the screen has always sent.
+        #
+        # Two ways to release existed and neither fits. a_substitute releases somebody
+        # only by naming who takes their place; closing the plan releases the entire
+        # crew. Neither says "these have moved on, nobody is replacing them".
         #
         # Nothing recorded is touched. Their actuals rows, quantities and pay stay
         # exactly as they are, and every busy/overlap check already reads a 'Left'
-        # row as free, so they can be put on another task straight away. That is the
-        # same treatment closing a plan gives, and it is why this is a small change.
+        # row as free, so they can go onto another task at once -- the same day too,
+        # where a split day is allowed. Closing a plan has always done precisely this
+        # to the whole crew, which is why this is a small change.
         nm = frappe.form_dict.get("assignment")
-        leaving = frappe.form_dict.get("employee")
-        left_date = frappe.form_dict.get("left_date") or frappe.utils.today()
+        rel_raw = frappe.form_dict.get("employees") or frappe.form_dict.get("employee") or ""
+        rel_day = (frappe.form_dict.get("release_date") or frappe.form_dict.get("left_date")
+            or frappe.utils.today())
+        rel_who = []
+        for rw in str(rel_raw).split(","):
+            if rw.strip():
+                rel_who.append(rw.strip())
+        rl = frappe.get_roles(frappe.session.user)
+        rel_may = any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
+            or ("System Manager" in rl)
+        for rr in rl:
+            if rr.startswith("Farm Manager"):
+                rel_may = 1
         err = None
-        if not nm or not leaving:
-            err = "The assignment and the worker to release are both required"
+        if not nm or not rel_who:
+            err = "The assignment and at least one worker are required"
+        elif not rel_may:
+            # the screen hides the controls from everybody else; this is the same rule
+            # enforced where it counts
+            err = "Only a Farm Manager, the HR head or the GM may release a worker."
         d = None
         if not err:
             d = frappe.get_doc("Work Management Assigner", nm)
             if d.workflow_state != "Assigned":
-                err = "A worker can only be released from an approved (Assigned) assignment"
-        if not err:
-            rel_row = None
-            for r in d.employees:
-                if r.employee == leaving and (r.status or "Active") == "Active":
-                    rel_row = r.name
-            if not rel_row:
-                err = "That worker is not on this assignment, or has already been released"
+                err = "Workers can only be released from an approved (Assigned) assignment"
         if err:
             out["error"] = err
         else:
-            # the parent is submitted, so child rows and parent counts are written
-            # directly -- the same route a_substitute takes, and no re-approval
-            frappe.db.set_value("Work Assignment Employee", rel_row, "status", "Left",
-                update_modified=False)
-            frappe.db.set_value("Work Assignment Employee", rel_row, "left_date", left_date,
-                update_modified=False)
-            # assigned_count counts ACTIVE rows, so releasing without a replacement
-            # moves it -- unlike a substitution, where one leaves as one joins
-            active_rows = frappe.db.sql("""
-                SELECT COUNT(*) c FROM `tabWork Assignment Employee`
-                WHERE parent=%s AND (status IS NULL OR status='Active')
-            """, (nm,), as_dict=True)
-            active = active_rows[0].c if active_rows else 0
-            planned = frappe.utils.cint(d.planned_people)
-            frappe.db.set_value("Work Management Assigner", nm, "assigned_count", active,
-                update_modified=False)
-            frappe.db.set_value("Work Management Assigner", nm, "variance", active - planned,
-                update_modified=False)
-            # what they already did here, so the screen can say the work was kept
-            # rather than leaving somebody to wonder
-            kept = frappe.db.sql("""
-                SELECT COUNT(*) n, COALESCE(SUM(we.actual_quantity),0) q,
-                       COALESCE(SUM(we.amount),0) c
-                FROM `tabWork Actuals Employee` we
-                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-                WHERE ac.assignment = %s AND we.employee = %s
-            """, (nm, leaving), as_dict=True)
-            frappe.db.commit()
-            out["name"] = nm
-            out["released"] = leaving
-            out["left_date"] = str(left_date)
-            out["active_count"] = active
-            out["variance"] = active - planned
-            out["kept_rows"] = frappe.utils.cint(kept[0].n) if kept else 0
-            out["kept_qty"] = frappe.utils.flt(kept[0].q) if kept else 0
-            out["kept_amount"] = frappe.utils.flt(kept[0].c, 2) if kept else 0
-            out["message"] = ("Released on " + str(left_date) + ". " +
-                str(out["kept_rows"]) + " day-row(s) already recorded here are kept, worth KES " +
-                frappe.utils.fmt_money(out["kept_amount"]) + ". They are now free for another task.")
+            rel_rows = {}
+            for r in d.employees:
+                if r.employee in rel_who and (r.status or "Active") == "Active":
+                    rel_rows[r.employee] = r.name
+            rel_missing = []
+            for rw in rel_who:
+                if rw not in rel_rows:
+                    rel_missing.append(rw)
+            if not rel_rows:
+                out["error"] = ("None of those workers is active on this assignment -- "
+                    "they may already have been released.")
+            else:
+                # the parent is submitted, so child rows and parent counts are written
+                # directly, which is the route a_substitute takes and needs no
+                # re-approval
+                for rw in rel_rows:
+                    frappe.db.set_value("Work Assignment Employee", rel_rows[rw], "status",
+                        "Left", update_modified=False)
+                    frappe.db.set_value("Work Assignment Employee", rel_rows[rw], "left_date",
+                        rel_day, update_modified=False)
+                # assigned_count counts ACTIVE rows, so releasing without a replacement
+                # moves it -- unlike a substitution, where one leaves as one joins
+                active_rows = frappe.db.sql("""
+                    SELECT COUNT(*) c FROM `tabWork Assignment Employee`
+                    WHERE parent=%s AND (status IS NULL OR status='Active')
+                """, (nm,), as_dict=True)
+                active = active_rows[0].c if active_rows else 0
+                planned = frappe.utils.cint(d.planned_people)
+                frappe.db.set_value("Work Management Assigner", nm, "assigned_count", active,
+                    update_modified=False)
+                frappe.db.set_value("Work Management Assigner", nm, "variance",
+                    active - planned, update_modified=False)
+                # what they already did here, so the screen can say the work was kept
+                # rather than leaving somebody to wonder whether releasing lost it
+                kept = frappe.db.sql("""
+                    SELECT COUNT(*) n, COALESCE(SUM(we.amount),0) c
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                    WHERE ac.assignment = %s AND we.employee IN %s
+                """, (nm, tuple(rel_rows.keys())), as_dict=True)
+                frappe.db.commit()
+                out["name"] = nm
+                out["released_count"] = len(rel_rows)
+                out["released"] = list(rel_rows.keys())
+                out["not_active"] = rel_missing
+                out["release_date"] = str(rel_day)
+                out["active_count"] = active
+                out["variance"] = active - planned
+                out["kept_rows"] = frappe.utils.cint(kept[0].n) if kept else 0
+                out["kept_amount"] = frappe.utils.flt(kept[0].c, 2) if kept else 0
+                out["message"] = (str(len(rel_rows)) + " released on " + str(rel_day) + ". " +
+                    str(out["kept_rows"]) + " day-row(s) already recorded here are kept, worth KES " +
+                    frappe.utils.fmt_money(out["kept_amount"]) +
+                    ". They are free for another task now.")
 
     elif action == "a_substitute":
         # one-for-one: outgoing -> Left(+left_date); replacement appended Active(+start_date)

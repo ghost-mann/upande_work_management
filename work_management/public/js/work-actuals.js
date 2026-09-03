@@ -1,5 +1,5 @@
 (function(){
-  var ST = { asg:null, detail:null, cells:{}, roles:null };
+  var ST = { asg:null, detail:null, cells:{}, hours:{}, roles:null };
 
   function csrf(){
     // Robust CSRF lookup: frappe global, then boot, then the meta tag Frappe injects.
@@ -44,7 +44,7 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep="/api/method/"+(method||"wm_actuals");
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,act_close_confirm:1,act_close_request:1};
+    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,act_close_confirm:1,act_close_request:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -66,6 +66,18 @@
   // a site whose tasks are named by subject looks exactly as it did.
   var TASK_NAMES={};
   function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
+  // HOW LONG A DAY IS, for pre-filling the hours box. Mirrors
+  // work_management/split_day.py: Saturday is short and Sunday is not, which is
+  // the shape these farms work. The model comes from the server so a site that
+  // works a six-hour Friday is not arguing with a number compiled in here.
+  function stdHours(iso, model){
+    model = model || {};
+    var d = new Date(iso + "T00:00:00");
+    var wd = d.getDay();                        // 0 Sunday .. 6 Saturday
+    if(wd === 6) return Number(model.saturday || 6);
+    if(wd === 0) return Number(model.sunday   || 8);
+    return Number(model.weekday || 8);
+  }
   // What this installation calls the levels. Falls back to the shipped wording
   // so the screen still reads correctly if the template has not loaded.
   var TXN = (window.WM_TAXONOMY || {});
@@ -382,7 +394,7 @@
     var val = (typeof explicitAsg === "string" && explicitAsg)
       ? explicitAsg
       : ((this && this.value) ? this.value : "");
-    ST.asg=val; ST.cells={}; ST.detail=null;
+    ST.asg=val; ST.cells={}; ST.hours={}; ST.detail=null;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
     if(!ST.asg){ el("ac-detail").style.display="none"; refresh(); return; }
     call({action:"act_detail",assignment:ST.asg}).then(function(d){
@@ -391,6 +403,7 @@
       renderDetail(a);
       // seed cells from any existing draft
       ST.cells = a.cells || {};
+      ST.hours = a.cell_hours || {};
       renderGrid(a);
       refresh();
     });
@@ -401,13 +414,14 @@
     showTab("enter");
     var sel=el("ac-asg");
     if(sel){ sel.value=assignment; }
-    ST.asg=assignment; ST.cells={}; ST.detail=null;
+    ST.asg=assignment; ST.cells={}; ST.hours={}; ST.detail=null;
     ST._editingDoc=docname; ST._editingStage=stage;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
     call({action:"act_detail",assignment:assignment}).then(function(d){
       var a=d.detail||{}; ST.detail=a;
       renderDetail(a);
       ST.cells = a.cells || {};
+      ST.hours = a.cell_hours || {};
       renderGrid(a);
       refresh();
       var banner=el("ac-editbanner");
@@ -572,7 +586,11 @@
       // substitute affordance: only Active Task Workers on an unlocked grid are swappable
       var canSub = !perm && !isLeft && !locked;
       var subBtn = canSub ? ('<button type="button" class="subbtn" title="Substitute this worker" data-sub-emp="'+esc(w.employee)+'" data-sub-name="'+esc(w.employee_name||w.employee)+'">swap</button>') : '';
-      h+='<tr class="'+rowcls.trim()+'"><td class="wname"><span class="nm">'+esc(w.employee_name||w.employee)+'</span>'+(perm?'<span class="mini">salaried</span>':'')+(isLeft?'<span class="mini left">left</span>':'')+(w.start_date&&!isLeft?'<span class="mini repl">replacement</span>':'')+subBtn+(alabel?'<div style="font-size:8px;color:#999;margin-top:1px">'+esc(alabel)+'</div>':'')+'</td>';
+      // RELEASE, beside swap. Swap needs somebody to take their place; this says
+      // they have moved on and nobody is replacing them. Everything they have
+      // recorded here stays, and they become free for another task.
+      var relBtn = canSub ? ('<button type="button" class="relbtn" title="Release this worker from this assignment. What they have recorded here is kept, and they become free for another task." data-rel-emp="'+esc(w.employee)+'" data-rel-name="'+esc(w.employee_name||w.employee)+'">release</button>') : '';
+      h+='<tr class="'+rowcls.trim()+'"><td class="wname"><span class="nm">'+esc(w.employee_name||w.employee)+'</span>'+(perm?'<span class="mini">salaried</span>':'')+(isLeft?'<span class="mini left">left</span>':'')+(w.start_date&&!isLeft?'<span class="mini repl">replacement</span>':'')+subBtn+relBtn+(alabel?'<div style="font-size:8px;color:#999;margin-top:1px">'+esc(alabel)+'</div>':'')+'</td>';
       days.forEach(function(iso){
         var active=cellActive(w,iso);
         var isOff=offDay(w,iso);
@@ -608,7 +626,18 @@
               pmark='<span title="no scan and no attendance record — presence unknown" style="'+pbase+'color:#a06000">?</span>';
             }
           }
-          h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+pmark+'</td>';
+          // The hours box appears only where a day can be split. With the
+          // switch off this cell is exactly what it has always been.
+          var hrsBox='';
+          if(a.allow_split_day){
+            var hv=ST.hours[ck(w.employee,iso)];
+            if(hv==null||hv==="") hv=stdHours(iso, a.standard_day);
+            hrsBox='<input type="number" min="0" step="any" class="hcell" '+(cellLocked?"disabled":"")+
+              ' data-hemp="'+esc(w.employee)+'" data-hdate="'+iso+'" value="'+esc(hv)+
+              '" title="Hours this task took on '+iso+'. Pre-filled with the standard day; '+
+              'change it only if the day was shared with another task.">';
+          }
+          h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+hrsBox+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+pmark+'</td>';
         }
       });
       h+='<td class="trow" data-wtot="'+esc(w.employee)+'">0</td></tr>';
@@ -624,6 +653,37 @@
         var v=parseFloat(inp.value);
         if(isNaN(v)||v<=0){ delete ST.cells[key]; } else { ST.cells[key]=v; }
         recompute(a);
+      };
+    });
+    box.querySelectorAll("[data-rel-emp]").forEach(function(btn){
+      btn.onclick=function(ev){
+        ev.stopPropagation();
+        var emp=btn.getAttribute("data-rel-emp");
+        var who=btn.getAttribute("data-rel-name")||emp;
+        var when=window.prompt("Release "+who+" from this assignment on which date?\n\n"+
+          "What they have already recorded here is kept and still paid. They "+
+          "become free to be assigned to another task — including the same day, "+
+          "if a split day is allowed.", (ST.detail&&ST.detail.today)||"");
+        if(!when) return;
+        btn.disabled=true;
+        // one implementation of this write, on the assigner, called from here --
+        // two copies of a mutation in two sandboxed scripts would drift
+        call({action:"a_release", assignment:ST.asg, employees:emp, release_date:when}, "wm_assigner")
+          .then(function(d){
+            if(d && d.error){ toast("Error: "+d.error); btn.disabled=false; return; }
+            window.alert(d && d.message ? d.message : ("Released "+who+"."));
+            refresh(); onAsg(ST.asg);
+          })
+          .catch(function(e){ toast(e && e.message ? e.message : "Could not release"); btn.disabled=false; });
+      };
+    });
+    box.querySelectorAll("input[data-hemp]").forEach(function(inp){
+      inp.oninput=function(){
+        var key=ck(inp.getAttribute("data-hemp"), inp.getAttribute("data-hdate"));
+        var v=parseFloat(inp.value);
+        // an emptied box is not zero hours, it is "use the standard" -- which is
+        // what the server does with an absent value too
+        if(isNaN(v)||v<=0){ delete ST.hours[key]; } else { ST.hours[key]=v; }
       };
     });
     // wire substitute buttons
@@ -720,7 +780,12 @@
   function doSubmit(submitNow){
     var payload=[];
     for(var key in ST.cells){
-      if(ST.cells[key]>0){ payload.push(key+"~"+ST.cells[key]); }
+      if(ST.cells[key]>0){
+        // fourth field, optional: the server falls back to the standard day when
+        // it is absent, so a cell nobody touched sends three as it always did
+        var hv=ST.hours[key];
+        payload.push(key+"~"+ST.cells[key]+(hv>0?("~"+hv):""));
+      }
     }
     if(!payload.length){ toast("Enter at least one quantity"); return; }
     var args={ action:"act_submit", assignment:ST.asg, rows:payload.join("|") };
@@ -745,11 +810,18 @@
       }
       if(d.att_overridden){ toast("Attendance override logged for "+d.att_overridden+" worker"+(d.att_overridden>1?"s":"")); }
       if(d.error){ toast("Error: "+d.error); refresh(); return; }
+      // Advisory, and deliberately so: the rows were written either way. Shown
+      // as an alert rather than a toast because a toast is missed, and the whole
+      // point of these two is that somebody reads them.
+      var notes=[];
+      if(d.long_day_warning) notes.push(d.long_day_warning);
+      if(d.released_warning) notes.push(d.released_warning);
+      if(notes.length) window.alert("Recorded, with a note:\n\n• "+notes.join("\n\n• "));
       if(d.submit_blocked){ toast(d.submit_blocked); }
       else if(ST._editingDoc){ toast("Updated "+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")); var bn=el("ac-editbanner"); if(bn){bn.style.display="none";} ST._editingDoc=null; ST._editingStage=null; }
       else toast((submitNow?"Submitted ":"Draft saved ")+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")+" · KES "+fmt(d.total_payment,2));
       if(submitNow && !d.submit_blocked){
-        ST.asg=null; ST.cells={}; ST.detail=null;
+        ST.asg=null; ST.cells={}; ST.hours={}; ST.detail=null;
         el("ac-asg").value=""; el("ac-detail").style.display="none";
         el("ac-grid").innerHTML='<div class="empty">Pick an assignment to load the grid.</div>';
         el("ac-varnote").textContent="";

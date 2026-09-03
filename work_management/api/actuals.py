@@ -334,6 +334,16 @@ def wm_actuals(**kwargs):
         a["rate"] = rate
         a["target_qty"] = target
         a["uom"] = uom
+        # WHETHER THE SCREEN ASKS FOR HOURS AT ALL. With splitting off the grid is
+        # exactly as it has always been -- no extra box, nothing to type. On, each
+        # cell offers the hours beside the quantity, pre-filled with the standard for
+        # that date so an ordinary day still needs nothing typed.
+        a["allow_split_day"] = 1 if ALLOW_SPLIT_DAY else 0
+        a["standard_day"] = {
+            "weekday": frappe.utils.flt(STANDARD_DAY.get("weekday")),
+            "saturday": frappe.utils.flt(STANDARD_DAY.get("saturday")),
+            "sunday": frappe.utils.flt(STANDARD_DAY.get("sunday")),
+        }
         # total block area (Ha) = primary block_section + extra_blocks, summed from Warehouse.custom_area_ha
         block_area = 0
         bset = {}
@@ -543,13 +553,19 @@ def wm_actuals(**kwargs):
         a["draft_name"] = draft[0].name if draft else None
         a["draft_state"] = draft[0].workflow_state if draft else None
         cells = {}
+        cell_hours = {}
         if draft:
             for r in frappe.db.sql("""
-                    SELECT employee, work_date, actual_quantity
+                    SELECT employee, work_date, actual_quantity, hours
                     FROM `tabWork Actuals Employee` WHERE parent = %s
             """, (draft[0].name,), as_dict=True):
                 cells[str(r.employee) + "~" + str(r.work_date)] = r.actual_quantity
+                # only when somebody typed one -- an empty box is the screen's cue to
+                # fill in that date's standard, and sending a 0 would suppress it
+                if frappe.utils.flt(r.hours) > 0:
+                    cell_hours[str(r.employee) + "~" + str(r.work_date)] = frappe.utils.flt(r.hours)
         a["cells"] = cells
+        a["cell_hours"] = cell_hours
         # also: is there a live (in-review/confirmed) doc blocking new entry?
         live = frappe.db.sql("""
             SELECT name, workflow_state FROM `tabWork Management Actuals`
