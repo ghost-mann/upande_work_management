@@ -426,10 +426,13 @@ def wm_actuals(**kwargs):
         # went on paying them. TW_MATCH is that same settings-driven test.
         tw_names = {}
         if workers:
+            tw_asked = []
+            for w in workers:
+                tw_asked.append(w.employee)
             for tw_row in frappe.db.sql("""
                 SELECT e.name FROM `tabEmployee` e
                 WHERE e.name IN %(names)s AND """ + TW_MATCH,
-                    {"names": tuple(w.employee for w in workers)}, as_dict=True):
+                    {"names": tuple(tw_asked)}, as_dict=True):
                 tw_names[tw_row.name] = 1
         for w in workers:
             w["is_task_worker"] = 1 if tw_names.get(w.employee) else 0
