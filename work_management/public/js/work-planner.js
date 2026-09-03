@@ -466,7 +466,14 @@
       var p=d.plan, acts=d.activities||[];
       // "get" reads the last-persisted planned/remaining figures, which only "headroom"
       // refreshes -- pull it for this plan's own period so "Left" is never stale.
-      return call({ action:"headroom", farm:p.farm, from_date:p.period_from, to_date:p.period_to },
+      // NAME THE PLAN. This asks about `name`'s own period, and headroom used to
+      // take whichever approved plan started latest -- fine while a farm held
+      // one, and once it can hold two over the same days that silently answered
+      // about the wrong budget. headroom now says `ambiguous` rather than
+      // guessing, so not naming it here returned no activities at all and every
+      // Progress and Left cell read zero.
+      return call({ action:"headroom", farm:p.farm, from_date:p.period_from,
+                    to_date:p.period_to, master_plan:name },
                   "wm_masterplan").then(function(hd){
         var byRow={};
         (hd.activities||[]).forEach(function(x){ byRow[x.row]=x; });

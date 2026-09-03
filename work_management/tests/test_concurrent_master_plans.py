@@ -192,3 +192,67 @@ class TestTheResolutionRuleIsSharedNotRestated(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestEveryHeadroomCallerNamesItsPlan(unittest.TestCase):
+	"""headroom stopped guessing, so its callers have to say which plan.
+
+	It used to take whichever approved plan started latest -- exact while a farm
+	held one budget per period, and a silent wrong answer once it can hold two.
+	It reports `ambiguous` now instead of choosing.
+
+	Which broke the master plan screen, and this is the regression itself:
+	openMasterPlan(name) reads a plan, then asks headroom about THAT plan's own
+	period -- and did not name it. Where one period sits wholly inside another,
+	both contain the range, headroom rightly refuses to choose, and the screen
+	got no activities at all:
+
+	    Plan A  2026-10-01 .. 2026-10-31   approved
+	    Plan C  2026-10-10 .. 2026-10-20   approved, inside A
+
+	    opening C without naming it -> master_plan=None, activities=0
+	    opening C naming it         -> master_plan='WMMP-00016', activities=1
+
+	With no activities every Progress and Left cell reads zero, which looks like
+	work nobody has started rather than a screen that could not tell which budget
+	it was being asked about. Reproduced on kaitet.local before fixing.
+	"""
+
+	JS = os.path.join(APP, "public", "js")
+
+	def planner_js(self):
+		with open(os.path.join(self.JS, "work-planner.js")) as handle:
+			return handle.read()
+
+	def test_headroom_is_only_called_from_one_place(self):
+		"""If it grows a second caller, the assertion below has to cover it."""
+		self.assertEqual(self.planner_js().count('action:"headroom"'), 1)
+
+	def test_that_caller_names_the_plan(self):
+		text = self.planner_js()
+		at = text.index('action:"headroom"')
+		window = text[at:at + 260]
+		self.assertIn("master_plan:", window,
+			"headroom is asked about a plan's own period without naming the plan, "
+			"so two overlapping approved plans make it answer `ambiguous` and the "
+			"screen shows zeros")
+
+	def test_it_names_the_plan_it_was_asked_to_open(self):
+		"""`name` is openMasterPlan's own argument. Passing p.name would work too;
+		passing the farm's newest would be the bug again."""
+		text = self.planner_js()
+		at = text.index('action:"headroom"')
+		self.assertRegex(text[at:at + 260], r"master_plan\s*:\s*(name|p\.name)\b")
+
+	def test_the_server_still_refuses_to_guess(self):
+		"""The fix is in the caller. If headroom went back to picking the latest,
+		the screen would look right and be wrong again."""
+		if not os.path.isdir(MIRROR):
+			self.skipTest("mirror not present")
+		text = script()
+		at = text.index('elif action == "headroom"')
+		nxt = re.search(r"^elif action ==", text[at + 30:], re.M)
+		block = text[at:at + 30 + (nxt.start() if nxt else len(text))]
+		code = "\n".join(line.split("#")[0] for line in block.splitlines())
+		self.assertNotRegex(code, r"ORDER BY period_from DESC\s+LIMIT 1")
+		self.assertIn("ambiguous", code)
