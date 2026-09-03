@@ -32,9 +32,6 @@ def wm_dashboard(**kwargs):
     # Multi-block planner (Option A) + fast grouped-query dashboard.
     # ==================================================================
 
-    # Hours model: Mon-Fri = 8h, Sat = 6h, Sun counts as a workday = 8h.
-    # (No def/return allowed at module top-level in the sandbox, so hours are computed inline
-    #  wherever needed using frappe.utils.getdate(d).weekday(): Mon=0 .. Sun=6.)
     # How long a full day is, and the denominator every man-day figure divides by.
     # Sunday is worked on these farms, so it is a full day and not zero -- a zero
     # would divide by nothing on every Sunday row.
@@ -2792,15 +2789,20 @@ def wm_dashboard(**kwargs):
         # they can give it to two -- the same worker on two assignments for one date
         # counted as two man-days, so efficiency read as half what it was.
         #
-        # Hours over the standard hours for that date instead. A null reads as a full
-        # day, which is what every row written before the field existed means, so
-        # historical figures come out exactly as they did. DAYOFWEEK is 1=Sunday ..
-        # 7=Saturday in MariaDB, and NULLIF keeps a site that says a day is zero
-        # hours long from dividing by nothing.
+        # Hours over the standard hours for that date instead. An absent hour reads as
+        # a full day, which is what every row written before the field existed means,
+        # so historical figures come out as they did.
+        #
+        # NULLIF(we.hours, 0) and not a bare COALESCE: frappe makes a Float column
+        # NOT NULL DEFAULT 0, so an unfilled row holds 0 rather than null, and
+        # COALESCE would read that as zero hours -- counting a real day as no labour
+        # at all. Zero IS the absent state here. The second NULLIF does a different
+        # job: it keeps a site that says a day is zero hours long from dividing by
+        # nothing. DAYOFWEEK is 1=Sunday .. 7=Saturday in MariaDB.
         plan_rows = frappe.db.sql("""
             SELECT a2.planner_request pr, ac.farm farm,
                    COALESCE(SUM(
-                     COALESCE(we.hours, CASE DAYOFWEEK(we.work_date)
+                     COALESCE(NULLIF(we.hours, 0), CASE DAYOFWEEK(we.work_date)
                         WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END)
                      / NULLIF(CASE DAYOFWEEK(we.work_date)
                         WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END, 0)

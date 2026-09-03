@@ -239,12 +239,15 @@ class TestTheMirrorMeasuresRatherThanCounts(unittest.TestCase):
 			"counts twice")
 
 	def test_man_days_read_the_hours_column(self):
-		self.assertIn("COALESCE(we.hours,", self.text)
+		self.assertIn("we.hours", self.text)
 
 	def test_an_absent_hour_falls_back_to_the_standard(self):
-		"""30,833 rows predate the field, and reading their null as zero would
-		erase every one of them from the figure."""
-		self.assertRegex(self.text, r"COALESCE\(we\.hours,\s*CASE DAYOFWEEK")
+		"""And zero is the absent state, not null.
+
+		Frappe makes a Float column NOT NULL DEFAULT 0, so an unfilled row holds
+		0. A bare COALESCE would read that as zero hours and count a real day as
+		no labour at all -- which is why this asserts the NULLIF."""
+		self.assertRegex(self.text, r"COALESCE\(NULLIF\(we\.hours, 0\),\s*CASE DAYOFWEEK")
 
 	def test_it_cannot_divide_by_a_zero_length_day(self):
 		"""A site that says Sunday is not worked must not make the query fail."""
@@ -264,3 +267,21 @@ class TestTheMirrorMeasuresRatherThanCounts(unittest.TestCase):
 					self.assertNotIn(dead, text,
 						"%s still carries the old loose hours constant %s"
 						% (os.path.basename(path), dead))
+
+
+class TestAWholeDayIsNeverAContradiction(unittest.TestCase):
+	"""Found by running the check against real data: it returned 162 rows on
+	kaitet.local and every one was somebody beating their target across a full
+	day. Productive is not contradictory."""
+
+	def test_beating_the_target_in_a_full_day_is_not_flagged(self):
+		self.assertFalse(split_day.output_disagrees_with_hours(225, 150, 8, WED))
+
+	def test_beating_it_in_a_full_saturday_is_not_flagged(self):
+		self.assertFalse(split_day.output_disagrees_with_hours(225, 150, 6, SAT))
+
+	def test_a_full_day_of_output_in_three_hours_still_is(self):
+		self.assertTrue(split_day.output_disagrees_with_hours(150, 150, 3, WED))
+
+	def test_double_the_target_in_half_the_day_still_is(self):
+		self.assertTrue(split_day.output_disagrees_with_hours(300, 150, 4, WED))

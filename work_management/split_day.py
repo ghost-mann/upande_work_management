@@ -38,6 +38,10 @@ TOLERANCE = 0.005
 #: nobody has a feel for invites somebody to tune it blind.
 DISAGREEMENT = 0.25
 
+#: At or above this share of the day, the day was essentially whole and output
+#: running ahead of time is just good work.
+WHOLE_DAY = 0.95
+
 #: What the catalogue spells an hour. Both are in use.
 HOURLY_UOMS = ("hour", "hours", "hr", "hrs")
 
@@ -160,6 +164,12 @@ def output_disagrees_with_hours(quantity, daily_target, hours, day, model=None):
 		return False
 	output_share = float(quantity or 0) / float(daily_target)
 	time_share = hours_of(day, hours, model) / standard
+	# A whole day is never this flag. Somebody doing 150% of target across a full
+	# day is productive, not contradictory, and treating that as a contradiction
+	# made the check 162 rows of good performers on real data. The contradiction
+	# is a full day's output in a FRACTION of the day.
+	if time_share >= WHOLE_DAY:
+		return False
 	return (output_share - time_share) > DISAGREEMENT
 
 

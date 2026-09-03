@@ -32,9 +32,6 @@ def wm_assigner(**kwargs):
     # Multi-block planner (Option A) + fast grouped-query dashboard.
     # ==================================================================
 
-    # Hours model: Mon-Fri = 8h, Sat = 6h, Sun counts as a workday = 8h.
-    # (No def/return allowed at module top-level in the sandbox, so hours are computed inline
-    #  wherever needed using frappe.utils.getdate(d).weekday(): Mon=0 .. Sun=6.)
 
     # WHO COUNTS AS A TASK WORKER
     # The same settings-driven test wm_payment uses, so the people this screen will

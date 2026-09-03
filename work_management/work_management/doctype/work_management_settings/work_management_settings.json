@@ -54,6 +54,9 @@
   "disc_no_pay",
   "disc_dup_day",
   "disc_inactive_assigned",
+  "disc_long_day",
+  "disc_short_day",
+  "disc_hours_vs_qty",
   "att_auto_release_inactive",
   "sb_consult",
   "consultant_users",
@@ -304,6 +307,27 @@
    "label": "Left the company but still on live assignments",
    "default": "1",
    "description": "Flags employees who have left but are still on live assignments."
+  },
+  {
+   "fieldname": "disc_long_day",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "More hours recorded than the day is long",
+   "description": "Flags a worker whose recorded hours across every task on one date exceed that date's standard day. Judged per date, so two ordinary full days are never read as one long one. Sometimes real overtime; often a split day whose halves were both left at the full standard."
+  },
+  {
+   "fieldname": "disc_short_day",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Hours and output disagree",
+   "description": "Flags a row whose output runs well ahead of the time recorded against it \u2014 three hours producing a full day's target. Not a short day: four hours producing about half a target is an ordinary half day and is never flagged."
+  },
+  {
+   "fieldname": "disc_hours_vs_qty",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Hourly task where the quantity and the hours differ",
+   "description": "On a task measured in Hours the quantity and the hours are the same fact typed twice. Flags the rows where they disagree \u2014 one of the two is wrong, and the quantity is the one that pays."
   },
   {
    "fieldname": "att_auto_release_inactive",

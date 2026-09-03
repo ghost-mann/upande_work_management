@@ -37,9 +37,6 @@ def wm_payment(**kwargs):
     # Multi-block planner (Option A) + fast grouped-query dashboard.
     # ==================================================================
 
-    # Hours model: Mon-Fri = 8h, Sat = 6h, Sun counts as a workday = 8h.
-    # (No def/return allowed at module top-level in the sandbox, so hours are computed inline
-    #  wherever needed using frappe.utils.getdate(d).weekday(): Mon=0 .. Sun=6.)
     # How long a full day is, and the denominator every man-day figure divides by.
     # Sunday is worked on these farms, so it is a full day and not zero -- a zero
     # would divide by nothing on every Sunday row.
@@ -2071,7 +2068,8 @@ def wm_payment(**kwargs):
         disc_on = {}
         for dk in ("disc_absent_paid", "disc_ghost_days", "disc_leave_paid", "disc_off_paid",
                    "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning",
-                   "disc_no_pay", "disc_dup_day", "disc_inactive_assigned"):
+                   "disc_no_pay", "disc_dup_day", "disc_inactive_assigned",
+                   "disc_long_day", "disc_short_day", "disc_hours_vs_qty"):
             val = 1
             try:
                 val = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", dk))
@@ -2094,9 +2092,15 @@ def wm_payment(**kwargs):
                    ac.name actuals, we.work_date wdate, we.actual_quantity qty,
                    we.amount, IFNULL(we.paid,0) paid, we.payment_ref run_ref,
                    ac.rate doc_rate, IFNULL(we.count_in_payroll,0) in_pay,
-                   ac.entered_by entered_by
+                   ac.entered_by entered_by, we.hours hours,
+                   p3.uom plan_uom, p3.daily_target dtarget
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            -- the unit and the daily target live on the plan, not on the actuals, and
+            -- the three hours checks below cannot be asked without them. Both joins
+            -- are on primary keys.
+            LEFT JOIN `tabWork Management Assigner` a3 ON ac.assignment = a3.name
+            LEFT JOIN `tabWork Management Planner` p3 ON a3.planner_request = p3.name
             WHERE """ + dconds + """
             ORDER BY we.work_date DESC
             LIMIT 30000
@@ -2152,6 +2156,21 @@ def wm_payment(**kwargs):
         b_leave = []
         b_off = []
         b_rate = []
+        # ---- THE THREE HOURS CHECKS ----
+        # A day used to be atomic here, so none of these could be asked. Now that a
+        # worker's day can be split between tasks and the hours are recorded, three
+        # things can contradict each other and are worth a person's attention.
+        #
+        # Hours absent read as a full day, which is what every row written before the
+        # field existed means -- so history does not light up the moment this ships.
+        b_long = []
+        b_short = []
+        b_hqty = []
+        day_h = {}
+        day_money = {}
+        day_where = {}
+        day_rows = {}
+        name_of = {}
         for r in base_rows:
             wd = str(r.wdate)
             rr = {"employee": r.employee, "employee_name": r.employee_name,
@@ -2184,6 +2203,99 @@ def wm_payment(**kwargs):
                     rr3["expected"] = expect
                     rr3["rate"] = frappe.utils.flt(r.doc_rate)
                     b_rate.append(rr3)
+            # standard_hours(), inlined -- no def in the sandbox. Saturday is short
+            # and Sunday is not, which is the shape these farms work. Keep in step
+            # with work_management/split_day.py, which is unit-tested.
+            hd_i = frappe.utils.getdate(wd).weekday()  # Mon=0 .. Sun=6
+            if hd_i == 5:
+                hd_std = frappe.utils.flt(STANDARD_DAY.get("saturday"))
+            elif hd_i == 6:
+                hd_std = frappe.utils.flt(STANDARD_DAY.get("sunday"))
+            else:
+                hd_std = frappe.utils.flt(STANDARD_DAY.get("weekday"))
+            hd_hrs = frappe.utils.flt(r.hours) if frappe.utils.flt(r.hours) > 0 else hd_std
+            # the day's total, for the long-day check after this loop
+            name_of[r.employee] = r.employee_name
+            day_h[(r.employee, wd)] = frappe.utils.flt(day_h.get((r.employee, wd))) + hd_hrs
+            day_money[(r.employee, wd)] = frappe.utils.flt(day_money.get((r.employee, wd))) + frappe.utils.flt(r.amount)
+            dw_list = day_where.get((r.employee, wd)) or []
+            if r.task and r.task not in dw_list:
+                dw_list.append(r.task)
+            day_where[(r.employee, wd)] = dw_list
+            # how many rows share this date, which is what makes the long-day check
+            # answerable at all -- see the note where it runs
+            day_rows[(r.employee, wd)] = frappe.utils.cint(day_rows.get((r.employee, wd))) + 1
+            # HOURS AND OUTPUT DISAGREEING. Not "was this a short day" -- four hours
+            # producing about half a target is an ordinary half day, and flagging it
+            # would make the flag noise. What is worth a look is three hours
+            # producing a full day's output: either the hours are wrong or the
+            # quantity is, and only a person can say which.
+            hd_tgt = frappe.utils.flt(r.dtarget)
+            if hd_tgt > 0 and hd_std > 0:
+                hd_out_share = frappe.utils.flt(r.qty) / hd_tgt
+                hd_time_share = hd_hrs / hd_std
+                # A FULL DAY IS NEVER THIS FLAG. Somebody doing 150% of target in a
+                # whole day is productive, not contradictory -- and flagging them
+                # made this 162 rows on kaitet.local, all of them good performers.
+                # The contradiction is a full day's output in a FRACTION of the day,
+                # so a day that was essentially whole is out of scope entirely.
+                if hd_time_share < 0.95 and (hd_out_share - hd_time_share) > 0.25:
+                    rr4 = dict(rr)
+                    rr4["hours"] = hd_hrs
+                    rr4["standard_hours"] = hd_std
+                    rr4["daily_target"] = hd_tgt
+                    rr4["output_pct"] = round(hd_out_share * 100, 1)
+                    rr4["time_pct"] = round(hd_time_share * 100, 1)
+                    b_short.append(rr4)
+            # AN HOURLY TASK WHOSE TWO NUMBERS DISAGREE. Hours are typed on every
+            # split row whatever the unit, including the 34 tasks already measured in
+            # Hour -- 497 of the planners. There the same number is typed twice and
+            # can be typed twice differently, and one of the two is then wrong.
+            hd_uom = str(r.plan_uom or "").strip().lower()
+            if hd_uom in ("hour", "hours", "hr", "hrs") and frappe.utils.flt(r.hours) > 0:
+                if abs(frappe.utils.flt(r.qty) - frappe.utils.flt(r.hours)) > 0.005:
+                    rr5 = dict(rr)
+                    rr5["hours"] = frappe.utils.flt(r.hours)
+                    rr5["uom"] = r.plan_uom
+                    b_hqty.append(rr5)
+        # ---- A DAY LONGER THAN THE DAY IS ----
+        # Per date against that date's own standard, so two ordinary full days are
+        # never read as one long one. This is where the warning the entry screen
+        # shows becomes a pattern rather than a message somebody dismissed.
+        for dk2 in day_h:
+            # ONLY A SHARED DAY CAN BE TOO LONG.
+            #
+            # A single row's hours are whatever that task's day is, and some tasks
+            # run longer than the site standard by design -- Security Patroll's daily
+            # target is 12 hours, Coffee Picking's is 3. Comparing one such row
+            # against an 8-hour standard flagged every one of them: on kaitet.local
+            # that was 337 rows, and none of them was a contradiction.
+            #
+            # The contradiction is several rows for one worker on one date ADDING UP
+            # to more than the day holds -- which is exactly the split day whose
+            # halves were both left at the full standard, the thing this check was
+            # asked for.
+            if frappe.utils.cint(day_rows.get(dk2)) < 2:
+                continue
+            dk_emp = dk2[0]
+            dk_day = dk2[1]
+            dk_i = frappe.utils.getdate(dk_day).weekday()
+            if dk_i == 5:
+                dk_std = frappe.utils.flt(STANDARD_DAY.get("saturday"))
+            elif dk_i == 6:
+                dk_std = frappe.utils.flt(STANDARD_DAY.get("sunday"))
+            else:
+                dk_std = frappe.utils.flt(STANDARD_DAY.get("weekday"))
+            dk_tot = frappe.utils.flt(day_h.get(dk2))
+            if dk_std > 0 and dk_tot > dk_std + 0.005:
+                b_long.append({"employee": dk_emp, "employee_name": name_of.get(dk_emp) or dk_emp,
+                               "farm": None, "task": ", ".join(day_where.get(dk2) or []),
+                               "actuals": None, "wdate": dk_day,
+                               "hours": dk_tot, "standard_hours": dk_std,
+                               "over_by": round(dk_tot - dk_std, 2),
+                               "amount": frappe.utils.flt(day_money.get(dk2))})
+        b_long = sorted(b_long, key=lambda x: -frappe.utils.flt(x.get("over_by")))
+
         # ---- same worker earning on 2+ farms the same day ----
         b_multi = []
         mf = frappe.db.sql("""
@@ -2353,13 +2465,24 @@ def wm_payment(**kwargs):
             {"key": "no_pay", "title": "Recorded work with no pay",
              "about": "Quantities recorded but the row valued at ZERO although the document has a rate and the worker is a Task Worker — the worker-type lookup failed at entry, so these people will never be paid for the work. Revalue to qty × rate.",
              "rows": b_nopay},
+            {"key": "long_day", "title": "More hours recorded than the day is long",
+             "about": "One worker's recorded hours across every task on a single date add up to more than that date's standard day (8 weekdays, 6 Saturdays by default — set in Work Management Settings). Judged per date, so two ordinary full days are never read as one long one. Sometimes real overtime; often a split day where the halves were both left at the full standard. Pay is unaffected either way — hours are measurement, and pay is quantity × rate — so this costs a wrong man-day figure, not a wrong wage.",
+             "rows": b_long},
+            {"key": "short_day", "title": "Hours and output disagree",
+             "about": "The output on this row runs well ahead of the time recorded against it — three hours producing a full day's target, say. NOT a short day: four hours producing about half a target is an ordinary half day and is never flagged. Either the hours are wrong or the quantity is, and only somebody who was there can say which.",
+             "rows": b_short},
+            {"key": "hours_vs_qty", "title": "Hourly task where the two numbers differ",
+             "about": "The task is measured in Hours, so the quantity and the hours are the same fact typed twice — and here they disagree. 34 tasks in the catalogue are hourly, covering 497 plans, and hours are typed on every split row whatever the unit, which is what makes this possible. One of the two figures is wrong; the quantity is the one that pays.",
+             "rows": b_hqty},
         ]
         toggle_map = {"inactive_assigned": "disc_inactive_assigned",
                       "dup_day": "disc_dup_day", "no_pay": "disc_no_pay",
                       "absent_paid": "disc_absent_paid", "ghost_days": "disc_ghost_days",
                       "leave_paid": "disc_leave_paid", "off_paid": "disc_off_paid",
                       "rate_mismatch": "disc_rate_mismatch", "multi_farm_day": "disc_multi_farm",
-                      "self_approved": "disc_self_approved", "left_but_earning": "disc_left_earning"}
+                      "self_approved": "disc_self_approved", "left_but_earning": "disc_left_earning",
+                      "long_day": "disc_long_day", "short_day": "disc_short_day",
+                      "hours_vs_qty": "disc_hours_vs_qty"}
         for c in checks:
             if not disc_on.get(toggle_map.get(c["key"]), 1):
                 c["rows"] = []
