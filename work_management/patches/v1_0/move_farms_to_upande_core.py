@@ -95,13 +95,42 @@ def _clear(doctype, name, fieldname):
 	frappe.db.set_value(doctype, name, fieldname, None, update_modified=False)
 
 
+# What rows_to_carry() would like, beyond the name every table has.
+WANTED = ("project", "area_ha")
+
+
+def fields_to_read(have):
+	"""The columns to ask for, given the columns `have` says the table holds.
+
+	`area_ha` reached the doctype JSON one commit before the JSON was deleted, so
+	a site whose last work_management migrate predates that commit has a table
+	without the column -- and with the JSON gone, schema sync can never add it,
+	because sync has no JSON to read. Asking for it there is
+
+	    Unknown column 'area_ha' in 'SELECT'
+
+	which is what this patch used to be on kentrout.local. rows_to_carry() reads
+	both keys with .get(), so a column that is not there carries nothing rather
+	than carrying a wrong value.
+	"""
+	return ["name"] + [field for field in WANTED if field in set(have)]
+
+
+def _old_farms():
+	"""The retired records, reading only the columns this site actually has."""
+	if not frappe.db.table_exists(OLD):
+		return []
+	fields = fields_to_read(frappe.db.get_table_columns(OLD))
+	return frappe.get_all(OLD, fields=fields, order_by="creation asc")
+
+
 def execute():
 	if not frappe.db.exists("DocType", OLD):
 		return
 
 	settings = frappe.get_doc("Work Management Settings")
 	already = {row.farm for row in (settings.get("farms") or []) if row.farm}
-	old_farms = frappe.get_all(OLD, fields=["name", "project", "area_ha"], order_by="creation asc")
+	old_farms = _old_farms()
 
 	carried = rows_to_carry(old_farms, already)
 	for row in carried:

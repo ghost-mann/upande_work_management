@@ -29,7 +29,10 @@ def execute():
 	# A fresh install never had the picker and stops here.
 	if not frappe.db.exists("DocType", OLD_CHILD):
 		return
-	if OLD_CHILD not in frappe.db.get_tables():
+	# table_exists(), not `in get_tables()`: get_tables() returns raw table names,
+	# so a bare doctype name is never in it and that guard returned every time --
+	# this patch could not carry a row on any site.
+	if not frappe.db.table_exists(OLD_CHILD):
 		return  # the doctype record survives without its table on some sites
 	chosen = frappe.db.sql_list(
 		"""

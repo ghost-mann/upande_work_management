@@ -71,3 +71,58 @@ class TestWhichReferencesToClear(unittest.TestCase):
 
 	def test_nothing_in_use_clears_nothing(self):
 		self.assertEqual(patch.orphans(set(), {"Saboti"}), [])
+
+
+class TestWhichColumnsToRead(unittest.TestCase):
+	"""The columns asked for come from the table, not from the deleted JSON.
+
+	`area_ha` was added to the doctype JSON one commit before that JSON was
+	deleted. A site whose last migrate of this app predates that commit has a
+	table without the column, and once the JSON is gone schema sync can never
+	add it -- there is nothing left for sync to read. This patch asked for it
+	unconditionally and every such site died on
+
+	    MySQLdb.OperationalError: (1054, "Unknown column 'area_ha' in 'SELECT'")
+
+	kentrout.local was one: its tabDocField rows for the retired doctype list
+	farm_name, business_unit, project, column_break_main, disabled, description
+	and no area_ha at all.
+	"""
+
+	def test_the_column_the_site_is_missing_is_not_asked_for(self):
+		have = ["name", "creation", "farm_name", "business_unit", "project", "disabled"]
+		self.assertEqual(patch.fields_to_read(have), ["name", "project"])
+
+	def test_a_site_that_has_both_is_asked_for_both(self):
+		have = ["name", "creation", "farm_name", "project", "area_ha"]
+		self.assertEqual(patch.fields_to_read(have), ["name", "project", "area_ha"])
+
+	def test_a_table_with_neither_still_yields_the_names(self):
+		"""The names are the point: execute() prints them as it retires them."""
+		self.assertEqual(patch.fields_to_read(["name", "creation", "farm_name"]), ["name"])
+
+	def test_name_comes_first_so_the_row_is_always_identifiable(self):
+		for have in (["name"], ["name", "area_ha"], ["name", "project", "area_ha"]):
+			self.assertEqual(patch.fields_to_read(have)[0], "name")
+
+	def test_a_missing_column_carries_nothing_rather_than_a_wrong_value(self):
+		"""fields_to_read and rows_to_carry have to agree, so test them together.
+
+		A farm read without `area_ha` has no area key, and rows_to_carry reads it
+		with .get() -- so the farm is judged on its project alone. Saboti has one
+		and is carried with area 0.0; Kabarak has neither and is skipped, exactly
+		as it would be on a site that did have the column and held 0 in it.
+		"""
+		read = patch.fields_to_read(["name", "project"])
+		self.assertNotIn("area_ha", read)
+		farms = [
+			{key: value for key, value in farm.items() if key in read}
+			for farm in (
+				{"name": "Saboti", "project": "PROJ-0031", "area_ha": 40.0},
+				{"name": "Kabarak", "project": None, "area_ha": 12.5},
+			)
+		]
+		self.assertEqual(
+			patch.rows_to_carry(farms),
+			[{"farm": "Saboti", "project": "PROJ-0031", "area_ha": 0.0}],
+		)

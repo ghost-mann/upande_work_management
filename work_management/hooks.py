@@ -93,6 +93,9 @@ after_migrate = [
 	# before the taxonomy writes its Property Setters: deleting a Custom Field
 	# takes that field's Property Setters with it
 	"work_management.install.drop_shadowing_custom_fields",
+	# before approvals.after_migrate, which saves Settings: a farms row naming no
+	# farm fails that save and takes the whole migrate with it
+	"work_management.install.drop_farmless_settings_rows",
 	"work_management.approvals.after_migrate",
 	"work_management.install.drop_stale_link_options",
 	"work_management.taxonomy.apply_labels",

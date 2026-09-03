@@ -419,6 +419,55 @@ def drop_stale_link_options():
 	return dropped
 
 
+def drop_farmless_settings_rows():
+	"""Delete Settings farm rows that name no farm, so Settings can be saved.
+
+	`WM Farm.farm` has been reqd since this app's first commit, so no validated
+	save can produce a row without one -- but kentrout.local carried one anyway,
+	written out of band (no Version row, no Activity Log entry, zero area, no
+	project). A row like that says nothing, and cannot: the project and area it
+	could hold belong to a farm it does not name.
+
+	What it does do is refuse every save of Work Management Settings, because
+	_validate_mandatory() walks the children. That took out after_migrate ->
+	seed_stages(), which saves Settings on every migrate, so one unattributable
+	row made `bench migrate` unrunnable until somebody deleted it by hand.
+
+	SQL rather than a document, for the same reason: loading Settings and saving
+	it is exactly what the bad row prevents. Narrow -- this one child table, this
+	one parent, and only rows whose farm is empty.
+	"""
+	if not frappe.db.table_exists("WM Farm"):
+		return []
+	rows = frappe.db.sql(
+		"""
+		SELECT name, project, area_ha FROM `tabWM Farm`
+		WHERE parenttype = 'Work Management Settings' AND parentfield = 'farms'
+		  AND IFNULL(farm, '') = ''
+		""",
+		as_dict=True,
+	)
+	if not rows:
+		return []
+	frappe.db.delete(
+		"WM Farm", {"name": ("in", [row["name"] for row in rows])}
+	)
+	frappe.clear_cache(doctype="Work Management Settings")
+	# Named on the way out. A row with a project or an area held something, even
+	# if there was no farm to attach it to, and this print is the only record.
+	for row in rows:
+		held = ", ".join(
+			f"{label} {value!r}"
+			for label, value in (("project", row["project"]), ("area_ha", row["area_ha"]))
+			if value
+		)
+		print(
+			f"Work Management: dropped a Settings farm row naming no farm"
+			+ (f" (it held {held})" if held else "")
+		)
+	return [row["name"] for row in rows]
+
+
 def seed_approvals():
 	"""Fill the approval stage catalogue and generate the workflows from it.
 
