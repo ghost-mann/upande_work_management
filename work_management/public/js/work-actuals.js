@@ -40,22 +40,32 @@
     if(r.ok) return r.json();
     return r.text().then(function(t){ throw new Error(serverMessage(t, r.status)); });
   }
-  function call(args){
+  function call(args, method){
+    // `method` names another screen's script, the way work-planner.js does it --
+    // needed only for wm_dashboard's task_names map, which no other script serves.
+    var ep="/api/method/"+(method||"wm_actuals");
     var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,act_close_confirm:1,act_close_request:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
     var token=csrf();
     if(!isWrite){
-      return fetch("/api/method/wm_actuals?"+p.toString(),{method:"GET",headers:{"Accept":"application/json","X-Frappe-CSRF-Token":token},credentials:"same-origin"})
+      return fetch(ep+"?"+p.toString(),{method:"GET",headers:{"Accept":"application/json","X-Frappe-CSRF-Token":token},credentials:"same-origin"})
         .then(readOr).then(function(j){return j.message||{};});
     }
-    return fetch("/api/method/wm_actuals",{method:"POST",
+    return fetch(ep,{method:"POST",
       headers:{"Content-Type":"application/x-www-form-urlencoded","X-Frappe-CSRF-Token":token,"Accept":"application/json"},
       body:p.toString(),credentials:"same-origin"}).then(readOr).then(function(j){return j.message||{};});
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+  // What a task is CALLED, not what it is filed under. Every read here hands back
+  // a Task docname, and on a site whose Task autoname is a series that docname is
+  // `TASK-2026-00131` -- which is what this screen was printing. wm_dashboard's
+  // task_names action returns {docname: subject}; the fallback is the docname, so
+  // a site whose tasks are named by subject looks exactly as it did.
+  var TASK_NAMES={};
+  function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
   // What this installation calls the levels. Falls back to the shipped wording
   // so the screen still reads correctly if the template has not loaded.
   var TXN = (window.WM_TAXONOMY || {});
@@ -278,7 +288,8 @@
     if(tsel){
       var tkeep=tsel.value;
       tsel.innerHTML='<option value="">All tasks</option>';
-      Object.keys(tasks).sort().forEach(function(t){ var o=document.createElement("option"); o.value=t; o.textContent=t; tsel.appendChild(o); });
+      Object.keys(tasks).sort(function(x,y){ return taskName(x).localeCompare(taskName(y)); })
+        .forEach(function(t){ var o=document.createElement("option"); o.value=t; o.textContent=taskName(t); tsel.appendChild(o); });
       tsel.value=tkeep||"";
     }
   }
@@ -325,7 +336,7 @@
       if(ffrom && a.to_date && a.to_date<ffrom) return;
       if(fto && a.from_date && a.from_date>fto) return;
       if(fq){
-        var hay=((a.name||"")+" "+(a.farm||"")+" "+(a.block_section||"")+" "+(a.task||"")).toLowerCase();
+        var hay=((a.name||"")+" "+(a.farm||"")+" "+(a.block_section||"")+" "+taskName(a.task)).toLowerCase();
         if(hay.indexOf(fq)<0) return;
       }
       shown++;
@@ -346,7 +357,7 @@
       var sel = (ST.asg===a.name) ? " sel" : "";
       h+='<div class="asg-row'+sel+'" data-asg="'+esc(a.name)+'">'+
            '<div class="asg-main"><span class="asg-farm">'+esc(a.farm)+'</span> · '+esc(blocksLbl(a))+
-           '<div class="asg-task">'+esc(a.task)+review+'</div>'+prog+'</div>'+
+           '<div class="asg-task">'+esc(taskName(a.task))+review+'</div>'+prog+'</div>'+
            '<div class="asg-ref">'+esc(a.name)+'</div></div>';
     });
     if(!shown){ h='<div class="empty" style="margin:0">No assignments match these filters.</div>'; }
@@ -418,7 +429,7 @@
     el("ac-detail").innerHTML=
       '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(a.farm)+'</span></div>'+
       '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(a))+'</span></div>'+
-      '<div class="dl"><span class="k">Task</span><span class="v">'+esc(a.task)+'</span></div>'+
+      '<div class="dl"><span class="k">Task</span><span class="v">'+esc(taskName(a.task))+'</span></div>'+
       '<div class="dl"><span class="k">Standard</span><span class="v">'+(a.daily_target>0?(fmt(a.daily_target)+" "+esc(uom||"unit")+"/day"):(a.task_kpi?esc(a.task_kpi):"—"))+'</span></div>'+
       '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+' Area</span><span class="v">'+(a.block_area>0?(fmt(a.block_area,2)+" Ha"):"—")+'</span></div>'+
       '<div class="dl"><span class="k">Rate</span><span class="v">KES '+fmt(a.rate,2)+' / '+esc(uom||"unit")+'</span></div>'+
@@ -888,7 +899,7 @@
     var uom=a.uom||"";
     var dhead=dowShort(iso)+", "+dnum(iso)+" "+monLabel(iso)+" "+iso.slice(0,4);
     var h='<div class="dv">'+
-      '<div class="dv-h"><b>'+esc(dhead)+'</b><span>'+esc(a.task||"")+' · '+esc(a.farm||"")+' · '+esc(blocksLbl(a))+'</span>'+
+      '<div class="dv-h"><b>'+esc(dhead)+'</b><span>'+esc(taskName(a.task))+' · '+esc(a.farm||"")+' · '+esc(blocksLbl(a))+'</span>'+
       '<a class="dv-desk" target="_blank" href="/app/work-management-actuals?assignment='+encodeURIComponent(ST.asg||"")+'">Open docs ↗</a></div>';
     h+='<div class="dv-figs">'+
       '<div class="dv-fig"><span>Confirmed</span><b>'+(rec?fmt(rec.qty):0)+' '+esc(uom)+'</b></div>'+
@@ -961,14 +972,14 @@
         + fbar(rows,{dates:true,statuses:Object.keys(sts).sort(),ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.entry_date),
-                hay:((r.name||"")+" "+(r.farm||"")+" "+(r.task||"")).toLowerCase()};
+                hay:((r.name||"")+" "+(r.farm||"")+" "+taskName(r.task)).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
         var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
           var editable = (r.workflow_state==="Draft" || r.workflow_state==="Rejected");
           var editcell = editable ? '<span class="editlink" data-asg="'+esc(r.assignment)+'">Edit →</span>' : '';
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+editcell+'</td></tr>';
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+editcell+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
@@ -977,7 +988,7 @@
         });
         wireExpand(body, 9, function(i){
           var r=list[i];
-          return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(r.task||"")+'</span></div>'+
+          return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
             rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Status",esc(r.workflow_state)]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
@@ -994,12 +1005,12 @@
         + fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
-                hay:((r.name||"")+" "+(r.farm||"")+" "+(r.task||"")).toLowerCase()};
+                hay:((r.name||"")+" "+(r.farm||"")+" "+taskName(r.task)).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
         var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td><span class="editlink" data-asg="'+esc(r.assignment)+'">Edit &amp; resubmit →</span></td></tr>';
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td><span class="editlink" data-asg="'+esc(r.assignment)+'">Edit &amp; resubmit →</span></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
@@ -1008,7 +1019,7 @@
         });
         wireExpand(body, 9, function(i){
           var r=list[i];
-          return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(r.task||"")+'</span></div>'+
+          return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
             rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Status",esc(r.workflow_state)]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
@@ -1026,12 +1037,12 @@
         + fbar(rows,{dates:true,ph:"Search plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.custom_close_request_date),
-                hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.custom_close_requested_by||"")).toLowerCase()};
+                hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)+" "+(r.custom_close_requested_by||"")).toLowerCase()};
       }, function(body, list){
       if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
       var h='<table><thead><tr><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Target</th><th class="n">Done</th><th class="n">Remaining</th><th>Requested by</th><th>Reason</th><th>Action</th></tr></thead><tbody>';
       list.forEach(function(r, i){
-        h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td>'+
+        h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td>'+
            '<td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td>'+
            '<td class="n m">'+fmt(r.fulfilled_qty)+((r.confirmed_qty!=null&&r.confirmed_qty<r.fulfilled_qty)?'<div style="font-size:9px;color:#a06000">'+fmt(r.confirmed_qty)+' confirmed</div>':'')+'</td>'+
            '<td class="n m">'+fmt(r.remaining_qty)+'</td>'+
@@ -1042,7 +1053,7 @@
       body.innerHTML=h+'</tbody></table>';
       wireExpand(body, 10, function(i){
         var r=list[i];
-        return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(r.task||"")+' · '+esc(lbl(r.block_section))+'</span></div>'+
+        return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+' · '+esc(lbl(r.block_section))+'</span></div>'+
           rowFigs([["Target",fmt(r.quantity)+' '+esc(r.uom||"")],["Done",fmt(r.fulfilled_qty)+((r.confirmed_qty!=null&&r.confirmed_qty<r.fulfilled_qty)?' ('+fmt(r.confirmed_qty)+' confirmed)':'')],["Remaining",fmt(r.remaining_qty)],["Requested by",esc(r.custom_close_requested_by||"—")],["Requested on",esc(r.custom_close_request_date||"—")]])+
           (r.custom_close_reason?('<div class="dv-note">Reason: '+esc(r.custom_close_reason)+'</div>'):'')+
           '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">'+deskA("Open plan","work-management-planner",r.name)+'</div>';
@@ -1070,17 +1081,17 @@
       b.innerHTML=fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task, entered by…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
-                hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.entered_by||"")).toLowerCase()};
+                hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)+" "+(r.entered_by||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
         var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>By</th><th>Action</th></tr></thead><tbody>';
         list.forEach(function(r, i){
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         wireExpand(body, 9, function(i){
           var r=list[i];
-          return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(r.task||"")+(r.block_section?(' · '+esc(lbl(r.block_section))):'')+'</span></div>'+
+          return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+(r.block_section?(' · '+esc(lbl(r.block_section))):'')+'</span></div>'+
             rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Planned people",fmt(r.planned_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Planned cost",fmt(r.planned_cost)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Entered by",esc((r.entered_by||"").split("@")[0])]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
@@ -1099,6 +1110,11 @@
   }
 
   function boot(){
+    // task_names rides alongside and resolves to {} on failure: unreadable task
+    // names are a nuisance, an actuals screen that will not open is not.
+    call({action:"task_names"}, "wm_dashboard").then(function(d){
+      TASK_NAMES=(d && d.task_names) || {};
+    }).catch(function(){});
     call({action:"a_roles"}).then(function(roles){
       ST.roles=roles;
       el("ac-who").textContent=(roles.user||"")+(roles.is_hr_head?" · HR Head":"");

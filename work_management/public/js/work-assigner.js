@@ -28,17 +28,20 @@
     if(r.ok) return r.json();
     return r.text().then(function(t){ throw new Error(serverMessage(t, r.status)); });
   }
-  function call(args){
+  function call(args, method){
+    // `method` names another screen's script, the way work-planner.js does it --
+    // needed only for wm_dashboard's task_names map, which no other script serves.
+    var ep = "/api/method/" + (method || "wm_assigner");
     var writes = {a_submit:1, a_fm_approve:1, a_hr_approve:1, a_gm_approve:1, a_reject:1, a_substitute:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
     var token = (typeof frappe!=="undefined" && frappe.csrf_token) ? frappe.csrf_token : "";
     if(!isWrite){
-      return fetch("/api/method/wm_assigner?" + p.toString(), { method:"GET", headers:{ "Accept":"application/json" }, credentials:"same-origin" })
+      return fetch(ep + "?" + p.toString(), { method:"GET", headers:{ "Accept":"application/json" }, credentials:"same-origin" })
         .then(readOr).then(function(j){ return j.message || {}; });
     }
-    return fetch("/api/method/wm_assigner", {
+    return fetch(ep, {
       method:"POST",
       headers:{ "Content-Type":"application/x-www-form-urlencoded", "X-Frappe-CSRF-Token":token, "Accept":"application/json" },
       body:p.toString(),
@@ -47,6 +50,13 @@
   }
   function fmt(n,d){ if(n==null||isNaN(n)) return "—"; return Number(n).toLocaleString("en-KE",{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+  // What a task is CALLED, not what it is filed under. Every read here hands back
+  // a Task docname, and on a site whose Task autoname is a series that docname is
+  // `TASK-2026-00131` -- which is what this screen was printing, including in the
+  // plan picker. wm_dashboard's task_names action returns {docname: subject}; the
+  // fallback is the docname, so a site named by subject looks exactly as it did.
+  var TASK_NAMES={};
+  function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
   // What this installation calls the levels. Falls back to the shipped wording
   // so the screen still reads correctly if the template has not loaded.
   var TXN = (window.WM_TAXONOMY || {});
@@ -229,7 +239,7 @@
             roster+='</tbody></table></div>';
           }
           d.innerHTML='<td colspan="'+colspan+'" style="white-space:normal;background:var(--wash);padding:12px 14px">'+
-            '<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:2px"><b style="font-size:12.5px">'+esc(a.name)+'</b><span style="font-size:10.5px;color:var(--mute)">'+esc(a.farm||"")+' · '+esc(a.task||"")+' · '+esc(blocksLbl(a))+'</span>'+
+            '<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:2px"><b style="font-size:12.5px">'+esc(a.name)+'</b><span style="font-size:10.5px;color:var(--mute)">'+esc(a.farm||"")+' · '+esc(taskName(a.task))+' · '+esc(blocksLbl(a))+'</span>'+
             '<a style="margin-left:auto;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#2563eb;text-decoration:none;border:1px solid #bfdbfe;background:#eff6ff;padding:4px 10px;border-radius:999px" target="_blank" href="/app/work-management-assigner/'+encodeURIComponent(a.name)+'">Open in Desk ↗</a></div>'+
             figs+roster+'</td>';
         }).catch(function(e){ d.firstChild.textContent="Could not load detail."; });
@@ -287,7 +297,8 @@
     if(tsel){
       var tkeep=tsel.value;
       tsel.innerHTML='<option value="">All tasks</option>';
-      Object.keys(tasks).sort().forEach(function(t){ var o=document.createElement("option"); o.value=t; o.textContent=t; tsel.appendChild(o); });
+      Object.keys(tasks).sort(function(x,y){ return taskName(x).localeCompare(taskName(y)); })
+        .forEach(function(t){ var o=document.createElement("option"); o.value=t; o.textContent=taskName(t); tsel.appendChild(o); });
       tsel.value=tkeep||"";
     }
   }
@@ -308,14 +319,14 @@
       if(ffrom && p.to_date && p.to_date<ffrom) return;
       if(fto && p.from_date && p.from_date>fto) return;
       if(fq){
-        var hay=((p.name||"")+" "+(p.farm||"")+" "+(p.block_section||"")+" "+(p.task||"")).toLowerCase();
+        var hay=((p.name||"")+" "+(p.farm||"")+" "+(p.block_section||"")+" "+taskName(p.task)).toLowerCase();
         if(hay.indexOf(fq)<0) return;
       }
       shown++;
       var taken = p.already_assigned?true:false;
       var sel = (ST.plan===p.name) ? " sel" : "";
       var takenCls = taken ? " taken" : "";
-      var meta='<div class="pl-task">'+esc(p.task)+(taken?'<span class="pl-tk">assigned</span>':'')+'</div>'+
+      var meta='<div class="pl-task">'+esc(taskName(p.task))+(taken?'<span class="pl-tk">assigned</span>':'')+'</div>'+
                '<div class="pl-sub">'+fmt(p.people_per_day)+'/day · KES '+fmt(p.total_cost)+' · '+esc(p.from_date)+' → '+esc(p.to_date)+'</div>';
       h+='<div class="pl-row'+sel+takenCls+'" data-plan="'+esc(p.name)+'" data-taken="'+(taken?1:0)+'">'+
            '<div class="pl-main"><span class="pl-farm">'+esc(p.farm)+'</span> · '+esc(blocksLbl(p))+meta+'</div>'+
@@ -347,7 +358,7 @@
       el("a-detail").innerHTML=
         '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(p.farm)+'</span></div>'+
         '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(p))+'</span></div>'+
-        '<div class="dl"><span class="k">Task</span><span class="v">'+esc(p.task)+'</span></div>'+
+        '<div class="dl"><span class="k">Task</span><span class="v">'+esc(taskName(p.task))+'</span></div>'+
         '<div class="dl"><span class="k">Standard</span><span class="v">'+esc(p.task_kpi||"—")+'</span></div>'+
         '<div class="dl"><span class="k">Period</span><span class="v">'+esc(p.from_date)+' → '+esc(p.to_date)+'</span></div>'+
         '<div class="dl"><span class="k">Planned people/day</span><span class="v big">'+fmt(p.people_per_day)+'</span></div>'+
@@ -559,7 +570,7 @@
         el("a-detail").innerHTML=
           '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(p.farm)+'</span></div>'+
           '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(p))+'</span></div>'+
-          '<div class="dl"><span class="k">Task</span><span class="v">'+esc(p.task)+'</span></div>'+
+          '<div class="dl"><span class="k">Task</span><span class="v">'+esc(taskName(p.task))+'</span></div>'+
           '<div class="dl"><span class="k">Standard</span><span class="v">'+esc(p.task_kpi||"—")+'</span></div>'+
           '<div class="dl"><span class="k">Period</span><span class="v">'+esc(p.from_date)+' → '+esc(p.to_date)+'</span></div>'+
           '<div class="dl"><span class="k">Planned people/day</span><span class="v big">'+fmt(p.people_per_day)+'</span></div>'+
@@ -605,7 +616,7 @@
         + fbar(rows,{dates:hasDates,statuses:Object.keys(sts).sort(),ph:"Search ref, plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.from_date),
-                hay:((r.name||"")+" "+(r.planner_request||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")).toLowerCase()};
+                hay:((r.name||"")+" "+(r.planner_request||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
         var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th>Status</th><th></th></tr></thead><tbody>';
@@ -613,7 +624,7 @@
           var editable = (r.workflow_state==="Draft"||r.workflow_state==="Rejected"||r.workflow_state==="Pending HR Head");
           var canSub = (r.workflow_state==="Assigned");
           var actionBtn = editable ? '<button class="btn" data-edit="'+esc(r.name)+'">Edit</button>' : (canSub ? '<button class="btn solid" data-sub="'+esc(r.name)+'">Manage crew</button>' : '');
-          h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
+          h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ openAsgForEdit(btn.getAttribute("data-edit")); }; });
@@ -641,12 +652,12 @@
       + fbar(all,{dates:true,ph:"Search ref, plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
-              hay:((r.name||"")+" "+(r.planner_request||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")).toLowerCase()};
+              hay:((r.name||"")+" "+(r.planner_request||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
       var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Status</th><th></th></tr></thead><tbody>';
       rows.forEach(function(r){
-        h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+stateTag(r.workflow_state)+'</td>'+
+        h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+stateTag(r.workflow_state)+'</td>'+
           '<td><div class="ib"><button class="btn solid" data-edit="'+esc(r.name)+'">Edit &amp; resubmit</button><button class="btn" data-close="'+esc(r.name)+'" data-plan="'+esc(r.planner_request||"")+'">'+closeLabel+'</button></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
@@ -683,7 +694,7 @@
         '<div class="dl"><span class="k">Plan</span><span class="v">'+esc(a.planner_request)+'</span></div>'+
         '<div class="dl"><span class="k">'+esc(TX("top_singular","Farm"))+'</span><span class="v">'+esc(a.farm)+'</span></div>'+
         '<div class="dl"><span class="k">'+esc(TX("unit_singular","Block"))+'</span><span class="v">'+esc(blocksLbl(a))+'</span></div>'+
-        '<div class="dl"><span class="k">Task</span><span class="v">'+esc(a.task)+'</span></div>'+
+        '<div class="dl"><span class="k">Task</span><span class="v">'+esc(taskName(a.task))+'</span></div>'+
         '<div class="dl"><span class="k">Standard</span><span class="v">'+esc(a.task_kpi||"—")+'</span></div>'+
         '<div class="dl"><span class="k">Rate</span><span class="v">KES '+fmt(a.rate,2)+' / '+esc(uom||"unit")+'</span></div>'+
         '<div class="dl"><span class="k">Period</span><span class="v">'+esc(a.from_date)+' → '+esc(a.to_date)+'</span></div>'+
@@ -817,12 +828,12 @@
     b.innerHTML=fbar(all,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task, assigned by…"});
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
-              hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.assigned_by||"")).toLowerCase()};
+              hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)+" "+(r.assigned_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
       var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th class="n">Cost</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r){
-        h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(r.task)+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+        h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
       wireExpandAsg(body, 10);
@@ -840,6 +851,11 @@
   }
 
   function boot(){
+    // task_names rides alongside and resolves to {} on failure: unreadable task
+    // names are a nuisance, an assigner screen that will not open is not.
+    call({action:"task_names"}, "wm_dashboard").then(function(d){
+      TASK_NAMES=(d && d.task_names) || {};
+    }).catch(function(){});
     call({action:"a_roles"}).then(function(roles){
       ST.roles=roles;
       el("wa-who").textContent=(roles.user||"")+(roles.is_hr_head?" · HR Head":(roles.is_clerk?" · HR":""));

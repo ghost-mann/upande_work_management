@@ -20,6 +20,16 @@
   // ── tiny helpers ──
   function el(id){ return document.getElementById(id); }
   function esc(v){ return (v==null?"":String(v)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+  // What a task is CALLED, not what it is filed under. Every read here hands back
+  // a Task docname, and on a site whose Task autoname is a series that docname is
+  // `TASK-2026-00131` -- which is what this screen printed, exports included, and
+  // a payment sheet naming ids is no use to whoever signs it. wm_dashboard's
+  // task_names action returns {docname: subject}; the fallback is the docname.
+  //
+  // Grouping keys are deliberately NOT resolved: they key on the docname because
+  // that is the identity, and two distinct tasks may share a subject.
+  var TASK_NAMES={};
+  function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
   // What this installation calls the levels. Falls back to the shipped wording
   // so the screen still reads correctly if the template has not loaded.
   var TXN = (window.WM_TAXONOMY || {});
@@ -36,19 +46,23 @@
   }
 
   // GET/POST to the single wm_payment endpoint. Writes go as POST with the CSRF token.
-  function call(args, isWrite){
+  function call(args, isWrite, method){
+    // `method` names another screen's script -- only wm_dashboard, for its
+    // task_names map. It is the third argument rather than the second because
+    // the second already means isWrite here, unlike the other screens.
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!=null) p.append(k, args[k]); }
+    var ep = method ? ("/api/method/"+method) : API;
     var opt={ headers:{ "Accept":"application/json" }, credentials:"same-origin" };
     if(isWrite){
       opt.method="POST";
       opt.headers["Content-Type"]="application/x-www-form-urlencoded";
       opt.headers["X-Frappe-CSRF-Token"]=(window.frappe&&window.frappe.csrf_token)||"";
       opt.body=p.toString();
-      var url=API;
+      var url=ep;
     } else {
       opt.method="GET";
-      var url=API+"?"+p.toString();
+      var url=ep+"?"+p.toString();
     }
     return fetch(url, opt)
       .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
@@ -694,7 +708,7 @@
         var h='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
           '<th>Date</th><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead><tbody>';
         jobs.forEach(function(j){
-          h+='<tr><td>'+esc(j.wdate||"")+'</td><td>'+esc(j.task||"")+'</td><td>'+esc(lbl(j.farm)||"")+'</td>'+
+          h+='<tr><td>'+esc(j.wdate||"")+'</td><td>'+esc(taskName(j.task))+'</td><td>'+esc(lbl(j.farm)||"")+'</td>'+
              '<td class="n m">'+fmt(j.qty)+'</td><td class="n m">'+fmt(j.rate,2)+'</td><td class="n m">'+money(j.amount)+'</td></tr>';
         });
         h+='</tbody><tfoot><tr><td colspan="5">Total owed</td><td class="n m">'+money(d.total_owed)+'</td></tr></tfoot></table></div></div>';
@@ -1250,7 +1264,7 @@
     } else if(c.key==="self_approved"){
       h+='<th>Actuals doc</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Entered by</th><th>HR appr.</th><th>GM appr.</th><th class="n">KES</th>';
       rows.forEach(function(r){
-        body+='<tr><td class="m">'+esc(r.actuals)+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+        body+='<tr><td class="m">'+esc(r.actuals)+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td>'+
           '<td>'+esc(shortUser(r.entered_by))+'</td><td>'+esc(shortUser(r.hr_approved_by)||"—")+'</td><td>'+esc(shortUser(r.gm_approved_by)||"—")+'</td>'+
           '<td class="n m">'+fmt(r.amount,2)+'</td></tr>';
       });
@@ -1258,12 +1272,12 @@
       h+='<th>Worker</th><th>Day worked</th><th>Left on</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">KES</th><th>Doc</th>';
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td class="m" style="color:var(--bad)">'+esc(dshort(r.left_date))+'</td>'+
-          '<td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td><td class="n m">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
+          '<td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
     } else if(c.key==="rate_mismatch"){
       h+='<th>Worker</th><th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Expected</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){
-        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.task||"")+'</td>'+
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(taskName(r.task))+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
@@ -1272,14 +1286,14 @@
       rows.forEach(function(r){
         body+='<tr><td>'+wlink(r)+'</td>'+
           '<td><span class="tag" style="color:var(--bad)">'+esc(r.emp_status||"Inactive")+'</span></td>'+
-          '<td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+          '<td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td>'+
           '<td class="m" style="font-size:10px">'+esc(r.assignment||"")+'</td>'+
           '<td class="m">'+esc(r.wdate||"")+'</td></tr>';
       });
     } else if(c.key==="dup_day"){
       h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Copies</th><th class="n">Total KES</th><th class="n">Excess KES</th><th>Docs</th><th>Entered by</th>';
       rows.forEach(function(r){
-        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.copies)+'×</td>'+
           '<td class="n m">'+fmt(r.total_amt,2)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td>'+
@@ -1289,7 +1303,7 @@
     } else if(c.key==="no_pay"){
       h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Should be KES</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){
-        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td>'+
           '<td class="n m" style="color:#0a7a43;font-weight:700">'+fmt(r.should_be,2)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">0</td>'+
@@ -1299,7 +1313,7 @@
       // presence-based checks: absent_paid / ghost_days / leave_paid / off_paid
       h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">KES</th><th class="c">Presence</th>'+(c.key==="leave_paid"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th>';
       rows.forEach(function(r){
-        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(r.task||"")+'</td>'+
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td>'+
           '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
           '<td class="c m">'+discPres(r)+'</td>'+
           (c.key==="leave_paid"?('<td>'+esc(r.leave_type||"")+'</td>'):'')+
@@ -1339,7 +1353,7 @@
       '<th class="c">Status</th><th>Run</th><th>Entered by</th></tr></thead><tbody>';
     rows.forEach(function(s){
       h+='<tr>'+
-        '<td>'+esc(s.farm)+'</td><td>'+esc(s.task)+'</td><td>'+esc(s.block||"—")+'</td>'+
+        '<td>'+esc(s.farm)+'</td><td>'+esc(taskName(s.task))+'</td><td>'+esc(s.block||"—")+'</td>'+
         '<td>'+esc(s.assignment||"—")+'</td>'+
         '<td class="n m">'+fmt(s.planned_people)+'</td><td class="n m">'+fmt(s.assigned_count)+'</td>'+
         '<td class="n m">'+fmt(s.actual_qty)+'</td><td class="n m">'+fmt(s.workers)+'</td>'+
@@ -1364,7 +1378,7 @@
       '<th>Date</th><th class="n">Qty</th><th class="n">Amount KES</th><th class="c">Paid</th><th>Run</th></tr></thead><tbody>';
     rows.forEach(function(r){
       h+='<tr>'+
-        '<td>'+esc(r.farm)+'</td><td>'+esc(r.task)+'</td><td>'+esc(r.assignment||"—")+'</td>'+
+        '<td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td>'+esc(r.assignment||"—")+'</td>'+
         '<td>'+esc(r.emp_name||r.emp)+'</td><td>'+esc(r.emp)+'</td><td>'+esc(r.emp_type||"—")+'</td>'+
         '<td>'+esc(r.wdate||"")+'</td><td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
         '<td class="c">'+payTag(r.pay_status)+'</td><td>'+esc(r.run_ref||"—")+'</td>'+
@@ -1442,7 +1456,7 @@
       var vq=(q.value||"").trim().toLowerCase();
       var flt=rows.filter(function(g){
         if(!vq) return true;
-        return (g.nm+" "+g.emp+" "+g.farm_list+" "+Object.keys(g.tasks).join(" ")).toLowerCase().indexOf(vq)>-1;
+        return (g.nm+" "+g.emp+" "+g.farm_list+" "+Object.keys(g.tasks).map(taskName).join(" ")).toLowerCase().indexOf(vq)>-1;
       });
       el("auw-count").textContent=flt.length+" of "+rows.length+" workers";
       var t='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
@@ -1572,7 +1586,7 @@
         '<th>Task</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Standard</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
         '<th class="n">Rate</th><th class="n">Amount KES</th><th class="n">Unpaid</th><th class="c">Status</th></tr></thead><tbody>';
       tasks.forEach(function(t){
-        h+='<tr><td><b>'+esc(t.task||"—")+'</b></td><td>'+esc(lbl(t.block)||"—")+'</td>'+
+        h+='<tr><td><b>'+esc(taskName(t.task)||"—")+'</b></td><td>'+esc(lbl(t.block)||"—")+'</td>'+
           '<td class="m">'+esc(t.standard||"—")+'</td>'+
           '<td class="m">'+esc(dshort(t.work_from))+' &rarr; '+esc(dshort(t.work_to))+'</td>'+
           '<td class="n m">'+fmt(t.days)+'</td><td class="n m">'+fmt(t.qty)+'</td><td class="n m">'+fmt(t.rate,2)+'</td>'+
@@ -1611,7 +1625,7 @@
       var who=peopleLine(t).map(function(w){ return w[0]+" "+shortUser(w[1]); });
       h+='<div style="border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden">'+
         '<div style="padding:12px 16px;background:var(--wash);display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline">'+
-          '<div style="font-weight:600;font-size:13px">'+esc(t.task||"—")+' <span style="color:var(--mute);font-weight:500">· '+esc(lbl(t.block)||"—")+' · '+esc(lbl(t.farm)||"")+'</span>'+(cardFlagged?' <span title="'+cardFlagged+' flagged day'+(cardFlagged>1?'s':'')+' — see the Discrepancies tab" style="color:#b91c1c;font-weight:700;font-size:11px">&#9873;'+cardFlagged+'</span>':'')+'</div>'+
+          '<div style="font-weight:600;font-size:13px">'+esc(taskName(t.task)||"—")+' <span style="color:var(--mute);font-weight:500">· '+esc(lbl(t.block)||"—")+' · '+esc(lbl(t.farm)||"")+'</span>'+(cardFlagged?' <span title="'+cardFlagged+' flagged day'+(cardFlagged>1?'s':'')+' — see the Discrepancies tab" style="color:#b91c1c;font-weight:700;font-size:11px">&#9873;'+cardFlagged+'</span>':'')+'</div>'+
           '<span style="flex:1"></span>'+
           '<span class="m" style="font-weight:600">'+money(t.amount)+'</span>'+payTag(t.pay_status)+
         '</div>'+
@@ -1699,7 +1713,7 @@
           '<div class="tablescroll" style="max-height:260px;padding:8px 16px 12px"><table style="margin-top:0"><thead><tr>'+
           '<th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Pay KES</th><th class="c">Presence</th>'+(g.k==="leave"?'<th>Leave</th>':'')+'<th class="c">Paid</th><th>Doc</th></tr></thead><tbody>';
         g.rows.forEach(function(r){
-          h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.task||"")+'</td>'+
+          h+='<tr><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(taskName(r.task))+'</td>'+
             '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
             '<td class="c m">'+discPres(r)+'</td>'+
             (g.k==="leave"?('<td>'+esc(r.day_leave||"")+'</td>'):'')+
@@ -1904,11 +1918,11 @@
       return h+'</tbody></table>';
     }
     var sumRows=(AU.summary||[]).map(function(s){
-      var a=[esc(s.farm),esc(s.task),esc(s.block||""),esc(s.assignment||""),fmt(s.planned_people),fmt(s.assigned_count),fmt(s.actual_qty),fmt(s.workers),fmt(s.total_pay,2),fmt(s.paid_pay,2),fmt(s.unpaid_pay,2),esc(s.pay_status),esc(s.run_refs||""),esc(s.entered_by||"")];
+      var a=[esc(s.farm),esc(taskName(s.task)),esc(s.block||""),esc(s.assignment||""),fmt(s.planned_people),fmt(s.assigned_count),fmt(s.actual_qty),fmt(s.workers),fmt(s.total_pay,2),fmt(s.paid_pay,2),fmt(s.unpaid_pay,2),esc(s.pay_status),esc(s.run_refs||""),esc(s.entered_by||"")];
       a._n=4; return a;
     });
     var detRows=(AU.detail||[]).map(function(d){
-      var a=[esc(d.farm),esc(d.task),esc(d.assignment||""),esc(d.emp_name||d.emp),esc(d.emp),esc(d.emp_type||""),esc(d.wdate||""),fmt(d.qty),fmt(d.amount,2),esc(d.pay_status),esc(d.run_ref||"")];
+      var a=[esc(d.farm),esc(taskName(d.task)),esc(d.assignment||""),esc(d.emp_name||d.emp),esc(d.emp),esc(d.emp_type||""),esc(d.wdate||""),fmt(d.qty),fmt(d.amount,2),esc(d.pay_status),esc(d.run_ref||"")];
       a._n=7; return a;
     });
     var win=window.open("","_blank");
@@ -1986,7 +2000,7 @@
       ["Task",TX("unit_singular","Block"),"Standard",TX("top_singular","Farm"),"Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
     ];
     tasks.forEach(function(t){
-      s1.push([t.task||"", t.block||"", t.standard||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,
+      s1.push([taskName(t.task), t.block||"", t.standard||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,
                Math.round((t.rate||0)*100)/100, t.amount||0, t.unpaid_amt||0, t.pay_status||""]);
     });
     s1.push(["TOTAL","","","","", k.days||0, k.qty||0, "", k.earned||0, k.unpaid_amt||0, ""]);
@@ -1995,7 +2009,7 @@
     tasks.forEach(function(t){
       var kk=(t.task||"")+"|"+(t.block||"")+"|"+(t.farm||"");
       var rows=(byTask[kk]||[]).slice().sort(function(a,b){ return (a.wdate||"")<(b.wdate||"")?-1:1; });
-      s2.push([(t.task||"—")+" · "+(t.block||"—")+" · "+(t.farm||""), "", "", "KES "+fmt(t.amount,2), t.pay_status||""]);
+      s2.push([(taskName(t.task)||"—")+" · "+(t.block||"—")+" · "+(t.farm||""), "", "", "KES "+fmt(t.amount,2), t.pay_status||""]);
       s2.push(["Task period", (t.plan_from||t.work_from||"")+" → "+(t.plan_to||t.work_to||""),
                "Worked", (t.work_from||"")+" → "+(t.work_to||"")+" ("+(t.days||0)+" days)"+(t.standard?(" · standard "+t.standard):"")]);
       if(t.assignments&&t.assignments.length) s2.push(["Assignments", t.assignments.join(", ")]);
@@ -2024,7 +2038,7 @@
 
   function exportWorkerCSV(d){
     var daily=(d.daily||[]).map(function(r){ return {
-      Date:r.wdate||"", Task:r.task||"", "Block":r.block||"", "Farm":r.farm||"",
+      Date:r.wdate||"", Task:taskName(r.task), "Block":r.block||"", "Farm":r.farm||"",
       Qty:r.qty||0, Rate:Math.round((r.rate||0)*100)/100, "Pay KES":r.amount||0,
       Status:(r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll"), Run:r.run_ref||""
     }; });
@@ -2075,7 +2089,7 @@
 
   function buildXLSX(){
     var sum=(AU.summary||[]).map(function(s){ return {
-      "Farm":s.farm, Task:s.task, "Block":s.block||"", Assignment:s.assignment||"",
+      "Farm":s.farm, Task:taskName(s.task), "Block":s.block||"", Assignment:s.assignment||"",
       "Planner":s.planner_request||"", "From":s.from_date||"", "To":s.to_date||"",
       "Planned people":s.planned_people, "Assigned":s.assigned_count, "Variance":s.variance,
       "Actual qty":s.actual_qty, "Workers":s.workers, "Worker-days":s.worker_days,
@@ -2083,7 +2097,7 @@
       "Status":s.pay_status, "Run(s)":s.run_refs||"", "Entered by":s.entered_by||"", "Entry date":s.entry_date||""
     }; });
     var det=(AU.detail||[]).map(function(d){ return {
-      "Farm":d.farm, Task:d.task, "Block":d.block||"", Assignment:d.assignment||"",
+      "Farm":d.farm, Task:taskName(d.task), "Block":d.block||"", Assignment:d.assignment||"",
       Worker:d.emp_name||d.emp, "ID":d.emp, "Type":d.emp_type||"", "Date":d.wdate||"",
       "Qty":d.qty, "Amount KES":d.amount, "In payroll":d.in_payroll, "Paid":d.pay_status, "Run":d.run_ref||""
     }; });
@@ -2106,13 +2120,13 @@
     }
     function csvCell(v){ v=(v==null?"":String(v)); if(/[",\r\n]/.test(v)){ v='"'+v.replace(/"/g,'""')+'"'; } return v; }
     var sum=(AU.summary||[]).map(function(s){ return {
-      "Farm":s.farm,Task:s.task,"Block":s.block||"",Assignment:s.assignment||"",Planner:s.planner_request||"",
+      "Farm":s.farm,Task:taskName(s.task),"Block":s.block||"",Assignment:s.assignment||"",Planner:s.planner_request||"",
       From:s.from_date||"",To:s.to_date||"","Planned people":s.planned_people,Assigned:s.assigned_count,Variance:s.variance,
       "Actual qty":s.actual_qty,Workers:s.workers,"Worker-days":s.worker_days,"Total KES":s.total_pay,
       "Paid KES":s.paid_pay,"Unpaid KES":s.unpaid_pay,Status:s.pay_status,"Run(s)":s.run_refs||"","Entered by":s.entered_by||"","Entry date":s.entry_date||""
     }; });
     var det=(AU.detail||[]).map(function(d){ return {
-      "Farm":d.farm,Task:d.task,"Block":d.block||"",Assignment:d.assignment||"",Worker:d.emp_name||d.emp,ID:d.emp,
+      "Farm":d.farm,Task:taskName(d.task),"Block":d.block||"",Assignment:d.assignment||"",Worker:d.emp_name||d.emp,ID:d.emp,
       Type:d.emp_type||"",Date:d.wdate||"",Qty:d.qty,"Amount KES":d.amount,"In payroll":d.in_payroll,Paid:d.pay_status,Run:d.run_ref||""
     }; });
     dl(auditFileBase()+"_summary.csv", toCSV(sum));
@@ -2237,6 +2251,11 @@
   }
 
   function init(){
+    // task_names rides alongside and resolves to {} on failure: unreadable task
+    // names are a nuisance, a payment screen that will not open is not.
+    call({action:"task_names"}, false, "wm_dashboard").then(function(d){
+      TASK_NAMES=(d && d.task_names) || {};
+    }).catch(function(){});
     // the pay window is a WEEK; default to the most recent completed one
     pwApply(pwLatestCompleteStart(), false);
 

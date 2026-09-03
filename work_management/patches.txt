@@ -15,3 +15,4 @@ work_management.patches.v1_0.drop_dead_consultant_controls
 # DocPerm granting submit without write. Position among the patches above does
 # not matter -- none of them writes permissions.
 work_management.patches.v1_0.repair_submit_without_write
+work_management.patches.v1_0.show_task_subjects_in_links
