@@ -17,3 +17,4 @@ work_management.patches.v1_0.drop_dead_consultant_controls
 work_management.patches.v1_0.repair_submit_without_write
 work_management.patches.v1_0.show_task_subjects_in_links
 work_management.patches.v1_0.backfill_actuals_hours
+work_management.patches.v1_0.switch_on_the_new_discrepancy_checks

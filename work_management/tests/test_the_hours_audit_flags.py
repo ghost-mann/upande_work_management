@@ -169,3 +169,89 @@ class TestTheOldFlagAlreadyCoveredOneOfThese(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestTheNewTogglesActuallyArriveOn(unittest.TestCase):
+	"""A Check field's `default` does not reach an existing site.
+
+	`default` applies to a NEW document. Work Management Settings is a Single
+	that already exists everywhere, so adding a Check to it writes `'0'` into
+	tabSingles -- not null, and not the default. The audit reads each toggle with
+	get_single_value and treats it as a real answer, so all three checks arrived
+	switched off:
+
+	    disc_dup_day        stored=1    an existing flag
+	    disc_long_day       stored=0    disabled=1
+	    disc_short_day      stored=0    disabled=1
+	    disc_hours_vs_qty   stored=0    disabled=1
+
+	Three checks, shipped invisible, with nothing in the code wrong: the field
+	says default 1, the audit honours the toggle, and the toggle honestly reports
+	what is stored. Found by running the audit over HTTP on kaitet.local and
+	noticing all three returned 0 while the other eleven returned their usual
+	counts.
+
+	Second time this trap cost something in one release -- the standard-hours
+	fields came out {0, 0, 0} the same way and made every man-day zero. So it
+	gets a test, and the next person adding a field to a Single gets a warning.
+	"""
+
+	PATCH = os.path.join(APP, "patches", "v1_0", "switch_on_the_new_discrepancy_checks.py")
+
+	def source(self):
+		with open(self.PATCH) as handle:
+			return handle.read()
+
+	def code(self):
+		"""The patch with its docstring and comments removed.
+
+		The docstring explains why this does NOT sweep every `disc_*` field, and
+		the first version of the assertion below matched that explanation. A test
+		that cannot tell an explanation from the thing it explains is worse than
+		no test -- the same lesson the headroom assertion learned."""
+		import ast
+
+		tree = ast.parse(self.source())
+		tree.body = [n for n in tree.body
+			if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
+				and isinstance(n.value.value, str))]
+		return ast.unparse(tree)
+
+	def test_a_patch_switches_them_on(self):
+		self.assertTrue(os.path.exists(self.PATCH),
+			"nothing corrects the 0 that adding these fields wrote")
+
+	def test_it_is_registered_to_run(self):
+		with open(os.path.join(APP, "patches.txt")) as handle:
+			listed = [l.strip() for l in handle if l.strip() and not l.lstrip().startswith("#")]
+		self.assertIn("work_management.patches.v1_0.switch_on_the_new_discrepancy_checks", listed)
+
+	def test_it_covers_every_new_toggle(self):
+		text = self.source()
+		for _key, field in FLAGS:
+			with self.subTest(field=field):
+				self.assertIn('"%s"' % field, text,
+					"%s would stay switched off on every existing site" % field)
+
+	def test_it_names_them_rather_than_sweeping_every_disc_field(self):
+		"""A `disc_*` field somebody turned off by hand looks identical to one
+		that was never set. Correcting those indiscriminately would override a
+		decision, so only the genuinely new ones are named."""
+		text = self.code()
+		self.assertNotRegex(text, r'like.*disc_%|disc_\*')
+		for old in ("disc_dup_day", "disc_absent_paid", "disc_no_pay"):
+			with self.subTest(old=old):
+				self.assertNotIn(old, text)
+
+	def test_it_does_not_override_a_flag_already_on(self):
+		self.assertRegex(self.source(), r"if frappe\.utils\.cint\(stored\)")
+
+	def test_it_survives_the_field_not_existing_yet(self):
+		"""Patches and schema sync are not ordered relative to each other on
+		every path, so the field may not be there on the first pass."""
+		self.assertRegex(self.source(), r"if not meta\.get_field\(field\)")
+
+	def test_it_clears_the_cache(self):
+		"""The Settings doc is cached, so the audit would keep reading the old
+		zero until something else happened to clear it."""
+		self.assertIn("frappe.clear_cache(doctype=\"Work Management Settings\")", self.source())
