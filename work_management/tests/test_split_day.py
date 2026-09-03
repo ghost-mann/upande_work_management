@@ -249,9 +249,21 @@ class TestTheMirrorMeasuresRatherThanCounts(unittest.TestCase):
 		no labour at all -- which is why this asserts the NULLIF."""
 		self.assertRegex(self.text, r"COALESCE\(NULLIF\(we\.hours, 0\),\s*CASE DAYOFWEEK")
 
+	def test_an_hourly_job_divides_by_its_own_day(self):
+		"""Security Patroll's day is 12 hours, not the site's 8. Dividing one
+		shift by 8 called it 1.5 man-days and inflated 381 rows by +201."""
+		self.assertRegex(self.text, r"IN \('hour','hours','hr','hrs'\)")
+		self.assertRegex(self.text, r"THEN p2\.daily_target")
+
+	def test_it_reaches_the_plan_for_that(self):
+		self.assertRegex(self.text, r"LEFT JOIN `tabWork Management Planner` p2")
+
 	def test_it_cannot_divide_by_a_zero_length_day(self):
 		"""A site that says Sunday is not worked must not make the query fail."""
-		self.assertIn("NULLIF(CASE DAYOFWEEK", self.text)
+		# the guard wraps the whole denominator now -- the job's own day or the
+		# site's, whichever applies -- so it is asserted on the division itself
+		self.assertRegex(self.text, r"/ NULLIF\(")
+		self.assertRegex(self.text, r"END, 0\)")
 
 	def test_the_hours_model_is_one_value_not_three_loose_ones(self):
 		"""WEEKDAY_HOURS / SATURDAY_HOURS / SUNDAY_HOURS were declared in five
@@ -285,3 +297,61 @@ class TestAWholeDayIsNeverAContradiction(unittest.TestCase):
 
 	def test_double_the_target_in_half_the_day_still_is(self):
 		self.assertTrue(split_day.output_disagrees_with_hours(300, 150, 4, WED))
+
+
+class TestAJobWhoseDayIsNotTheStandardDay(unittest.TestCase):
+	"""Some tasks carry their own day length, and dividing them by the site's
+	standard misreads them.
+
+	`Security Patroll` has a daily target of 12 hours, `Coffee Picking` 3, `Mill
+	Operations` 8 -- and those are hours, because the task is measured in Hours.
+	One 12-hour patrol shift is one person for one working day. Dividing it by an
+	eight-hour standard called it 1.5 man-days, which inflated the figure on 381
+	rows by +201 man-days on kaitet.local alone.
+
+	So an hourly task divides by its own daily target. Everything else -- Trees,
+	Meters, Crates -- divides by the date's standard, because there `daily_target`
+	is output per day and says nothing about time.
+	"""
+
+	def test_a_full_shift_on_a_twelve_hour_job_is_one_man_day(self):
+		self.assertEqual(split_day.man_days([(WED, 12, "Hour", 12)]), 1.0)
+
+	def test_half_a_shift_is_half_a_man_day(self):
+		self.assertEqual(split_day.man_days([(WED, 6, "Hour", 12)]), 0.5)
+
+	def test_a_twelve_hour_shift_on_a_saturday_is_still_one_man_day(self):
+		"""The job's day does not shorten because the site's does."""
+		self.assertEqual(split_day.man_days([(SAT, 12, "Hour", 12)]), 1.0)
+
+	def test_an_eight_hour_job_on_a_six_hour_saturday_is_one_man_day(self):
+		"""This is the case that moved the figure: Mill Operations, target 8,
+		recorded 8, on a Saturday whose site standard is 6."""
+		self.assertEqual(split_day.man_days([(SAT, 8, "Hour", 8)]), 1.0)
+
+	def test_a_piece_rate_task_still_divides_by_the_date(self):
+		"""150 trees is not 150 hours. `daily_target` there is output, so the only
+		sensible denominator is the standard day."""
+		self.assertEqual(split_day.man_days([(WED, 4, "Tree", 150)]), 0.5)
+		self.assertEqual(split_day.man_days([(SAT, 6, "Tree", 150)]), 1.0)
+
+	def test_an_hourly_task_with_no_target_falls_back_to_the_date(self):
+		"""Nothing to divide by, so use the thing that is always there."""
+		self.assertEqual(split_day.man_days([(WED, 8, "Hour", 0)]), 1.0)
+		self.assertEqual(split_day.man_days([(WED, 8, "Hour", None)]), 1.0)
+
+	def test_two_element_rows_still_work(self):
+		"""Callers that know nothing about units keep working unchanged."""
+		self.assertEqual(split_day.man_days([(WED, 8)]), 1.0)
+		self.assertEqual(split_day.man_days([(WED, 4), (WED, 4)]), 1.0)
+
+	def test_a_shared_day_between_two_hourly_jobs(self):
+		"""Six hours of a twelve-hour job and four of an eight-hour one: half of
+		one day and half of the other, which is one day of somebody's time."""
+		self.assertEqual(split_day.man_days([(WED, 6, "Hour", 12), (WED, 4, "Hour", 8)]), 1.0)
+
+	def test_the_day_length_helper_answers_directly(self):
+		self.assertEqual(split_day.day_length(WED, "Hour", 12), 12)
+		self.assertEqual(split_day.day_length(SAT, "Hour", 12), 12)
+		self.assertEqual(split_day.day_length(SAT, "Tree", 150), 6)
+		self.assertEqual(split_day.day_length(WED, None, None), 8)

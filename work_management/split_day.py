@@ -82,25 +82,55 @@ def hours_of(day, hours, model=None):
 	return float(hours)
 
 
-def man_days(rows, model=None):
-	"""Man-days across `rows`, each a (date, hours) pair.
+def day_length(day, uom=None, daily_target=None, model=None):
+	"""How long a full day is for this piece of work.
 
-	Summed per date and divided by that date's standard, so two four-hour rows
-	on one Wednesday are one man-day however many assignments they span, and a
-	full six-hour Saturday is one man-day rather than three quarters.
+	Usually the site's standard day. But a task measured in Hours carries its own
+	day length in `daily_target` -- Security Patroll's is 12, Coffee Picking's 3,
+	Mill Operations' 8 -- and those are hours, because the unit is hours.
 
-	A site that says a day is zero hours long contributes zero rather than
-	raising -- that is a site saying the day is not worked.
+	A twelve-hour patrol shift is one person for one working day. Dividing it by
+	an eight-hour standard called it one and a half, which inflated the figure on
+	381 rows by +201 man-days on kaitet.local alone. And the job's day does not
+	shorten because the site's does: a twelve-hour shift on a Saturday is still
+	one shift.
+
+	For everything else -- Trees, Meters, Crates -- `daily_target` is output per
+	day and says nothing about time, so the standard day is the only sensible
+	denominator.
 	"""
-	per_day = {}
-	for day, hours in rows:
-		key = str(_as_date(day))
-		per_day[key] = per_day.get(key, 0.0) + hours_of(day, hours, model)
+	if str(uom or "").strip().lower() in HOURLY_UOMS and float(daily_target or 0) > 0:
+		return float(daily_target)
+	return float(standard_hours(day, model))
+
+
+def man_days(rows, model=None):
+	"""Man-days across `rows`.
+
+	A row is `(date, hours)`, or `(date, hours, uom, daily_target)` where the
+	caller knows the unit -- see day_length() for why that matters. The short
+	form still works, so a caller that knows nothing about units is unchanged.
+
+	Hours are summed per date and divided by the length of a day, so two
+	four-hour rows on one Wednesday are one man-day however many assignments they
+	span, and a full six-hour Saturday is one man-day rather than three quarters.
+
+	Where a date mixes jobs of different day lengths, each row contributes its own
+	fraction -- six hours of a twelve-hour job and four of an eight-hour one is
+	half of each, which is one day of somebody's time.
+
+	A day of zero length contributes zero rather than raising: that is a site
+	saying the day is not worked.
+	"""
 	total = 0.0
-	for key, hours in per_day.items():
-		standard = float(standard_hours(key, model))
-		if standard > 0:
-			total = total + hours / standard
+	for row in rows:
+		day = row[0]
+		hours = row[1]
+		uom = row[2] if len(row) > 2 else None
+		target = row[3] if len(row) > 3 else None
+		length = day_length(day, uom, target, model)
+		if length > 0:
+			total = total + hours_of(day, hours, model) / length
 	return round(total, 6)
 
 

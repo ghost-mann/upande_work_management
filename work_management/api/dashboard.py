@@ -2793,6 +2793,15 @@ def wm_dashboard(**kwargs):
         # a full day, which is what every row written before the field existed means,
         # so historical figures come out as they did.
         #
+        # The denominator is the length of a DAY for that piece of work, and that is
+        # not always the site standard. A task measured in Hours carries its own day
+        # in `daily_target` -- Security Patroll 12, Coffee Picking 3, Mill Operations
+        # 8 -- and a twelve-hour patrol shift is one person for one working day.
+        # Dividing it by eight called it one and a half, inflating 381 rows by +201
+        # man-days on kaitet.local. For Trees and Meters `daily_target` is output per
+        # day and says nothing about time, so there the standard day is the only
+        # sensible denominator.
+        #
         # NULLIF(we.hours, 0) and not a bare COALESCE: frappe makes a Float column
         # NOT NULL DEFAULT 0, so an unfilled row holds 0 rather than null, and
         # COALESCE would read that as zero hours -- counting a real day as no labour
@@ -2804,13 +2813,22 @@ def wm_dashboard(**kwargs):
                    COALESCE(SUM(
                      COALESCE(NULLIF(we.hours, 0), CASE DAYOFWEEK(we.work_date)
                         WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END)
-                     / NULLIF(CASE DAYOFWEEK(we.work_date)
-                        WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END, 0)
+                     / NULLIF(
+                         CASE WHEN LOWER(TRIM(IFNULL(p2.uom, ''))) IN ('hour','hours','hr','hrs')
+                                   AND IFNULL(p2.daily_target, 0) > 0
+                              THEN p2.daily_target
+                              ELSE CASE DAYOFWEEK(we.work_date)
+                                     WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END
+                         END, 0)
                    ), 0) mandays,
                    COALESCE(SUM(we.amount), 0) pay
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            -- for the unit and the daily target: an hourly task's day is its own
+            -- length, not the site's. LEFT, so a row whose plan has gone still counts
+            -- against the standard day rather than vanishing from the figure.
+            LEFT JOIN `tabWork Management Planner` p2 ON a2.planner_request = p2.name
             WHERE ac.workflow_state = 'CONFIRMED'
               AND we.work_date BETWEEN %(f)s AND %(t)s AND we.actual_quantity > 0
             GROUP BY a2.planner_request, ac.farm

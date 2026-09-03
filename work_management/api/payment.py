@@ -2206,6 +2206,14 @@ def wm_payment(**kwargs):
             # standard_hours(), inlined -- no def in the sandbox. Saturday is short
             # and Sunday is not, which is the shape these farms work. Keep in step
             # with work_management/split_day.py, which is unit-tested.
+            #
+            # DELIBERATELY the SITE standard here, not the job's own day, which is
+            # what man-days divide by. The two measure different things: a man-day
+            # asks "how much of this job's day was given", so a twelve-hour patrol
+            # shift is one day of patrolling. These checks ask "could a person's
+            # calendar day physically hold this", and there the answer is eight
+            # hours whatever the job. A twelve-hour shift plus a four-hour task is
+            # sixteen hours of one person's Wednesday, and that is worth a look.
             hd_i = frappe.utils.getdate(wd).weekday()  # Mon=0 .. Sun=6
             if hd_i == 5:
                 hd_std = frappe.utils.flt(STANDARD_DAY.get("saturday"))
