@@ -86,7 +86,12 @@
   function blocksLbl(obj){ var a=(obj&&obj.blocks)||null; if(a&&a.length){ var o=[]; for(var i=0;i<a.length;i++){ o.push(lbl(a[i])); } return o.join(", "); } return lbl(obj&&obj.block_section); }
   function el(id){ return document.getElementById(id); }
   function toast(m){ var t=el("ac-toast"); t.textContent=m; t.classList.add("show"); setTimeout(function(){t.classList.remove("show");},2400); }
-  function isTaskWorker(et){ return (et||"")==="Task Worker"; }
+  // WHO IS PAID PER TASK. The row carries the answer; the server works it out from
+  // Settings with the same test payment uses -- see api/actuals.py. Deciding it here
+  // from employment_type, as this did, disagreed with payment on every site that
+  // names its task workers by designation or category instead: all of them read as
+  // salaried, so their work went unpriced and swap and release vanished from the grid.
+  function isTaskWorker(row){ return !!(row && Number(row.is_task_worker)); }
   // active window: replacement open from start_date; outgoing(Left) open up to & incl left_date
   function offDay(w, iso){
     var offs=w.off_dates||[];
@@ -581,7 +586,7 @@
     });
     h+='<th class="trow">Total</th></tr></thead><tbody>';
     workers.forEach(function(w){
-      var perm=!isTaskWorker(w.employment_type);
+      var perm=!isTaskWorker(w);
       var isLeft=(w.status||"Active")==="Left";
       var alabel=workerActiveLabel(w);
       var rowcls=(perm?"perm ":"")+(isLeft?"leftrow":"");
@@ -714,7 +719,7 @@
     workers.forEach(function(w){ wtot[w.employee]=0; });
     days.forEach(function(iso){ dtot[iso]=0; });
     workers.forEach(function(w){
-      var isTW=isTaskWorker(w.employment_type);
+      var isTW=isTaskWorker(w);
       days.forEach(function(iso){
         if(!cellActive(w,iso)) return;   // skip cells outside this worker's active window
         var q=ST.cells[ck(w.employee,iso)]||0;
@@ -730,7 +735,7 @@
     var box=el("ac-grid");
     workers.forEach(function(w){
       var c=box.querySelector('[data-wtot="'+cssq(w.employee)+'"]');
-      if(c){ var isTW=isTaskWorker(w.employment_type); c.textContent=fmt(wtot[w.employee])+(isTW&&wtot[w.employee]>0?(" · "+fmt(wtot[w.employee]*rate)):""); }
+      if(c){ var isTW=isTaskWorker(w); c.textContent=fmt(wtot[w.employee])+(isTW&&wtot[w.employee]>0?(" · "+fmt(wtot[w.employee]*rate)):""); }
     });
     days.forEach(function(iso){
       var c=box.querySelector('[data-dtot="'+iso+'"]');
@@ -1148,7 +1153,7 @@
         if(q>0) anyDraft=true;
         var cf=confMap[w.employee];
         var cq=cf?cf.qty:0;
-        var isTW=isTaskWorker(w.employment_type);
+        var isTW=isTaskWorker(w);
         rows+='<tr><td>'+esc(w.employee_name||w.employee)+(isTW?'':' <span class="mini">salaried</span>')+'</td>'+
           '<td><span class="dv-st '+stCls+'">'+stTxt+'</span></td>'+
           '<td class="n">'+(cq>0?fmt(cq):"—")+'</td>'+
@@ -1157,7 +1162,7 @@
       });
       confRows.forEach(function(c){
         if(seen[c.employee]) return;
-        var isTW=isTaskWorker(c.et);
+        var isTW=isTaskWorker(c);
         rows+='<tr><td>'+esc(c.name||c.employee)+(isTW?'':' <span class="mini">salaried</span>')+' <span class="mini">off roster</span></td>'+
           '<td><span class="dv-st mut">worked, since replaced</span></td>'+
           '<td class="n">'+fmt(c.qty)+'</td>'+

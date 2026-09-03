@@ -417,6 +417,22 @@ def wm_actuals(**kwargs):
             WHERE parent = %s
             ORDER BY idx
         """, (name,), as_dict=True)
+        # WHO IS PAID PER TASK, decided once, here. The screen used to answer this
+        # itself with employment_type == "Task Worker" -- the very test this script
+        # stopped using, and for the same reason: a site that names its task workers
+        # by designation or category has none at all by employment_type, so the grid
+        # called every one of them salaried, priced none of their work, and hid the
+        # swap and release controls from every row -- while payment, reading Settings,
+        # went on paying them. TW_MATCH is that same settings-driven test.
+        tw_names = {}
+        if workers:
+            for tw_row in frappe.db.sql("""
+                SELECT e.name FROM `tabEmployee` e
+                WHERE e.name IN %(names)s AND """ + TW_MATCH,
+                    {"names": tuple(w.employee for w in workers)}, as_dict=True):
+                tw_names[tw_row.name] = 1
+        for w in workers:
+            w["is_task_worker"] = 1 if tw_names.get(w.employee) else 0
         # off-days per worker within the plan period (from their Employee.holiday_list)
         # .get(), not attribute access: with no such assignment `a` is a plain {}
         # so the error can be reported without the next 250 lines raising, and a
@@ -545,6 +561,7 @@ def wm_actuals(**kwargs):
                 SELECT wae.work_date d, wae.employee emp,
                        COALESCE(e.employee_name, wae.employee) nm,
                        COALESCE(e.employment_type, '') et,
+                       CASE WHEN """ + TW_MATCH + """ THEN 1 ELSE 0 END tw,
                        COALESCE(SUM(wae.actual_quantity),0) qty
                 FROM `tabWork Actuals Employee` wae
                 INNER JOIN `tabWork Management Actuals` ac ON wae.parent = ac.name
@@ -558,7 +575,8 @@ def wm_actuals(**kwargs):
                 k = str(r.d)
                 if k not in dayw:
                     dayw[k] = []
-                dayw[k].append({"employee": r.emp, "name": r.nm, "et": r.et, "qty": r.qty})
+                dayw[k].append({"employee": r.emp, "name": r.nm, "et": r.et,
+                    "is_task_worker": r.tw, "qty": r.qty})
         a["day_workers"] = dayw
         # existing Draft/Rejected doc for this assignment -> return its cells so the grid resumes.
         # Raw SQL (not get_all) so a low-privilege user without doctype read still loads the grid.
