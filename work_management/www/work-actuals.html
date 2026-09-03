@@ -150,6 +150,23 @@
 /* substitution modal */
 #acp #ac-submodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
 #acp #ac-closemodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
+#acp #ac-addmodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
+#acp #ac-relmodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
+/* The candidate list. A search box and a scrollable list of names, because the
+   pool is the farm's whole eligible workforce -- 229 on the assignment this was
+   built against -- and a <select> that long is no better than typing an id. */
+#acp .addsearch{width:100%;border:1px solid var(--line);padding:8px 11px;font-family:inherit;font-size:13px;border-radius:8px;background:#fff;color:var(--ink)}
+#acp .addsearch:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+#acp .addlist{max-height:230px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px;background:#fff}
+#acp .addrow{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:7px 11px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--faint)}
+#acp .addrow:last-child{border-bottom:none}
+#acp .addrow:hover{background:var(--wash)}
+#acp .addrow.sel{background:var(--ink);color:#fff}
+#acp .addrow.sel .addid,#acp .addrow.sel .addtag{color:#cbd5e1}
+#acp .addid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:var(--mute)}
+#acp .addtag{font-size:10px;color:#a06000}
+#acp .addempty{padding:14px 11px;font-size:11.5px;color:var(--mute);text-align:center}
+#acp .addcount{font-size:10.5px;color:var(--mute);margin-top:6px}
 #acp .submodal-card{background:#fff;max-width:440px;width:92%;border:1px solid var(--line);padding:0;border-radius:16px;box-shadow:0 25px 50px -12px rgba(15,23,42,.35);overflow:hidden}
 #acp .submodal-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--faint)}
 #acp .submodal-head .h{font-size:13px;font-weight:700;letter-spacing:-.01em}
@@ -769,6 +786,51 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
       <div class="submodal-foot">
         <button type="button" class="btn" id="ac-sub-cancel">Cancel</button>
         <button type="button" class="btn solid" id="ac-sub-confirm" disabled>Confirm swap</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- add-a-worker modal. Same card as the substitute and close modals. -->
+  <div id="ac-addmodal">
+    <div class="submodal-card">
+      <div class="submodal-head">
+        <div class="h">Add a worker to the crew</div>
+        <button type="button" class="x" id="ac-add-x">&times;</button>
+      </div>
+      <div class="submodal-body">
+        <div class="outline">For somebody who worked and is not on the list. Nobody has to leave to make room &mdash; the plan&rsquo;s quantity still caps what can be recorded and paid, so the crew simply shares the same budgeted work.</div>
+        <label class="fl">Search</label>
+        <input type="text" class="addsearch" id="ac-add-q" placeholder="Name or payroll number" autocomplete="off">
+        <div class="addlist" id="ac-add-list"></div>
+        <div class="addcount" id="ac-add-count"></div>
+        <label class="fl">Starting on</label>
+        <input type="date" id="ac-add-date">
+        <div id="ac-add-note" style="font-size:10.5px;color:var(--mute);margin-top:5px"></div>
+      </div>
+      <div class="submodal-foot">
+        <button type="button" class="btn" id="ac-add-cancel">Cancel</button>
+        <button type="button" class="btn solid" id="ac-add-go" disabled>Add to crew</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- release modal. A date needs a date input, not a free-text prompt: the
+       first version of this asked for one by typing and a slip became a silent
+       bad date. -->
+  <div id="ac-relmodal">
+    <div class="submodal-card">
+      <div class="submodal-head">
+        <div class="h">Release from this assignment</div>
+        <button type="button" class="x" id="ac-rel-x">&times;</button>
+      </div>
+      <div class="submodal-body">
+        <div class="outline">Releasing <b id="ac-rel-name">&mdash;</b>. What they have already recorded here is kept and still paid &mdash; releasing only frees them for other work, including the same day where a split day is allowed.</div>
+        <label class="fl">Last day worked here</label>
+        <input type="date" id="ac-rel-date">
+      </div>
+      <div class="submodal-foot">
+        <button type="button" class="btn" id="ac-rel-cancel">Cancel</button>
+        <button type="button" class="btn solid" id="ac-rel-go" disabled>Release</button>
       </div>
     </div>
   </div>

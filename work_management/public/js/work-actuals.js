@@ -256,6 +256,8 @@
     el("b-acdraft").onclick=function(){ doSubmit(0); };
     el("b-acsubmit").onclick=function(){ doSubmit(1); };
     initSubModal();
+    wireAddModal();
+    wireRelModal();
     initCloseModal();
     loadAssignments();
   }
@@ -662,41 +664,7 @@
           '<span class="ac-addnote">Only a Farm Manager, the HR head or the GM can change the crew.</span>');
     box.appendChild(addbar);
     var addCrewBtn = el("ac-addcrew");
-    if(addCrewBtn){
-      addCrewBtn.onclick=function(){
-        // the same candidate list the assigner's crew screen uses, so the two
-        // agree about who is eligible
-        call({action:"a_employees", farm:a.farm, from_date:a.from_date, to_date:a.to_date,
-              exclude_assignment:ST.asg}, "wm_assigner").then(function(d){
-          var pool=(d.employees||[]);
-          var onIt={};
-          (a.workers||[]).forEach(function(w){ onIt[w.employee]=1; });
-          var pick=pool.filter(function(c){
-            if(onIt[c.name]) return false;
-            // busy elsewhere is offered only where a split day is allowed
-            return d.allow_split_day ? true : !c.allocated_elsewhere;
-          });
-          if(!pick.length){ toast("No eligible worker to add"); return; }
-          var lines=pick.slice(0,40).map(function(c,i){
-            return (i+1)+". "+(c.employee_name||c.name)+" ["+c.name+"]"+
-              (c.allocated_elsewhere?" (also on "+(c.allocated_task||c.allocated_asg||"another task")+")":"");
-          }).join("\n");
-          var who=window.prompt("Add a worker to "+ST.asg+"\n\nType the worker id from the list:\n\n"+lines);
-          if(!who) return;
-          var from=window.prompt("Starting on which date?", a.from_date);
-          if(!from) return;
-          call({action:"a_add_crew", assignment:ST.asg, employees:who.trim(), start_date:from},
-               "wm_assigner").then(function(r){
-            if(r.error){ toast("Error: "+r.error); return; }
-            var notes=[];
-            if(r.cap_warning) notes.push(r.cap_warning);
-            if(r.split_warning) notes.push(r.split_warning);
-            window.alert((r.message||"Added.")+(notes.length?("\n\n\u2022 "+notes.join("\n\n\u2022 ")):""));
-            refresh(); onAsg(ST.asg);
-          }).catch(function(e){ toast("Could not add"); });
-        }).catch(function(e){ toast("Could not load the worker list"); });
-      };
-    }
+    if(addCrewBtn){ addCrewBtn.onclick=function(){ openAddModal(a); }; }
 
     box.querySelectorAll("input[data-emp]").forEach(function(inp){
       inp.oninput=function(){
@@ -711,21 +679,7 @@
         ev.stopPropagation();
         var emp=btn.getAttribute("data-rel-emp");
         var who=btn.getAttribute("data-rel-name")||emp;
-        var when=window.prompt("Release "+who+" from this assignment on which date?\n\n"+
-          "What they have already recorded here is kept and still paid. They "+
-          "become free to be assigned to another task — including the same day, "+
-          "if a split day is allowed.", (ST.detail&&ST.detail.today)||"");
-        if(!when) return;
-        btn.disabled=true;
-        // one implementation of this write, on the assigner, called from here --
-        // two copies of a mutation in two sandboxed scripts would drift
-        call({action:"a_release", assignment:ST.asg, employees:emp, release_date:when}, "wm_assigner")
-          .then(function(d){
-            if(d && d.error){ toast("Error: "+d.error); btn.disabled=false; return; }
-            window.alert(d && d.message ? d.message : ("Released "+who+"."));
-            refresh(); onAsg(ST.asg);
-          })
-          .catch(function(e){ toast(e && e.message ? e.message : "Could not release"); btn.disabled=false; });
+        openRelModal(a, emp, who);
       };
     });
     box.querySelectorAll("input[data-hemp]").forEach(function(inp){
@@ -900,6 +854,149 @@
     var dateInp=el("ac-sub-date");
     if(dateInp){ dateInp.onchange=syncStartHint; }
   }
+  // ── RELEASE ──────────────────────────────────────────────────────────────
+  function closeRelModal(){
+    var m=el("ac-relmodal"); if(m) m.style.display="none";
+    ST._relEmp=null; ST._relFor=null;
+  }
+  function openRelModal(a, emp, who){
+    var m=el("ac-relmodal"); if(!m) return;
+    ST._relEmp=emp; ST._relFor=ST.asg;
+    el("ac-rel-name").textContent=who||emp;
+    var d=el("ac-rel-date");
+    d.min=a.from_date||""; d.max=a.to_date||"";
+    d.value=(a.today && a.today>=a.from_date && a.today<=a.to_date) ? a.today : (a.to_date||"");
+    el("ac-rel-go").disabled=!d.value;
+    m.style.display="flex";
+  }
+  function wireRelModal(){
+    var m=el("ac-relmodal"); if(!m) return;
+    if(el("ac-rel-x")) el("ac-rel-x").onclick=closeRelModal;
+    if(el("ac-rel-cancel")) el("ac-rel-cancel").onclick=closeRelModal;
+    m.onclick=function(ev){ if(ev.target===m) closeRelModal(); };
+    if(el("ac-rel-date")) el("ac-rel-date").onchange=function(){
+      el("ac-rel-go").disabled=!el("ac-rel-date").value;
+    };
+    if(el("ac-rel-go")) el("ac-rel-go").onclick=function(){
+      var when=el("ac-rel-date").value;
+      if(!when){ toast("Pick the last day worked"); return; }
+      el("ac-rel-go").disabled=true;
+      var asg=ST._relFor;
+      // one implementation of this write, on the assigner, called from here --
+      // two copies of a mutation in two sandboxed scripts would drift
+      call({action:"a_release", assignment:asg, employees:ST._relEmp,
+            release_date:when}, "wm_assigner").then(function(d){
+        if(d && d.error){ toast("Error: "+d.error); el("ac-rel-go").disabled=false; return; }
+        closeRelModal();
+        window.alert(d && d.message ? d.message : "Released.");
+        refresh(); onAsg(asg);
+      }).catch(function(e){
+        toast(e && e.message ? e.message : "Could not release");
+        el("ac-rel-go").disabled=false;
+      });
+    };
+  }
+
+  // ── ADD A WORKER ─────────────────────────────────────────────────────────
+  // A search box and a list, not a prompt and not a <select>. The pool is the
+  // farm's whole eligible workforce -- 229 on the assignment this was built
+  // against -- and asking somebody to type a payroll number into a browser
+  // prompt is not a picker.
+  function closeAddModal(){
+    var m=el("ac-addmodal"); if(m) m.style.display="none";
+    ST._addPool=null; ST._addPick=null; ST._addFor=null;
+  }
+  function renderAddList(){
+    var box=el("ac-add-list"); if(!box) return;
+    var q=((el("ac-add-q")&&el("ac-add-q").value)||"").trim().toLowerCase();
+    var pool=ST._addPool||[];
+    var shown=pool.filter(function(c){
+      if(!q) return true;
+      return ((c.employee_name||"")+" "+c.name).toLowerCase().indexOf(q)>-1;
+    });
+    if(!shown.length){
+      box.innerHTML='<div class="addempty">'+(pool.length?"Nobody matches that.":"No eligible worker to add.")+'</div>';
+    } else {
+      box.innerHTML=shown.slice(0,200).map(function(c){
+        // "also on ..." is shown rather than hidden: with a split day allowed
+        // these are pickable, and the reader should know what they are picking
+        var tag=c.allocated_elsewhere
+          ? '<span class="addtag">also on '+esc(c.allocated_task||c.allocated_asg||"another task")+'</span>' : '';
+        return '<div class="addrow'+(ST._addPick===c.name?" sel":"")+'" data-add="'+esc(c.name)+'">'+
+          '<span>'+esc(c.employee_name||c.name)+' <span class="addid">'+esc(c.name)+'</span></span>'+tag+'</div>';
+      }).join("");
+      box.querySelectorAll("[data-add]").forEach(function(row){
+        row.onclick=function(){
+          ST._addPick=row.getAttribute("data-add");
+          renderAddList();
+          var go=el("ac-add-go"); if(go) go.disabled=!(ST._addPick && el("ac-add-date").value);
+        };
+      });
+    }
+    var c=el("ac-add-count");
+    if(c) c.textContent=shown.length+" of "+pool.length+" eligible"+(shown.length>200?" · showing 200":"");
+  }
+  function openAddModal(a){
+    var m=el("ac-addmodal"); if(!m) return;
+    ST._addFor=ST.asg; ST._addPick=null; ST._addPool=[];
+    el("ac-add-q").value="";
+    el("ac-add-date").value=a.from_date||"";
+    el("ac-add-date").min=a.from_date||"";
+    el("ac-add-date").max=a.to_date||"";
+    el("ac-add-note").textContent="";
+    el("ac-add-go").disabled=true;
+    el("ac-add-list").innerHTML='<div class="addempty">Loading…</div>';
+    m.style.display="flex";
+    // the same candidate list the assigner's crew screen reads, so the two
+    // screens cannot disagree about who is eligible
+    call({action:"a_employees", farm:a.farm, from_date:a.from_date, to_date:a.to_date,
+          exclude_assignment:ST.asg}, "wm_assigner").then(function(d){
+      var onIt={};
+      (a.workers||[]).forEach(function(w){ onIt[w.employee]=1; });
+      ST._addPool=(d.employees||[]).filter(function(c){
+        if(onIt[c.name]) return false;
+        // busy elsewhere is offered only where a split day is allowed
+        return d.allow_split_day ? true : !c.allocated_elsewhere;
+      });
+      if(!d.allow_split_day){
+        el("ac-add-note").textContent="Workers already assigned elsewhere over these dates are not listed. Turn on 'Allow a worker's day to be split between tasks' in Settings to offer them.";
+      }
+      renderAddList();
+    }).catch(function(e){
+      el("ac-add-list").innerHTML='<div class="addempty">Could not load the worker list.</div>';
+    });
+  }
+  function wireAddModal(){
+    var m=el("ac-addmodal"); if(!m) return;
+    if(el("ac-add-x")) el("ac-add-x").onclick=closeAddModal;
+    if(el("ac-add-cancel")) el("ac-add-cancel").onclick=closeAddModal;
+    m.onclick=function(ev){ if(ev.target===m) closeAddModal(); };
+    if(el("ac-add-q")) el("ac-add-q").oninput=renderAddList;
+    if(el("ac-add-date")) el("ac-add-date").onchange=function(){
+      var go=el("ac-add-go"); if(go) go.disabled=!(ST._addPick && el("ac-add-date").value);
+    };
+    if(el("ac-add-go")) el("ac-add-go").onclick=function(){
+      if(!ST._addPick){ toast("Pick a worker"); return; }
+      var from=el("ac-add-date").value;
+      if(!from){ toast("Pick the date they start"); return; }
+      el("ac-add-go").disabled=true;
+      call({action:"a_add_crew", assignment:ST._addFor, employees:ST._addPick,
+            start_date:from}, "wm_assigner").then(function(r){
+        if(r.error){ toast("Error: "+r.error); el("ac-add-go").disabled=false; return; }
+        var notes=[];
+        if(r.cap_warning) notes.push(r.cap_warning);
+        if(r.split_warning) notes.push(r.split_warning);
+        var asg=ST._addFor;
+        closeAddModal();
+        if(notes.length) window.alert((r.message||"Added.")+"\n\n\u2022 "+notes.join("\n\n\u2022 "));
+        else toast(r.message||"Added to crew");
+        refresh(); onAsg(asg);
+      }).catch(function(e){
+        toast("Could not add"); el("ac-add-go").disabled=false;
+      });
+    };
+  }
+
   function closeSubModal(){ var m=el("ac-submodal"); if(m) m.style.display="none"; ST._subEmp=null; ST._subName=null; }
   function syncStartHint(){
     var d=el("ac-sub-date"); var s=el("ac-sub-starthint");

@@ -176,3 +176,78 @@ class TestTheTwoThingsFixedOnTheWay(TestTheMirrorIsCheckedOut):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestThePickerIsAPicker(unittest.TestCase):
+	"""Not a browser prompt.
+
+	The first version of both controls asked for their input with
+	`window.prompt`: for add, a numbered list of names and "type the worker id";
+	for release, a date typed as free text. Both worked and neither was usable --
+	the eligible pool is the farm's whole workforce, 229 on the assignment this
+	was built against, and a typed date has no picker and no validation, so a
+	slip becomes a silent bad date.
+
+	Both are modals now, in the same card the substitute and early-close modals
+	already use, so there is one dialog shape on this screen rather than three.
+	"""
+
+	def setUp(self):
+		self.js = screen("work-actuals")
+		with open(os.path.join(APP, "www", "work-actuals.html")) as handle:
+			self.html = handle.read()
+
+	def test_no_prompt_is_left_on_the_screen(self):
+		self.assertNotIn("window.prompt", self.js,
+			"a browser prompt is still doing the work of a form")
+
+	def test_both_modals_exist_in_the_page(self):
+		for node in ("ac-addmodal", "ac-relmodal"):
+			with self.subTest(node=node):
+				self.assertIn('id="%s"' % node, self.html)
+
+	def test_they_reuse_the_established_card(self):
+		"""Three dialogs on one screen should not be three shapes."""
+		for node in ("ac-addmodal", "ac-relmodal"):
+			at = self.html.index('id="%s"' % node)
+			window = self.html[at:at + 1600]
+			with self.subTest(node=node):
+				for part in ("submodal-card", "submodal-head", "submodal-body", "submodal-foot"):
+					self.assertIn(part, window)
+
+	def test_the_add_picker_can_be_searched(self):
+		"""229 candidates is too many to scroll blind."""
+		self.assertIn('id="ac-add-q"', self.html)
+		self.assertIn("renderAddList", self.js)
+		self.assertRegex(self.js, r'el\("ac-add-q"\)\.oninput\s*=\s*renderAddList')
+
+	def test_the_dates_are_date_inputs_bounded_by_the_assignment(self):
+		for node in ("ac-add-date", "ac-rel-date"):
+			with self.subTest(node=node):
+				self.assertRegex(self.html, r'<input type="date" id="%s"' % node)
+		# and bounded, so a date outside the window cannot be picked at all
+		self.assertRegex(self.js, r'el\("ac-add-date"\)\.min\s*=')
+		self.assertRegex(self.js, r'\.min\s*=\s*a\.from_date')
+
+	def test_confirm_stays_disabled_until_there_is_something_to_confirm(self):
+		for node in ("ac-add-go", "ac-rel-go"):
+			with self.subTest(node=node):
+				at = self.html.index('id="%s"' % node)
+				self.assertIn("disabled", self.html[at:at + 120])
+
+	def test_the_busy_are_shown_as_busy_rather_than_hidden(self):
+		"""With a split day allowed they are pickable, and the reader should know
+		what they are picking."""
+		self.assertIn("also on ", self.js)
+		self.assertIn("addtag", self.html)
+
+	def test_both_are_wired_at_boot(self):
+		"""Defined and never called is the easiest way to ship a dead dialog."""
+		for fn in ("wireAddModal();", "wireRelModal();"):
+			with self.subTest(fn=fn):
+				self.assertIn(fn, self.js)
+
+	def test_they_can_be_dismissed(self):
+		for node in ("ac-add-x", "ac-add-cancel", "ac-rel-x", "ac-rel-cancel"):
+			with self.subTest(node=node):
+				self.assertIn('id="%s"' % node, self.html)
