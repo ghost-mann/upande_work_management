@@ -647,6 +647,8 @@
     h+='</tbody><tfoot><tr><td class="wname">Day total</td>';
     days.forEach(function(iso){ h+='<td class="dtot" data-dtot="'+iso+'">0</td>'; });
     h+='<td class="trow" data-grand>0</td></tr></tfoot></table></div>';
+    box.innerHTML=h;
+
     // ADD A WORKER. The grid offers only this assignment's roster, so somebody
     // who worked and is not on it cannot be recorded at all -- which is the gap
     // this closes. Gated to FM / HR head / GM, and the server enforces the same

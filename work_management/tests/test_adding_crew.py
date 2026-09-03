@@ -251,3 +251,53 @@ class TestThePickerIsAPicker(unittest.TestCase):
 		for node in ("ac-add-x", "ac-add-cancel", "ac-rel-x", "ac-rel-cancel"):
 			with self.subTest(node=node):
 				self.assertIn('id="%s"' % node, self.html)
+
+
+class TestTheGridStillRendersBeforeAnythingIsAppendedToIt(unittest.TestCase):
+	"""The add bar broke the grid, and no test could have noticed.
+
+	Adding the bar meant inserting code between `box.innerHTML=h;` and the input
+	wiring that follows it -- and the edit replaced that line instead of keeping
+	it. The whole worker grid stopped rendering: `h` was built and thrown away,
+	and the bar was appended to whatever the container held from before.
+
+	Nothing caught it. No test executes this JS, `node --check` only parses, and
+	the served file was verifiably present and current -- which is exactly what I
+	checked and reported. It took someone opening the screen.
+
+	So this asserts the shape instead: the container is filled before anything is
+	appended to it, and there is exactly one place doing the filling.
+	"""
+
+	def setUp(self):
+		self.js = screen("work-actuals")
+
+	def grid_function(self):
+		at = self.js.index("ac-addbar")
+		start = self.js.rindex("function ", 0, at)
+		end = self.js.index('box.querySelectorAll("input[data-emp]")', at)
+		return self.js[start:end]
+
+	def test_the_container_is_filled(self):
+		block = self.grid_function()
+		self.assertIn("box.innerHTML=h;", block,
+			"the grid html is built and never written to the page")
+
+	def test_it_is_filled_before_the_bar_is_appended(self):
+		"""Appending first and assigning innerHTML afterwards would silently
+		wipe the bar out again."""
+		block = self.grid_function()
+		self.assertLess(block.index("box.innerHTML=h;"), block.index("box.appendChild(addbar)"))
+
+	def test_the_html_that_was_built_is_the_html_that_is_written(self):
+		"""`h` accumulates the whole table; anything else assigned here would
+		mean part of it was dropped."""
+		block = self.grid_function()
+		self.assertRegex(block, r"box\.innerHTML\s*=\s*h\s*;")
+
+	def test_the_add_bar_is_a_sibling_of_the_grid_not_inside_the_table(self):
+		"""It changes who the grid is about, which is a different kind of action
+		from typing in a cell -- and a div inside a table renders unpredictably."""
+		block = self.grid_function()
+		self.assertIn('addbar.className = "ac-addbar"', block)
+		self.assertNotRegex(block, r"h\s*\+=\s*'<div class=\"ac-addbar\"")
