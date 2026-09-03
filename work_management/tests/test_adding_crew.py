@@ -37,7 +37,7 @@ import unittest
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS = os.path.join(APP, "public", "js")
-MIRROR = "/home/austin/vscodeProjects/kaitet-work-management/server_scripts"
+from work_management.tests.mirror import SERVER_SCRIPTS as MIRROR
 
 
 def script(name):

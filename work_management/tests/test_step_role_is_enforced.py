@@ -43,7 +43,7 @@ import unittest
 
 from work_management import approvals
 
-MIRROR = "/home/austin/vscodeProjects/kaitet-work-management/server_scripts"
+from work_management.tests.mirror import SERVER_SCRIPTS as MIRROR
 
 # Every action that advances a chain, and the step it takes.
 GATED = {

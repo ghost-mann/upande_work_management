@@ -26,6 +26,7 @@ existing rows.
 import unittest
 
 from work_management import split_day
+from work_management.tests.mirror import SERVER_SCRIPTS
 
 # 12 Aug 2026 is a Wednesday, 15 Aug a Saturday, 16 Aug a Sunday.
 WED, SAT, SUN = "2026-08-12", "2026-08-15", "2026-08-16"
@@ -223,7 +224,7 @@ class TestTheMirrorMeasuresRatherThanCounts(unittest.TestCase):
 	4,810.000 either way. That is the property that made it deployable.
 	"""
 
-	MIRROR = "/home/austin/vscodeProjects/kaitet-work-management/server_scripts"
+	MIRROR = SERVER_SCRIPTS
 
 	def setUp(self):
 		import os

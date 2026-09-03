@@ -34,7 +34,7 @@ import unittest
 
 from work_management import approvals
 
-MIRROR = "/home/austin/vscodeProjects/kaitet-work-management/server_scripts"
+from work_management.tests.mirror import SERVER_SCRIPTS as MIRROR
 
 # The screens that advance a chain. wm_payment is not among them: its only step
 # is Payment: Accounts, which is required and so can never be switched off, and
