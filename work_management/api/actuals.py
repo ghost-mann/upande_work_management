@@ -315,10 +315,26 @@ def wm_actuals(**kwargs):
         a = frappe.db.get_value("Work Management Assigner", name,
             ["name","farm","block_section","task","task_kpi","from_date","to_date",
              "planned_people","planned_cost","planner_request"], as_dict=True)
+        # ANSWER, DO NOT RAISE. With no assignment -- or a name that does not exist --
+        # every `a[...]` below assigns into None and the request dies with
+        # `TypeError: 'NoneType' object does not support item assignment`: a 500
+        # where an error message belongs. Reached by passing the wrong parameter
+        # name, which is easily done since the field is `assignment` and the
+        # doctype's own is `name`.
+        if not a:
+            out["error"] = ("No such assignment: " + str(name or "(none given)") +
+                ". Pass ?assignment=<name>.")
+            # and something for the rest of this block to write into. The sandbox
+            # has no `return`, and wrapping 269 lines in a conditional to avoid one
+            # bad parameter would be a worse change than this: an empty _dict reads
+            # every field as None, the queries below filter on a parent that does
+            # not exist and come back empty, and the date-dependent parts are
+            # already guarded by `if fromd and tod`. The caller gets the error.
+            a = {}
         rate = 0
         target = 0
         uom = None
-        pr = a.planner_request if a else None
+        pr = a.get("planner_request")
         if pr:
             pinfo = frappe.db.get_value("Work Management Planner", pr,
                 ["rate","quantity","uom","daily_target","custom_close_state"], as_dict=True)
@@ -344,7 +360,7 @@ def wm_actuals(**kwargs):
         # total block area (Ha) = primary block_section + extra_blocks, summed from Warehouse.custom_area_ha
         block_area = 0
         bset = {}
-        prim_block = a.block_section
+        prim_block = a.get("block_section")
         if prim_block:
             bset[prim_block] = 1
         if pr:
@@ -402,8 +418,11 @@ def wm_actuals(**kwargs):
             ORDER BY idx
         """, (name,), as_dict=True)
         # off-days per worker within the plan period (from their Employee.holiday_list)
-        fromd = a.from_date
-        tod = a.to_date
+        # .get(), not attribute access: with no such assignment `a` is a plain {}
+        # so the error can be reported without the next 250 lines raising, and a
+        # frappe as_dict row answers .get() just the same.
+        fromd = a.get("from_date")
+        tod = a.get("to_date")
         # check Leave Application availability ONCE (avoids per-worker failures blanking the grid)
         leave_ok = 0
         try:
@@ -844,6 +863,7 @@ def wm_actuals(**kwargs):
                 day_hours = {}
                 long_days = {}
                 released_after = []
+                joined_before = []
                 cells = payload.split("|") if payload else []
                 for c in cells:
                     if not c:
@@ -906,6 +926,21 @@ def wm_actuals(**kwargs):
                     if rel_on and str(wdate) > str(rel_on[0].d):
                         released_after.append(str(emp) + " on " + str(wdate) +
                             " (released " + str(rel_on[0].d) + ")")
+                    # AND THE OTHER END. Work recorded before somebody joined is as
+                    # doubtful as work recorded after somebody left, and until crew
+                    # could be added mid-period there was nothing to check: every
+                    # start_date was the assignment's own. Warned, not refused, for
+                    # the same reason as the release end -- a clerk may be correcting
+                    # a day, and blocking that costs more than the wrong row it stops.
+                    joined_on = frappe.db.sql("""
+                        SELECT we.start_date d FROM `tabWork Assignment Employee` we
+                        WHERE we.parent = %s AND we.employee = %s
+                          AND we.start_date IS NOT NULL
+                        ORDER BY we.start_date ASC LIMIT 1
+                    """, (d.assignment, emp), as_dict=True)
+                    if joined_on and str(wdate) < str(joined_on[0].d):
+                        joined_before.append(str(emp) + " on " + str(wdate) +
+                            " (joined " + str(joined_on[0].d) + ")")
                     total_qty = total_qty + qty
                     seen_people[emp] = 1
                     if in_pay:
@@ -946,6 +981,9 @@ def wm_actuals(**kwargs):
                     out["released_warning"] = ("Work recorded for a worker already released from "
                         "this assignment: " + ", ".join(released_after[:6]) +
                         ". Recorded as typed.")
+                if joined_before:
+                    out["joined_warning"] = ("Work recorded for a worker before they joined this "
+                        "assignment: " + ", ".join(joined_before[:6]) + ". Recorded as typed.")
                 d.entry_date = frappe.utils.today()
                 # ===== HARD TARGET CAP (budget guard) =====
                 # total confirmed/in-progress qty on this plan from OTHER actuals docs + this doc must not exceed plan target

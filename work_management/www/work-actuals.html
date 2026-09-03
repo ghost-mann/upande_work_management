@@ -119,6 +119,11 @@
    retype it. It exists only where a day may be split. */
 #acp table.grid td.dcell input.hcell{width:40px;margin-top:2px;padding:2px 4px;font-size:10px;color:var(--mute);background:var(--wash)}
 #acp table.grid td.dcell input.hcell:focus{color:var(--ink);background:#fff}
+/* The add-a-worker bar sits under the grid rather than in it: it changes who the
+   grid is about, which is a different kind of action from typing in a cell. */
+#acp .ac-addbar{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);flex-wrap:wrap}
+#acp .ac-addbar .btn[disabled]{opacity:.45;cursor:not-allowed}
+#acp .ac-addnote{font-size:10.5px;color:var(--mute);line-height:1.4}
 /* clear-all-entries button in the grid header */
 #acp .gridclear{font-family:inherit;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);background:#fff;color:var(--mute);padding:4px 11px;border-radius:999px;cursor:pointer;margin-left:auto;transition:all .12s}
 #acp .gridclear:hover{background:var(--red);color:#fff;border-color:var(--red)}

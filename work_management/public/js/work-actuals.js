@@ -44,7 +44,7 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep="/api/method/"+(method||"wm_actuals");
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,act_close_confirm:1,act_close_request:1};
+    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -645,7 +645,58 @@
     h+='</tbody><tfoot><tr><td class="wname">Day total</td>';
     days.forEach(function(iso){ h+='<td class="dtot" data-dtot="'+iso+'">0</td>'; });
     h+='<td class="trow" data-grand>0</td></tr></tfoot></table></div>';
-    box.innerHTML=h;
+    // ADD A WORKER. The grid offers only this assignment's roster, so somebody
+    // who worked and is not on it cannot be recorded at all -- which is the gap
+    // this closes. Gated to FM / HR head / GM, and the server enforces the same
+    // rule; shown-but-disabled for everyone else, because a control that simply
+    // is not there teaches nobody who to ask.
+    var mayAdd = ST.roles && (ST.roles.is_farm_manager || ST.roles.is_hr_head || ST.roles.is_gm);
+    var addbar = document.createElement("div");
+    addbar.className = "ac-addbar";
+    addbar.innerHTML = locked
+      ? '<span class="ac-addnote">This entry is locked, so the crew cannot change.</span>'
+      : (mayAdd
+        ? '<button type="button" class="btn" id="ac-addcrew">+ Add a worker</button>'+
+          '<span class="ac-addnote">For somebody who worked and is not listed. Nobody has to leave to make room.</span>'
+        : '<button type="button" class="btn" disabled>+ Add a worker</button>'+
+          '<span class="ac-addnote">Only a Farm Manager, the HR head or the GM can change the crew.</span>');
+    box.appendChild(addbar);
+    var addCrewBtn = el("ac-addcrew");
+    if(addCrewBtn){
+      addCrewBtn.onclick=function(){
+        // the same candidate list the assigner's crew screen uses, so the two
+        // agree about who is eligible
+        call({action:"a_employees", farm:a.farm, from_date:a.from_date, to_date:a.to_date,
+              exclude_assignment:ST.asg}, "wm_assigner").then(function(d){
+          var pool=(d.employees||[]);
+          var onIt={};
+          (a.workers||[]).forEach(function(w){ onIt[w.employee]=1; });
+          var pick=pool.filter(function(c){
+            if(onIt[c.name]) return false;
+            // busy elsewhere is offered only where a split day is allowed
+            return d.allow_split_day ? true : !c.allocated_elsewhere;
+          });
+          if(!pick.length){ toast("No eligible worker to add"); return; }
+          var lines=pick.slice(0,40).map(function(c,i){
+            return (i+1)+". "+(c.employee_name||c.name)+" ["+c.name+"]"+
+              (c.allocated_elsewhere?" (also on "+(c.allocated_task||c.allocated_asg||"another task")+")":"");
+          }).join("\n");
+          var who=window.prompt("Add a worker to "+ST.asg+"\n\nType the worker id from the list:\n\n"+lines);
+          if(!who) return;
+          var from=window.prompt("Starting on which date?", a.from_date);
+          if(!from) return;
+          call({action:"a_add_crew", assignment:ST.asg, employees:who.trim(), start_date:from},
+               "wm_assigner").then(function(r){
+            if(r.error){ toast("Error: "+r.error); return; }
+            var notes=[];
+            if(r.cap_warning) notes.push(r.cap_warning);
+            if(r.split_warning) notes.push(r.split_warning);
+            window.alert((r.message||"Added.")+(notes.length?("\n\n\u2022 "+notes.join("\n\n\u2022 ")):""));
+            refresh(); onAsg(ST.asg);
+          }).catch(function(e){ toast("Could not add"); });
+        }).catch(function(e){ toast("Could not load the worker list"); });
+      };
+    }
 
     box.querySelectorAll("input[data-emp]").forEach(function(inp){
       inp.oninput=function(){
@@ -816,6 +867,7 @@
       var notes=[];
       if(d.long_day_warning) notes.push(d.long_day_warning);
       if(d.released_warning) notes.push(d.released_warning);
+      if(d.joined_warning) notes.push(d.joined_warning);
       if(notes.length) window.alert("Recorded, with a note:\n\n• "+notes.join("\n\n• "));
       if(d.submit_blocked){ toast(d.submit_blocked); }
       else if(ST._editingDoc){ toast("Updated "+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")); var bn=el("ac-editbanner"); if(bn){bn.style.display="none";} ST._editingDoc=null; ST._editingStage=null; }

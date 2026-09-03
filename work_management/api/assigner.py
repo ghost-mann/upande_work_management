@@ -453,6 +453,12 @@ def wm_assigner(**kwargs):
             else:
                 e["allocated_elsewhere"] = 0
         out["employees"] = emps
+        # WHETHER A BUSY WORKER MAY BE PICKED. The rows above are tagged
+        # `allocated_elsewhere` and the screen makes those non-selectable, which is
+        # right while a worker can only be on one task at a time -- and hides exactly
+        # the people the split-day switch was turned on to allow. So the screen is
+        # told, and decides.
+        out["allow_split_day"] = 1 if ALLOW_SPLIT_DAY else 0
 
     elif action == "a_my_assignments":
         out["assignments"] = frappe.db.get_all("Work Management Assigner",
@@ -913,6 +919,165 @@ def wm_assigner(**kwargs):
             if not already_map.get(emp.name) and not busy_map.get(emp.name):
                 cands.append(emp)
         out["candidates"] = cands
+
+    elif action == "a_add_crew":
+        # The third verb the crew never had. Swap needs somebody to take the
+        # leaver's place; release says they have gone. Neither says "this person
+        # worked and is not on the list", which is what a clerk finds while typing
+        # the day's quantities -- and the actuals grid offers only the assignment's
+        # own roster, so there was no way to record it at all.
+        #
+        # Mechanically this is the second half of a_substitute with the first half
+        # removed: the same eligibility checks, the same child-row insert into a
+        # submitted parent, the same recount afterwards.
+        nm = frappe.form_dict.get("assignment")
+        add_raw = frappe.form_dict.get("employees") or frappe.form_dict.get("employee") or ""
+        add_from = frappe.form_dict.get("start_date")
+        add_who = []
+        for aw in str(add_raw).split(","):
+            if aw.strip() and aw.strip() not in add_who:
+                add_who.append(aw.strip())
+        rl = frappe.get_roles(frappe.session.user)
+        add_may = any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
+            or ("System Manager" in rl)
+        for rr in rl:
+            if rr.startswith("Farm Manager"):
+                add_may = 1
+        err = None
+        if not nm or not add_who:
+            err = "The assignment and at least one worker are required"
+        elif not add_may:
+            # the screens disable the control for everybody else; this is the same
+            # rule where it counts. Release's gate lived only in the browser until
+            # today, which is not a gate.
+            err = "Only a Farm Manager, the HR head or the GM may add a worker to approved work."
+        d = None
+        if not err:
+            d = frappe.get_doc("Work Management Assigner", nm)
+            if d.workflow_state != "Assigned":
+                err = "Workers can only be added to an approved (Assigned) assignment"
+            elif not add_from:
+                add_from = d.from_date
+            if not err and str(add_from) > str(d.to_date):
+                err = ("They cannot start on " + str(add_from) + " -- this assignment ends " +
+                    str(d.to_date) + ".")
+        if not err:
+            # already here? a mistake rather than a decision, so it is refused
+            on_roster = {}
+            for r in d.employees:
+                on_roster[r.employee] = (r.status or "Active")
+            dup = []
+            for aw in add_who:
+                if aw in on_roster:
+                    dup.append(aw + " (" + on_roster[aw] + ")")
+            if dup:
+                err = ("Already on this assignment: " + ", ".join(dup[:6]) +
+                    ". Use swap to replace somebody, or release and add them again to "
+                    "restart their tally.")
+        if not err:
+            # a task worker under the CURRENT settings, or their work could never be
+            # paid through this system and recording it would be recording something
+            # nobody will settle
+            not_tw = []
+            for aw in add_who:
+                ok = frappe.db.sql("""
+                    SELECT e.name FROM `tabEmployee` e WHERE e.name = %(n)s AND """ + TW_MATCH + """
+                    LIMIT 1
+                """, {"n": aw}, as_dict=True)
+                if not ok:
+                    not_tw.append(frappe.db.get_value("Employee", aw, "employee_name") or aw)
+            if not_tw:
+                err = ("Not task workers under the current Work Management Settings, so "
+                    "their work could never be paid through this system: " +
+                    ", ".join(not_tw[:6]) + ".")
+        if err:
+            out["error"] = err
+        else:
+            # BUSY ELSEWHERE. Refused, or reported, exactly as the assign screen does
+            # -- the switch is the one place that decides whether a shared day is a
+            # fault or a plan.
+            busy = frappe.db.sql("""
+                SELECT DISTINCT we.employee emp, a.name asg
+                FROM `tabWork Assignment Employee` we
+                INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
+                WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                  AND a.name != %s
+                  AND IFNULL(we.status,'Active') = 'Active'
+                  AND a.from_date <= %s AND a.to_date >= %s
+                  AND we.employee IN %s
+            """, (nm, d.to_date, add_from, tuple(add_who)), as_dict=True)
+            busy_names = []
+            for b in busy:
+                busy_names.append((frappe.db.get_value("Employee", b.emp, "employee_name") or b.emp)
+                    + " (" + str(b.asg) + ")")
+            if busy and not ALLOW_SPLIT_DAY:
+                out["error"] = ("Already assigned elsewhere over these dates: " +
+                    ", ".join(busy_names[:6]) + ". Release them there first, or turn on "
+                    "'Allow a worker's day to be split between tasks' in Work Management Settings.")
+            else:
+                if busy:
+                    out["split_warning"] = ("Also assigned elsewhere over these dates: " +
+                        ", ".join(busy_names[:6]) + ". Their day will be split, so record the "
+                        "hours each task took on the actuals screen.")
+                maxidx = frappe.db.sql("""
+                    SELECT COALESCE(MAX(idx),0) m FROM `tabWork Assignment Employee` WHERE parent=%s
+                """, (nm,), as_dict=True)
+                next_idx = (maxidx[0].m if maxidx else 0) + 1
+                added = []
+                for aw in add_who:
+                    # the parent is submitted, so the row is inserted directly -- the
+                    # route a_substitute takes, and it needs no re-approval
+                    child = frappe.new_doc("Work Assignment Employee")
+                    child.parent = nm
+                    child.parenttype = "Work Management Assigner"
+                    child.parentfield = "employees"
+                    child.idx = next_idx
+                    child.employee = aw
+                    child.employee_name = frappe.db.get_value("Employee", aw, "employee_name")
+                    child.employment_type = frappe.db.get_value("Employee", aw, "employment_type")
+                    child.status = "Active"
+                    child.start_date = add_from
+                    child.count_in_payroll = 1
+                    child.db_insert()
+                    added.append(aw)
+                    next_idx = next_idx + 1
+                active_rows = frappe.db.sql("""
+                    SELECT COUNT(*) c FROM `tabWork Assignment Employee`
+                    WHERE parent=%s AND (status IS NULL OR status='Active')
+                """, (nm,), as_dict=True)
+                active = active_rows[0].c if active_rows else 0
+                planned = frappe.utils.cint(d.planned_people)
+                frappe.db.set_value("Work Management Assigner", nm, "assigned_count", active,
+                    update_modified=False)
+                frappe.db.set_value("Work Management Assigner", nm, "variance",
+                    active - planned, update_modified=False)
+                # THE HEAD COUNT WARNS, IT DOES NOT REFUSE.
+                #
+                # people_per_day reads like a limit and is not a spending control.
+                # The spending control is the plan's quantity, and this screen's
+                # sibling refuses to pass it -- "Exceeds plan target". Pay is
+                # quantity x rate, so total pay is capped however many people share
+                # the work: another body means the same budgeted work divided
+                # further, not more money.
+                #
+                # And 1,316 of 1,497 approved assignments sit exactly at their
+                # people_per_day, so refusing here would block this on 88% of them
+                # while protecting nothing.
+                if planned > 0 and active > planned:
+                    out["cap_warning"] = ("This assignment now has " + str(active) +
+                        " active workers and the plan budgeted " + str(planned) +
+                        " per day. Allowed -- the plan's quantity still caps what can be "
+                        "recorded and paid -- but the crew is over its planned size.")
+                frappe.db.commit()
+                out["name"] = nm
+                out["added"] = added
+                out["added_count"] = len(added)
+                out["start_date"] = str(add_from)
+                out["active_count"] = active
+                out["variance"] = active - planned
+                out["planned_people"] = planned
+                out["message"] = (str(len(added)) + " added from " + str(add_from) + ". " +
+                    str(active) + " active now (plan budgeted " + str(planned) + ").")
 
     elif action == "a_release":
         # Release workers from the crew. No replacement, which is the whole point.

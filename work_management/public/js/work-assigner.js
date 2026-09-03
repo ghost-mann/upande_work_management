@@ -32,7 +32,8 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep = "/api/method/" + (method || "wm_assigner");
-    var writes = {a_submit:1, a_fm_approve:1, a_hr_approve:1, a_gm_approve:1, a_reject:1, a_substitute:1};
+    var writes = {a_submit:1, a_fm_approve:1, a_hr_approve:1, a_gm_approve:1, a_reject:1,
+                  a_substitute:1, a_release:1, a_add_crew:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
@@ -375,6 +376,8 @@
     ST.curFarm=farm;
     call({action:"a_employees",farm:farm,from_date:pd.from_date,to_date:pd.to_date,exclude_assignment:(ST.editingAsg||"")}).then(function(d){
       ST.employees=d.employees||[];
+      ST._empAll=d.employees||[];
+      ST._empSplitOk=!!d.allow_split_day;
       ST.scanInfo=d.scan_info||{};
       // whether the project asked for today's presence -- the endpoint answers,
       // because off it does not run the reads and there is nothing to draw
@@ -441,7 +444,11 @@
     box.innerHTML=h;
     wireScanBar(box);
     box.querySelectorAll(".emrow").forEach(function(row){
-      if(row.classList.contains("busy")) return;   // non-selectable: allocated elsewhere
+      // Busy elsewhere is non-selectable only while a shared day is a fault. With
+      // the split-day switch on it is a plan, and refusing to select these rows
+      // would hide exactly the people the switch permits -- the server warns
+      // instead of refusing, so the screen should too.
+      if(row.classList.contains("busy") && !ST._empSplitOk) return;
       row.onclick=function(){
         var id=row.getAttribute("data-emp");
         if(!ST.picked[id]){
@@ -579,6 +586,8 @@
         el("o-plan").textContent=fmt(p.people_per_day);
         call({action:"a_employees",farm:p.farm}).then(function(ed){
           ST.employees=ed.employees||[];
+          ST._empAll=ed.employees||[];
+          ST._empSplitOk=!!ed.allow_split_day;
           el("a-emfilter").disabled=false;
           ST.picked={};
           (a.workers||[]).forEach(function(w){ if((w.status||"Active")==="Active") ST.picked[w.employee]=true; });
@@ -742,6 +751,17 @@
       '</div>';
     var outOpts=actives.map(function(w){ return '<option value="'+esc(w.employee)+'">'+esc(w.employee_name||w.employee)+' · '+fmt(w.days_worked)+'d, KES '+fmt(w.pay_to_date)+'</option>'; }).join("");
     var repOpts=cands.map(function(c){ return '<option value="'+esc(c.name)+'">'+esc(c.employee_name||c.name)+'</option>'; }).join("");
+    // Add offers the same candidates, plus -- where a split day is allowed --
+    // the ones already assigned elsewhere, tagged so the picker is honest about
+    // it. Hiding them would hide exactly the people the switch permits.
+    var addPool = ST._empSplitOk ? (ST._empAll || cands) : cands;
+    var onRoster = {};
+    (a.workers||[]).forEach(function(w){ onRoster[w.employee]=1; });
+    var addOpts = addPool.filter(function(c){ return !onRoster[c.name]; })
+      .map(function(c){
+        var tag = c.allocated_elsewhere ? (' \u00b7 also on '+(c.allocated_task||c.allocated_asg||'another task')) : '';
+        return '<option value="'+esc(c.name)+'">'+esc(c.employee_name||c.name)+esc(tag)+'</option>';
+      }).join("");
     var right =
       '<div class="sub-col sub-right">'+
         '<div class="sub-h">Substitute a worker</div>'+
@@ -755,6 +775,15 @@
         '<input type="date" id="sub-startdate" min="'+esc(a.from_date)+'" max="'+esc(a.to_date)+'" value="'+esc(a.from_date)+'">'+
         '<div class="sub-actions"><button class="btn" id="sub-cancel">Cancel</button><button class="btn solid" id="sub-confirm">Confirm substitution</button></div>'+
         '<div class="sub-note">The replacement inherits the remaining target and starts their tally at zero.</div>'+
+        (canRelease ? (
+          '<div class="sub-h" style="margin-top:16px">Add a worker</div>'+
+          '<div class="sub-note" style="margin-bottom:8px">For somebody who worked and is not on the list. Nobody has to leave to make room \u2014 the plan\u2019s quantity still caps what can be recorded and paid, so the crew simply shares the same budgeted work.</div>'+
+          '<label>Worker to add</label>'+
+          '<select id="add-emp"><option value="">\u2014 pick a worker \u2014</option>'+(addOpts||'')+'</select>'+
+          '<label>Starting on</label>'+
+          '<input type="date" id="add-start" min="'+esc(a.from_date)+'" max="'+esc(a.to_date)+'" value="'+esc(a.from_date)+'">'+
+          '<div class="sub-actions"><button class="btn solid" id="add-confirm">Add to crew</button></div>'
+        ) : '')+
       '</div>';
     ov.innerHTML=
       '<div class="sub-full">'+
@@ -779,6 +808,28 @@
         close(); loadMine();
       }).catch(function(e){ toast("Substitution failed"); el("sub-confirm").disabled=false; });
     };
+    // ---- add-a-worker wiring (same FM/HR/GM gate as release; the server
+    //      enforces it too, because a gate in the browser is not a gate) ----
+    var addBtn=el("add-confirm");
+    if(addBtn){
+      addBtn.onclick=function(){
+        var emp=el("add-emp").value, from=el("add-start").value;
+        if(!emp){ toast("Pick a worker to add"); return; }
+        if(!from){ toast("Pick the date they start"); return; }
+        addBtn.disabled=true;
+        call({action:"a_add_crew", assignment:a.name, employees:emp, start_date:from})
+          .then(function(r){
+            if(r.error){ toast("Error: "+r.error); addBtn.disabled=false; return; }
+            var notes=[];
+            if(r.cap_warning) notes.push(r.cap_warning);
+            if(r.split_warning) notes.push(r.split_warning);
+            if(notes.length) window.alert((r.message||"Added.")+"\n\n\u2022 "+notes.join("\n\n\u2022 "));
+            else toast(r.message||"Added to crew");
+            close(); loadMine();
+          })
+          .catch(function(e){ toast("Could not add"); addBtn.disabled=false; });
+      };
+    }
     // ---- release-workers wiring (FM/HR/GM only; controls exist only when canRelease) ----
     var relAll=el("rel-all"), relBtn=el("rel-confirm");
     if(relBtn){
