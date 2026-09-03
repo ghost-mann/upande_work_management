@@ -611,7 +611,9 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   <nav class="tabs" id="pay-tabs">
     <button data-tab="build" aria-selected="true">Pay workers</button>
     <button data-tab="accounts" aria-selected="false">Awaiting accounts <span class="cnt" id="tab-acc-cnt" style="display:none">0</span></button>
+    <button data-tab="issues" aria-selected="false">Issues <span class="cnt" id="tab-iss-cnt" style="display:none">0</span></button>
     <button data-tab="mine" aria-selected="false">History</button>
+    <button data-tab="audit" aria-selected="false">Audit</button>
     <button data-tab="insights" aria-selected="false">Insights</button>
   </nav>
 
@@ -640,7 +642,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
           <input type="date" id="pf-from-v"><span class="hint">to</span><input type="date" id="pf-to-v">
           <button type="button" class="btn sm" id="pw-apply-range">Apply</button>
         </div>
-        <div class="hint" style="margin-top:3px">Sending still creates one payment per pay week, whatever range you review.</div>
+        <div class="hint" style="margin-top:3px" id="pw-range-hint">Sending still creates one payment per pay week, whatever range you review.</div>
       </div>
       <div class="fgrp">
         <label class="fl">&nbsp;</label>
@@ -672,10 +674,76 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <div id="accounts-body"><div class="loading">Loading pending runs&hellip;</div></div>
   </div>
 
+  <!-- ═══════════ ISSUES ═══════════ -->
+  <div class="panel" id="p-issues">
+    <div class="kpis" id="iss-kpis">
+      <div class="kpi" style="--kc:var(--blue)"><div class="k">Considered</div><div class="v" id="ik-considered">&mdash;</div><div class="u">unpaid confirmed workers in range</div></div>
+      <div class="kpi" style="--kc:var(--good)"><div class="k">Clear</div><div class="v" id="ik-clear">&mdash;</div><div class="u">would pay cleanly</div></div>
+      <div class="kpi" style="--kc:#b91c1c"><div class="k">Blocked</div><div class="v" id="ik-blocked">&mdash;</div><div class="u">cannot get a payroll record</div></div>
+      <div class="kpi" style="--kc:var(--pay)"><div class="k">Blocked value</div><div class="v" id="ik-blocked-amt">&mdash;</div><div class="u">KES stuck with no payroll record</div></div>
+    </div>
+
+    <div class="filters">
+      <div class="fgrp">
+        <label class="fl" for="is-from">From</label>
+        <input type="date" id="is-from">
+      </div>
+      <div class="fgrp">
+        <label class="fl" for="is-to">To</label>
+        <input type="date" id="is-to">
+      </div>
+      <button class="btn" id="is-apply">Apply</button>
+      <button class="btn" id="is-reset" style="border-color:var(--line);color:var(--mute)">Reset</button>
+    </div>
+
+    <div class="farmchips" id="iss-farmchips"></div>
+
+    <div class="sech">Blocked payroll records <span class="hint" id="iss-paydate"></span></div>
+    <div id="issues-body"><div class="loading">Loading issues&hellip;</div></div>
+  </div>
+
   <!-- ═══════════ MY RUNS ═══════════ -->
   <div class="panel" id="p-mine">
     <div class="sech">My payment runs <span class="hint">everything you&rsquo;ve prepared</span></div>
     <div id="mine-body"><div class="loading">Loading your runs&hellip;</div></div>
+  </div>
+
+  <!-- ═══════════ AUDIT ═══════════ -->
+  <div class="panel" id="p-audit">
+    <div class="sech">Payroll audit <span class="hint">confirmed actuals reconciled against assigner &amp; payment &mdash; every task</span></div>
+
+    <div class="filters">
+      <div class="fgrp">
+        <label class="fl" for="au-from">Work done from</label>
+        <input type="date" id="au-from">
+      </div>
+      <div class="fgrp">
+        <label class="fl" for="au-to">to</label>
+        <input type="date" id="au-to">
+      </div>
+      <button class="btn" id="au-apply">Apply</button>
+      <button class="btn" id="au-reset" style="border-color:var(--line);color:var(--mute)">Reset</button>
+      <span style="flex:1"></span>
+      <div class="au-view" id="au-view" role="tablist" style="display:inline-flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden">
+        <button class="btn" id="au-v-summary" data-view="summary" style="border:0;border-radius:0;box-shadow:none">Summary</button>
+        <button class="btn" id="au-v-detail" data-view="detail" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Detail</button>
+        <button class="btn" id="au-v-workers" data-view="workers" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Workers</button>
+        <button class="btn" id="au-v-disc" data-view="disc" style="border:0;border-radius:0;border-left:1px solid var(--line);box-shadow:none">Discrepancies</button>
+      </div>
+      <button class="btn" id="au-print">Print / PDF</button>
+      <button class="btn pay" id="au-xlsx">Export Excel</button>
+    </div>
+
+    <div class="farmchips" id="au-farmchips"></div>
+
+    <div class="kpis" id="au-kpis" style="display:none">
+      <div class="kpi" style="--kc:var(--blue)"><div class="k">Tasks</div><div class="v" id="au-k-tasks">&mdash;</div><div class="u">confirmed actuals docs</div></div>
+      <div class="kpi" style="--kc:var(--pay)"><div class="k">Total pay</div><div class="v" id="au-k-pay">&mdash;</div><div class="u">KES &middot; confirmed</div></div>
+      <div class="kpi" style="--kc:var(--good)"><div class="k">Paid</div><div class="v" id="au-k-paid">&mdash;</div><div class="u">KES</div></div>
+      <div class="kpi" style="--kc:var(--warn)"><div class="k">Unpaid</div><div class="v" id="au-k-unpaid">&mdash;</div><div class="u">KES</div></div>
+    </div>
+
+    <div id="audit-body"><div class="loading">Pick a date range and press Apply&hellip;</div></div>
   </div>
 
   <!-- ═══════════ AUDIT ═══════════ -->

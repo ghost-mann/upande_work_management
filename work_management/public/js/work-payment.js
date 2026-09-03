@@ -14,7 +14,9 @@
     farms: [],          // [{farm, workers, owed}] summary across window
     activeFarms: {},    // farm -> 1 (chip filter); empty = all
     isAccounts: false,
-    accCount: 0
+    accCount: 0,
+    allowRange: false,  // whether Settings offers sending a chosen range of days
+    maxSpan: 31         // the longest range one payment may cover
   };
 
   // ── tiny helpers ──
@@ -93,7 +95,9 @@
     });
     if(name==="build")    loadPayable();
     if(name==="accounts") loadAccounts();
+    if(name==="issues")   loadIssues();
     if(name==="mine")     loadMine();
+    if(name==="audit")    initAudit();
     if(name==="insights") initInsights();
   }
 
@@ -499,7 +503,8 @@
     function step(){
       if(i>=emps.length){ done(null, agg); return; }
       var batch=emps.slice(i, i+SIZE); i+=SIZE;
-      call({ action:action, employees:batch.join(","), from_date:(win.from||""), to_date:(win.to||"") }, true)
+      call({ action:action, employees:batch.join(","), from_date:(win.from||""), to_date:(win.to||""),
+             days:(win.days||"") }, true)
         .then(function(d){
           if(d.error){ done(new Error(d.error), agg); return; }
           agg.results=agg.results.concat(d.results||[]);
@@ -519,6 +524,7 @@
     confirmModal(
       "Send "+fmt(s.all.length)+" workers to accounts",
       '<p style="margin:0 0 10px">Send <b>'+fmt(s.all.length)+' workers</b> totalling <b>'+money(s.amt)+'</b> to accounts?</p>'+
+      '<p style="margin:0 0 10px">Work is <b>'+esc(spanNote())+'</b>.</p>'+
       '<p class="note" style="margin:0">Each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Unpaid. Your user and the time are stamped on every included day-row.</p>',
       "Send all to accounts",
       function(){
@@ -551,6 +557,7 @@
     if(wkGrp) wkGrp.style.display = PW.custom ? "none" : "";
     if(el("pw-custom-grp")) el("pw-custom-grp").style.display = PW.custom ? "" : "none";
     if(el("pw-mode")) el("pw-mode").textContent = PW.custom ? "Back to pay weeks" : "Custom range";
+    pwRangeHint();
     if(PW.custom){
       // seed the range from the week on screen so nothing jumps
       if(el("pf-from-v") && !el("pf-from-v").value) el("pf-from-v").value=el("pf-from").value||"";
@@ -615,9 +622,37 @@
     pwApply(s);
   }
 
+  // How many days one payment should cover, or 0 for "group into pay weeks".
+  // Pay-week mode sends nothing and the server groups as it always has. Custom
+  // range means the operator picked the dates themselves, so the send covers
+  // exactly those dates -- but only where Settings offers ranges; otherwise the
+  // range is a review filter and sending still groups into weeks.
+  function sendSpanDays(){
+    if(!PW.custom || !ST.allowRange) return 0;
+    var r=range();
+    if(!r.from || !r.to) return 0;
+    var a=new Date(r.from+"T00:00:00"), b=new Date(r.to+"T00:00:00");
+    if(isNaN(a.getTime()) || isNaN(b.getTime())) return 0;
+    var n=Math.round((b.getTime()-a.getTime())/86400000)+1;
+    return n>0 ? n : 0;
+  }
+  function spanNote(){
+    var n=sendSpanDays();
+    if(!n) return "grouped into pay weeks — one payment per worker per completed week";
+    return "one payment per worker covering the "+n+" day"+(n>1?"s":"")+" you selected";
+  }
+  function pwRangeHint(){
+    var h=el("pw-range-hint");
+    if(!h) return;
+    h.textContent = ST.allowRange
+      ? "Sending covers exactly the range you pick, as one payment per worker (up to "+(ST.maxSpan||31)+" days)."
+      : "Sending still creates one payment per pay week, whatever range you review.";
+  }
+
   function payWindow(){
     var r=range();
-    return { from:r.from, to:r.to, refresh:function(){ loadPayable(); refreshAccountsCount(); } };
+    return { from:r.from, to:r.to, days:sendSpanDays(),
+             refresh:function(){ loadPayable(); refreshAccountsCount(); } };
   }
 
   function workerByEmp(emp){
@@ -997,6 +1032,183 @@
       "good"
     );
   }
+
+  // ════════════════════════════════════════════════
+  //  ISSUES — workers sent to accounts who got no payroll record
+  //  (the throw that used to kill a whole bulk send is now guarded server-side;
+  //  this tab is the only place that failure is visible)
+  // ════════════════════════════════════════════════
+  var ISQ = { farms:{}, data:null };
+
+  function issRange(){
+    return { from: el("is-from").value||"", to: el("is-to").value||"" };
+  }
+  function issFarmsCSV(){
+    var k=Object.keys(ISQ.farms); return k.length?k.join(","):"";
+  }
+  function seedIssuesDefaults(force){
+    // default the window to whatever the Pay workers tab is currently showing
+    if(force || !el("is-from").value) el("is-from").value = el("pf-from").value||monthStartISO();
+    if(force || !el("is-to").value)   el("is-to").value   = el("pf-to").value||todayISO();
+  }
+  function issWindow(){
+    return { from: el("is-from").value||"", to: el("is-to").value||"", refresh: function(){ loadIssues(); } };
+  }
+
+  function loadIssues(){
+    var box=el("issues-body");
+    if(!box) return;
+    var r=issRange();
+    if(!r.from || !r.to){
+      box.innerHTML='<div class="empty"><b>Pick a date range</b>Choose From and To dates, then Apply, to check for workers who were sent to accounts but got no payroll record.</div>';
+      ISQ.data=null;
+      updateIssBadge();
+      return;
+    }
+    box.innerHTML='<div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row"></div>';
+    var args={ action:"pay_issues", from_date:r.from, to_date:r.to };
+    var fc=issFarmsCSV(); if(fc) args.farms=fc;
+    call(args).then(function(d){
+      if(d.error){ box.innerHTML='<div class="err">'+esc(d.error)+'</div>'; ISQ.data=null; updateIssBadge(); return; }
+      ISQ.data=d;
+      updateIssBadge();
+      renderIssues();
+    }).catch(function(e){
+      box.innerHTML='<div class="err">Could not load issues: '+esc(e.message)+'</div>';
+    });
+  }
+
+  function issFarmList(){
+    var m={};
+    ((ISQ.data&&ISQ.data.issues)||[]).forEach(function(w){
+      var f=w.farm||"—";
+      m[f]=(m[f]||0)+1;
+    });
+    return Object.keys(m).sort().map(function(f){ return {farm:f, n:m[f]}; });
+  }
+
+  function renderIssFarmChips(){
+    var host=el("iss-farmchips"); if(!host) return;
+    var list=issFarmList();
+    if(!list.length){ host.innerHTML=""; return; }
+    var h='<div class="fchip allchip'+(Object.keys(ISQ.farms).length?"":" on")+'" data-issfarm="">All farms</div>';
+    list.forEach(function(f){
+      var on=ISQ.farms[f.farm]?" on":"";
+      h+='<div class="fchip'+on+'" data-issfarm="'+esc(f.farm)+'">'+esc(f.farm)+' <span class="fc-mini">'+fmt(f.n)+'</span></div>';
+    });
+    host.innerHTML=h;
+    host.querySelectorAll(".fchip").forEach(function(chip){
+      chip.onclick=function(){
+        var farm=chip.getAttribute("data-issfarm");
+        if(farm===""){ ISQ.farms={}; }
+        else if(ISQ.farms[farm]){ delete ISQ.farms[farm]; }
+        else { ISQ.farms[farm]=1; }
+        loadIssues();
+      };
+    });
+  }
+
+  function issStatusTag(status){
+    if(!status) return "";
+    var bad=(status!=="Active");
+    return '<span class="tag"'+(bad?' style="color:#b91c1c"':'')+'>'+esc(status)+'</span>';
+  }
+
+  // one blocked worker: everything needed to understand and fix the block —
+  // the reasons/fixes pairing is the point of this card, not a footnote
+  function issueCard(w){
+    var reasons=w.reasons||[], fixes=w.fixes||[];
+    var figs='<div class="rc-fig"><div class="rf-k">Amount</div><div class="rf-v">'+money(w.amount)+'</div></div>'+
+      '<div class="rc-fig"><div class="rf-k">Days</div><div class="rf-v">'+fmt(w.days)+'</div></div>';
+    if(w.date_of_joining) figs+='<div class="rc-fig"><div class="rf-k">Joined</div><div class="rf-v" style="font-size:13px">'+esc(dshort(w.date_of_joining))+'</div></div>';
+    if(w.relieving_date)  figs+='<div class="rc-fig"><div class="rf-k">Relieved</div><div class="rf-v" style="font-size:13px;color:#b91c1c">'+esc(dshort(w.relieving_date))+'</div></div>';
+
+    var rh='<div style="margin:0 16px 14px;border:1px solid #fde68a;background:var(--warn-wash);border-radius:12px;padding:12px 14px">'+
+      '<div style="font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--warn);font-weight:700;margin-bottom:8px">Why this worker cannot be paid</div>'+
+      '<ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px;font-size:12px">';
+    reasons.forEach(function(rs,i){
+      rh+='<li><b>'+esc(rs)+'</b>'+(fixes[i]?'<div style="color:var(--mute);font-weight:500;margin-top:2px">&rarr; '+esc(fixes[i])+'</div>':'')+'</li>';
+    });
+    if(fixes.length>reasons.length){
+      fixes.slice(reasons.length).forEach(function(fx){ rh+='<li style="color:var(--mute)">&rarr; '+esc(fx)+'</li>'; });
+    }
+    rh+='</ul></div>';
+
+    return '<div class="runcard">'+
+      '<div class="rc-head">'+
+        '<div style="flex:1"><div class="rc-title">'+esc(w.employee_name||w.employee)+'</div>'+
+        '<div class="rc-sub">'+esc(w.employee)+' &middot; '+esc(w.farm||"—")+' &middot; '+
+          esc(dshort(w.work_from))+' &rarr; '+esc(dshort(w.work_to))+'</div></div>'+
+        issStatusTag(w.status)+
+      '</div>'+
+      '<div class="rc-figs">'+figs+'</div>'+
+      rh+
+      '<div class="rc-foot">'+
+        '<button type="button" class="btn sm" data-issreview="'+esc(w.employee)+'">Review worker</button>'+
+        '<button type="button" class="btn good sm" data-recheck="'+esc(w.employee)+'" data-nm="'+esc(w.employee_name||w.employee)+'">Mark solved</button>'+
+      '</div>'+
+    '</div>';
+  }
+
+  function renderIssues(){
+    var box=el("issues-body");
+    var d=ISQ.data||{};
+    if(el("ik-considered"))  el("ik-considered").textContent=fmt(d.considered);
+    if(el("ik-clear"))       el("ik-clear").textContent=fmt(d.clear);
+    if(el("ik-blocked"))     el("ik-blocked").textContent=fmt(d.blocked);
+    if(el("ik-blocked-amt")) el("ik-blocked-amt").textContent=money(d.blocked_amount);
+    var pdEl=el("iss-paydate");
+    if(pdEl) pdEl.textContent = d.pay_date ? ("checks run against pay date "+d.pay_date) : "";
+    renderIssFarmChips();
+    var issues=d.issues||[];
+    if(!issues.length){
+      var msg = d.considered ? "Every considered worker in this window can be paid cleanly." : "No confirmed, unpaid work in this window to check.";
+      box.innerHTML='<div class="empty"><b>Nothing blocked</b>'+msg+'</div>';
+      return;
+    }
+    var h='<div class="runlist">';
+    issues.forEach(function(w){ h+=issueCard(w); });
+    h+='</div>';
+    box.innerHTML=h;
+    wireIssueRows(box);
+  }
+
+  function wireIssueRows(box){
+    box.querySelectorAll("[data-issreview]").forEach(function(b){
+      b.onclick=function(){ openWorkerReview(b.getAttribute("data-issreview"), issWindow()); };
+    });
+    box.querySelectorAll("[data-recheck]").forEach(function(b){
+      b.onclick=function(){
+        var emp=b.getAttribute("data-recheck"), nm=b.getAttribute("data-nm")||emp;
+        var payDate=(ISQ.data&&ISQ.data.pay_date)||"";
+        var old=b.textContent;
+        b.disabled=true; b.textContent="Checking…";
+        call({ action:"pay_recheck", employee:emp, pay_date:payDate }).then(function(d){
+          if(d.error){ toast(d.error,"bad"); b.disabled=false; b.textContent=old; return; }
+          if(d.clear){
+            toast(nm+" can be paid now — cleared","good");
+          } else {
+            // deliberate: the row is NOT removed here — only a full reload of the
+            // authoritative pay_issues list decides whether a worker leaves this tab
+            toast(nm+" is still blocked — "+((d.reasons||[])[0]||"see the reasons below"),"bad");
+          }
+          loadIssues();
+        }).catch(function(e){
+          toast("Could not recheck: "+e.message,"bad");
+          b.disabled=false; b.textContent=old;
+        });
+      };
+    });
+  }
+
+  function updateIssBadge(){
+    var b=el("tab-iss-cnt");
+    if(!b) return;
+    var n=(ISQ.data&&ISQ.data.blocked)||0;
+    if(n>0){ b.textContent=n; b.style.display="inline-block"; }
+    else { b.style.display="none"; }
+  }
+
 
   // ════════════════════════════════════════════════
   //  MY RUNS
@@ -2280,6 +2492,15 @@
     };
     el("pf-search").addEventListener("input", function(){ if(ST.workers.length) renderPayable({}); });
 
+    // issues tab: default range matches whatever the Pay workers tab is showing
+    seedIssuesDefaults();
+    if(el("is-apply")) el("is-apply").onclick=loadIssues;
+    if(el("is-reset")) el("is-reset").onclick=function(){
+      seedIssuesDefaults(true);
+      ISQ.farms={};
+      loadIssues();
+    };
+
     // dock
     if(el("dk-clear")) el("dk-clear").onclick=clearPicks;
     if(el("dk-create")) el("dk-create").onclick=createRun;
@@ -2291,12 +2512,16 @@
       ST.isAccounts=!!d.is_accounts;
       ST.canSend=!!d.can_send;
       el("pay-who").textContent=(d.user||"")+(d.is_accounts?" · accounts":"");
+      ST.allowRange=!!d.allow_day_range;
+      ST.maxSpan=d.max_span_days||31;
+      pwRangeHint();
       if(d.week_ends_on && d.week_ends_on!==PW.endsOn){
         PW.endsOn=d.week_ends_on;                 // re-anchor to the configured boundary
         pwApply(pwLatestCompleteStart(), false);
       }
     }).catch(function(){}).then(function(){
       refreshAccountsCount();
+      loadIssues();       // seeds the Issues tab badge even before it's opened
       showTab("build");
     });
   }
