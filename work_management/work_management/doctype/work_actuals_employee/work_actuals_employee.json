@@ -11,6 +11,7 @@
   "employee_name",
   "employment_type",
   "actual_quantity",
+  "hours",
   "count_in_payroll",
   "amount",
   "paid",
@@ -61,6 +62,13 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Actual Qty"
+  },
+  {
+   "fieldname": "hours",
+   "fieldtype": "Float",
+   "label": "Hours",
+   "precision": "2",
+   "description": "How long this worker gave this task on this date. Arrives filled with the standard hours for that date, so an ordinary day needs no typing; type the real time only when the day was shared with another task.\n\nMeasurement only \u2014 pay stays quantity \u00d7 rate, so a mistyped hour spoils a figure and never a wage. Empty reads as a full day, which is what every row recorded before this field existed means."
   },
   {
    "columns": 1,

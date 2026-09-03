@@ -23,6 +23,8 @@ def wm_assigner(**kwargs):
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
+    ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
+    STANDARD_DAY = _cfg["standard_day"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Assigner" (API, api_method=wm_assigner)
@@ -33,9 +35,6 @@ def wm_assigner(**kwargs):
     # Hours model: Mon-Fri = 8h, Sat = 6h, Sun counts as a workday = 8h.
     # (No def/return allowed at module top-level in the sandbox, so hours are computed inline
     #  wherever needed using frappe.utils.getdate(d).weekday(): Mon=0 .. Sun=6.)
-    WEEKDAY_HOURS = 8
-    SATURDAY_HOURS = 6
-    SUNDAY_HOURS = 8
 
     # WHO COUNTS AS A TASK WORKER
     # The same settings-driven test wm_payment uses, so the people this screen will
@@ -145,6 +144,20 @@ def wm_assigner(**kwargs):
     # it is what this site has always allowed -- these were four lists compiled into
     # the code, naming this company's job titles, so a farm could say who approves a
     # plan and not who may change a rate.
+
+    # May one worker's day be shared between two tasks?
+    #
+    # Off, a worker already on a live assignment over these dates cannot be put on
+    # another -- which is how this has always worked, and the guard below refuses.
+    # On, the guard says so and lets it through, and hours on the actuals rows keep
+    # the day counting once however many tasks it spanned.
+    #
+    # port_app.py strips both of these and rebuilds them from get_config(), so in
+    # the app they are whatever Work Management Settings holds. Here they are the
+    # literals, and False keeps live behaving exactly as it does today.
+
+    # How long a full day is. The denominator every man-day figure divides by.
+    # Sunday is worked on these farms, so it is a full day and not zero.
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -486,7 +499,31 @@ def wm_assigner(**kwargs):
         if planner:
             planned = frappe.utils.cint(frappe.db.get_value("Work Management Planner", planner, "people_per_day"))
         if not err and planned > 0 and len(emp_list) > planned:
-            err = "Too many workers: plan allows " + str(planned) + " per day, you selected " + str(len(emp_list)) + ". Remove " + str(len(emp_list) - planned) + "."
+            # HEAD COUNT vs PERSON-DAYS. The plan budgets people per day, and this
+            # counts heads against it -- which is exact while a worker gives a whole
+            # day to one task.
+            #
+            # Once a day can be split it stops being exact, and it cannot be made
+            # exact here: how the day divides is recorded in ACTUALS, hours by hours,
+            # long after this screen has been left. Twenty half-day workers are ten
+            # person-days and should fit a plan for ten, but nothing on this screen
+            # knows they will be half days.
+            #
+            # So with splitting on this says so and lets it through, and the real
+            # person-days comparison happens where the hours exist -- see
+            # work_management/split_day.py and the man-day figures it feeds. A guard
+            # enforcing a rule it cannot actually check is the trap this codebase
+            # has already had to undo once.
+            over_by = len(emp_list) - planned
+            if ALLOW_SPLIT_DAY:
+                out["crew_warning"] = ("Plan allows " + str(planned) + " per day and you selected " +
+                    str(len(emp_list)) + ". Allowed because a day may be split -- but only the "
+                    "hours recorded on the actuals screen will say whether " + str(len(emp_list)) +
+                    " workers really cost " + str(planned) + " person-days.")
+            else:
+                err = ("Too many workers: plan allows " + str(planned) + " per day, you selected " +
+                    str(len(emp_list)) + ". Remove " + str(over_by) + ", or turn on 'Allow a "
+                    "worker's day to be split between tasks' in Work Management Settings.")
         # DOUBLE-ALLOCATION GUARD (server enforcement): reject workers already on an overlapping live assignment
         if not err and planner and emp_list:
             p_dates = frappe.db.get_value("Work Management Planner", planner, ["from_date","to_date"], as_dict=True)
@@ -506,7 +543,20 @@ def wm_assigner(**kwargs):
                     for c in clash:
                         nm = frappe.db.get_value("Employee", c.emp, "employee_name") or c.emp
                         names.append(nm)
-                    err = "These workers are already assigned elsewhere for an overlapping period: " + ", ".join(names[:8]) + (" and more" if len(names) > 8 else "") + ". Remove them to avoid double-allocation."
+                    clash_who = ", ".join(names[:8]) + (" and more" if len(names) > 8 else "")
+                    if ALLOW_SPLIT_DAY:
+                        # Allowed, and still said. A worker on two assignments is
+                        # usually a mistake; a split day is deliberate, and only the
+                        # person doing it can tell the two apart. The hours typed on
+                        # each actuals row are what keep the day counting once.
+                        out["split_warning"] = ("Already assigned elsewhere over these dates: " +
+                            clash_who + ". Their day will be split, so record the hours each "
+                            "task took on the actuals screen.")
+                        out["split_workers"] = names
+                    else:
+                        err = ("These workers are already assigned elsewhere for an overlapping period: " +
+                            clash_who + ". Remove them to avoid double-allocation, or turn on "
+                            "'Allow a worker's day to be split between tasks' in Work Management Settings.")
         # ── TIME & ATTENDANCE GATE (server enforcement; toggles in Work Management
         # Settings): a worker on approved leave, marked Absent inside the window, or
         # off for the WHOLE window needs an explicit, logged override. ──
@@ -866,6 +916,80 @@ def wm_assigner(**kwargs):
             if not already_map.get(emp.name) and not busy_map.get(emp.name):
                 cands.append(emp)
         out["candidates"] = cands
+
+    elif action == "a_release":
+        # Release ONE worker from the crew. No replacement, which is the whole point.
+        #
+        # Two ways to do this existed and neither fits. a_substitute below releases
+        # somebody only by naming who takes their place -- "Both the left date and
+        # the replacement start date are required" -- and closing the plan releases
+        # the entire crew at once. Neither says "this one has moved on, nobody is
+        # replacing them".
+        #
+        # Nothing recorded is touched. Their actuals rows, quantities and pay stay
+        # exactly as they are, and every busy/overlap check already reads a 'Left'
+        # row as free, so they can be put on another task straight away. That is the
+        # same treatment closing a plan gives, and it is why this is a small change.
+        nm = frappe.form_dict.get("assignment")
+        leaving = frappe.form_dict.get("employee")
+        left_date = frappe.form_dict.get("left_date") or frappe.utils.today()
+        err = None
+        if not nm or not leaving:
+            err = "The assignment and the worker to release are both required"
+        d = None
+        if not err:
+            d = frappe.get_doc("Work Management Assigner", nm)
+            if d.workflow_state != "Assigned":
+                err = "A worker can only be released from an approved (Assigned) assignment"
+        if not err:
+            rel_row = None
+            for r in d.employees:
+                if r.employee == leaving and (r.status or "Active") == "Active":
+                    rel_row = r.name
+            if not rel_row:
+                err = "That worker is not on this assignment, or has already been released"
+        if err:
+            out["error"] = err
+        else:
+            # the parent is submitted, so child rows and parent counts are written
+            # directly -- the same route a_substitute takes, and no re-approval
+            frappe.db.set_value("Work Assignment Employee", rel_row, "status", "Left",
+                update_modified=False)
+            frappe.db.set_value("Work Assignment Employee", rel_row, "left_date", left_date,
+                update_modified=False)
+            # assigned_count counts ACTIVE rows, so releasing without a replacement
+            # moves it -- unlike a substitution, where one leaves as one joins
+            active_rows = frappe.db.sql("""
+                SELECT COUNT(*) c FROM `tabWork Assignment Employee`
+                WHERE parent=%s AND (status IS NULL OR status='Active')
+            """, (nm,), as_dict=True)
+            active = active_rows[0].c if active_rows else 0
+            planned = frappe.utils.cint(d.planned_people)
+            frappe.db.set_value("Work Management Assigner", nm, "assigned_count", active,
+                update_modified=False)
+            frappe.db.set_value("Work Management Assigner", nm, "variance", active - planned,
+                update_modified=False)
+            # what they already did here, so the screen can say the work was kept
+            # rather than leaving somebody to wonder
+            kept = frappe.db.sql("""
+                SELECT COUNT(*) n, COALESCE(SUM(we.actual_quantity),0) q,
+                       COALESCE(SUM(we.amount),0) c
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE ac.assignment = %s AND we.employee = %s
+            """, (nm, leaving), as_dict=True)
+            frappe.db.commit()
+            out["name"] = nm
+            out["released"] = leaving
+            out["left_date"] = str(left_date)
+            out["active_count"] = active
+            out["variance"] = active - planned
+            out["kept_rows"] = frappe.utils.cint(kept[0].n) if kept else 0
+            out["kept_qty"] = frappe.utils.flt(kept[0].q) if kept else 0
+            out["kept_amount"] = frappe.utils.flt(kept[0].c, 2) if kept else 0
+            out["message"] = ("Released on " + str(left_date) + ". " +
+                str(out["kept_rows"]) + " day-row(s) already recorded here are kept, worth KES " +
+                frappe.utils.fmt_money(out["kept_amount"]) + ". They are now free for another task.")
 
     elif action == "a_substitute":
         # one-for-one: outgoing -> Left(+left_date); replacement appended Active(+start_date)

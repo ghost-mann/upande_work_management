@@ -16,3 +16,4 @@ work_management.patches.v1_0.drop_dead_consultant_controls
 # not matter -- none of them writes permissions.
 work_management.patches.v1_0.repair_submit_without_write
 work_management.patches.v1_0.show_task_subjects_in_links
+work_management.patches.v1_0.backfill_actuals_hours

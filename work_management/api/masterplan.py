@@ -23,6 +23,8 @@ def wm_masterplan(**kwargs):
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
+    ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
+    STANDARD_DAY = _cfg["standard_day"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Master Plan" (API, api_method=wm_masterplan)

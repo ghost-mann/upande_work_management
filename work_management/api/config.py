@@ -11,7 +11,7 @@ Kaitet's own values are applied by work_management.seed.kaitet on that site alon
 
 import frappe
 
-from work_management import approvals, capabilities, taxonomy
+from work_management import approvals, capabilities, split_day, taxonomy
 
 # Warehouse name fragments that are stores rather than places work happens.
 # Generic enough to be a useful starting point anywhere; override in Settings.
@@ -239,6 +239,13 @@ def get_config():
 		# site says otherwise, so approving a second overlapping plan is refused
 		# exactly as it always has been.
 		"allow_concurrent_master_plans": False,
+		# May one worker's day be shared between two tasks? Off unless a site says
+		# so, and with it off the double-allocation guard refuses exactly as it
+		# always has -- no figure on any existing site moves.
+		"allow_split_day": False,
+		# How long a full day is. The denominator every man-day figure divides by;
+		# see work_management/split_day.py, which is unit-tested.
+		"standard_day": dict(split_day.STANDARD_DAY),
 	}
 
 	try:
@@ -249,6 +256,31 @@ def get_config():
 	# `settings.get(...)` rather than an attribute: a Settings doc saved before
 	# this field existed has no such key, and an attribute would raise.
 	cfg["allow_concurrent_master_plans"] = bool(settings.get("allow_concurrent_master_plans"))
+	cfg["allow_split_day"] = bool(settings.get("allow_split_day"))
+	# HOW LONG A DAY IS, read defensively, because zero is what an unset field
+	# actually holds here.
+	#
+	# A `default` on a doctype field applies to a NEW document. Work Management
+	# Settings is a Single that already exists on every site, so adding these
+	# three fields wrote `'0'` into tabSingles for all of them -- not null, not 8.
+	# Read literally, that says a working day is zero hours long, and it made
+	# every man-day figure zero and the backfill write zero hours onto all 7,605
+	# rows on kaitet.local. Both were the same bug.
+	#
+	# So a Monday or a Saturday of zero hours is read as "nothing said" and falls
+	# back to the shipped figure: no site means it, and the cost of believing it
+	# is every labour figure silently becoming zero. Sunday IS allowed to be
+	# zero, because "we do not work Sundays" is a real thing to say and
+	# split_day.man_days() contributes nothing for such a day rather than
+	# dividing by it.
+	for weekday, field in (("weekday", "std_hours_weekday"),
+			("saturday", "std_hours_saturday")):
+		hours = settings.get(field)
+		if hours not in (None, "") and float(hours) > 0:
+			cfg["standard_day"][weekday] = float(hours)
+	sunday = settings.get("std_hours_sunday")
+	if sunday not in (None, ""):
+		cfg["standard_day"]["sunday"] = float(sunday)
 	if settings.get("default_company"):
 		cfg["default_company"] = settings.default_company
 	if settings.get("block_exclude"):

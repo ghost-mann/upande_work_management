@@ -60,6 +60,12 @@
   "master_plan_post_approval_editors",
   "sb_master_plan",
   "allow_concurrent_master_plans",
+  "sb_split_day",
+  "allow_split_day",
+  "std_hours_weekday",
+  "std_hours_saturday",
+  "column_break_split",
+  "std_hours_sunday",
   "tab_rates",
   "sb_rates",
   "current_daily_wage",
@@ -335,6 +341,47 @@
    "default": "0",
    "label": "Allow more than one approved master plan per Farm at a time",
    "description": "Off: a farm holds one approved budget for any given day, and approving a second plan whose period overlaps is refused. On: a farm may run two budgets over the same days \u2014 separate streams of work, each with its own ceiling.\n\nRaising an overlapping plan has always been allowed and is reported when it happens; this governs approval. Nothing is bypassed silently: the approver is still told which plan overlaps, because raising the same plan twice by mistake looks identical to raising a deliberate second one.\n\nEach request already records the plan it draws down, so the planner asks which budget when two cover the dates rather than guessing. Off by default \u2014 a site that has always run one budget per period keeps doing so."
+  },
+  {
+   "fieldname": "sb_split_day",
+   "fieldtype": "Section Break",
+   "label": "A worker's day",
+   "description": "How long a full day is, and whether one worker's day may be shared between two tasks. The hours are the denominator every man-day figure divides by, and the default is what this code has always assumed."
+  },
+  {
+   "fieldname": "allow_split_day",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Allow a worker's day to be split between tasks",
+   "description": "Off: a worker already on a live assignment over these dates cannot be put on another one, which is how it has always worked.\n\nOn: they can. Release them from one task's crew \u2014 their recorded work and pay stay exactly as they are \u2014 and assign them to another, recording work against both on the same day. Hours are then typed on each row, so the day counts once however many tasks it spanned.\n\nOff by default: with it off no figure on any site changes."
+  },
+  {
+   "fieldname": "std_hours_weekday",
+   "fieldtype": "Float",
+   "default": "8",
+   "precision": "2",
+   "label": "Standard hours, Monday to Friday",
+   "description": "What a full weekday is. Man-days divide by this, so a worker who gave four of eight hours is half a man-day."
+  },
+  {
+   "fieldname": "std_hours_saturday",
+   "fieldtype": "Float",
+   "default": "6",
+   "precision": "2",
+   "label": "Standard hours, Saturday",
+   "description": "Six by default. A full six-hour Saturday is a whole man-day, not three quarters of one."
+  },
+  {
+   "fieldname": "column_break_split",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "std_hours_sunday",
+   "fieldtype": "Float",
+   "default": "8",
+   "precision": "2",
+   "label": "Standard hours, Sunday",
+   "description": "Sunday is worked on these farms, so it is a full day by default. Set it to zero for a site that does not work Sundays \u2014 a zero day contributes no man-days rather than dividing by nothing."
   },
   {
    "fieldname": "tab_rates",

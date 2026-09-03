@@ -23,6 +23,8 @@ def wm_planner(**kwargs):
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
+    ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
+    STANDARD_DAY = _cfg["standard_day"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Planner" (API, api_method=wm_planner)
@@ -33,9 +35,15 @@ def wm_planner(**kwargs):
     # Hours model: Mon-Fri = 8h, Sat = 6h, Sun counts as a workday = 8h.
     # (No def/return allowed at module top-level in the sandbox, so hours are computed inline
     #  wherever needed using frappe.utils.getdate(d).weekday(): Mon=0 .. Sun=6.)
-    WEEKDAY_HOURS = 8
-    SATURDAY_HOURS = 6
-    SUNDAY_HOURS = 8
+    # How long a full day is, and the denominator every man-day figure divides by.
+    # Sunday is worked on these farms, so it is a full day and not zero -- a zero
+    # would divide by nothing on every Sunday row.
+    #
+    # This was three loose constants, declared in five scripts and read in one. It is
+    # one value now because port_app.py strips it and rebuilds it from get_config(),
+    # so a site that works a six-hour Friday can say so in Work Management Settings
+    # instead of it being compiled in. Mirrors work_management/split_day.py, which is
+    # unit-tested; keep the two in step.
 
     # WHO MAY DECIDE A PLAN. Approving and rejecting were gated only by the desk
     # workflow and by what the pending list chose to show -- the endpoint itself
@@ -564,9 +572,11 @@ def wm_planner(**kwargs):
                 while cursor <= endd and guard < 400:
                     wdi = cursor.weekday()  # Mon=0 .. Sun=6
                     if wdi == 5:
-                        th = th + SATURDAY_HOURS
+                        th = th + frappe.utils.flt(STANDARD_DAY.get("saturday"))
+                    elif wdi == 6:
+                        th = th + frappe.utils.flt(STANDARD_DAY.get("sunday"))
                     else:
-                        th = th + WEEKDAY_HOURS
+                        th = th + frappe.utils.flt(STANDARD_DAY.get("weekday"))
                     cursor = frappe.utils.add_days(cursor, 1)
                     guard = guard + 1
                 # man-days are the labour the QUANTITY represents: quantity / daily target.

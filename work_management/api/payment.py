@@ -23,6 +23,8 @@ def wm_payment(**kwargs):
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
+    ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
+    STANDARD_DAY = _cfg["standard_day"]
 
     # ==================================================================
     # Master plan attribution: none. Every period_from/period_to in this script is
@@ -38,9 +40,15 @@ def wm_payment(**kwargs):
     # Hours model: Mon-Fri = 8h, Sat = 6h, Sun counts as a workday = 8h.
     # (No def/return allowed at module top-level in the sandbox, so hours are computed inline
     #  wherever needed using frappe.utils.getdate(d).weekday(): Mon=0 .. Sun=6.)
-    WEEKDAY_HOURS = 8
-    SATURDAY_HOURS = 6
-    SUNDAY_HOURS = 8
+    # How long a full day is, and the denominator every man-day figure divides by.
+    # Sunday is worked on these farms, so it is a full day and not zero -- a zero
+    # would divide by nothing on every Sunday row.
+    #
+    # This was three loose constants, declared in five scripts and read in one. It is
+    # one value now because port_app.py strips it and rebuilds it from get_config(),
+    # so a site that works a six-hour Friday can say so in Work Management Settings
+    # instead of it being compiled in. Mirrors work_management/split_day.py, which is
+    # unit-tested; keep the two in step.
 
     # WHO THIS SYSTEM PAYS
     # Task work only. Permanent, Contract and Temporary staff are salaried and paid

@@ -23,6 +23,8 @@ def wm_dashboard(**kwargs):
     STAGE_STATES = _cfg["stage_states"]
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
+    ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
+    STANDARD_DAY = _cfg["standard_day"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Dashboard" (API, api_method=wm_dashboard)
@@ -33,9 +35,15 @@ def wm_dashboard(**kwargs):
     # Hours model: Mon-Fri = 8h, Sat = 6h, Sun counts as a workday = 8h.
     # (No def/return allowed at module top-level in the sandbox, so hours are computed inline
     #  wherever needed using frappe.utils.getdate(d).weekday(): Mon=0 .. Sun=6.)
-    WEEKDAY_HOURS = 8
-    SATURDAY_HOURS = 6
-    SUNDAY_HOURS = 8
+    # How long a full day is, and the denominator every man-day figure divides by.
+    # Sunday is worked on these farms, so it is a full day and not zero -- a zero
+    # would divide by nothing on every Sunday row.
+    #
+    # This was three loose constants, declared in five scripts and read in one. It is
+    # one value now because port_app.py strips it and rebuilds it from get_config(),
+    # so a site that works a six-hour Friday can say so in Work Management Settings
+    # instead of it being compiled in. Mirrors work_management/split_day.py, which is
+    # unit-tested; keep the two in step.
 
     # `IN %s` with an empty tuple is a SQL syntax error, not an empty result. A site
     # with no farms configured yet -- every site, the day the app is installed --
@@ -2777,17 +2785,37 @@ def wm_dashboard(**kwargs):
         fifrom = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -30))
         fito = frappe.form_dict.get("to_date") or str(frappe.utils.today())
         # confirmed man-days + pay per plan in the window
+        # MAN-DAYS ARE MEASURED NOW, NOT COUNTED.
+        #
+        # This was COUNT(DISTINCT CONCAT(we.employee, '|', we.work_date)), which is
+        # exact while a worker gives a whole day to one task, and wrong the moment
+        # they can give it to two -- the same worker on two assignments for one date
+        # counted as two man-days, so efficiency read as half what it was.
+        #
+        # Hours over the standard hours for that date instead. A null reads as a full
+        # day, which is what every row written before the field existed means, so
+        # historical figures come out exactly as they did. DAYOFWEEK is 1=Sunday ..
+        # 7=Saturday in MariaDB, and NULLIF keeps a site that says a day is zero
+        # hours long from dividing by nothing.
         plan_rows = frappe.db.sql("""
             SELECT a2.planner_request pr, ac.farm farm,
-                   COUNT(DISTINCT CONCAT(we.employee, '|', we.work_date)) mandays,
+                   COALESCE(SUM(
+                     COALESCE(we.hours, CASE DAYOFWEEK(we.work_date)
+                        WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END)
+                     / NULLIF(CASE DAYOFWEEK(we.work_date)
+                        WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END, 0)
+                   ), 0) mandays,
                    COALESCE(SUM(we.amount), 0) pay
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
             WHERE ac.workflow_state = 'CONFIRMED'
-              AND we.work_date BETWEEN %s AND %s AND we.actual_quantity > 0
+              AND we.work_date BETWEEN %(f)s AND %(t)s AND we.actual_quantity > 0
             GROUP BY a2.planner_request, ac.farm
-        """, (fifrom, fito), as_dict=True)
+        """, {"f": fifrom, "t": fito,
+              "wk": frappe.utils.flt(STANDARD_DAY.get("weekday")),
+              "sat": frappe.utils.flt(STANDARD_DAY.get("saturday")),
+              "sun": frappe.utils.flt(STANDARD_DAY.get("sunday"))}, as_dict=True)
         prs = [r.pr for r in plan_rows if r.pr]
         plan_info = {}
         plan_blocks = {}
