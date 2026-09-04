@@ -254,6 +254,19 @@ def wm_actuals(**kwargs):
             GROUP BY assignment
         """, as_dict=True):
             inreview[r.assignment] = r.n
+        # WORK THIS CALLER HAS ALREADY STARTED IS NOT CLUTTER.
+        #
+        # Read before the filter runs, because both the drop below and the cap below
+        # that would otherwise take it away. Draft and Rejected only -- the two states
+        # the screen draws an "Edit" link for; a CONFIRMED entry is finished and has no
+        # business back in the picker.
+        mine = {}
+        for r in frappe.db.sql("""
+            SELECT DISTINCT assignment FROM `tabWork Management Actuals`
+            WHERE entered_by = %s AND workflow_state IN ('Draft','Rejected')
+              AND IFNULL(assignment,'') != ''
+        """, (frappe.session.user,), as_dict=True):
+            mine[r.assignment] = 1
         rows = []
         for a in asgs:
             pr = a.planner_request
@@ -276,9 +289,30 @@ def wm_actuals(**kwargs):
                 continue
             # PENDING-ONLY: hide assignments whose plan target is already fully met (reduce clutter).
             # Keep those with remaining work, and those with no target set (target==0) so they aren't lost.
-            if a["fulfilled_done"]:
+            #
+            # ...and keep the caller's own unfinished entries, whatever the total says.
+            # `recorded` is confirmed PLUS pending, and pending counts Draft -- so a
+            # clerk who enters a draft meeting the target trips this test with their own
+            # unfinished work, and the assignment leaves the picker taking the draft with
+            # it. On kaitet-group that was 16 of the 19 stranded drafts: the target was
+            # met only by counting the very entry that could no longer be reached.
+            # Hiding a finished assignment is clutter control; hiding somebody's
+            # unfinished work is not, so the test has to ask whose work it is.
+            if a["fulfilled_done"] and not mine.get(a.name):
                 continue
             rows.append(a)
+        # The caller's own, first, so the cap falls on rows nobody has touched. Raising
+        # 200 to 500 would only move where the cliff falls; a cap may shorten a list, it
+        # may not decide what somebody is allowed to finish.
+        if mine:
+            pinned = []
+            others = []
+            for a in rows:
+                if mine.get(a.name):
+                    pinned.append(a)
+                else:
+                    others.append(a)
+            rows = pinned + others
         # NOW the cap, on assignments that survived the trim rather than on the fetch
         if len(rows) > SHOWN:
             rows = rows[:SHOWN]

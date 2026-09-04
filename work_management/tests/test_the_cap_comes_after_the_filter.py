@@ -158,5 +158,89 @@ class TestTheCapStillExists(TestTheMirrorIsCheckedOut):
 				self.assertLess(block.index("rows.append("), block.index("rows[:SHOWN]"))
 
 
+class TestTheCapCannotHideYourOwnWork(TestTheMirrorIsCheckedOut):
+	"""A cap may shorten the list. It may not decide what somebody can finish.
+
+	Moving the cap off the fetch fixed the arithmetic and left the shape: 1,497
+	Assigned assignments, 200 offered, 1,297 not. Sitting in that remainder on
+	kaitet-group were 19 draft actuals belonging to six clerks -- 18 of them cut
+	purely by the cap, at ranks 238 to 1,474. Their entries were intact and
+	unreachable from the picker, which from a clerk's chair is the same complaint
+	as before, for a different reason. Raising 200 to 500 would only move where
+	the cliff falls.
+
+	So the caller's own unfinished work is pinned ahead of the cap. It is the one
+	class of row where "not shown" is never merely clutter: somebody typed it,
+	means to come back to it, and has no other way in from this screen. Draft and
+	Rejected only -- the two states work-actuals.js draws an "Edit" link for.
+
+	This does not touch the two drops above it. An approver who closed a plan
+	early meant it, and a plan already fully recorded is genuinely done; both stay
+	dropped, and a draft stranded on one is reachable from My actuals -> Edit,
+	which goes straight to the assignment by name.
+	"""
+
+	BLOCK = ("wm_actuals", 'elif action == "act_assigned":')
+
+	def block(self):
+		script, opens = self.BLOCK
+		return block_of(source(script), opens)
+
+	def test_it_asks_which_assignments_this_caller_has_started(self):
+		block = self.block()
+		self.assertIn("entered_by", block,
+			"act_assigned never asks which rows are the caller's own")
+		self.assertIn("frappe.session.user", block,
+			"act_assigned asks about entered_by but not about who is asking")
+
+	def test_only_the_resumable_states_are_pinned(self):
+		"""Pinning a CONFIRMED entry would put finished work back in the picker."""
+		block = self.block()
+		guard = block[block.index("entered_by"):]
+		self.assertIn("'Draft'", guard)
+		self.assertIn("'Rejected'", guard)
+		self.assertNotIn("'CONFIRMED'", guard[:guard.index("rows[:SHOWN]")])
+
+	def test_the_pinning_happens_before_the_cap(self):
+		"""After the drops, before the slice -- otherwise it pins nothing."""
+		block = self.block()
+		self.assertLess(block.index("entered_by"), block.index("rows[:SHOWN]"),
+			"the caller's own rows are identified after the cap has already cut them")
+
+	def test_the_cap_is_still_applied_afterwards(self):
+		"""Pinning must not become a way to render every row."""
+		block = self.block()
+		self.assertIn("rows[:SHOWN]", block)
+		self.assertLess(block.index("entered_by"), block.index("rows[:SHOWN]"))
+
+	def test_your_own_draft_does_not_hide_its_own_assignment(self):
+		"""The drop that actually stranded people, and the subtler half of this.
+
+		`recorded` is confirmed PLUS pending, and pending counts Draft. So a clerk
+		who enters a draft meeting the plan target trips `fulfilled_done` with their
+		own unfinished entry, and the assignment leaves the picker -- taking the
+		draft with it. 16 of the 19 stranded drafts on kaitet-group were this, not
+		the cap; the plan target was met only by counting the very draft that could
+		no longer be reached.
+
+		Hiding a fully-recorded assignment is clutter control. An assignment the
+		caller has unfinished work on is not clutter, so the drop has to ask whose
+		work it is.
+		"""
+		block = self.block()
+		guard = re.search(r'if a\["fulfilled_done"\][^\n]*', block)
+		self.assertIsNotNone(guard, "the fulfilled-done drop has gone")
+		self.assertIn("mine", guard.group(0),
+			"the fulfilled-done drop discards the caller's own unfinished work: "
+			+ guard.group(0).strip())
+
+	def test_the_caller_is_known_before_the_rows_are_filtered(self):
+		"""Pinning after the drop would rescue only the capped ones -- which is
+		exactly the half-fix this test exists to stop coming back."""
+		block = self.block()
+		self.assertLess(block.index("entered_by"), block.index('if a["fulfilled_done"]'),
+			"the caller's own rows are identified after the drop has already cut them")
+
+
 if __name__ == "__main__":
 	unittest.main()
