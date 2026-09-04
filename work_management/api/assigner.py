@@ -497,6 +497,21 @@ def wm_assigner(**kwargs):
                 if ev and ev not in emp_list:
                     emp_list.append(ev)
         if not emp_list: err = "Assign at least one employee"
+        # Submitting crosses a workflow transition; saving a draft does not, and stays
+        # open to whoever may enter the crew. The step's own configured role gates it
+        # and System Manager bypasses -- may_take_step()'s rule, which every approve
+        # action already applies.
+        #
+        # Nothing enforced this before. The write below moves the state with
+        # db.set_value(), which no validator sees, under a comment saying it exists to
+        # get around the workflow's own transition-role gate. That gate was the only
+        # thing checking who this person was, so going around it left the step open to
+        # anybody who could reach the endpoint. Refuse here, in words, instead.
+        if not err and submit_now and not (STAGE_ROLE["assigner_submit"] in MY_ROLES
+                                           or "System Manager" in MY_ROLES):
+            err = ("Only " + str(STAGE_ROLE["assigner_submit"]) + " can submit an "
+                   "assignment for approval. Save it as a draft, or ask somebody "
+                   "holding that role to submit it.")
         # HARD CAP: active assigned workers may not exceed the plan's people_per_day
         planned = 0
         if planner:
@@ -713,7 +728,11 @@ def wm_assigner(**kwargs):
             d.variance = active - frappe.utils.cint(d.planned_people)
             d.save(ignore_permissions=True)
             if submit_now and not editing_pending:
-                # bypass workflow engine transition-role gate
+                # written directly rather than through save(): the workflow's own
+                # transition-role gate would refuse the enterer here, and it is the
+                # wrong place to refuse from -- it names neither the role required nor
+                # theirs. Who may take this step is checked above, before anything was
+                # written, against STAGE_ROLE["assigner_submit"].
                 frappe.db.set_value("Work Management Assigner", d.name, "workflow_state", STAGE_NEXT["assigner_submit"], update_modified=False)
                 d.workflow_state = STAGE_NEXT["assigner_submit"]
             # audit trail: an attendance override is always logged on the document

@@ -619,6 +619,28 @@ def wm_actuals(**kwargs):
         submit_now = frappe.form_dict.get("submit_now")
         err = None
         if not assignment: err = "Assignment is required"
+        # Submitting crosses a workflow transition; recording the work does not, and
+        # stays open to whoever enters it. The step's own configured role gates the
+        # submit and System Manager bypasses -- may_take_step()'s rule, which every
+        # approve action already applies.
+        #
+        # Nothing enforced this before. The write below moves the state with
+        # db.set_value(), under a comment saying it exists to get around the workflow's
+        # transition-role gate because "the enterer doesn't hold" those roles, and that
+        # "access is gated by the completion check above". A completion check gates the
+        # document, never the person -- so the step was open to anybody who could reach
+        # the endpoint.
+        #
+        # Refused as submit_blocked rather than as an error, which is what this screen
+        # already does when the target is not complete: the grid is a worker-by-day
+        # entry that must not be thrown away because the person who typed it may not be
+        # the one to submit it. The actuals land as a Draft and the toast says why.
+        if submit_now and not (STAGE_ROLE["actuals_submit"] in MY_ROLES
+                               or "System Manager" in MY_ROLES):
+            submit_now = 0
+            out["submit_blocked"] = ("Saved as a draft: only " + str(STAGE_ROLE["actuals_submit"]) +
+                                     " can submit actuals for approval. Ask somebody holding "
+                                     "that role to submit it.")
         if err:
             out["error"] = err
         else:
@@ -1077,9 +1099,11 @@ def wm_actuals(**kwargs):
                         d.workflow_state = "Draft"
                         d.save(ignore_permissions=True)
                     if submit_now and completed and not editing_pending:
-                        # bypass the workflow engine (save() enforces transition roles the
-                        # enterer doesn't hold) — write the state directly. Access is gated by
-                        # the completion check above.
+                        # written directly rather than through save(): the workflow's own
+                        # transition-role gate would refuse from the bottom of the stack,
+                        # naming neither the role required nor the enterer's. Who may take
+                        # this step is checked at the top of this action, against
+                        # STAGE_ROLE["actuals_submit"], before any of this was written.
                         frappe.db.set_value("Work Management Actuals", d.name, "workflow_state", STAGE_NEXT["actuals_submit"], update_modified=False)
                         d.workflow_state = STAGE_NEXT["actuals_submit"]
                     elif submit_now and not completed and not editing_pending:

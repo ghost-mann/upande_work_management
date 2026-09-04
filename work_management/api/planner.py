@@ -428,6 +428,26 @@ def wm_planner(**kwargs):
         if not task: err = "Task is required"
         if qty <= 0: err = "Quantity must be greater than zero"
         if not from_date or not to_date: err = "Date range is required"
+        # Submitting crosses a workflow transition; saving a draft does not, and
+        # stays open to whoever may raise the plan. The step's own configured role
+        # gates it and System Manager bypasses -- may_take_step()'s rule, which
+        # every approve action already applies.
+        #
+        # The refusal happened without this, but at the bottom of the stack: the
+        # write below moves the plan by assigning workflow_state and saving, and
+        # Frappe validates that against the generated workflow. ignore_permissions
+        # does not reach that check -- only flags.ignore_validate would -- so a
+        # section head without the role got
+        #
+        #     Workflow State transition not allowed from Draft to Pending Approval
+        #
+        # which names neither the role required nor their own, arriving as a 417
+        # with a traceback. Refuse here instead, in words, before anything is written.
+        if not err and submit_now and not (STAGE_ROLE["planner_submit"] in MY_ROLES
+                                           or "System Manager" in MY_ROLES):
+            err = ("Only " + str(STAGE_ROLE["planner_submit"]) + " can submit a plan "
+                   "for approval. Save it as a draft, or ask somebody holding that "
+                   "role to submit it.")
         if err:
             out["error"] = err
         else:

@@ -186,5 +186,116 @@ class TestTheMirrorHasWhatItNeeds(unittest.TestCase):
 					self.assertIn('"role"', entry)
 
 
+class TestTheSubmitStepIsGated(unittest.TestCase):
+	"""The step that moves a draft into the chain is a step, and needs the same gate.
+
+	Found on kaitet-group when a section head could not submit a plan. The planner
+	moves it by assigning `workflow_state` and calling `save()`, and Frappe validates
+	that against the generated workflow -- `ignore_permissions` does not reach that
+	check, only `flags.ignore_validate` would. So the role WAS enforced, by the
+	framework, at the bottom of the stack, as:
+
+	    WorkflowPermissionError: Workflow State transition not allowed from
+	    Draft to Pending Approval
+
+	which names neither the role required nor the person's own, and arrives as a 417
+	with a traceback.
+
+	The other two screens had already met this and gone the other way -- around it.
+	Both write the state with `frappe.db.set_value()`, which no validator sees, under
+	comments saying so outright:
+
+	    assigner   # bypass workflow engine transition-role gate
+	    actuals    # bypass the workflow engine (save() enforces transition roles
+	               # the enterer doesn't hold) -- write the state directly.
+	               # Access is gated by the completion check above.
+
+	A completion check gates the *document*, never the *person*: that is the same
+	confusion TestEveryApproveActionChecksIt was written about. So the framework
+	enforced the role noisily on one screen and not at all on two, and no screen
+	enforced it in words.
+
+	The gate refuses the submit, never the recording. Saving a draft crosses no
+	transition and stays open to whoever may enter the work.
+
+	Master plan is deliberately absent. Its submit IS gated -- by the
+	`edit_master_plan` capability -- so it needs a decision about which check should
+	govern, not a missing one added.
+	"""
+
+	APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+	# module, its submit action, and the step that action takes
+	SUBMITS = [
+		("planner", "submit", "planner_submit"),
+		("assigner", "a_submit", "assigner_submit"),
+		("actuals", "act_submit", "actuals_submit"),
+	]
+
+	def body(self, module, action):
+		"""The source of one module's submit branch, up to the next branch."""
+		with open(os.path.join(self.APP, "api", module + ".py")) as handle:
+			text = handle.read()
+		start = text.index('elif action == "%s":' % action)
+		following = re.search(r"\n    elif action == ", text[start + 1:])
+		return text[start:start + 1 + following.start()] if following else text[start:]
+
+	def test_it_checks_the_configured_role(self):
+		for module, action, key in self.SUBMITS:
+			with self.subTest(action=action):
+				self.assertIn('STAGE_ROLE["%s"]' % key, self.body(module, action),
+					"%s never reads its step's role" % action)
+
+	def test_it_compares_against_the_callers_own_roles(self):
+		for module, action, _key in self.SUBMITS:
+			with self.subTest(action=action):
+				self.assertIn("MY_ROLES", self.body(module, action),
+					"%s never reads the caller's roles" % action)
+
+	def test_it_checks_its_own_step(self):
+		"""A copy-paste naming the neighbouring step would gate the wrong people
+		and would look right -- the trap TestEveryApproveActionChecksIt names."""
+		for module, action, key in self.SUBMITS:
+			others = [k for _m, _a, k in self.SUBMITS if k != key]
+			body = self.body(module, action)
+			for other in others:
+				with self.subTest(action=action, other=other):
+					self.assertNotIn('STAGE_ROLE["%s"]' % other, body)
+
+	def test_the_refusal_names_the_role_required(self):
+		"""A dead end says no. A self-diagnosing refusal says who may.
+
+		Twice, then: once to decide, once to say so.
+		"""
+		for module, action, key in self.SUBMITS:
+			with self.subTest(action=action):
+				self.assertGreaterEqual(self.body(module, action).count('STAGE_ROLE["%s"]' % key), 2,
+					"%s tests the role but does not name it in the refusal" % action)
+
+	def test_only_submitting_is_gated_not_saving_a_draft(self):
+		for module, action, key in self.SUBMITS:
+			body = self.body(module, action)
+			condition = body[:body.index('STAGE_ROLE["%s"]' % key)].rsplit("if ", 1)[1]
+			with self.subTest(action=action):
+				self.assertIn("submit_now", condition,
+					"%s gates more than submitting: %s" % (action, condition.strip()))
+
+	def test_the_check_comes_before_the_state_moves(self):
+		for module, action, key in self.SUBMITS:
+			body = self.body(module, action)
+			with self.subTest(action=action):
+				self.assertLess(body.index('STAGE_ROLE["%s"]' % key),
+					body.index('STAGE_NEXT["%s"]' % key),
+					"%s moves the state before checking who may" % action)
+
+	def test_neither_bypass_comment_survives(self):
+		"""The two screens wrote their way around the framework's gate and said so.
+		With a gate of their own the comments are not just stale, they are wrong."""
+		for module, action, _key in self.SUBMITS:
+			with self.subTest(action=action):
+				self.assertNotIn("bypass workflow engine", self.body(module, action))
+				self.assertNotIn("bypass the workflow engine", self.body(module, action))
+
+
 if __name__ == "__main__":
 	unittest.main()
