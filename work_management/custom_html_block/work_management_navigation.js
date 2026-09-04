@@ -36,6 +36,28 @@
     if (!ok) tile.classList.add('uwmn-hide');
   });
 
+  // AND HIDE A DESK TILE THIS USER CANNOT OPEN.
+  // The /app tiles all shipped as data-roles="", so every reader was offered ten
+  // links into the desk -- and the roles this app's own approval chain runs on
+  // (Farm Manager, General Manager, HOD HR, Production Section Head, HR Clerk)
+  // hold no read permission on any of those doctypes. A farm manager clicking
+  // "Plan requests" got Frappe's bare "Not permitted", which reads as the whole
+  // module being shut to them rather than as one dead link. The web screens beside
+  // them were always open: they query with raw SQL precisely so a reader without
+  // doctype read still gets their work.
+  //
+  // Frappe's boot payload lists what this user may read, so the tile can ask.
+  // Without that list we hide nothing: a tile that refuses on click is a smaller
+  // failure than a navigation page that empties itself.
+  var canRead = (window.frappe && frappe.boot && frappe.boot.user
+    && frappe.boot.user.can_read) || null;
+  if (canRead && canRead.length) {
+    root_element.querySelectorAll('.uwmn-tile[data-doctype]').forEach(function (tile) {
+      var dt = tile.getAttribute('data-doctype');
+      if (dt && canRead.indexOf(dt) < 0) tile.classList.add('uwmn-hide');
+    });
+  }
+
   // Live counts on the record tiles, so the page reports workload rather than
   // just offering links. Deliberately additive: a count that cannot be read —
   // no permission, missing doctype, offline — simply never appears, and the
