@@ -36,25 +36,44 @@
     if (!ok) tile.classList.add('uwmn-hide');
   });
 
-  // AND HIDE A DESK TILE THIS USER CANNOT OPEN.
+  // AND LOCK A DESK TILE THIS USER CANNOT OPEN.
   // The /app tiles all shipped as data-roles="", so every reader was offered ten
-  // links into the desk -- and the roles this app's own approval chain runs on
-  // (Farm Manager, General Manager, HOD HR, Production Section Head, HR Clerk)
-  // hold no read permission on any of those doctypes. A farm manager clicking
-  // "Plan requests" got Frappe's bare "Not permitted", which reads as the whole
-  // module being shut to them rather than as one dead link. The web screens beside
-  // them were always open: they query with raw SQL precisely so a reader without
-  // doctype read still gets their work.
+  // links into the desk whether or not they could read the doctype behind them.
+  // A farm manager clicking "Plan requests" got Frappe's bare "Not permitted",
+  // which reads as the whole module being shut to them rather than as one dead
+  // link -- and that is how it was reported.
   //
-  // Frappe's boot payload lists what this user may read, so the tile can ask.
-  // Without that list we hide nothing: a tile that refuses on click is a smaller
-  // failure than a navigation page that empties itself.
+  // Locked, not hidden. A tile that simply is not there teaches nobody that a
+  // permission is missing, which is the same reason the actuals crew bar shows
+  // its button disabled rather than removing it. Hiding it would also bury the
+  // next lost permission: today the desk at least says "Not permitted".
+  //
+  // The permission that decides this is not the one this app ships. A site that
+  // has ever opened the Role Permissions Manager for a doctype gets a
+  // `Custom DocPerm` set, and that REPLACES the doctype's own permissions --
+  // the shipped JSON is then read by nobody. So the tile asks what the reader
+  // may actually read, which Frappe puts in the boot payload.
+  //
+  // Fails OPEN: no payload means lock nothing. A tile that refuses on click is a
+  // smaller failure than a navigation page that locks itself.
   var canRead = (window.frappe && frappe.boot && frappe.boot.user
     && frappe.boot.user.can_read) || null;
   if (canRead && canRead.length) {
     root_element.querySelectorAll('.uwmn-tile[data-doctype]').forEach(function (tile) {
       var dt = tile.getAttribute('data-doctype');
-      if (dt && canRead.indexOf(dt) < 0) tile.classList.add('uwmn-hide');
+      if (!dt || canRead.indexOf(dt) >= 0) return;
+      tile.classList.add('uwmn-locked');
+      tile.removeAttribute('href');          // not a link any more
+      tile.setAttribute('aria-disabled', 'true');
+      tile.setAttribute('title', 'You do not have permission to open ' + dt);
+      tile.addEventListener('click', function (ev) { ev.preventDefault(); });
+      var tx = tile.querySelector('.uwmn-tx');
+      if (tx && !tx.querySelector('.uwmn-lock')) {
+        var note = document.createElement('span');
+        note.className = 'uwmn-lock';
+        note.textContent = 'No permission \u2014 ask an administrator';
+        tx.appendChild(note);
+      }
     });
   }
 

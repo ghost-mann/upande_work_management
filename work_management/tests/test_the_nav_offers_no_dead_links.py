@@ -15,10 +15,16 @@ having lost Farm Manager on the Planner. So the tile cannot be gated on a role
 named here -- only on what the reader may actually read, which Frappe puts in
 the boot payload.
 
-Hence: every /app tile names its doctype, the script hides one the reader cannot
-read, and it fails OPEN -- no boot payload means hide nothing, because a tile
-that refuses on click is a smaller failure than a navigation page that empties
-itself.
+Hence: every /app tile names its doctype, and one the reader cannot read is
+LOCKED rather than removed -- greyed, unclickable, and captioned with who to
+ask. Hiding it was the first attempt and it was wrong twice over: a tile that is
+simply not there teaches nobody that a permission is missing (the same reason
+the actuals crew bar disables its button instead of dropping it), and it would
+bury the next lost permission, where today the desk at least says "Not
+permitted".
+
+It fails OPEN -- no boot payload means lock nothing, because a tile that refuses
+on click is a smaller failure than a navigation page that locks itself.
 """
 
 import os
@@ -61,23 +67,41 @@ class TestEveryDeskTileNamesItsDoctype(unittest.TestCase):
 		self.assertEqual(wrong, [], "web tiles must not be gated: " + ", ".join(wrong))
 
 
-class TestTheScriptGatesOnWhatCanBeRead(unittest.TestCase):
+class TestTheScriptLocksWhatCannotBeRead(unittest.TestCase):
 	def setUp(self):
 		self.js = read("js")
+		self.css = read("css")
+		self.gate = self.js[self.js.index("var canRead"):]
 
 	def test_it_reads_the_boot_payload(self):
 		self.assertIn("frappe.boot.user", self.js)
 		self.assertIn("can_read", self.js)
 
-	def test_it_hides_a_tile_naming_an_unreadable_doctype(self):
-		self.assertIn("[data-doctype]", self.js)
-		self.assertIn("uwmn-hide", self.js)
+	def test_it_locks_the_tile_rather_than_hiding_it(self):
+		self.assertIn("uwmn-locked", self.gate)
+		self.assertNotIn("uwmn-hide", self.gate,
+			"a tile the reader cannot open must stay visible, not disappear")
+
+	def test_the_locked_tile_cannot_be_clicked(self):
+		self.assertIn("removeAttribute('href')", self.gate)
+		self.assertIn("preventDefault", self.gate)
+		self.assertIn("aria-disabled", self.gate)
+
+	def test_it_says_who_to_ask(self):
+		self.assertIn("uwmn-lock", self.gate)
+		self.assertIn("ask an administrator", self.gate)
+
+	def test_the_locked_style_exists_and_is_visible(self):
+		"""Greyed and inert -- but display must not be none."""
+		rule = self.css[self.css.index(".uwmn-tile.uwmn-locked"):][:220]
+		self.assertIn("opacity", rule)
+		self.assertIn("not-allowed", rule)
+		self.assertNotIn("display:none", rule)
 
 	def test_it_fails_open_when_the_payload_is_absent(self):
-		"""No list -> hide nothing. A guard that hides everything on a missing
-		global is how a navigation page turns into a blank one."""
-		gate = self.js[self.js.index("var canRead"):][:500]
-		self.assertRegex(gate, r"if\s*\(canRead\s*&&\s*canRead\.length\)",
+		"""No list -> lock nothing. A guard that locks everything on a missing
+		global is how a navigation page turns into a wall."""
+		self.assertRegex(self.gate[:400], r"if\s*\(canRead\s*&&\s*canRead\.length\)",
 			"the gate must run only when the payload actually arrived")
 
 	def test_the_role_gate_still_exists_for_settings(self):
