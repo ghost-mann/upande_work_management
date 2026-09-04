@@ -74,7 +74,12 @@ class TestPageScriptInjection(unittest.TestCase):
 			[ln for ln in code if "window.frappe" in ln],
 			"the page still defers script injection until window.frappe appears",
 		)
-		self.assertIn("/assets/work_management/js/work-management-dashboard.js", html)
+		# The path itself moved into the controller, so a deploy can bust the
+		# year-long immutable cache nginx puts on /assets. What this test is about
+		# is unchanged: the tag is injected, and not behind a wait for the global.
+		self.assertIn('s.src = "{{ screen_js }}";', html)
+		ctl = read(os.path.join(WWW, "work_management.py"))
+		self.assertIn("work-management-dashboard.js", ctl)
 
 
 if __name__ == "__main__":

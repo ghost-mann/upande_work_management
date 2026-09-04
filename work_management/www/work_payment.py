@@ -1,6 +1,7 @@
 import frappe
 
 from work_management.api.config import get_config
+from work_management.assets import screen_js
 
 
 def get_context(context):
@@ -16,4 +17,8 @@ def get_context(context):
 	# Printed and exported audit documents are headed with this.
 	context.org_name = config.get("default_company") or ""
 	context.taxonomy = config.get("taxonomy") or {}
+	# Cache-busted: /assets is served immutable for a year from a URL that
+	# never changed, so every deploy left readers on the old script.
+	context.screen_js = screen_js('work-payment.js')
+
 	return context
