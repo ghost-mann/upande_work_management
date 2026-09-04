@@ -171,3 +171,85 @@ class TestTheServerSideStillServesIt(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestTheMapIsInHandBeforeAnythingRenders(unittest.TestCase):
+	"""Having taskName() everywhere is worth nothing if TASK_NAMES is still empty
+	when the first list is drawn.
+
+	All four screens fired the task_names call and never waited for it:
+
+	    call({action:"task_names"}, "wm_dashboard").then(...)   // not joined
+	    call({action:"a_roles"}).then(function(roles){ initAssign(); ... })
+
+	Two independent requests, no ordering between them, and nothing re-renders
+	when the slower one lands. Which arrived first decided whether a row read
+	"Coffee picking" or "TASK-2026-00155" -- so the screens looked correct on a
+	local bench, where the answer is small and instant, and wrong on the deployed
+	site, where the Task table is larger and the map is a bigger payload. It was
+	reported as the naming fix simply not working.
+
+	The map is now joined to the call the first render already waits on. The
+	screen must still open if task_names fails or drags: the call is caught, so
+	a failure resolves rather than rejects, and the wait is capped.
+	"""
+
+	# planner folds it into the Promise.all it already had; the other three take
+	# a named promise and hang the first render off it.
+	JOINED = {
+		"work-planner": 'call({action:"task_names"}, "wm_dashboard")',
+		"work-assigner": "var names = taskNamesReady();",
+		"work-actuals": "var names = taskNamesReady();",
+		"work-payment": "var names = taskNamesReady();",
+	}
+
+	def screen(self, name):
+		with open(os.path.join(JS, name + ".js")) as handle:
+			return handle.read()
+
+	def test_no_screen_fires_the_call_and_walks_away(self):
+		"""The old shape: the call, then a sibling call that renders, unjoined."""
+		for name in self.JOINED:
+			with self.subTest(screen=name):
+				src = self.screen(name)
+				self.assertIn(self.JOINED[name], src)
+
+	def test_the_planner_waits_on_it_with_its_other_two(self):
+		src = self.screen("work-planner")
+		block = src[src.index("Promise.all([ call({action:\"meta\"})"):][:400]
+		self.assertIn("task_names", block,
+			"the planner's first render must wait on the map, not race it")
+
+	def test_the_other_three_hang_their_first_render_off_the_map(self):
+		"""Waiting takes two shapes here: the assigner and actuals return
+		names.then(render) out of their roles handler; payment returns the
+		promise itself into the next link of its chain. Either is a wait; what
+		must not happen is the render running with the promise ignored."""
+		for name, first in (("work-assigner", "initAssign();"),
+				("work-actuals", "initEnter(); buildTabs();"),
+				("work-payment", 'showTab("build");')):
+			with self.subTest(screen=name):
+				src = self.screen(name)
+				after = src[src.index("var names = taskNamesReady();"):]
+				render = after.index(first)
+				waits = [w for w in ("names.then(", "return names;")
+					if w in after[:render]]
+				self.assertTrue(waits,
+					name + " builds the map promise and renders without waiting on it")
+
+	def test_a_failed_or_slow_map_still_opens_the_screen(self):
+		for name in ("work-assigner", "work-actuals", "work-payment"):
+			with self.subTest(screen=name):
+				src = self.screen(name)
+				helper = src[src.index("function taskNamesReady()"):][:600]
+				self.assertIn(".catch(function(){})", helper,
+					name + ": a failing task_names must resolve, not reject")
+				self.assertIn("Promise.race", helper,
+					name + ": a slow task_names must be abandoned, not waited on forever")
+				self.assertIn("TASK_NAMES_WAIT", helper)
+
+	def test_the_planners_call_is_still_caught(self):
+		src = self.screen("work-planner")
+		block = src[src.index("Promise.all([ call({action:\"meta\"})"):][:400]
+		self.assertIn(".catch(function(){})", block,
+			"a failing task_names must not take the planner's boot down with it")

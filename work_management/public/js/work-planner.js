@@ -2100,13 +2100,16 @@
   }
 
   function boot(){
-    // task_names rides along with the two the screen already makes, and resolves
-    // to {} on failure: unreadable task names are a nuisance, a planner that will
-    // not open is not. taskName() falls back to the docname either way.
-    call({action:"task_names"}, "wm_dashboard").then(function(d){
-      TASK_NAMES=(d && d.task_names) || {};
-    }).catch(function(){});
-    Promise.all([ call({action:"meta"}), call({action:"roles"}) ]).then(function(res){
+    // task_names joins the two the screen already makes rather than racing them.
+    // It used to be fired alongside and never waited for, so whether a row read
+    // its task's name or its docname came down to which of the two independent
+    // answers landed first -- undefined, and free to differ between one site and
+    // the next. Caught, so a failure resolves and the planner still opens;
+    // taskName() falls back to the docname either way.
+    Promise.all([ call({action:"meta"}), call({action:"roles"}),
+        call({action:"task_names"}, "wm_dashboard").then(function(d){
+          TASK_NAMES=(d && d.task_names) || {};
+        }).catch(function(){}) ]).then(function(res){
       var meta=res[0], roles=res[1];
       ST.roles=roles;
       el("wp-who").textContent=(roles.user||"")+(roles.is_approver?" · Approver":"");

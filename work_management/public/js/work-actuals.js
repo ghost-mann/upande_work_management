@@ -1337,16 +1337,34 @@
     }).catch(function(e){ toast("Action failed"); });
   }
 
-  function boot(){
-    // task_names rides alongside and resolves to {} on failure: unreadable task
-    // names are a nuisance, an actuals screen that will not open is not.
-    call({action:"task_names"}, "wm_dashboard").then(function(d){
-      TASK_NAMES=(d && d.task_names) || {};
+  // WAIT FOR THE MAP BEFORE THE FIRST RENDER.
+  // Every list on this screen prints its task through taskName(), and nothing
+  // re-renders when a later answer arrives. The map used to be fetched by a call
+  // nobody joined, so whether a row read "Coffee picking" or "TASK-2026-00155"
+  // came down to which of two independent requests landed first -- undefined,
+  // and free to differ between a local bench and a deployed site, or between two
+  // loads of the same page. Joined now, not raced.
+  //
+  // It still cannot stop the screen opening, which is what the old comment here
+  // was protecting: the call is caught, so a failure resolves instead of
+  // rejecting, and an answer slower than the cap is abandoned. taskName() falls
+  // back to the docname in both cases.
+  var TASK_NAMES_WAIT = 4000;
+  function taskNamesReady(){
+    var got = call({action:"task_names"}, "wm_dashboard").then(function(d){
+      TASK_NAMES = (d && d.task_names) || {};
     }).catch(function(){});
+    return Promise.race([got, new Promise(function(done){
+      setTimeout(done, TASK_NAMES_WAIT);
+    })]);
+  }
+
+  function boot(){
+    var names = taskNamesReady();
     call({action:"a_roles"}).then(function(roles){
       ST.roles=roles;
       el("ac-who").textContent=(roles.user||"")+(roles.is_hr_head?" · HR Head":"");
-      initEnter(); buildTabs();
+      return names.then(function(){ initEnter(); buildTabs(); });
     }).catch(function(e){ el("ac-who").textContent="Could not load."; });
   }
   // No window.frappe check before booting -- see the note in work-planner.js. csrf()
