@@ -392,13 +392,18 @@
     var box=el("a-empicker");
     var si=ST.scanInfo||{};
     var list=ST.employees.filter(function(e){
-      if(ST.onlyIn && !e.present_today) return false;
+      if(ST.onlyIn && ST.showToday && !e.present_today) return false;
       if(!q) return true;
       return ((e.employee_name||"")+" "+(e.designation||"")+" "+(e.name||"")).toLowerCase().indexOf(q)>=0;
     });
     var h="";
     // ── PRESENCE BAR: today's live scans, shown whatever the work window ──
-    h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line,#e5e5e5);border-radius:10px;background:rgba(10,122,67,.05);font-size:11.5px">'+
+    // ...but only when the endpoint actually read them. With the setting off it
+    // runs none of the three presence queries, so present_count is 0 because
+    // nothing was counted, not because nobody came in. Printing "P 0 of 79
+    // scanned in" then states as measured a thing never measured, and the
+    // "Only workers who are in" filter beside it hides everybody.
+    if(ST.showToday) h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line,#e5e5e5);border-radius:10px;background:rgba(10,122,67,.05);font-size:11.5px">'+
       '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' '+esc(ST.curFarm||"")+' workers scanned in / marked present today'+
       (si.checked && si.gate_on && !si.cutoff_passed ? ' <span style="color:#a06000">· scan check starts at '+esc((si.cutoff||"09:00").slice(0,5))+'</span>' : '')+
       ' <span style="color:#8a8780">· key: <b style="color:#0a7a43">P · time</b> in &nbsp;<b style="color:#b91c1c">A</b> absent &nbsp;<b>?</b> no record yet</span>'+
@@ -476,7 +481,13 @@
     if(e.att_absent_days>0) aw.push("marked Absent "+e.att_absent_days+" day"+(e.att_absent_days>1?"s":"")+(e.att_absent_span?" ("+e.att_absent_span+")":"")+" in this window");
     if(e.att_all_off) aw.push(e.att_off_reason||"off-day conflict in this window");
     var si=ST.scanInfo||{};
-    if(si.checked && si.gate_on && si.cutoff_passed && !e.present_today && !e.is_night){
+    // ST.showToday first: with the presence setting off the endpoint looks nothing
+    // up, so present_today is 0 for everybody and means "not asked", not "not here".
+    // Without this the screen red-flags every worker on site and puts a confirm()
+    // on each row click -- which is what it did to 79 Vale workers who had all
+    // scanned in before 07:00. The other three reasons above come from the
+    // att_block_* settings and are unaffected.
+    if(ST.showToday && si.checked && si.gate_on && si.cutoff_passed && !e.present_today && !e.is_night){
       aw.push("not seen on site today (no scan or Present attendance yet)");
     }
     return aw;

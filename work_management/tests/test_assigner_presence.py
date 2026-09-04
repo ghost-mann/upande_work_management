@@ -92,6 +92,64 @@ class TestTheScreenRespectsIt(unittest.TestCase):
 			self.assertIn(kept, src, kept)
 
 	def test_the_blocking_warnings_are_not_affected(self):
-		"""attReasons() comes from att_block_absent / leave / off -- separate
-		settings, separately useful, and not what this switch governs."""
+		"""Three of attReasons()' four reasons come from att_block_absent / leave /
+		off -- separate settings, separately useful, and not what this switch
+		governs. The fourth is not one of them: see TestTheSwitchIsNotLeaked."""
 		self.assertIn("attReasons", screen())
+
+
+class TestTheSwitchIsNotLeaked(unittest.TestCase):
+	"""Off must read as "not asked", never as "nobody is here".
+
+	Found on kaitet-group. The switch was off, so the endpoint ran none of the
+	three presence reads and every worker came back with `present_today = 0` --
+	correct, and meaning only that nothing was looked up. Three places on the
+	screen then reported that emptiness as fact:
+
+	    the presence bar     "P 0 of 79 Vale workers scanned in / marked present
+	                         today", a measurement that was never taken
+	    attReasons()         a red "NOT SEEN ON SITE TODAY" on all 79, and a
+	                         confirm() on every single row click
+	    the "Only in" filter  which hides everybody
+
+	The chip was guarded (`if(!ST.showToday)`) and these were not, so the screen
+	suppressed the honest "? today" and kept the alarming version of the same
+	non-fact. On the day this was found all 79 had scanned in between 05:59 and
+	06:59, and `tabEmployee Checkin` held 1,588 rows for 1,447 employees. Nobody
+	could staff a plan.
+
+	The data was never the problem, and neither was the gate -- a_submit reads
+	Employee Checkin directly, so a submitted assignment would have passed. Only
+	the screen was wrong, and only because a switch meaning "do not look" was
+	rendered as "looked, found nobody".
+	"""
+
+	def att_reasons(self):
+		src = screen()
+		start = src.index("function attReasons(")
+		return src[start:start + src[start:].index("\n  function ")]
+
+	def render_head(self):
+		"""The presence bar itself, from its own comment down to the first row."""
+		src = screen()
+		start = src.index("PRESENCE BAR")
+		return src[start:start + src[start:].index("if(!list.length)")]
+
+	def only_in_filter(self):
+		src = screen()
+		start = src.index("if(ST.onlyIn")
+		return src[start:src.index("\n", start)]
+
+	def test_the_not_seen_warning_is_behind_the_switch(self):
+		"""The one that blocks work: it puts a confirm() on every row click."""
+		self.assertIn("showToday", self.att_reasons(),
+			"attReasons() reports 'not seen on site' without checking whether "
+			"presence was read at all")
+
+	def test_the_presence_bar_is_behind_the_switch(self):
+		self.assertIn("showToday", self.render_head(),
+			"the presence bar prints a count that was never measured")
+
+	def test_the_only_in_filter_is_behind_the_switch(self):
+		self.assertIn("showToday", self.only_in_filter(),
+			"'Only workers who are in' hides everybody when presence is not read")
