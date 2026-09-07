@@ -364,5 +364,62 @@ class TestTheConsultantStepIsRoleBased(unittest.TestCase):
 			"the consultant role is read before STAGE_ROLE has been populated")
 
 
+class TestAnAdministratorIsShownEveryStage(unittest.TestCase):
+	"""`is_hr_head` is the one of these flags that System Manager cannot satisfy.
+
+	The screens ask the endpoint who the caller is and draw the approval tabs from
+	the answer. Four of the five flags let an administrator through:
+
+	    is_clerk        ("System Manager" in rl) or enter_work roles
+	    is_accounts     ("System Manager" in rl) or handle_payments roles
+	    is_hr_head      HR_HEAD_ROLES only            <-- no bypass
+	    is_gm           "General Manager" only        <-- no bypass
+
+	So on kaitet-group an administrator holding System Manager, HR Manager and
+	General Manager could not see the HR Head tab in actuals, and there was
+	nothing on screen to say why: the answer was that `HR_HEAD_ROLES` resolves to
+	`HOD HR` alone and he did not hold it. Meanwhile the *action* behind that tab,
+	`act_hr_approve`, does accept System Manager -- so the endpoint permitted the
+	step and the screen hid the way to reach it.
+
+	A System Manager already passes every approve gate in these modules. Hiding a
+	tab from them reports a permission that is not actually withheld, which is the
+	same class of thing as the assigner reporting an unread presence as an absence.
+
+	`is_gm` has the identical gap and is deliberately left alone here: the GM step
+	is a real separation and widening it is a decision, not a consistency fix.
+	"""
+
+	APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	MODULES = ("assigner", "actuals")
+
+	def line(self, module, flag):
+		with open(os.path.join(self.APP, "api", module + ".py")) as handle:
+			for line in handle:
+				if 'out["%s"]' % flag in line:
+					return line
+		return ""
+
+	def test_the_hr_head_flag_lets_a_system_manager_through(self):
+		for module in self.MODULES:
+			with self.subTest(module=module):
+				self.assertIn("System Manager", self.line(module, "is_hr_head"),
+					"%s hides the HR Head stage from an administrator who may take it: %s"
+					% (module, self.line(module, "is_hr_head").strip()))
+
+	def test_it_still_asks_the_configured_hr_head_roles(self):
+		"""Widened, not replaced -- the configured role is still what grants it."""
+		for module in self.MODULES:
+			with self.subTest(module=module):
+				self.assertIn("HR_HEAD_ROLES", self.line(module, "is_hr_head"))
+
+	def test_its_neighbours_are_unchanged(self):
+		"""is_clerk and is_accounts already had the bypass; this must not disturb them."""
+		for module in self.MODULES:
+			for flag in ("is_clerk", "is_accounts"):
+				with self.subTest(module=module, flag=flag):
+					self.assertIn("System Manager", self.line(module, flag))
+
+
 if __name__ == "__main__":
 	unittest.main()
