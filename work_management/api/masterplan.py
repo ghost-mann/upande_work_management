@@ -162,6 +162,23 @@ def wm_masterplan(**kwargs):
     if (STAGE_ROLE.get("masterplan_gm") in mp_roles) or ("System Manager" in mp_roles):
         CAN_GM = 1
 
+    # ...and the consultant step is a step like any other, so whoever the chain names
+    # for it may take it. It was the one step that asked a list of email addresses
+    # instead of a role: `consultant_users` in Settings, plus System Manager. Its Role
+    # column reached the generated desk workflow and the screen not at all, so the HR
+    # head could be named for the step, see the role on the workflow, and still be
+    # refused here -- which is what happened on kaitet-group. Naming individuals also
+    # does not survive people leaving, which is what roles are for.
+    #
+    # The list stays: it is how a consultant who holds no role at all is named, and it
+    # is what this site runs on today. This widens the question, it does not replace
+    # it. Resolved in this block rather than at IS_CONSULTANT above for the same
+    # reason CAN_GM is -- STAGE_ROLE is built here, and is empty before it.
+    # A step with no role configured refuses everybody, which `.get()` returning None
+    # gives for free -- no role is ever None. Same shape as CAN_GM above, deliberately.
+    if STAGE_ROLE.get("masterplan_consultant") in mp_roles:
+        IS_CONSULTANT = 1
+
     # The caller's roles, read once. Each step's configured Role gates that step --
     # see may_take_step() in approvals.py, whose rule this mirrors: the step's own
     # role, or System Manager as the unstick-the-pipeline bypass. General Manager is

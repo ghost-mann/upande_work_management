@@ -297,5 +297,72 @@ class TestTheSubmitStepIsGated(unittest.TestCase):
 				self.assertNotIn("bypass the workflow engine", self.body(module, action))
 
 
+class TestTheConsultantStepIsRoleBased(unittest.TestCase):
+	"""The master plan's consultant step is a step, so its configured Role gates it.
+
+	Every other step in the chain asks Settings who may take it. This one asked a
+	comma-separated list of email addresses in `Work Management Settings.
+	consultant_users`, plus System Manager:
+
+	    IS_CONSULTANT = 1 if (MP_LISTED_CONSULTANT or "System Manager" in mp_roles)
+
+	So the one step whose Role column reached the generated desk workflow and
+	nothing else. On kaitet-group that meant the HR head could be named for the
+	step in Settings, see the role on the workflow, and still be refused by the
+	screen -- because the screen never asked. Naming individuals also does not
+	survive people leaving, which is the thing roles exist to fix.
+
+	The list stays. It is how a consultant who holds no role at all is named, and
+	it is what the site is configured with today; this widens the question rather
+	than replacing it. `STAGE_ROLE` is read in the same block that builds it --
+	the same reason CAN_GM is resolved there and not at its declaration.
+	"""
+
+	APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	ROLE = 'STAGE_ROLE'
+	KEY = 'masterplan_consultant'
+
+	def src(self):
+		with open(os.path.join(self.APP, "api", "masterplan.py")) as handle:
+			return handle.read()
+
+	def grant(self):
+		"""The line that grants consultant rights from the configured role."""
+		for line in self.src().splitlines():
+			if self.KEY in line and self.ROLE in line and "STAGE_STATE" not in line \
+					and "STAGE_NEXT" not in line and "STAGE_ON" not in line:
+				return line
+		return ""
+
+	def test_the_configured_consultant_role_is_honoured(self):
+		self.assertTrue(self.grant(),
+			"masterplan.py never reads STAGE_ROLE for the consultant step, so the "
+			"Role column on that step gates nothing on the screen")
+
+	def test_it_is_compared_against_the_callers_roles(self):
+		self.assertIn("mp_roles", self.grant(),
+			"the consultant role is read but not compared with who is asking: "
+			+ self.grant().strip())
+
+	def test_holding_it_makes_you_a_consultant(self):
+		src = self.src()
+		after = src[src.index(self.grant()):]
+		self.assertIn("IS_CONSULTANT = 1", after[:400],
+			"the configured role is checked but grants nothing")
+
+	def test_the_named_list_still_works(self):
+		"""Widened, not replaced -- a consultant holding no role is still named."""
+		src = self.src()
+		self.assertIn("consultant_users", src)
+		self.assertIn("MP_LISTED_CONSULTANT", src)
+
+	def test_the_role_is_read_after_stage_role_is_built(self):
+		"""STAGE_ROLE is filled in mid-request; reading it earlier reads nothing."""
+		src = self.src()
+		built = src.index('STAGE_ROLE[sr_row["key"]]')
+		self.assertLess(built, src.index(self.grant()),
+			"the consultant role is read before STAGE_ROLE has been populated")
+
+
 if __name__ == "__main__":
 	unittest.main()
