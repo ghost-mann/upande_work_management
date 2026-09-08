@@ -229,7 +229,11 @@
     var q=(AT.q||"").toLowerCase();
     return AT.rows.filter(function(r){
       if(AT.state && r.state!==AT.state) return false;
-      if(q && (r.task+" "+r.farm+" "+r.plan).toLowerCase().indexOf(q)<0) return false;
+      // the subject AND the docname: a reader types "FERTILIZER APPLICATION",
+      // which is what the Activity column shows them, but a row they reached
+      // from a link may still be known to them as TASK-2026-00131. Matching
+      // both costs nothing and neither one alone is enough.
+      if(q && (r.task+" "+taskName(r.task)+" "+r.farm+" "+r.plan).toLowerCase().indexOf(q)<0) return false;
       return true;
     }).sort(function(a,b){
       var k=AT.sort, x=a[k], y=b[k];
@@ -2344,7 +2348,7 @@
       rows.forEach(function(r){
         var o=document.createElement("option");
         o.value=r.name;
-        o.textContent=r.name+" · "+r.farm+" · "+r.task+" ("+fmt(r.pct,0)+"%)";
+        o.textContent=r.name+" · "+r.farm+" · "+taskName(r.task)+" ("+fmt(r.pct,0)+"%)";
         sel.appendChild(o);
       });
       sel.onchange=function(){ loadCal(this.value); };

@@ -1814,7 +1814,7 @@
     call({ action:"plan_trace", plan:name }).then(function(d){
       if(d.error){ el("wp-tr-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
       var p=d.plan||{}, dv=d.delivery||{};
-      el("wp-tr-title").textContent=p.task||name;
+      el("wp-tr-title").textContent=taskName(p.task)||name;
       el("wp-tr-sub").textContent=name+" · "+(p.farm||"")+" · "+p.from_date+" → "+p.to_date+" · "+(p.workflow_state||"");
       var h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
       h+=trTile("Target", fmt(dv.target)+" "+esc(p.uom||""), "planned quantity");

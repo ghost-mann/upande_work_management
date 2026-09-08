@@ -253,3 +253,98 @@ class TestTheMapIsInHandBeforeAnythingRenders(unittest.TestCase):
 		block = src[src.index("Promise.all([ call({action:\"meta\"})"):][:400]
 		self.assertIn(".catch(function(){})", block,
 			"a failing task_names must not take the planner's boot down with it")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE HOLE THE FIRST PASS FELL THROUGH.
+#
+# RENDERS_RAW above only looks at `esc(...)`, because a task printed into markup
+# is escaped on the way. Three sites printed one WITHOUT going through esc() and
+# so were invisible to it:
+#
+#   work-planner.js      el("wp-tr-title").textContent = p.task || name
+#   dashboard.js         o.textContent = r.name+" · "+r.farm+" · "+r.task+…
+#   dashboard.js         (r.task+" "+r.farm+" "+r.plan).indexOf(q)      <- search
+#
+# The first two set text through the DOM property rather than markup; the third
+# is not a render at all but a free-text SEARCH, where matching only the docname
+# means typing the subject a reader can actually see finds nothing.
+#
+# `<option>` VALUES are still deliberately exempt, as the module docstring says:
+# the value is compared against the row's own `task`, so it must stay the
+# docname. Only the label a person reads moves. That is why this checks
+# textContent (a label) and not `.value` (an identity).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# `x.task`, but not `task_kpi` / `task_subject` (`_` is a word char, so `\b`
+# excludes them) and not `d.task.subject`, which is already the subject.
+RAW_TASK = re.compile(r"\w+\.task\b(?!\s*\.)")
+
+# `taskName(r.task)` and `taskName(r.task||"—")` -- resolved, so strip these
+# before looking for what is left unresolved.
+RESOLVED = re.compile(r"taskName\(\s*\w+\.task\b\s*(?:\|\|\s*[^)]*)?\)")
+
+# one `…textContent = <expr>;` assignment
+TEXT_CONTENT = re.compile(r"\.textContent\s*=\s*([^;\n]+)")
+
+
+class TestNoScreenSetsTextContentToATaskId(unittest.TestCase):
+	"""A task's docname reaching the DOM as text, past esc()."""
+
+	def offenders(self, text):
+		found = []
+		for match in TEXT_CONTENT.finditer(text):
+			expr = RESOLVED.sub("", match.group(1))
+			if RAW_TASK.search(expr):
+				found.append(match.group(0).strip())
+		return found
+
+	def test_the_regex_catches_the_two_real_faults(self):
+		"""Self-check: the shapes that actually shipped must be caught, or a
+		green test below would only mean the pattern never matches anything."""
+		self.assertEqual(
+			self.offenders('el("wp-tr-title").textContent=p.task||name;'),
+			['.textContent=p.task||name'])
+		self.assertEqual(
+			self.offenders('o.textContent=r.name+" · "+r.farm+" · "+r.task+" (";'),
+			['.textContent=r.name+" · "+r.farm+" · "+r.task+" ("'])
+
+	def test_the_regex_passes_the_fixed_shapes(self):
+		self.assertEqual(self.offenders('el("wp-tr-title").textContent=taskName(p.task)||name;'), [])
+		self.assertEqual(
+			self.offenders('o.textContent=r.name+" · "+taskName(r.task)+" (";'), [])
+		# a plain label, and the subject read off a fetched row: both fine
+		self.assertEqual(self.offenders('el("wp-tr-sub").textContent=name+" · "+p.farm;'), [])
+		self.assertEqual(self.offenders('x.textContent=esc(d.task.subject);'), [])
+		# task_kpi is a different field entirely -- the standard, not the task
+		self.assertEqual(self.offenders('el("f-kpi").textContent=r.task_kpi;'), [])
+
+	def test_no_screen_sets_a_task_id_as_text(self):
+		offenders = []
+		for screen in SCREENS:
+			for hit in self.offenders(source(screen)):
+				offenders.append("%s.js: %s" % (screen, hit))
+		self.assertEqual(offenders, [], "\n".join(
+			["a task's docname is being set as element text, not its subject:"] + offenders))
+
+
+class TestTheDashboardSearchMatchesSubjects(unittest.TestCase):
+	"""Typing what the screen shows you must find the row.
+
+	Not a render, so neither check above sees it: the activity table's free-text
+	filter compared the query against `r.task` alone, so a reader searching
+	"FERTILIZER APPLICATION" -- the only name the table ever showed them -- got
+	no rows at all. It matches both now; the docname stays in the haystack
+	because a row reached from a link may still be known by it.
+	"""
+
+	def test_the_filter_searches_the_subject_too(self):
+		text = source("work-management-dashboard")
+		match = re.search(r"function atFiltered\(\)\{(.*?)\n  \}", text, re.S)
+		self.assertIsNotNone(match, "atFiltered() is gone -- has the filter moved?")
+		body = match.group(1)
+		self.assertIn("taskName(r.task)", body,
+			"the activity search matches only the docname, so searching the "
+			"subject a reader can see finds nothing")
+		self.assertIn("r.task+", body,
+			"the docname dropped out of the haystack; both should match")
