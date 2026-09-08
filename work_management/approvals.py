@@ -27,12 +27,14 @@ SCOPE_FIELD = "farm"
 
 Stage = namedtuple(
 	"Stage",
-	"key label document_type kind state action role scoped required",
+	"key label document_type kind state action role scoped required default_off",
 )
 
 
-def _stage(key, label, document_type, kind, state, action, role, scoped=False, required=False):
-	return Stage(key, label, document_type, kind, state, action, role, scoped, required)
+def _stage(key, label, document_type, kind, state, action, role, scoped=False, required=False,
+		default_off=False):
+	return Stage(key, label, document_type, kind, state, action, role, scoped, required,
+		default_off)
 
 
 # The default chain a fresh install starts with -- the seed, not the chain: see
@@ -71,6 +73,29 @@ CATALOGUE = [
 		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
 	_stage("planner_farm_approval", "Planner: Farm Approval", "Work Management Planner",
 		"Approval", "Pending Approval", "Approve", "System Manager", scoped=True),
+	# A SECOND planner approval, shipped OFF.
+	#
+	# The Planner was the one chain with a single approval step, and Altura wants
+	# two: the section head raises, the farm manager approves, HR approves after
+	# them. Every other chain could express its target by switching steps off and
+	# swapping roles; this one had nothing to switch on.
+	#
+	# `default_off` because a catalogue entry reaches every installation. seed_stages()
+	# gives a row it has never seen before `enabled = 1`, which is right for the
+	# fourteen steps that describe how this pipeline has always run and wrong for a
+	# step nobody has asked for: an existing site would migrate and discover a new
+	# approval standing between its planners and their work. Off, it costs those
+	# sites nothing -- effective_chain() relinks Farm Approval straight to Approved,
+	# exactly as before -- and Altura turns it on in Settings.
+	#
+	# The role is System Manager like every other shipped step, NOT HOD HR. The brief
+	# asked for HOD HR and it cannot be shipped: it is one of the five job titles this
+	# app was deliberately stopped from inventing (see test_no_shipped_roles), and a
+	# Workflow Transition's role is a Link, so defaulting to a role the site may not
+	# have breaks the generated workflow's save. Altura points the step at HOD HR in
+	# Settings, which is where the rest of its chain is configured too.
+	_stage("planner_hr_approval", "Planner: HR Approval", "Work Management Planner",
+		"Approval", "Pending HR Approval", "HR Approve", "System Manager", default_off=True),
 
 	_stage("assigner_submit", "Assigner: Submit", "Work Management Assigner",
 		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
@@ -188,6 +213,9 @@ def configured_stages(settings=None):
 			role=row.get("role"),
 			scoped=bool(row.get("scoped")),
 			required=bool(row.get("required")),
+			# not a row field: it only decides what a row gets the first time
+			# seed_stages() writes one. Once the row exists, `enabled` is the answer.
+			default_off=bool(default.default_off) if default else False,
 		))
 	return stages or list(CATALOGUE)
 
@@ -488,7 +516,13 @@ def seed_stages(settings=None, save=True):
 			"action": stage.action,
 			"scoped": 1 if stage.scoped else 0,
 			"required": 1 if stage.required else 0,
-			"enabled": 1 if stage.required else (previous.enabled if previous else 1),
+			# A row already here keeps its own answer. A row being written for the
+			# first time gets 1, because the shipped catalogue describes how this
+			# pipeline runs -- except where the step declares `default_off`, which
+			# is how a step can be ADDED to the catalogue without switching itself
+			# on across every existing installation.
+			"enabled": 1 if stage.required else (
+				previous.enabled if previous else (0 if stage.default_off else 1)),
 			"role": (previous.role if previous and previous.role else stage.role),
 		})
 

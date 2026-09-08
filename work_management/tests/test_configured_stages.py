@@ -99,9 +99,14 @@ class TestTheChainComesFromSettings(unittest.TestCase):
 		self.assertEqual([st.key for st in chain], [st.key for st in approvals.CATALOGUE])
 
 	def test_the_shipped_catalogue_is_still_the_seed(self):
-		"""Nothing changes for an existing deployment: the fourteen steps Kaitet
-		runs are the fifteen the app ships, and they are what a fresh install gets."""
-		self.assertEqual(len(approvals.CATALOGUE), 14)
+		"""What a fresh install gets, and the count that has to be deliberate.
+
+		Fifteen steps: the fourteen this pipeline has always run, plus the second
+		planner approval, which ships switched off (`default_off`) so adding it
+		changed no existing chain. Pinning the number is what makes a sixteenth a
+		decision rather than a diff nobody read.
+		"""
+		self.assertEqual(len(approvals.CATALOGUE), 15)
 
 
 class TestTheChildTableCanCarryAStep(unittest.TestCase):
