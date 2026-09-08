@@ -1196,13 +1196,23 @@ def wm_payment(**kwargs):
                     "day_off": ev_off.get(wd, 0) if wd else 0,
                 })
             out["daily"] = daily
-            # payment runs that include this worker
+            # payment runs that include this worker -- one row per RUN, which is what
+            # the heading above the table promises and what the run-count tile beside
+            # it reports. Ungrouped, a run covering five days returned five rows whose
+            # every visible column was run-level -- the name, the title, the payroll
+            # date, the state -- so they printed identically and read as duplicates.
+            # The value that told them apart was the line's own work date, which this
+            # table does not show and should not: a day-row belongs on Work & days.
+            #
+            # Summed rather than picked, because one line's amount under a GROUP BY is
+            # an arbitrary day's pay presented as the run's.
             runs = frappe.db.sql("""
                 SELECT p.name run, p.run_title title, p.payroll_date rdate, p.workflow_state state,
-                       l.amount amount, l.days days, l.qty qty
+                       SUM(l.amount) amount, SUM(l.days) days, SUM(l.qty) qty
                 FROM `tabWork Payment Line` l
                 INNER JOIN `tabWork Management Payment` p ON l.parent = p.name
                 WHERE l.employee = %s
+                GROUP BY p.name, p.run_title, p.payroll_date, p.workflow_state
                 ORDER BY p.payroll_date DESC LIMIT 100
             """, (emp,), as_dict=True)
             runlist = []
