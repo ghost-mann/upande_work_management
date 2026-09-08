@@ -87,6 +87,11 @@
   "last_recalc_summary",
   "sb_payroll",
   "salary_component",
+  "pay_week_starts_on",
+  "pay_week_ends_on",
+  "pay_day",
+  "allow_part_week_send",
+  "allow_day_range",
   "sb_whopays",
   "tw_employment_type_rows",
   "tw_employment_types",
@@ -94,11 +99,6 @@
   "tw_designations",
   "tw_category_rows",
   "tw_categories",
-  "allow_part_week_send",
-  "pay_week_starts_on",
-  "pay_week_ends_on",
-  "pay_day",
-  "allow_day_range",
   "tab_branding",
   "sb_branding",
   "project_logo"
@@ -509,7 +509,7 @@
   {
    "fieldname": "sb_payroll",
    "fieldtype": "Section Break",
-   "label": "Payroll",
+   "label": "Payments",
    "description": "Sending a worker to accounts creates a submitted Additional Salary against this component, so payroll picks the earnings up on the next salary slip."
   },
   {
