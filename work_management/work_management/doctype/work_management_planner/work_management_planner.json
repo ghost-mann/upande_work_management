@@ -28,6 +28,8 @@
   "rate",
   "sb_calc",
   "quantity",
+  "original_qty",
+  "original_cost",
   "custom_tw_qty",
   "people_per_day",
   "cb_calc",
@@ -78,7 +80,7 @@
    "label": "Master Plan",
    "options": "Work Management Master Plan",
    "read_only": 1,
-   "description": "The budget this request draws against. Set from the plan chosen on the planner screen; where it is empty the request's dates still resolve it, which is how requests raised before this field keep working. Settable after submission, because it records which budget an already-submitted request drew from — the backfill needs that, and so does correcting a plan later.",
+   "description": "The budget this request draws against. Set from the plan chosen on the planner screen; where it is empty the request's dates still resolve it, which is how requests raised before this field keep working. Settable after submission, because it records which budget an already-submitted request drew from \u2014 the backfill needs that, and so does correcting a plan later.",
    "allow_on_submit": 1
   },
   {
@@ -202,7 +204,8 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Quantity (total)",
-   "reqd": 1
+   "reqd": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "custom_tw_qty",
@@ -215,7 +218,8 @@
    "fieldtype": "Int",
    "in_list_view": 1,
    "label": "People / Day",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "cb_calc",
@@ -225,7 +229,8 @@
    "fieldname": "person_days",
    "fieldtype": "Int",
    "label": "Mandays",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "description": "Mon-Fri 8h, Sat 6h, Sun 8h across the plan period",
@@ -239,7 +244,8 @@
    "fieldtype": "Currency",
    "in_list_view": 1,
    "label": "Total Cost (KES)",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "sb_burndown",
@@ -419,6 +425,23 @@
    "fieldtype": "Datetime",
    "label": "Submitted At",
    "read_only": 1
+  },
+  {
+   "fieldname": "original_qty",
+   "fieldtype": "Float",
+   "label": "Original quantity",
+   "read_only": 1,
+   "precision": "2",
+   "description": "What this request was approved for, before its target was raised mid-flight. Empty on a request nobody has raised. Same shape as the Master Plan Activity's original_qty, which records the same kind of edit for the same reason: the approved figure has to survive the edit that changed it.",
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "original_cost",
+   "fieldtype": "Currency",
+   "label": "Original cost",
+   "read_only": 1,
+   "description": "The cost of the originally approved quantity. Kept beside it so \u201cwhat did we agree to\u201d is answerable without recomputing a rate that may since have moved.",
+   "allow_on_submit": 1
   }
  ],
  "idx": 0,

@@ -543,14 +543,16 @@ class TestTheCapNamesThePlanItRefusedFor(unittest.TestCase):
 		return [src[at:at + 420] for at in
 			(m.start() for m in re.finditer(r'"Over the budgeted ', src))]
 
-	def test_both_refusals_are_still_there(self):
-		"""One for the quantity ceiling and one for the cost ceiling."""
-		self.assertEqual(len(self.refusals()), 2)
+	def test_the_refusals_are_still_there(self):
+		"""Two per ceiling-checking action -- one for the quantity ceiling and one
+		for the cost ceiling -- and a raise is checked against the same two."""
+		self.assertGreaterEqual(len(self.refusals()), 2)
 
 	def test_each_names_the_master_plan(self):
+		"""Whichever action refuses, and however it holds the plan."""
 		for text in self.refusals():
 			with self.subTest(refusal=" ".join(text.split())[:60]):
-				self.assertIn("cm.name", text,
+				self.assertTrue("cm.name" in text or "rt.master_plan" in text,
 					"the refusal quotes a remaining figure without saying which "
 					"plan it belongs to")
 

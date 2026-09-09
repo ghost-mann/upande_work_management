@@ -747,6 +747,208 @@ def wm_planner(**kwargs):
                 out["blocks"] = block_list
                 out["editing"] = editing
 
+    elif action == "raise_target":
+        # MORE OF THE SAME WORK, ON A REQUEST ALREADY APPROVED.
+        #
+        # A week's plan is approved for 500 and the crew can clearly do 700. Today
+        # that needs a second request, through the whole chain, for work already
+        # under way -- or an edit, which sends the approved plan back to Draft and
+        # loses the approval it already has. So: raise the quantity in place.
+        #
+        # UPWARD ONLY. Lowering it is a different act with a different risk: the
+        # actuals cap and the completion gate both read this figure live, so a cut
+        # below what is already recorded would make recorded work exceed its own
+        # target and leave the plan unable to complete. check_cut_allowed() refuses
+        # exactly that on the master plan line, for the same reason, and this stays
+        # on the safe side of the same line by not offering the cut at all.
+        #
+        # NO NEW APPROVAL STAGE. Managers agree a spend increase offline, by
+        # decision; what this needs is that the person recording the decision is
+        # one who could have approved the request in the first place.
+        rt_name = frappe.form_dict.get("name")
+        rt_qty = frappe.utils.flt(frappe.form_dict.get("quantity"))
+        rt_preview = frappe.utils.cint(frappe.form_dict.get("preview"))
+        rt = frappe.db.get_value("Work Management Planner", rt_name,
+            ["name", "farm", "task", "quantity", "total_cost", "rate", "uom",
+             "daily_target", "working_days", "workflow_state", "master_plan",
+             "original_qty", "original_cost", "from_date", "to_date"], as_dict=True)
+        # WHO MAY RAISE ONE. The plan's own approval steps -- whoever could have
+        # approved this request can agree to more of it -- plus GM and System
+        # Manager. Never the requester role alone: raising your own approved target
+        # is approving your own request, one step later and with nobody looking.
+        rt_may = 0
+        rt_roles = []
+        for rt_step in AP_STEPS:
+            if rt_step.get("role"):
+                rt_roles.append(rt_step["role"])
+                if rt_step["role"] in MY_ROLES:
+                    rt_may = 1
+        if ("System Manager" in MY_ROLES) or ("General Manager" in MY_ROLES):
+            rt_may = 1
+        rt_recorded = 0
+        if rt:
+            # what the actuals cap already counts against this request. The floor
+            # under any target, and the figure that makes "never below what is
+            # recorded" a fact rather than an intention.
+            rt_done = frappe.db.sql("""
+                SELECT COALESCE(SUM(ac.total_actual_qty),0) q
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                WHERE a2.planner_request = %(p)s
+                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+            """, {"p": rt_name}, as_dict=True)
+            rt_recorded = frappe.utils.flt(rt_done[0].q) if rt_done else 0
+        # WHAT THE MASTER PLAN LINE HAS LEFT, by the same attribution rule as
+        # everything else: this plan's own requests, not every request whose dates
+        # happen to sit in the period. The raise is a DELTA -- the current quantity
+        # is already counted in cap_used -- so the line only has to have room for
+        # the increase.
+        rt_line = None
+        rt_left_q = 0
+        rt_left_c = 0
+        rt_rate = frappe.utils.flt(rt.rate) if rt else 0
+        rt_delta = (rt_qty - frappe.utils.flt(rt.quantity)) if rt else 0
+        if rt and rt.master_plan:
+            rt_mp = frappe.db.get_value("Work Management Master Plan", rt.master_plan,
+                ["name", "period_from", "period_to", "workflow_state"], as_dict=True)
+            if rt_mp and rt_mp.workflow_state == "Approved":
+                rt_rows = frappe.db.sql("""
+                    SELECT name, work_qty, cost FROM `tabWork Management Master Plan Activity`
+                    WHERE parent = %(p)s AND task = %(t)s AND consultant_state = 'OK'
+                    LIMIT 1
+                """, {"p": rt_mp.name, "t": rt.task}, as_dict=True)
+                if rt_rows:
+                    rt_line = rt_rows[0]
+                    rt_used = frappe.db.sql("""
+                        SELECT COALESCE(SUM(p.quantity),0) q, COALESCE(SUM(p.total_cost),0) c
+                        FROM `tabWork Management Planner` p
+                        WHERE p.task = %(t)s AND p.farm = %(f)s
+                          AND IFNULL(p.workflow_state,'') != 'Rejected'
+                          AND """ + attributed_to_plan("p") + """
+                    """, {"t": rt.task, "f": rt.farm, "plan": rt_mp.name,
+                          "pfrom": rt_mp.period_from, "pto": rt_mp.period_to},
+                        as_dict=True)[0]
+                    rt_left_q = frappe.utils.flt(rt_line.work_qty) - frappe.utils.flt(rt_used.q)
+                    rt_left_c = frappe.utils.flt(rt_line.cost) - frappe.utils.flt(rt_used.c)
+
+        rt_err = None
+        if not rt:
+            rt_err = "no such plan: " + str(rt_name)
+        elif rt.workflow_state != "Approved":
+            # Anything not yet approved can simply be edited, which is the existing
+            # path and keeps the chain honest. This exists for the one state where
+            # editing would throw away an approval.
+            rt_err = ("Only an approved request's target can be raised in place ("
+                      + str(rt.workflow_state) + "). Edit it instead — it has not "
+                      "been approved yet, so nothing is lost.")
+        elif not rt_may:
+            rt_err = ("Raising an approved target is the approver's decision. "
+                      + ("Only " + ", ".join(sorted(set(rt_roles))) +
+                         " or the general manager may take it. " if rt_roles else "")
+                      + "You hold none of them.")
+        elif rt_qty <= 0:
+            rt_err = "A target has to be a number greater than zero."
+        elif rt_qty < frappe.utils.flt(rt.quantity) - 0.005:
+            rt_err = ("A target can only be raised here, not lowered: this request "
+                      "is at " + str(frappe.utils.flt(rt.quantity)) + " and " +
+                      str(rt_qty) + " is less. Recorded work reads the target live, "
+                      "so lowering it would put work already done over its own "
+                      "target and leave the plan unable to complete.")
+        elif abs(rt_qty - frappe.utils.flt(rt.quantity)) <= 0.005:
+            rt_err = ("This request is already at " + str(frappe.utils.flt(rt.quantity)) + ".")
+        elif not rt.master_plan:
+            rt_err = ("This request names no master plan, so there is no budget to "
+                      "check the raise against. Set its master plan first.")
+        elif not rt_line:
+            rt_err = (str(rt.task) + " is not an approved activity on " +
+                      str(rt.master_plan) + ", so its budget cannot fund a raise.")
+        elif rt_delta > rt_left_q + 0.005:
+            # Refused in the same style as the planner's raise cap, and pointing at
+            # the same fix: the master plan line can itself be raised first --
+            # check_cut_allowed() permits raises and refuses only cuts below what is
+            # committed -- and then this will go through.
+            rt_err = ("Over the budgeted quantity for " + str(rt.task) + " on " +
+                      str(rt.master_plan) + ": " + str(round(rt_left_q, 2)) +
+                      " left of " + str(frappe.utils.flt(rt_line.work_qty)) +
+                      ", this raise asks for " + str(round(rt_delta, 2)) + " more.")
+        elif rt_delta * rt_rate > rt_left_c + 0.005:
+            rt_err = ("Over the budgeted cost for " + str(rt.task) + " on " +
+                      str(rt.master_plan) + ": KES " + str(round(rt_left_c, 2)) +
+                      " left of " + str(frappe.utils.flt(rt_line.cost)) +
+                      ", this raise costs " + str(round(rt_delta * rt_rate, 2)) + " more.")
+
+        if rt:
+            # BEFORE AND AFTER, always -- the preview IS the decision, and a
+            # refusal that shows the figures is worth more than one that does not.
+            out["plan"] = rt_name
+            out["task"] = rt.task
+            out["uom"] = rt.uom
+            out["can_raise"] = rt_may
+            out["approver_roles"] = sorted(set(rt_roles))
+            out["current_qty"] = frappe.utils.flt(rt.quantity)
+            out["current_cost"] = frappe.utils.flt(rt.total_cost)
+            out["recorded_qty"] = rt_recorded
+            out["original_qty"] = frappe.utils.flt(rt.original_qty) or None
+            out["new_qty"] = rt_qty
+            out["new_cost"] = frappe.utils.flt(rt_qty * rt_rate, 2)
+            out["delta_qty"] = rt_delta
+            out["delta_cost"] = frappe.utils.flt(rt_delta * rt_rate, 2)
+            out["master_plan"] = rt.master_plan
+            out["budget_left_qty"] = rt_left_q
+            out["budget_left_cost"] = rt_left_c
+            # what the line has left AFTER this raise, which is the figure the
+            # person deciding actually wants
+            out["budget_after_qty"] = rt_left_q - rt_delta
+            out["budget_after_cost"] = rt_left_c - (rt_delta * rt_rate)
+
+        if rt_err:
+            out["error"] = rt_err
+        elif rt_preview:
+            out["preview"] = 1
+        else:
+            rd = frappe.get_doc("Work Management Planner", rt_name)
+            rt_was_q = frappe.utils.flt(rd.quantity)
+            rt_was_c = frappe.utils.flt(rd.total_cost)
+            # SNAPSHOT ONCE. A second raise must not overwrite the first snapshot
+            # with the first raise's figure -- "originally approved" means the
+            # figure the chain approved, not the one before the latest edit.
+            if not frappe.utils.flt(rd.original_qty):
+                rd.original_qty = rt_was_q
+                rd.original_cost = rt_was_c
+            rd.quantity = rt_qty
+            rd.total_cost = rt_qty * rt_rate
+            # the crew and the labour follow the quantity, by the same arithmetic
+            # the request was written with: man-days are quantity / daily target,
+            # and the crew rounds up because people come whole.
+            rt_tgt = frappe.utils.flt(rd.daily_target)
+            rt_wd = frappe.utils.cint(rd.working_days)
+            if rt_tgt > 0 and rt_wd > 0:
+                rt_raw = rt_qty / rt_tgt / rt_wd
+                rt_ppd = int(rt_raw)
+                if rt_ppd < rt_raw:
+                    rt_ppd = rt_ppd + 1
+                rd.people_per_day = rt_ppd
+            rd.person_days = (frappe.utils.flt(rt_qty / rt_tgt, 2) if rt_tgt > 0
+                              else frappe.utils.flt(rd.people_per_day) * rt_wd)
+            rd.flags.ignore_permissions = True
+            # allow_on_submit is what lets an approved (submitted) request take
+            # this; the fields it touches carry it for exactly this reason.
+            rd.save(ignore_permissions=True)
+            rd.add_comment("Comment",
+                "Target raised by " + frappe.session.user + " on " +
+                frappe.utils.today() + ": " + str(rt_was_q) + " → " + str(rt_qty) +
+                " " + str(rt.uom or "") + " (KES " + str(round(rt_was_c, 2)) + " → " +
+                str(round(rt_qty * rt_rate, 2)) + "), against " + str(rt.master_plan) +
+                ". Agreed offline; no separate approval step.")
+            frappe.db.commit()
+            out["raised"] = 1
+            out["was_qty"] = rt_was_q
+            out["was_cost"] = rt_was_c
+            out["quantity"] = frappe.utils.flt(rd.quantity)
+            out["total_cost"] = frappe.utils.flt(rd.total_cost)
+            out["people_per_day"] = frappe.utils.flt(rd.people_per_day)
+            out["person_days"] = frappe.utils.flt(rd.person_days)
+
     elif action == "approve":
         nm = frappe.form_dict.get("name")
         ap_doc = frappe.db.get_value("Work Management Planner", nm,

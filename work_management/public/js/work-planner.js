@@ -318,6 +318,87 @@
     };
   }
 
+  // ── raise an approved request's target ──────────────────────────────────
+  // A week approved for 500 that the crew can clearly finish at 700 should not
+  // need a second trip through the chain for work already under way, and editing
+  // the request instead sends an approved plan back to Draft and throws away the
+  // approval it has. So the target moves in place — upward only, by somebody who
+  // could have approved it, and never without showing what it does to the budget.
+  function openRaiseDialog(plan, onDone){
+    var dlg=el("wp-closedialog");
+    dlg.innerHTML=
+      '<div style="background:#fff;max-width:520px;width:94%;border:2px solid var(--ink)">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--faint)">'+
+          '<div style="font-size:13px;font-weight:700">Raise target</div>'+
+          '<button type="button" id="wpr-x" style="border:none;background:none;font-size:20px;line-height:1;color:var(--mute);cursor:pointer">&times;</button>'+
+        '</div>'+
+        '<div style="padding:16px 18px">'+
+          '<div style="font-size:12px;color:#444;margin-bottom:10px">More of the same work on <b>'+esc(plan)+'</b>, without a second approval. '+
+            'Managers agree the spend offline; this records it. Upward only.</div>'+
+          '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">New target</label>'+
+          '<input type="number" id="wpr-qty" min="0" step="any" style="font-family:inherit;font-size:14px;border:1px solid var(--line);padding:8px 10px;width:180px;background:#fff;color:var(--ink)">'+
+          '<div id="wpr-figs" style="margin-top:14px;font-size:12px"></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--faint)">'+
+          '<button type="button" class="btn" id="wpr-cancel">Cancel</button>'+
+          '<button type="button" class="btn solid" id="wpr-go" disabled>Raise it</button>'+
+        '</div>'+
+      '</div>';
+    dlg.style.display="flex";
+    var qty=el("wpr-qty"), go=el("wpr-go"), figs=el("wpr-figs");
+    function shut(){ dlg.style.display="none"; dlg.innerHTML=""; }
+    el("wpr-x").onclick=shut; el("wpr-cancel").onclick=shut;
+    dlg.onclick=function(ev){ if(ev.target===dlg) shut(); };
+
+    function row(k,a,b){
+      return '<div style="display:flex;gap:10px;padding:3px 0"><div style="width:150px;color:var(--mute)">'+k+'</div>'+
+        '<div style="width:120px;text-align:right;font-variant-numeric:tabular-nums">'+a+'</div>'+
+        '<div style="width:22px;text-align:center;color:var(--mute)">→</div>'+
+        '<div style="width:120px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700">'+b+'</div></div>';
+    }
+    // BEFORE AND AFTER, every time — including on a refusal, because "you cannot"
+    // without the figures leaves the person deciding no way to decide.
+    function look(){
+      var v=num(qty.value);
+      figs.innerHTML='<span class="gg-alt">Checking…</span>';
+      go.disabled=true;
+      call({action:"raise_target", name:plan, quantity:v||0, preview:1}).then(function(d){
+        var h='';
+        if(d.current_qty!=null){
+          h+=row("Target", fmt(d.current_qty)+" "+esc(d.uom||""), fmt(d.new_qty)+" "+esc(d.uom||""));
+          h+=row("Cost", "KES "+fmt(d.current_cost,2), "KES "+fmt(d.new_cost,2));
+          if(d.master_plan!=null && d.budget_left_qty!=null){
+            h+=row("Budget left on "+esc(d.master_plan||"—"), fmt(d.budget_left_qty),
+                   fmt(d.budget_after_qty));
+          }
+          if(num(d.recorded_qty)>0){
+            h+='<div style="margin-top:8px;color:var(--mute)">'+fmt(d.recorded_qty)+
+               ' already recorded against this request — a target may never go below it.</div>';
+          }
+          if(d.original_qty){
+            h+='<div style="margin-top:4px;color:var(--mute)">Originally approved for '+fmt(d.original_qty)+'.</div>';
+          }
+        }
+        if(d.error){
+          h+='<div style="margin-top:10px;padding:9px 12px;border:1px solid #fed7aa;background:#fff7ed;color:#7c2d12;border-radius:8px">'+esc(d.error)+'</div>';
+        }
+        figs.innerHTML=h||'<span class="gg-alt">Type a new target.</span>';
+        go.disabled=!!d.error || !v;
+      }).catch(function(e){ figs.innerHTML='<span class="gg-alt">Could not check: '+esc(e&&e.message?e.message:e)+'</span>'; });
+    }
+    qty.oninput=function(){ if(num(qty.value)>0) look(); else { figs.innerHTML=''; go.disabled=true; } };
+    go.onclick=function(){
+      go.disabled=true;
+      call({action:"raise_target", name:plan, quantity:num(qty.value)}, true).then(function(d){
+        if(d.error){ toast("Error: "+d.error); go.disabled=false; return; }
+        shut();
+        toast("Target raised: "+fmt(d.was_qty)+" → "+fmt(d.quantity));
+        if(typeof onDone==="function") onDone();
+      }).catch(function(e){ toast("Raise failed"); go.disabled=false; });
+    };
+    look();
+  }
+
   // ── master plan: the budget the planner draws down against ──────────────
   var MP = { roles:null, inited:false };
   function loadMasterPlans(){
@@ -1398,6 +1479,18 @@
     });
     showTab("new");
   }
+  // The request detail panel is shared by three tabs, so what to reload after a
+  // change depends on which one is open rather than on where the code sits.
+  function refreshVisibleRequests(){
+    ["mine", "rej", "appr"].forEach(function(n){
+      var p=el("p-"+n);
+      if(!p || !p.classList.contains("on")) return;
+      if(n==="mine") loadMine();
+      if(n==="rej") loadRejected();
+      if(n==="appr") loadAppr();
+    });
+  }
+
   function showTab(name){
     ["new","mine","rej","appr","week","mp","rates"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
     document.querySelectorAll("#wp-tabs button").forEach(function(b){ b.setAttribute("aria-selected", b.getAttribute("data-tab")===name); });
@@ -1729,9 +1822,18 @@
       '<div style="padding:0 14px 12px;font-size:11px;color:var(--mute)">'+
         (r.requested_by?'Requested by <b>'+esc(shortUser(r.requested_by))+'</b> · ':'')+
         'Hours model: Mon–Fri 8h · Sat 6h · Sun 8h across '+esc(r.from_date)+' → '+esc(r.to_date)+'. Open in ERP: <a href="/app/work-management-planner/'+encodeURIComponent(r.name)+'" target="_blank">'+esc(r.name)+'</a></div>'+
-      (editableState(r.workflow_state) ? '<div style="padding:0 14px 14px"><button class="btn solid" data-edit="'+esc(r.name)+'">Edit this plan</button></div>' : '');
+      (editableState(r.workflow_state) ? '<div style="padding:0 14px 14px"><button class="btn solid" data-edit="'+esc(r.name)+'">Edit this plan</button></div>' : '')+
+      // Approved is the one state where editing would cost the approval, and so
+      // the one state this control belongs in. Anything earlier is simply edited.
+      (r.workflow_state==="Approved" ? '<div style="padding:0 14px 14px"><button class="btn" data-raise="'+esc(r.name)+'">Raise target</button>'+
+        '<span class="hint" style="margin-left:10px">More of the same work, without a second approval. Approver only, upward only.</span></div>' : '');
     var eb=box.querySelector('[data-edit]');
     if(eb){ eb.onclick=function(ev){ ev.stopPropagation(); openPlanForEdit(eb.getAttribute("data-edit")); }; }
+    var rb=box.querySelector('[data-raise]');
+    if(rb){ rb.onclick=function(ev){ ev.stopPropagation();
+      // reload whichever list this panel was opened from, so the figure on
+      // screen is the one that was just written
+      openRaiseDialog(rb.getAttribute("data-raise"), refreshVisibleRequests); }; }
   }
 
   function wireReqExpand(body, list){
