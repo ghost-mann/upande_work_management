@@ -14,55 +14,32 @@ import frappe
 from work_management.api.config import get_config
 
 
-@frappe.whitelist()
-def wm_payment(**kwargs):
-    _cfg = get_config()
-    FARM_PROJECT = _cfg["farm_project"]
-    DEFAULT_COMPANY = _cfg["default_company"]
-    FARMS = _cfg["farms"]
-    BLOCK_EXCLUDE = _cfg["block_exclude"]
-    FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
-    HR_HEAD_ROLES = _cfg["hr_head_roles"]
-    STAGE_ROWS = _cfg["stage_rows"]
-    STAGE_STATES = _cfg["stage_states"]
-    CAPABILITIES = _cfg["capabilities"]
-    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
-    ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
-    STANDARD_DAY = _cfg["standard_day"]
+def task_worker_sql(alias="we"):
+    """SQL: limit a query to the workers this system pays. Returns an AND clause.
 
-    # ==================================================================
-    # Master plan attribution: none. Every period_from/period_to in this script is
-    # the PAYMENT's own pay period -- the week a run covers -- not a master plan's.
-    # Nothing here attributes work to a budget, so nothing changed when a farm became
-    # able to hold two plans over the same days. Checked line by line rather than
-    # assumed.
-    # SERVER SCRIPT — "WM Payment" (API, api_method=wm_payment)
-    # Powers: Planner + Assigner (a_) + Actuals (act_) + Payment (pay_) + dash
-    # Multi-block planner (Option A) + fast grouped-query dashboard.
-    # ==================================================================
+    Task work only. Permanent, Contract and Temporary staff are salaried and paid
+    through payroll, so their recorded work must never turn into a payment here.
+    The row's own employment_type column cannot be trusted for this -- every row
+    carries "Task Worker" regardless of the Employee master -- so the test always
+    reads tabEmployee.
 
-    # How long a full day is, and the denominator every man-day figure divides by.
-    # Sunday is worked on these farms, so it is a full day and not zero -- a zero
-    # would divide by nothing on every Sunday row.
-    #
-    # This was three loose constants, declared in five scripts and read in one. It is
-    # one value now because port_app.py strips it and rebuilds it from get_config(),
-    # so a site that works a six-hour Friday can say so in Work Management Settings
-    # instead of it being compiled in. Mirrors work_management/split_day.py, which is
-    # unit-tested; keep the two in step.
+    An employee qualifies if ANY of the three configured lists matches. A blank
+    employment type on a new hire therefore does not quietly make them unpayable.
+    Read the pickers first and the old typed boxes second, so both shapes work
+    while sites migrate: an empty picker changes nothing at all. A picked value is
+    a Link target or a Select option rather than something typed, so it needs no
+    character check -- an apostrophe in a designation is a docname, not a hazard.
 
-    # WHO THIS SYSTEM PAYS
-    # Task work only. Permanent, Contract and Temporary staff are salaried and paid
-    # through payroll, so their recorded work must never turn into a payment here.
-    # The row's own employment_type column cannot be trusted for this -- every row
-    # carries "Task Worker" regardless of the Employee master -- so the test always
-    # reads tabEmployee.
-    # An employee qualifies if ANY of the three configured lists matches. A blank
-    # employment type on a new hire therefore does not quietly make them unpayable.
-    # Read the pickers first and the old typed boxes second, so both shapes work
-    # while sites migrate: an empty picker changes nothing at all. A picked value is
-    # a Link target or a Select option rather than something typed, so it needs no
-    # character check -- an apostrophe in a designation is a docname, not a hazard.
+    `alias` is what the caller called `tabWork Actuals Employee`, because the
+    clause correlates on that table's `employee` column.
+
+    Lifted out of wm_payment() unchanged so the weekly payroll feed can ask the
+    same question. A feed that decided eligibility differently from the payment
+    run would pay somebody the payment run will not, or the reverse, and the two
+    figures would never reconcile. api/actuals.py and api/assigner.py still carry
+    their own inlined copies -- the mirror re-inlines them and they were not
+    touched here.
+    """
     TW_SOURCES = [
         ("employment_type", "Work Management Payable Employment Type", "employment_type", "tw_employment_types"),
         ("designation", "Work Management Payable Designation", "designation", "tw_designations"),
@@ -116,8 +93,97 @@ def wm_payment(**kwargs):
     if not TW_CLAUSES:
         # never leave the gate wide open if Settings is blank or unusable
         TW_CLAUSES = ["twe.employment_type = 'Task Worker'"]
-    TW_ONLY = (" AND EXISTS (SELECT 1 FROM `tabEmployee` twe WHERE twe.name = we.employee"
-               "             AND (" + " OR ".join(TW_CLAUSES) + "))")
+    return (" AND EXISTS (SELECT 1 FROM `tabEmployee` twe WHERE twe.name = " + alias + ".employee"
+            "             AND (" + " OR ".join(TW_CLAUSES) + "))")
+
+
+#: Confirmed, unpaid, payroll-counted, worth something, not already on a payment.
+#: Copied verbatim out of pay_worker_submit rather than reworded: the weekly feed
+#: has to sum exactly the money the payment run would send, and "IFNULL(payment_ref,
+#: '') = ''" in particular is what stops a second pass re-claiming rows that already
+#: sit on a document.
+EARNINGS_CONDITIONS = ("ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
+                       " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                       " AND IFNULL(we.payment_ref,'')=''")
+
+
+def weekly_earnings(week_from, week_to, employee=None, farm=None):
+    """What each task worker earned in one window, by the payment run's own rules.
+
+    One row per worker: `owed` is the money, `days` the distinct dates worked and
+    `qty` the output. The same three aggregates pay_worker_submit groups per
+    actuals document, grouped per worker instead -- a payroll feed writes one
+    figure per person, not one per job.
+
+    Exposed for api/payroll.py's weekly feed. Deriving the total there instead
+    would give payroll a number the payment screen disagrees with, and the first
+    anyone would know is a worker paid twice or not at all.
+    """
+    conds = EARNINGS_CONDITIONS + task_worker_sql("we")
+    params = {"a": week_from, "b": week_to}
+    if employee:
+        conds = conds + " AND we.employee = %(e)s"
+        params["e"] = employee
+    if farm:
+        conds = conds + " AND ac.farm = %(f)s"
+        params["f"] = farm
+    return frappe.db.sql("""
+        SELECT we.employee employee, MAX(we.employee_name) employee_name,
+               COALESCE(SUM(we.amount),0) owed,
+               COUNT(DISTINCT we.work_date) days,
+               COALESCE(SUM(we.actual_quantity),0) qty,
+               MIN(we.work_date) first_day, MAX(we.work_date) last_day
+        FROM `tabWork Actuals Employee` we
+        INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+        WHERE """ + conds + """
+          AND we.work_date >= %(a)s AND we.work_date <= %(b)s
+        GROUP BY we.employee
+        ORDER BY MAX(we.employee_name)
+    """, params, as_dict=True)
+
+
+@frappe.whitelist()
+def wm_payment(**kwargs):
+    _cfg = get_config()
+    FARM_PROJECT = _cfg["farm_project"]
+    DEFAULT_COMPANY = _cfg["default_company"]
+    FARMS = _cfg["farms"]
+    BLOCK_EXCLUDE = _cfg["block_exclude"]
+    FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
+    HR_HEAD_ROLES = _cfg["hr_head_roles"]
+    STAGE_ROWS = _cfg["stage_rows"]
+    STAGE_STATES = _cfg["stage_states"]
+    CAPABILITIES = _cfg["capabilities"]
+    ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
+    ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
+    STANDARD_DAY = _cfg["standard_day"]
+
+    # ==================================================================
+    # Master plan attribution: none. Every period_from/period_to in this script is
+    # the PAYMENT's own pay period -- the week a run covers -- not a master plan's.
+    # Nothing here attributes work to a budget, so nothing changed when a farm became
+    # able to hold two plans over the same days. Checked line by line rather than
+    # assumed.
+    # SERVER SCRIPT — "WM Payment" (API, api_method=wm_payment)
+    # Powers: Planner + Assigner (a_) + Actuals (act_) + Payment (pay_) + dash
+    # Multi-block planner (Option A) + fast grouped-query dashboard.
+    # ==================================================================
+
+    # How long a full day is, and the denominator every man-day figure divides by.
+    # Sunday is worked on these farms, so it is a full day and not zero -- a zero
+    # would divide by nothing on every Sunday row.
+    #
+    # This was three loose constants, declared in five scripts and read in one. It is
+    # one value now because port_app.py strips it and rebuilds it from get_config(),
+    # so a site that works a six-hour Friday can say so in Work Management Settings
+    # instead of it being compiled in. Mirrors work_management/split_day.py, which is
+    # unit-tested; keep the two in step.
+
+    # WHO THIS SYSTEM PAYS -- task_worker_sql() above, which this used to inline.
+    # It is the same code and the same clause; it moved out so the weekly payroll
+    # feed in api/payroll.py can ask the identical question rather than deciding
+    # eligibility a second time.
+    TW_ONLY = task_worker_sql("we")
 
     # WHO MAY SEND WORK TO ACCOUNTS
     # Sending creates the payment record and commits the money, so it is limited to

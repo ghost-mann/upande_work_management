@@ -107,6 +107,22 @@ CORE_CUSTOM_FIELDS = [
 	("Task", "custom_uom", "UoM", "Link", "UOM", "subject", {}),
 	("Task", "custom_daily_target", "Daily Target", "Float", None, "custom_uom", {}),
 	("Task", "custom_rate", "Rate", "Float", None, "custom_daily_target", {"precision": "4"}),
+	# What the weekly payroll feed writes: this pay week's total for one worker,
+	# actuals plus the off-day bonus. A colleague owns the Salary Structure whose
+	# Basic component fetches it, which is why the FIELDNAME is fixed -- the feed
+	# must write exactly this one, and that wiring is deliberately out of scope
+	# here. read_only because nothing typed into it survives the next feed.
+	("Employee", "custom_basic_pay", "Basic Pay", "Currency", None, "salary_mode",
+		{"read_only": 1, "description": "Weekly total written by Work Management: "
+			"confirmed unpaid actuals for the fed pay week, plus the weekly off-day "
+			"bonus where it was earned."}),
+	# Which week the figure above is for. Without it a second feed of the same
+	# week would overwrite the first with the same number and no way to tell,
+	# and a feed of the WRONG week would be invisible. The existing payment flow
+	# stamps payment_ref / paid for the same reason.
+	("Employee", "custom_basic_pay_week", "Basic Pay — week fed", "Data", None,
+		"custom_basic_pay", {"read_only": 1, "description": "The pay week the "
+			"figure above covers, as from → to. Re-feeding the same week is a no-op."}),
 ]
 
 

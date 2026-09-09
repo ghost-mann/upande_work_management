@@ -18,3 +18,7 @@ work_management.patches.v1_0.repair_submit_without_write
 work_management.patches.v1_0.show_task_subjects_in_links
 work_management.patches.v1_0.backfill_actuals_hours
 work_management.patches.v1_0.switch_on_the_new_discrepancy_checks
+# Employee.custom_basic_pay and its week stamp: CORE_CUSTOM_FIELDS is only
+# applied by after_install, so a field added to it later needs this to reach a
+# site that is already up.
+work_management.patches.v1_0.add_the_basic_pay_field

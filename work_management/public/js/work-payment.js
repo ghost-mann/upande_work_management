@@ -94,7 +94,7 @@
       b.setAttribute("aria-selected", b.getAttribute("data-tab")===name);
     });
     if(name==="build")    loadPayable();
-    if(name==="accounts") loadAccounts();
+    if(name==="accounts"){ loadAccounts(); feedWeek(false); }
     if(name==="issues")   loadIssues();
     if(name==="mine")     loadMine();
     if(name==="audit")    initAudit();
@@ -755,6 +755,96 @@
   // ════════════════════════════════════════════════
   //  AWAITING ACCOUNTS
   // ════════════════════════════════════════════════
+  // ── FEED A WEEK TO PAYROLL ──────────────────────────────────────────────
+  // Employee.custom_basic_pay is what a Salary Structure's Basic component
+  // fetches, so this writes onto a live payroll record. Nothing is written
+  // until the preview below has been on screen: who, their actuals, whose off
+  // day is which, whether the bonus was earned and why not where it was not.
+  function feedWeek(write){
+    var box=el("feed-week"); if(!box) return;
+    box.innerHTML='<div class="loading">Working out the week&hellip;</div>';
+    var args={ action:"feed_week_to_payroll" };
+    if(ST.feedFrom) args.week_from=ST.feedFrom;
+    if(write) args.write=1;
+    call(args, write?true:false, "wm_payroll").then(function(d){
+      ST.feed=d;
+      if(d.week_from) ST.feedFrom=d.week_from;
+      renderFeed();
+      if(write && !d.error) toast("Fed "+fmt(d.written)+" worker"+(d.written===1?"":"s")+" for "+d.week_stamp);
+    }).catch(function(e){
+      box.innerHTML='<div class="empty">Could not load: '+esc(e&&e.message?e.message:e)+'</div>';
+    });
+  }
+
+  function feedReason(r){
+    if(r.skipped) return '<span class="tag">'+esc(r.skipped)+'</span>';
+    if(r.bonus>0) return '<b style="color:var(--good)">yes</b> · '+money(r.bonus);
+    return 'no · '+esc(r.bonus_reason||"");
+  }
+
+  function renderFeed(){
+    var box=el("feed-week"), d=ST.feed||{};
+    if(d.error){ box.innerHTML='<div class="banner warn"><b>'+esc(d.error)+'</b></div>'; return; }
+    var rows=d.rows||[], skipped=d.skipped||[], blocked=(d.config_missing||[]).length;
+    var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px;align-items:center">'+
+      '<span class="hint" style="font-weight:600;color:var(--ink)">Pay week</span>'+
+      '<input type="date" id="fw-week" value="'+esc(d.week_from||"")+'">'+
+      '<span class="hint">'+esc(d.week_from||"")+' → '+esc(d.week_to||"")+' · paid '+esc(d.pay_date||"")+'</span>'+
+      '<span style="flex:1"></span>'+
+      '<span class="hint">'+(d.bonus_enabled
+        ? 'Off-day bonus '+money(d.bonus_amount)+' on full attendance'
+        : 'Off-day bonus off')+'</span>'+
+      // Disabled with the reason IN the tooltip: a greyed button with no
+      // explanation is the thing that costs an afternoon.
+      '<button type="button" class="btn'+(blocked?"":" solid")+'" id="fw-write"'+
+        (blocked?' disabled title="'+esc((d.config_missing||[]).join("; "))+'"':'')+
+        (rows.length?'':' disabled title="Nothing to write for this week"')+
+        '>Write '+fmt(rows.length)+' to payroll</button></div>';
+    if(blocked){
+      h+='<div class="banner warn"><b>Not configured:</b> '+esc((d.config_missing||[]).join("; "))+'.</div>';
+    }
+    if((d.assumed_off_day||[]).length){
+      h+='<div class="banner info"><b>'+fmt(d.assumed_off_day.length)+' worker'+
+         (d.assumed_off_day.length===1?" has":"s have")+' no off-day data</b> — Sunday is assumed for '+
+         esc(d.assumed_off_day.map(function(r){ return r.employee_name; }).slice(0,6).join(", "))+
+         '. Assign them a Holiday List so the rest day is theirs rather than a guess.</div>';
+    }
+    if((d.hr_questions||[]).length){
+      h+='<div class="banner info"><b>'+fmt(d.hr_questions.length)+' task worker'+
+         (d.hr_questions.length===1?"":"s")+' recorded no confirmed work this week</b> — skipped rather than '+
+         'written as zero. For HR: '+esc(d.hr_questions.map(function(r){ return r.employee_name; }).slice(0,6).join(", "))+'.</div>';
+    }
+    if(!rows.length && !skipped.length){
+      box.innerHTML=h+'<div class="empty"><b>Nothing to feed</b>No confirmed unpaid work for '+esc(d.week_stamp||"this week")+'.</div>';
+      wireFeed(); return;
+    }
+    h+='<table><thead><tr><th>Worker</th><th class="n">Actuals</th><th class="n">Days</th>'+
+       '<th>Off day</th><th class="n">Attended</th><th>Bonus</th><th class="n">Weekly total</th></tr></thead><tbody>';
+    rows.concat(skipped).forEach(function(r){
+      h+='<tr'+(r.skipped?' style="opacity:.55"':'')+'><td><b>'+esc(r.employee_name)+'</b>'+
+         '<div class="hint">'+esc(r.employee)+(r.was_week?(' · last fed '+esc(r.was_week)):'')+'</div></td>'+
+         '<td class="n">'+money(r.actuals)+'</td><td class="n">'+fmt(r.days_worked)+'</td>'+
+         '<td>'+esc(r.off_day||"—")+(r.off_day_assumed?' <span class="tag">assumed</span>':'')+
+         (r.public_holidays?'<div class="hint">holiday: '+esc(r.public_holidays)+'</div>':'')+'</td>'+
+         '<td class="n">'+fmt(r.attended)+' / '+fmt(r.working_days)+'</td>'+
+         '<td>'+feedReason(r)+'</td>'+
+         '<td class="n"><b>'+money(r.total)+'</b></td></tr>';
+    });
+    h+='</tbody></table>';
+    box.innerHTML=h;
+    wireFeed();
+  }
+
+  function wireFeed(){
+    if(el("fw-week")) el("fw-week").onchange=function(){ ST.feedFrom=this.value; feedWeek(false); };
+    if(el("fw-write")) el("fw-write").onclick=function(){
+      var d=ST.feed||{};
+      if(!confirm("Write "+(d.rows||[]).length+" worker totals to Employee.custom_basic_pay for "+
+                  d.week_stamp+"?\n\nThis updates live payroll records.")) return;
+      feedWeek(true);
+    };
+  }
+
   function loadAccounts(reset){
     var box=el("accounts-body");
     if(reset!==false){ ST.accStart=0; ST.accRows=[]; }

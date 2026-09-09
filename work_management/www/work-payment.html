@@ -115,6 +115,9 @@
 #wpay .banner{padding:12px 16px;border-radius:var(--radius);font-size:12px;margin-top:16px;display:flex;align-items:center;gap:10px}
 #wpay .banner.info{background:var(--pay-wash);border:1px solid #ddd6fe;color:#5b21b6}
 #wpay .banner.good{background:var(--good-wash);border:1px solid #bbf0d0;color:var(--good)}
+/* the feed panel refuses out loud: a warning banner had no style of its own
+   and rendered as an unstyled row, which reads as a layout bug */
+#wpay .banner.warn{background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12}
 #wpay .banner b{font-weight:700}
 
 /* skeleton */
@@ -669,6 +672,11 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
   <!-- ═══════════ AWAITING ACCOUNTS ═══════════ -->
   <div class="panel" id="p-accounts">
+    <!-- The weekly payroll feed. It lives here rather than on Pay workers
+         because this is the tab that already thinks in closed pay weeks: the
+         queue is filtered by one, and this writes one. -->
+    <div class="sech">Feed a week to payroll <span class="hint">writes each worker&rsquo;s weekly total to Employee.custom_basic_pay</span></div>
+    <div id="feed-week"><div class="loading">Checking the last closed pay week&hellip;</div></div>
     <div class="sech">Runs awaiting accounts <span class="hint">approve to release payment and stamp worker rows paid</span></div>
     <div id="pay-acc-banner"></div>
     <div id="accounts-body"><div class="loading">Loading pending runs&hellip;</div></div>

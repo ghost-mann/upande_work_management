@@ -92,6 +92,9 @@
   "pay_day",
   "allow_part_week_send",
   "allow_day_range",
+  "sb_offday_bonus",
+  "pay_weekly_off_on_full_attendance",
+  "weekly_off_bonus_amount",
   "sb_whopays",
   "tw_employment_type_rows",
   "tw_employment_types",
@@ -727,6 +730,27 @@
    "fieldtype": "Data",
    "label": "Cost grouping (plural)",
    "description": "Default: Sections."
+  },
+  {
+   "fieldname": "sb_offday_bonus",
+   "fieldtype": "Section Break",
+   "label": "Weekly off-day bonus",
+   "description": "A casual who works every working day of a pay week is paid for their rest day as well. The rest day is each worker's OWN: it comes from the Holiday List assigned to them, where a Holiday row with \u201cWeekly Off\u201d ticked is a rest day and one without it is a public holiday. Public holidays are working days for this rule \u2014 missing one forfeits the bonus, attending one earns it."
+  },
+  {
+   "fieldname": "pay_weekly_off_on_full_attendance",
+   "fieldtype": "Check",
+   "label": "Pay the weekly off day on full attendance",
+   "default": "0",
+   "description": "Off: the weekly feed pays confirmed actuals only. On: a worker present on every working day of the pay week is also paid the amount below."
+  },
+  {
+   "fieldname": "weekly_off_bonus_amount",
+   "fieldtype": "Currency",
+   "label": "Off-day bonus amount",
+   "default": "387",
+   "depends_on": "eval:doc.pay_weekly_off_on_full_attendance",
+   "description": "What a qualifying rest day is worth. Defaults to the current daily wage (387). Set it to 0 to switch the bonus off without losing the setting."
   }
  ],
  "idx": 0,
