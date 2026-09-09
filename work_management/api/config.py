@@ -13,6 +13,19 @@ import frappe
 
 from work_management import approvals, capabilities, split_day, taxonomy
 
+#: The two payment paths, spelled once. They are the Select's options in
+#: Work Management Settings and the values `payment_mode` takes everywhere; a
+#: typo in one of the eight places that compare against them would silently put
+#: a site on the other path, which is money.
+ACCOUNTS_RELEASE = "Accounts release"
+PAYROLL_FEED = "Payroll feed"
+
+#: What `payment_kind` records on a Work Management Payment. Blank on every run
+#: written before the field existed, which means the same as ACCOUNTS_KIND --
+#: nothing else could have created them.
+ACCOUNTS_KIND = "Accounts Release"
+FEED_KIND = "Payroll Feed"
+
 # Warehouse name fragments that are stores rather than places work happens.
 # Generic enough to be a useful starting point anywhere; override in Settings.
 DEFAULT_BLOCK_EXCLUDE = [
@@ -250,6 +263,10 @@ def get_config():
 		# an unconfigured site gets: doubling a site's holiday pay because it
 		# migrated is not a decision this app may make for anyone.
 		"public_holiday_pay_multiplier": 1.0,
+		# WHICH PAYMENT PATH THIS SITE RUNS. "Accounts release" is the pipeline
+		# this app has always had and is what an unconfigured site gets, so a
+		# migrate changes nothing about how anybody gets paid.
+		"payment_mode": ACCOUNTS_RELEASE,
 	}
 
 	try:
@@ -274,6 +291,11 @@ def get_config():
 	_holiday_x = frappe.utils.flt(settings.get("public_holiday_pay_multiplier"))
 	if _holiday_x > 0:
 		cfg["public_holiday_pay_multiplier"] = _holiday_x
+	# Anything that is not exactly the payroll-feed option is accounts release --
+	# an unset Select on an existing Single reads as an empty string, and the safe
+	# reading of "nothing said" is the path the site was already running.
+	if settings.get("payment_mode") == PAYROLL_FEED:
+		cfg["payment_mode"] = PAYROLL_FEED
 	# HOW LONG A DAY IS, read defensively, because zero is what an unset field
 	# actually holds here.
 	#

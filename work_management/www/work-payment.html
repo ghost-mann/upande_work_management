@@ -679,11 +679,16 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <!-- The weekly payroll feed. It lives here rather than on Pay workers
          because this is the tab that already thinks in closed pay weeks: the
          queue is filtered by one, and this writes one. -->
-    <div class="sech">Feed a week to payroll <span class="hint">writes each worker&rsquo;s weekly total to Employee.custom_basic_pay</span></div>
+    <div class="sech" id="feed-heading">Feed a week to payroll <span class="hint">writes each worker&rsquo;s weekly total to Employee.custom_basic_pay</span></div>
     <div id="feed-week"><div class="loading">Checking the last closed pay week&hellip;</div></div>
-    <div class="sech">Runs awaiting accounts <span class="hint">approve to release payment and stamp worker rows paid</span></div>
-    <div id="pay-acc-banner"></div>
-    <div id="accounts-body"><div class="loading">Loading pending runs&hellip;</div></div>
+    <!-- The release queue belongs to the accounts-release path. On a project
+         that pays by feeding payroll there is no release step, so the whole
+         block is hidden and the feed panel above is all this tab holds. -->
+    <div id="acc-queue-wrap">
+      <div class="sech">Runs awaiting accounts <span class="hint">approve to release payment and stamp worker rows paid</span></div>
+      <div id="pay-acc-banner"></div>
+      <div id="accounts-body"><div class="loading">Loading pending runs&hellip;</div></div>
+    </div>
   </div>
 
   <!-- ═══════════ ISSUES ═══════════ -->

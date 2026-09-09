@@ -189,8 +189,8 @@ class TestItSumsWhatThePaymentRunWouldSend(unittest.TestCase):
 
 	def test_the_aggregate_is_exposed_rather_than_re_implemented(self):
 		self.assertIn("def weekly_earnings(", self.payment)
-		self.assertIn("from work_management.api.payment import weekly_earnings",
-			read(PAYROLL))
+		self.assertIn("weekly_earnings", read(PAYROLL).split("\n\n")[0]
+			+ "".join(l for l in read(PAYROLL).splitlines() if l.startswith("from ")))
 
 	def test_the_feed_calls_it(self):
 		self.assertIn("weekly_earnings(", feed_block())

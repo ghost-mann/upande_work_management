@@ -94,7 +94,7 @@
       b.setAttribute("aria-selected", b.getAttribute("data-tab")===name);
     });
     if(name==="build")    loadPayable();
-    if(name==="accounts"){ loadAccounts(); feedWeek(false); }
+    if(name==="accounts"){ feedWeek(false); if(!ST.paysByFeed) loadAccounts(); }
     if(name==="issues")   loadIssues();
     if(name==="mine")     loadMine();
     if(name==="audit")    initAudit();
@@ -388,7 +388,8 @@
       tq+=(w.qty||0); te+=(w.owed||0); tp+=(w.paid_amt||0); tu+=(unpaid||0);
       var acts='<button type="button" class="btn sm" data-review="'+esc(w.emp)+'">Review</button>';
       if(ST.canSend && w.pay_status==="Unpaid"){
-        acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
+        if(!ST.paysByFeed)
+          acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
       }
       var actionable=w.pay_status==="Unpaid" && (unpaid||0)>0.001;
       var cb=actionable?
@@ -414,7 +415,9 @@
     h+='</tbody><tfoot><tr><th colspan="7">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
        '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te,2)+'</th><th class="n">'+fmt(tp,2)+'</th><th class="n">'+fmt(tu,2)+'</th>'+
        '<th colspan="2"></th></tr></tfoot></table></div></div>';
-    h+='<div class="note">Unpaid &rarr; review the worker and send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
+    h+= ST.paysByFeed
+      ? '<div class="note">Unpaid &rarr; feed the week to payroll &middot; Paid. This project pays through the <b>payroll feed</b>: the weekly feed on the Payroll tab creates each worker\'s payment run already paid and writes their week\'s total to payroll, so there is no send-to-accounts step. Unpaid day-rows can still be corrected inside Review before the week is fed.</div>'
+      : '<div class="note">Unpaid &rarr; review the worker and send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
     box.innerHTML=h;
     box.querySelectorAll("[data-review]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-review"), payWindow()); };
@@ -996,7 +999,7 @@
     }
     foot+='<button type="button" class="btn sm" data-view="'+esc(r.name)+'">View lines</button>';
     foot+='<button type="button" class="btn sm" data-withdraw="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" style="color:var(--warn);border-color:#fde68a">Return to unpaid</button>';
-    if(canPay){
+    if(canPay && !ST.paysByFeed){
       foot+='<button type="button" class="btn good sm" data-paid="'+esc(r.name)+'">Mark paid</button>';
     }
     return '<div class="runcard">'+
@@ -1327,19 +1330,41 @@
         return;
       }
       var h='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
-        '<th>Run</th><th>Title</th><th class="n">Workers</th><th class="n">Total</th><th class="c">Status</th><th>Date</th></tr></thead><tbody>';
+        '<th>Run</th><th>Title</th><th class="n">Workers</th><th class="n">Total</th><th class="c">Status</th><th>Date</th><th>How</th><th></th></tr></thead><tbody>';
       rows.forEach(function(r){
+        var fed=(r.payment_kind==="Payroll Feed");
         h+='<tr><td><span class="rowlink" data-view="'+esc(r.name)+'">'+esc(r.name)+'</span></td>'+
            '<td>'+esc(r.run_title||"—")+'</td>'+
            '<td class="n m">'+fmt(r.total_workers)+'</td>'+
            '<td class="n m">'+money(r.amount)+'</td>'+
            '<td class="c">'+stateTag(r.workflow_state)+'</td>'+
-           '<td>'+esc(r.payroll_date||"")+'</td></tr>';
+           '<td>'+esc(r.payroll_date||"")+'</td>'+
+           // blank on every run written before payment_kind existed, which means
+           // accounts release -- nothing else could have made them
+           '<td>'+(fed?'<span class="tag">payroll feed</span>':'<span class="hint">accounts</span>')+'</td>'+
+           // A MIS-FED WEEK HAS TO BE CORRECTABLE. There is no accounts step to
+           // withdraw from, so this is that step's equivalent.
+           '<td>'+((fed && r.workflow_state!=="Cancelled")
+             ? '<button type="button" class="btn sm" data-cancelfeed="'+esc(r.name)+'" data-nm="'+esc(r.run_title||r.name)+'" style="color:var(--warn);border-color:#fde68a">Cancel feed</button>'
+             : '')+'</td></tr>';
       });
       h+='</tbody></table></div></div>';
       box.innerHTML=h;
       box.querySelectorAll("[data-view]").forEach(function(a){
         a.onclick=function(){ openRunDetail(a.getAttribute("data-view")); };
+      });
+      box.querySelectorAll("[data-cancelfeed]").forEach(function(b){
+        b.onclick=function(){
+          var nm=b.getAttribute("data-cancelfeed");
+          if(!confirm("Cancel "+b.getAttribute("data-nm")+"?\n\nThe days it paid go back to unpaid and the worker\'s basic pay for that week is cleared, so the week can be fed again."))
+            return;
+          b.disabled=true;
+          call({ action:"pay_cancel_feed", name:nm }, true).then(function(d){
+            if(d.error){ toast("Error: "+d.error); b.disabled=false; return; }
+            toast("Cancelled "+nm+" — "+fmt(d.rows_reset)+" day-rows back to unpaid");
+            loadMine();
+          }).catch(function(){ toast("Cancel failed"); b.disabled=false; });
+        };
       });
     }).catch(function(e){
       box.innerHTML='<div class="err">Could not load your runs: '+esc(e.message)+'</div>';
@@ -1789,7 +1814,8 @@
         tq+=g.qty; te+=g.amount; tp+=g.paid_amt; tu+=g.unpaid_amt;
         var acts='<button type="button" class="btn sm" data-review="'+esc(g.emp)+'">Review</button>';
         if(ST.canSend && g.unpaid_amt>0.001 && g.status==="Unpaid"){
-          acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.unpaid_amt+'">Send to accounts</button>';
+          if(!ST.paysByFeed)
+            acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.unpaid_amt+'">Send to accounts</button>';
         }
         t+='<tr><td><span class="rowlink" data-review="'+esc(g.emp)+'">'+esc(g.nm)+'</span></td>'+
           '<td class="m">'+esc(g.emp)+'</td><td>'+esc(g.farm_list)+'</td>'+
@@ -1997,7 +2023,19 @@
       '<div class="kpi" style="--kc:var(--good)"><div class="k">Paid to date</div><div class="v">'+fmt(k.paid_amt,2)+'</div><div class="u">KES · this window</div></div>'+
       '<div class="kpi"><div class="k">Runs</div><div class="v">'+fmt(runs.length)+'</div><div class="u">payment runs</div></div>'+
     '</div>';
-    if(k.unpaid_amt>0.001){
+    // WHAT HAPPENS TO THIS MONEY NEXT, which is a different sentence on each
+    // path. "Ready to pay -- send to accounts" is simply false where there is no
+    // accounts step, and a review sheet that says it teaches the wrong workflow.
+    var feedRun=null;
+    (runs||[]).forEach(function(r){ if(r.kind==="Payroll Feed" && !feedRun) feedRun=r; });
+    if(ST.paysByFeed && feedRun){
+      h+='<div class="banner good" style="margin-top:14px"><b>Paid via payroll feed '+
+         esc(feedRun.run)+'.</b> The week was fed to payroll on '+esc(dshort(feedRun.rdate))+
+         ', which created this run already paid and wrote the total to the worker\'s basic pay.</div>';
+    } else if(ST.paysByFeed && k.unpaid_amt>0.001){
+      h+='<div class="banner info" style="margin-top:14px"><b>Included in the next payroll feed</b> ('+
+         money(k.unpaid_amt)+'). Feeding the week on the Payroll tab pays it and stamps these days.</div>';
+    } else if(k.unpaid_amt>0.001){
       h+='<div class="banner info" style="margin-top:14px"><b>Ready to pay.</b> “Approve &amp; send to accounts” below creates a payment run for this worker alone ('+money(k.unpaid_amt)+') and hands it to accounts for release.</div>';
     }
     h+='<div class="sech" style="margin-top:16px">Payment runs including this worker</div>';
@@ -2643,11 +2681,20 @@
     // roles (gate mark-paid) then first load
     call({ action:"pay_roles" }).then(function(d){
       ST.isAccounts=!!d.is_accounts;
-      ST.canSend=!!d.can_send;
-      el("pay-who").textContent=(d.user||"")+(d.is_accounts?" · accounts":"");
+      // WHICH PAYMENT PATH THIS PROJECT RUNS, asked once. Every control that
+      // belongs to the other path is then absent rather than present-and-
+      // refusing -- a button that exists to say no is a button somebody presses.
+      ST.paysByFeed=!!d.pays_by_feed;
+      ST.paymentMode=d.payment_mode||"";
+      // Sending to accounts is not a thing this project does in feed mode, so
+      // the permission to do it is moot.
+      ST.canSend=!!d.can_send && !ST.paysByFeed;
+      el("pay-who").textContent=(d.user||"")+(d.is_accounts?" · accounts":"")+
+        (ST.paysByFeed?" · pays by payroll feed":"");
       ST.allowRange=!!d.allow_day_range;
       ST.maxSpan=d.max_span_days||31;
       pwRangeHint();
+      applyPaymentMode();
       if(d.week_ends_on && d.week_ends_on!==PW.endsOn){
         PW.endsOn=d.week_ends_on;                 // re-anchor to the configured boundary
         pwApply(pwLatestCompleteStart(), false);
@@ -2659,6 +2706,23 @@
       loadIssues();       // seeds the Issues tab badge even before it's opened
       showTab("build");
     });
+  }
+
+  // In payroll-feed mode this tab is the payroll tab: the feed panel is all of
+  // it, and the release queue -- a step this project does not have -- is gone
+  // rather than sitting there empty and unexplainable.
+  function applyPaymentMode(){
+    if(!ST.paysByFeed) return;
+    var q=el("acc-queue-wrap"); if(q) q.hidden=true;
+    var tab=document.querySelector('#pay-tabs button[data-tab="accounts"]')
+         || document.querySelector('button[data-tab="accounts"]');
+    if(tab){
+      var cnt=tab.querySelector(".cnt");
+      tab.textContent="Payroll";
+      if(cnt) tab.appendChild(cnt);
+    }
+    var head=el("feed-heading");
+    if(head) head.firstChild.textContent="Feed a week to payroll — this is how workers are paid here ";
   }
 
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", init);

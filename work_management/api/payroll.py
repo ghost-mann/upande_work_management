@@ -12,8 +12,9 @@ import json
 import frappe
 
 from work_management import pay_week
-from work_management.api.config import get_config
-from work_management.api.payment import weekly_earnings
+from work_management.api.config import ACCOUNTS_RELEASE, PAYROLL_FEED, get_config
+from work_management.api.payment import (payroll_feed_run, weekly_earnings,
+                                          weekly_spoken_for)
 
 
 #: Attendance statuses that count as having turned up. "Half Day" deliberately
@@ -281,6 +282,27 @@ def feed_preview(week_from=None, week_to=None, farm=None, employee=None):
             continue
         rows.append(row)
 
+    # ALREADY SPOKEN FOR. A worker sent to accounts has no eligible rows left, so
+    # they drop out of the loop above without a word -- and "where did Brian go"
+    # is then a question the panel cannot answer. Listed with the run that claimed
+    # them, which is also the shape of the exclusion in the other direction: a fed
+    # row cannot be sent, a sent row cannot be fed, and both are visible.
+    for taken in weekly_spoken_for(week_a, week_b, employee=employee, farm=farm):
+        skipped.append({
+            "employee": taken.employee,
+            "employee_name": taken.employee_name or taken.employee,
+            "actuals": frappe.utils.flt(taken.owed, 2),
+            "days_worked": frappe.utils.cint(taken.days),
+            "off_day": None, "off_day_assumed": 0, "public_holidays": None,
+            "working_days": 0, "attended": 0, "bonus": 0, "bonus_reason": None,
+            "total": frappe.utils.flt(taken.owed, 2),
+            "was": 0, "was_week": None,
+            "skipped": (("paid by payroll feed " if frappe.utils.cint(taken.paid)
+                         else "already sent to accounts as ")
+                        + str(taken.runs or "another run")),
+            "spoken_for": 1,
+        })
+
     out["preview"] = 1
     out["rows"] = rows
     out["skipped"] = skipped
@@ -293,8 +315,18 @@ def feed_preview(week_from=None, week_to=None, farm=None, employee=None):
     # WHETHER THE BUTTON MAY BE PRESSED, and if not, why -- in a sentence, not a
     # flag. Ordered so the reader is told the thing they have to fix FIRST: the
     # configuration, then the week, then whether there is anything left to do.
+    mode = get_config().get("payment_mode")
+    out["payment_mode"] = mode
     reason = None
-    if missing:
+    if mode != PAYROLL_FEED:
+        # ONE PAYMENT PATH AT A TIME, EVER. On a site that releases through
+        # accounts, feeding a week would pay work that is also queued for
+        # accounts to release -- so the panel is visible, explains itself, and
+        # does nothing.
+        reason = ("this project's payment mode is \u201c" + str(mode or ACCOUNTS_RELEASE)
+            + "\u201d, so workers are paid by sending runs to accounts rather than "
+            "by feeding payroll")
+    elif missing:
         reason = "not configured: " + "; ".join(missing)
     elif not complete:
         reason = ("the pay week " + stamp + " has not closed yet -- it can be fed "
@@ -318,26 +350,66 @@ def feed_write(plan):
     Takes the preview rather than recomputing: what somebody approved on screen
     is then exactly what lands, and a week that changed underneath them cannot be
     written on the strength of a figure they never saw.
+
+    IN PAYROLL-FEED MODE THE FEED IS THE PAYMENT, so each worker gets three
+    things or none of them: a payment run created already paid, their day-rows
+    stamped paid against it, and custom_basic_pay carrying the week's total. A
+    savepoint per worker is what makes that "or none" true -- half of it is worse
+    than nothing, because a stamped row with no figure is unpaid work nobody can
+    find, and a figure with no run is money with no evidence.
+
+    One worker failing does not stop the rest: the others are independent, and
+    the report names who was left out.
     """
     written = 0
+    runs = []
+    failed = []
+    company = frappe.db.get_single_value("Work Management Settings", "default_company")
+    feeding = get_config().get("payment_mode") == PAYROLL_FEED
     for row in plan.get("rows") or []:
-        # A PROPER DOC UPDATE, not frappe.db.set_value(..., update_modified=False).
-        # This is somebody's pay: the change belongs in the Employee's version
-        # history with who made it and when, which is exactly what a raw column
-        # write throws away.
-        doc = frappe.get_doc("Employee", row["employee"])
-        doc.custom_basic_pay = row["total"]
-        doc.custom_basic_pay_week = plan["week_stamp"]
-        doc.flags.ignore_permissions = True
-        doc.save(ignore_permissions=True)
-        doc.add_comment("Comment",
-            "Basic pay fed from Work Management for " + plan["week_stamp"] + ": KES "
-            + str(row["total"]) + " (" + str(row["actuals"]) + " actuals"
-            + (" + " + str(row["bonus"]) + " off-day bonus" if row["bonus"] else "")
-            + ") by " + frappe.session.user)
-        written = written + 1
+        point = "wmfeed_" + frappe.generate_hash(length=8)
+        frappe.db.savepoint(point)
+        try:
+            run = None
+            if feeding:
+                run = payroll_feed_run(row["employee"], row["employee_name"],
+                    plan["week_from"], plan["week_to"], plan["pay_date"], company)
+                if not run:
+                    raise ValueError("no payable actuals left for this worker")
+            written = written + _write_basic_pay(plan, row, run)
+            if run:
+                runs.append({"employee": row["employee"],
+                             "employee_name": row["employee_name"],
+                             "payment": run, "amount": row["total"]})
+        except Exception as failure:
+            frappe.db.rollback(save_point=point)
+            failed.append({"employee": row["employee"],
+                           "employee_name": row["employee_name"],
+                           "reason": str(failure)})
     frappe.db.commit()
+    plan["runs"] = runs
+    plan["failed"] = failed
     return written
+
+
+def _write_basic_pay(plan, row, run=None):
+    """The Employee half of a feed. Returns 1 so the caller can count."""
+    # A PROPER DOC UPDATE, not frappe.db.set_value(..., update_modified=False).
+    # This is somebody's pay: the change belongs in the Employee's version
+    # history with who made it and when, which is exactly what a raw column
+    # write throws away.
+    doc = frappe.get_doc("Employee", row["employee"])
+    doc.custom_basic_pay = row["total"]
+    doc.custom_basic_pay_week = plan["week_stamp"]
+    doc.flags.ignore_permissions = True
+    doc.save(ignore_permissions=True)
+    doc.add_comment("Comment",
+        "Basic pay fed from Work Management for " + plan["week_stamp"] + ": KES "
+        + str(row["total"]) + " (" + str(row["actuals"]) + " actuals"
+        + (" + " + str(row["bonus"]) + " off-day bonus" if row["bonus"] else "")
+        + ") by " + frappe.session.user
+        + (" \u2014 payment run " + str(run) if run else ""))
+    return 1
 
 
 @frappe.whitelist()

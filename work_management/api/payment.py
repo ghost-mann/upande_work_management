@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config
+from work_management.api.config import FEED_KIND, PAYROLL_FEED, get_config
 
 
 def task_worker_sql(alias="we"):
@@ -142,6 +142,201 @@ def weekly_earnings(week_from, week_to, employee=None, farm=None):
     """, params, as_dict=True)
 
 
+def weekly_spoken_for(week_from, week_to, employee=None, farm=None):
+    """Workers whose week is already claimed by a payment run.
+
+    The eligibility conditions exclude a row the moment it carries a
+    `payment_ref` or is marked paid, which is what makes the two payment paths
+    mutually exclusive without a lock -- but it also makes such a worker vanish
+    from the payroll feed's preview entirely, with nothing said. "Where did
+    Brian go" is then a question the screen cannot answer.
+
+    So they are looked up separately and reported: same window, same
+    task-worker filter, same confirmed-and-payroll-counted grain, and the run
+    that claimed them.
+    """
+    conds = ("ac.workflow_state='CONFIRMED' AND IFNULL(we.count_in_payroll,0)=1"
+             " AND we.amount>0"
+             " AND (IFNULL(we.payment_ref,'') != '' OR IFNULL(we.paid,0) = 1)")
+    conds = conds + task_worker_sql("we")
+    params = {"a": week_from, "b": week_to}
+    if employee:
+        conds = conds + " AND we.employee = %(e)s"
+        params["e"] = employee
+    if farm:
+        conds = conds + " AND ac.farm = %(f)s"
+        params["f"] = farm
+    return frappe.db.sql("""
+        SELECT we.employee employee, MAX(we.employee_name) employee_name,
+               COALESCE(SUM(we.amount),0) owed,
+               COUNT(DISTINCT we.work_date) days,
+               MAX(IFNULL(we.paid,0)) paid,
+               GROUP_CONCAT(DISTINCT we.payment_ref) runs
+        FROM `tabWork Actuals Employee` we
+        INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+        WHERE """ + conds + """
+          AND we.work_date >= %(a)s AND we.work_date <= %(b)s
+        GROUP BY we.employee
+        ORDER BY MAX(we.employee_name)
+    """, params, as_dict=True)
+
+
+def payment_mode():
+    """Which payment path this site runs. One read, so nothing can disagree."""
+    return get_config().get("payment_mode")
+
+
+def actuals_earnings(employee, week_from, week_to):
+    """One worker's window, grouped per actuals document.
+
+    The grain a payment run's lines are written at: one traceable line per
+    actuals doc the worker earned on, carrying the accountability chain -- who
+    assigned the job, who entered the actuals, and every approver.
+
+    Same conditions as weekly_earnings() above, which is what makes the total on
+    a fed run equal the total the panel previewed.
+    """
+    conds = EARNINGS_CONDITIONS + task_worker_sql("we")
+    return frappe.db.sql("""
+        SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
+               ac.rate doc_rate, ac.assignment assignment,
+               ac.entered_by entered_by, ac.hr_approved_by hr_approved_by,
+               ac.gm_approved_by gm_approved_by, we.employee_name nm,
+               MIN(we.work_date) wfrom, MAX(we.work_date) wto,
+               COUNT(DISTINCT we.work_date) days,
+               COALESCE(SUM(we.actual_quantity),0) qty,
+               COALESCE(SUM(we.amount),0) owed
+        FROM `tabWork Actuals Employee` we
+        INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+        WHERE """ + conds + """
+          AND we.employee = %(e)s
+          AND we.work_date >= %(a)s AND we.work_date <= %(b)s
+        GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.rate, ac.assignment,
+                 ac.entered_by, ac.hr_approved_by, ac.gm_approved_by, we.employee_name
+        ORDER BY MIN(we.work_date)
+    """, {"e": employee, "a": week_from, "b": week_to}, as_dict=True)
+
+
+def payroll_feed_run(employee, employee_name, week_from, week_to, pay_date, company):
+    """Create one worker's payment run for a fed week: paid, and rows stamped.
+
+    In payroll-feed mode THE FEED IS THE PAYMENT. There is no accounts step to
+    wait for, so the run is created in the terminal state and its day-rows are
+    stamped `payment_ref` and `paid` in the same breath -- exactly what
+    pay_mark_paid does at the end of the accounts path.
+
+    That stamping is also what makes the two paths mutually exclusive without a
+    lock: every eligibility query in this module carries `IFNULL(paid,0)=0 AND
+    IFNULL(payment_ref,'')=''`, so a fed row cannot be sent to accounts and a
+    sent row cannot be fed. The exclusion is a property of the data, not a rule
+    somebody has to remember.
+
+    Deliberately NOT an extraction from pay_worker_submit. That path is the one
+    every existing site runs and this release must not change it; the two share
+    EARNINGS_CONDITIONS, task_worker_sql() and the field-for-field shape of the
+    lines, and a test holds them to it.
+
+    Returns the payment's name, or None when the worker has nothing to pay.
+    """
+    rows = actuals_earnings(employee, week_from, week_to)
+    total = 0
+    for group in rows:
+        total = total + frappe.utils.flt(group.owed)
+    if not rows or total <= 0:
+        return None
+
+    name = employee_name or (rows[0].nm if rows else None) or employee
+    doc = frappe.new_doc("Work Management Payment")
+    doc.run_title = "Payroll feed \u2014 " + str(name) + " \u2014 " + str(week_from) + " to " + str(week_to)
+    doc.company = company
+    doc.payroll_date = pay_date
+    doc.prepared_by = frappe.session.user
+    try:
+        doc.period_from = week_from
+        doc.period_to = week_to
+    except Exception:
+        pass
+    asg_cache = {}
+    total_days = 0
+    total_qty = 0
+    for group in rows:
+        if frappe.utils.flt(group.owed) <= 0:
+            continue
+        info = None
+        if group.assignment:
+            info = asg_cache.get(group.assignment)
+            if info is None:
+                info = frappe.db.get_value("Work Management Assigner", group.assignment,
+                    ["assigned_by", "approved_by"], as_dict=True)
+                asg_cache[group.assignment] = info
+        qty = frappe.utils.flt(group.qty)
+        owed = frappe.utils.flt(group.owed)
+        line = doc.append("lines", {})
+        line.actuals = group.actuals
+        line.employee = employee
+        line.employee_name = name
+        line.farm = group.farm
+        line.task = group.task
+        line.block = group.block
+        line.work_from = group.wfrom
+        line.work_to = group.wto
+        line.days = group.days
+        line.qty = qty
+        # the stored rate, or what the money implies -- on a public holiday the
+        # amount carries the multiplier, so amount/qty is the effective rate and
+        # the doc rate is not. Same fallback the accounts path uses.
+        line.rate = frappe.utils.flt(group.doc_rate) or ((owed / qty) if qty else 0)
+        line.assignment = group.assignment
+        line.assigned_by = info.assigned_by if info else None
+        line.fm_approved_by = info.approved_by if info else None
+        line.entered_by = group.entered_by
+        line.hr_approved_by = group.hr_approved_by
+        line.gm_approved_by = group.gm_approved_by
+        line.paid_workers = 1
+        line.amount = owed
+        total_days = total_days + frappe.utils.cint(group.days)
+        total_qty = total_qty + qty
+    doc.employee = employee
+    doc.employee_name = name
+    doc.farm = rows[0].farm
+    doc.total_days = total_days
+    doc.total_qty = total_qty
+    doc.amount = total
+    doc.total_workers = 1
+    doc.total_actuals = len(doc.lines)
+    doc.flags.ignore_permissions = True
+    doc.insert(ignore_permissions=True)
+    # Terminal on creation. Written directly for the same reason the accounts
+    # path writes its states directly: the workflow's transition-role gate would
+    # refuse from the bottom of the stack, naming neither the role nor the user.
+    frappe.db.set_value("Work Management Payment", doc.name, {
+        "workflow_state": "Paid",
+        "docstatus": 1,
+        "payment_kind": FEED_KIND,
+        "accounts_approved_by": frappe.session.user,
+        "accounts_approval_date": frappe.utils.today(),
+    }, update_modified=False)
+
+    stamped = frappe.db.sql("""
+        SELECT we.name rowname
+        FROM `tabWork Actuals Employee` we
+        INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+        WHERE """ + EARNINGS_CONDITIONS + task_worker_sql("we") + """
+          AND we.employee = %(e)s
+          AND we.work_date >= %(a)s AND we.work_date <= %(b)s
+    """, {"e": employee, "a": week_from, "b": week_to}, as_dict=True)
+    now = frappe.utils.now()
+    for row in stamped:
+        frappe.db.set_value("Work Actuals Employee", row.rowname, {
+            "payment_ref": doc.name,
+            "paid": 1,
+            "custom_reviewed": 1,
+            "custom_reviewed_by": frappe.session.user,
+            "custom_reviewed_at": now,
+        }, update_modified=False)
+    return doc.name
+
+
 @frappe.whitelist()
 def wm_payment(**kwargs):
     _cfg = get_config()
@@ -243,6 +438,13 @@ def wm_payment(**kwargs):
 
 
 
+    # Every action that moves money along the ACCOUNTS path: creating a run for
+    # accounts to release, and accounts releasing it. Named as a set rather than
+    # repeated at each branch, so adding a send action and forgetting the guard is
+    # a thing a test can see.
+    ACCOUNTS_ACTIONS = ("pay_submit", "pay_worker_submit", "pay_bulk_submit",
+                        "pay_mark_paid")
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -281,6 +483,17 @@ def wm_payment(**kwargs):
             fields=["name","farm","task","block_section","payroll_people","total_payment","entry_date"],
             order_by="farm", limit=500)
         out["actuals"] = rows
+
+    # THE OTHER PATH IS NOT AVAILABLE. In payroll-feed mode the weekly feed is
+    # the payment: it creates the run already paid and stamps the days. Sending
+    # the same work to accounts as well would pay it twice, and hiding the
+    # buttons is not enforcement -- these are whitelisted actions anybody who can
+    # reach the endpoint can call.
+    elif action in ACCOUNTS_ACTIONS and payment_mode() == PAYROLL_FEED:
+        out["error"] = ("This project pays through the payroll feed, so work is not "
+                        "sent to accounts. Open the payroll panel on the Payments "
+                        "tab and feed the week. (Work Management Settings \u2192 "
+                        "How workers get paid.)")
 
     elif action == "pay_submit" and not CAN_SEND:
         out["error"] = ("Only the HR head, accounting or the general manager can send work to "
@@ -672,7 +885,7 @@ def wm_payment(**kwargs):
     elif action == "pay_my":
         out["runs"] = frappe.db.get_all("Work Management Payment",
             filters={"prepared_by":frappe.session.user},
-            fields=["name","run_title","total_actuals","total_workers","amount","workflow_state","payroll_date"],
+            fields=["name","run_title","total_actuals","total_workers","amount","workflow_state","payroll_date","payment_kind"],
             order_by="creation desc", limit=200)
 
     elif action == "pay_roles":
@@ -682,6 +895,12 @@ def wm_payment(**kwargs):
         out["user"] = frappe.session.user
         out["is_accounts"] = 1 if is_acc else 0
         out["can_send"] = CAN_SEND
+        # WHICH PAYMENT PATH THIS PROJECT RUNS. The screen asks once, at boot, and
+        # every control that belongs to the other path is then absent rather than
+        # present-and-refusing. The server refuses too -- see ACCOUNTS_ACTIONS --
+        # because a hidden button is a courtesy and not a gate.
+        out["payment_mode"] = payment_mode()
+        out["pays_by_feed"] = 1 if payment_mode() == PAYROLL_FEED else 0
         # the page picks pay weeks, not free dates, so it needs the configured
         # week boundary
         r_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -1284,6 +1503,10 @@ def wm_payment(**kwargs):
                         frappe.utils.flt(r.hol_x) or 1),
                 })
             out["daily"] = daily
+            # HOW THIS WORKER GETS PAID, in the sheet's own words. "Ready to pay
+            # -- send to accounts" is a lie on a site that pays by feeding
+            # payroll: there is no accounts step to send anything to.
+            out["pays_by_feed"] = 1 if payment_mode() == PAYROLL_FEED else 0
             # payment runs that include this worker -- one row per RUN, which is what
             # the heading above the table promises and what the run-count tile beside
             # it reports. Ungrouped, a run covering five days returned five rows whose
@@ -1296,6 +1519,7 @@ def wm_payment(**kwargs):
             # an arbitrary day's pay presented as the run's.
             runs = frappe.db.sql("""
                 SELECT p.name run, p.run_title title, p.payroll_date rdate, p.workflow_state state,
+                       IFNULL(p.payment_kind, '') kind,
                        SUM(l.amount) amount, SUM(l.days) days, SUM(l.qty) qty
                 FROM `tabWork Payment Line` l
                 INNER JOIN `tabWork Management Payment` p ON l.parent = p.name
@@ -1311,6 +1535,80 @@ def wm_payment(**kwargs):
                     "days": frappe.utils.cint(r.days), "qty": frappe.utils.flt(r.qty),
                 })
             out["runs"] = runlist
+
+    elif action == "pay_cancel_feed":
+        # A MIS-FED WEEK HAS TO BE CORRECTABLE. The feed is terminal, so there is
+        # no accounts step to withdraw from -- this is that step's equivalent:
+        # un-stamp the days, put the run in Cancelled, and clear the figure the
+        # feed wrote onto the Employee.
+        #
+        # The last part is the one that must not be forgotten. custom_basic_pay is
+        # read by a Salary Structure, so leaving it holding a total whose backing
+        # run was cancelled would pay the worker for work that is now unpaid and
+        # sitting back in the queue.
+        cf_name = frappe.form_dict.get("name")
+        cf = frappe.db.get_value("Work Management Payment", cf_name,
+            ["name", "workflow_state", "payment_kind", "employee", "employee_name",
+             "period_from", "period_to", "amount"], as_dict=True)
+        if not cf:
+            out["error"] = "Payment reference not found"
+        elif cf.payment_kind != FEED_KIND:
+            out["error"] = ("Only a payroll-feed run is cancelled this way. "
+                            + str(cf_name) + " was sent to accounts; return it to "
+                            "unpaid instead.")
+        elif cf.workflow_state == "Cancelled":
+            out["error"] = str(cf_name) + " is already cancelled."
+        elif frappe.db.sql("""
+            SELECT sd.parent FROM `tabSalary Detail` sd
+            INNER JOIN `tabAdditional Salary` a ON a.name = sd.additional_salary
+            WHERE a.ref_doctype = 'Work Management Payment' AND a.ref_docname = %(n)s LIMIT 1
+        """, {"n": cf_name}, as_dict=True):
+            # payroll has already consumed it; unwinding here would leave a Salary
+            # Slip pointing at money this says was never paid
+            out["error"] = ("Cannot cancel: a Salary Slip has already paid this through "
+                            "payroll. Reverse it in payroll first.")
+        else:
+            for asr in frappe.db.sql("""
+                SELECT name FROM `tabAdditional Salary`
+                WHERE ref_doctype = 'Work Management Payment' AND ref_docname = %(n)s
+                  AND docstatus = 1
+            """, {"n": cf_name}, as_dict=True):
+                adoc = frappe.get_doc("Additional Salary", asr.name)
+                adoc.flags.ignore_permissions = True
+                adoc.cancel()
+            cf_rows = frappe.db.get_all("Work Actuals Employee",
+                filters={"payment_ref": cf_name}, pluck="name")
+            for rn in cf_rows:
+                frappe.db.set_value("Work Actuals Employee", rn, {
+                    "payment_ref": None, "paid": 0, "custom_reviewed": 0,
+                    "custom_reviewed_by": None, "custom_reviewed_at": None,
+                }, update_modified=False)
+            # the week this run was fed for, in the stamp's own format
+            cf_stamp = str(cf.period_from) + " \u2192 " + str(cf.period_to)
+            cf_cleared = 0
+            if cf.employee:
+                cf_emp = frappe.db.get_value("Employee", cf.employee,
+                    "custom_basic_pay_week")
+                if str(cf_emp or "") == cf_stamp:
+                    # a versioned save, as the feed's own write is: this changes
+                    # somebody's pay and belongs in their history
+                    cf_doc = frappe.get_doc("Employee", cf.employee)
+                    cf_doc.custom_basic_pay = 0
+                    cf_doc.custom_basic_pay_week = None
+                    cf_doc.flags.ignore_permissions = True
+                    cf_doc.save(ignore_permissions=True)
+                    cf_doc.add_comment("Comment",
+                        "Basic pay cleared: payroll feed " + str(cf_name) + " for "
+                        + cf_stamp + " was cancelled by " + frappe.session.user + ".")
+                    cf_cleared = 1
+            frappe.db.set_value("Work Management Payment", cf_name, {
+                "workflow_state": "Cancelled", "docstatus": 2,
+            }, update_modified=False)
+            frappe.db.commit()
+            out["name"] = cf_name
+            out["rows_reset"] = len(cf_rows)
+            out["basic_pay_cleared"] = cf_cleared
+            out["week"] = cf_stamp
 
     elif action == "pay_run_withdraw":
         # Return a pending payment to Unpaid: clear the reference and review stamps

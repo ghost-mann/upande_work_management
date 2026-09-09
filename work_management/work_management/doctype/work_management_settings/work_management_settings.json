@@ -86,6 +86,7 @@
   "last_recalc_by",
   "last_recalc_summary",
   "sb_payroll",
+  "payment_mode",
   "salary_component",
   "pay_week_starts_on",
   "pay_week_ends_on",
@@ -760,6 +761,14 @@
    "default": "2",
    "precision": "2",
    "description": "What a day's work is worth when it falls on a PUBLIC holiday \u2014 a Holiday row on the worker's list WITHOUT \u201cWeekly Off\u201d ticked. 2 pays double; 1 switches it off. Applied when the work is valued, so it changes new actuals only and never re-prices what is already recorded. NOTE: a Settings field's default reaches a fresh install only \u2014 on a site that already exists this arrives as 0, and 0 is read as 1 (off) rather than as double pay, so turning it on is always somebody's decision."
+  },
+  {
+   "fieldname": "payment_mode",
+   "fieldtype": "Select",
+   "label": "How workers get paid",
+   "options": "Accounts release\nPayroll feed",
+   "default": "Accounts release",
+   "description": "<b>Accounts release</b> \u2014 the pipeline this app has always run: work is sent to accounts as a payment run, and accounts marks it paid. <b>Payroll feed</b> \u2014 the weekly feed IS the payment: it writes each worker's total to Employee.custom_basic_pay, creates their payment run already paid, and stamps the days, so payroll pays them from the salary structure. One path at a time, ever \u2014 in Payroll feed mode the send-to-accounts controls disappear and refuse server-side, and in Accounts release mode the payroll panel is disabled."
   }
  ],
  "idx": 0,

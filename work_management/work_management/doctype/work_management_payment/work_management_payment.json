@@ -13,6 +13,7 @@
   "farm",
   "total_days",
   "total_qty",
+  "payment_kind",
   "workflow_state",
   "cb_top",
   "company",
@@ -207,6 +208,15 @@
    "fieldtype": "Datetime",
    "label": "Submitted At",
    "read_only": 1
+  },
+  {
+   "fieldname": "payment_kind",
+   "fieldtype": "Select",
+   "label": "Payment kind",
+   "options": "Accounts Release\nPayroll Feed",
+   "default": "Accounts Release",
+   "read_only": 1,
+   "description": "Which path created this run. <b>Accounts Release</b> \u2014 sent to accounts and released by them. <b>Payroll Feed</b> \u2014 created already paid by the weekly payroll feed. EMPTY on every run written before this field existed, which is the same thing as Accounts Release: nothing else could have made them."
   }
  ],
  "idx": 0,

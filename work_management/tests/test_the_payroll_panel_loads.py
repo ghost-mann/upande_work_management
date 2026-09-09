@@ -154,7 +154,7 @@ class TestTheLoaderReadsAndTheButtonWrites(unittest.TestCase):
 		"""feed_write() consumes the preview dict, so what somebody approved on
 		screen is exactly what lands."""
 		at = self.src.index("def feed_write(")
-		self.assertIn("plan.get(\"rows\")", self.src[at:at + 900])
+		self.assertIn('plan.get("rows")', self.src[at:self.src.index("def _write_basic_pay(")])
 
 
 class TestThePanelExplainsItselfWhenItCannotFeed(unittest.TestCase):
