@@ -246,6 +246,10 @@ def get_config():
 		# How long a full day is. The denominator every man-day figure divides by;
 		# see work_management/split_day.py, which is unit-tested.
 		"standard_day": dict(split_day.STANDARD_DAY),
+		# What a day's work is worth on a PUBLIC holiday. 1.0 is off, which is what
+		# an unconfigured site gets: doubling a site's holiday pay because it
+		# migrated is not a decision this app may make for anyone.
+		"public_holiday_pay_multiplier": 1.0,
 	}
 
 	try:
@@ -257,6 +261,19 @@ def get_config():
 	# this field existed has no such key, and an attribute would raise.
 	cfg["allow_concurrent_master_plans"] = bool(settings.get("allow_concurrent_master_plans"))
 	cfg["allow_split_day"] = bool(settings.get("allow_split_day"))
+	# PUBLIC HOLIDAY PAY, read the same defensive way the standard day below is,
+	# and for the same reason: a `default` on a Single's field reaches a FRESH
+	# install only. On a site that already exists the field arrives as 0, and 0
+	# read literally would value every public holiday's work at nothing.
+	#
+	# So 0 means "nothing said", and nothing said is 1.0 -- the feature off,
+	# amounts exactly as they have always been. A site turns it on by putting 2
+	# in the box, which is a decision somebody makes rather than one a migrate
+	# makes for them. Every other switch in this app ships off for the same
+	# reason; this one moves money, so more so.
+	_holiday_x = frappe.utils.flt(settings.get("public_holiday_pay_multiplier"))
+	if _holiday_x > 0:
+		cfg["public_holiday_pay_multiplier"] = _holiday_x
 	# HOW LONG A DAY IS, read defensively, because zero is what an unset field
 	# actually holds here.
 	#

@@ -1579,8 +1579,13 @@
     } else if(c.key==="rate_mismatch"){
       h+='<th>Worker</th><th>Day</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Expected</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){
-        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(taskName(r.task))+'</td>'+
-          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
+        // A holiday row expects qty × rate × the multiplier. Without saying so the
+        // Expected column reads as twice the rate beside it and looks like the bug
+        // rather than the rule.
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+
+          (r.holiday?' <span class="wr-holx" title="public holiday">holiday</span>':'')+'</td><td>'+esc(taskName(r.task))+'</td>'+
+          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.rate,2)+
+          (r.multiplier>1?' <span class="wr-holx">×'+fmt(r.multiplier,2)+'</span>':'')+'</td><td class="n m">'+fmt(r.expected)+'</td>'+
           '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.amount,2)+'</td><td class="m" style="font-size:10px">'+esc(r.actuals)+'</td></tr>';
       });
     } else if(c.key==="inactive_assigned"){
@@ -1948,7 +1953,13 @@
           : fmt(r.qty);
         h+='<tr'+(rowFlag?' style="background:rgba(185,28,28,.045)"':'')+'><td class="m">'+esc(dshort(r.wdate))+(r.day_leave?' <span style="color:#7c3aed;font-size:9px;font-weight:700" title="approved leave this day">'+esc(r.day_leave)+'</span>':'')+(r.day_off?' <span style="color:#a06000;font-size:9px;font-weight:700" title="weekly off / holiday">off day</span>':'')+'</td>'+
           '<td class="c">'+presenceTag(r)+'</td>'+
-          '<td class="n m" data-qcell>'+qtyCell+'</td><td class="n m">'+fmt(r.rate,2)+'</td><td class="n m" data-amt-for="'+esc(r.rowname||"")+'">'+fmt(r.amount,2)+'</td>'+
+          // The rate column is amount/qty, so a doubled row already reads as twice
+          // the task's rate — which looks like a data error until you know why.
+          // The marker is the why: this day was a PUBLIC holiday and the work was
+          // valued at the multiplier, so HR never has to guess.
+          '<td class="n m" data-qcell>'+qtyCell+'</td><td class="n m">'+fmt(r.rate,2)+
+          (r.holiday_multiplier>1?' <span class="wr-holx" title="Public holiday — valued at '+fmt(r.holiday_multiplier,2)+'× the task rate of '+fmt(r.doc_rate,2)+'">×'+fmt(r.holiday_multiplier,2)+'</span>':'')+'</td>'+
+          '<td class="n m" data-amt-for="'+esc(r.rowname||"")+'">'+fmt(r.amount,2)+'</td>'+
           '<td class="c">'+(r.in_payroll? payTag(r.paid?"Paid":"Unpaid") : '<span class="tag">Not in payroll</span>')+'</td>'+
           '<td class="m">'+esc(r.run_ref||"—")+'</td></tr>';
       });

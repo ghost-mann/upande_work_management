@@ -157,6 +157,7 @@ def wm_payment(**kwargs):
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
     STANDARD_DAY = _cfg["standard_day"]
+    HOLIDAY_X = _cfg["public_holiday_pay_multiplier"]
 
     # ==================================================================
     # Master plan attribution: none. Every period_from/period_to in this script is
@@ -1198,6 +1199,7 @@ def wm_payment(**kwargs):
             dl = frappe.db.sql("""
                 SELECT ac.name actuals, we.name rowname, we.work_date wdate, ac.task task, ac.block_section block, ac.farm farm,
                        we.actual_quantity qty, we.amount amount, ac.rate doc_rate,
+                       IFNULL(we.holiday_multiplier, 0) hol_x,
                        IFNULL(we.paid,0) paid, IFNULL(we.count_in_payroll,0) in_payroll,
                        IFNULL(we.custom_reviewed,0) reviewed, we.payment_ref run_ref
                 FROM `tabWork Actuals Employee` we
@@ -1238,13 +1240,20 @@ def wm_payment(**kwargs):
                     for dd in ddates:
                         if str(r2.from_date) <= dd <= str(r2.to_date):
                             ev_leave[dd] = r2.leave_type or "leave"
+                # Both kinds, kept apart. `day_off` has always meant "a Holiday row
+                # exists", which is what the review sheet's off-day marker reads;
+                # `day_public_holiday` is the narrower one the multiplier follows.
+                ev_pub = {}
                 hl2 = frappe.db.get_value("Employee", emp, "holiday_list")
                 if hl2:
                     for r2 in frappe.db.sql("""
-                        SELECT holiday_date FROM `tabHoliday`
+                        SELECT holiday_date, IFNULL(weekly_off, 0) weekly_off
+                        FROM `tabHoliday`
                         WHERE parent = %s AND holiday_date IN %s
                     """, (hl2, ddates), as_dict=True):
                         ev_off[str(r2.holiday_date)] = 1
+                        if not frappe.utils.cint(r2.weekly_off):
+                            ev_pub[str(r2.holiday_date)] = 1
             daily = []
             for r in dl:
                 qty = frappe.utils.flt(r.qty)
@@ -1264,6 +1273,15 @@ def wm_payment(**kwargs):
                     "att_status": ev_att.get(wd) if wd else None,
                     "day_leave": ev_leave.get(wd) if wd else None,
                     "day_off": ev_off.get(wd, 0) if wd else 0,
+                    # HOW THIS ROW WAS VALUED. "rate" above is amount/qty, which on a
+                    # doubled row reads as twice the task's rate and looks like a
+                    # data error until you know why. So the sheet gets both: what the
+                    # row was multiplied by, and whether the day was a public holiday
+                    # -- HR never has to guess which of the two it is looking at.
+                    "day_public_holiday": ev_pub.get(wd, 0) if wd else 0,
+                    "holiday_multiplier": frappe.utils.flt(r.hol_x),
+                    "effective_rate": frappe.utils.flt(r.doc_rate) * (
+                        frappe.utils.flt(r.hol_x) or 1),
                 })
             out["daily"] = daily
             # payment runs that include this worker -- one row per RUN, which is what
@@ -2173,6 +2191,7 @@ def wm_payment(**kwargs):
                    we.amount, IFNULL(we.paid,0) paid, we.payment_ref run_ref,
                    ac.rate doc_rate, IFNULL(we.count_in_payroll,0) in_pay,
                    ac.entered_by entered_by, we.hours hours,
+                   IFNULL(we.holiday_multiplier, 0) hol_x,
                    p3.uom plan_uom, p3.daily_target dtarget
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
@@ -2223,12 +2242,20 @@ def wm_payment(**kwargs):
         """, (demps,), as_dict=True):
             hl_ev[r2.name] = r2.holiday_list
         off_ev = {}
+        # ...and, separately, the ones that are PUBLIC holidays. `weekly_off`
+        # ticked is the worker's rest day; not ticked is a public holiday, and only
+        # the second is paid at the multiplier. b_off below wants both kinds, which
+        # is why off_ev keeps holding both.
+        pub_ev = {}
         if hl_ev:
             for r2 in frappe.db.sql("""
-                SELECT parent, holiday_date FROM `tabHoliday`
+                SELECT parent, holiday_date, IFNULL(weekly_off, 0) weekly_off
+                FROM `tabHoliday`
                 WHERE parent IN %s AND holiday_date BETWEEN %s AND %s
             """, (tuple(set(hl_ev.values())), dfrom, dto), as_dict=True):
                 off_ev[(r2.parent, str(r2.holiday_date))] = 1
+                if not frappe.utils.cint(r2.weekly_off):
+                    pub_ev[(r2.parent, str(r2.holiday_date))] = 1
         # ---- single pass: bucket rows into the presence-based checks ----
         today_d = str(frappe.utils.today())
         b_absent = []
@@ -2275,13 +2302,37 @@ def wm_payment(**kwargs):
                     break
             if not onlv and hl_ev.get(r.employee) and off_ev.get((hl_ev[r.employee], wd)):
                 b_off.append(rr)
-            # amount should equal qty x doc rate for payroll rows
+            # amount should equal qty x doc rate for payroll rows -- TIMES the
+            # holiday multiplier, where one applies.
+            #
+            # Which rule to judge a row by is decided by the row itself. A row
+            # priced since public-holiday pay shipped carries what it was
+            # multiplied by, even when that was 1; a row written before it carries
+            # nothing. So:
+            #
+            #   stored multiplier + public holiday -> qty x rate x the multiplier,
+            #       and a holiday row still sitting at plain qty x rate IS flagged,
+            #       because that is a worker underpaid for a holiday
+            #   stored multiplier + ordinary day   -> qty x rate, unchanged
+            #   nothing stored                     -> qty x rate, the rule that
+            #       applied when it was written. History is never re-judged against
+            #       a rule that did not exist yet, which is the difference between
+            #       a useful check and 7,000 rows of noise on the day this ships.
             if frappe.utils.cint(r.in_pay) and frappe.utils.flt(r.doc_rate) > 0:
-                expect = frappe.utils.flt(r.qty) * frappe.utils.flt(r.doc_rate)
+                want_x = 1
+                if frappe.utils.flt(r.hol_x) > 0:
+                    if hl_ev.get(r.employee) and pub_ev.get((hl_ev[r.employee], wd)):
+                        want_x = HOLIDAY_X
+                expect = frappe.utils.flt(r.qty) * frappe.utils.flt(r.doc_rate) * want_x
                 if abs(expect - frappe.utils.flt(r.amount)) > 0.5:
                     rr3 = dict(rr)
                     rr3["expected"] = expect
                     rr3["rate"] = frappe.utils.flt(r.doc_rate)
+                    # what the reviewer needs to read the figure: the rate they
+                    # expect to see doubled, and the fact that it is a holiday
+                    rr3["multiplier"] = want_x
+                    rr3["holiday"] = 1 if want_x != 1 else 0
+                    rr3["effective_rate"] = frappe.utils.flt(r.doc_rate) * want_x
                     b_rate.append(rr3)
             # standard_hours(), inlined -- no def in the sandbox. Saturday is short
             # and Sunday is not, which is the shape these farms work. Keep in step
@@ -2629,7 +2680,19 @@ def wm_payment(**kwargs):
                 if etype != "Task Worker":
                     errors.append({"rowname": rn, "error": "worker is not a Task Worker (" + str(etype) + ")"})
                     continue
-                new_amt = round(frappe.utils.flt(row.actual_quantity) * frappe.utils.flt(pinfo.rate), 2)
+                # the repair values the row the way entry would today, holiday
+                # included -- otherwise repairing a zero-valued holiday row writes
+                # a single rate and the discrepancy check reports it, correctly, as
+                # underpaid the moment the repair finishes.
+                fz_x = 1
+                if HOLIDAY_X != 1:
+                    fz_list = frappe.db.get_value("Employee", row.employee, "holiday_list")
+                    if fz_list and frappe.db.exists("Holiday", {"parent": fz_list,
+                            "holiday_date": row.work_date, "weekly_off": 0}):
+                        fz_x = HOLIDAY_X
+                new_amt = round(frappe.utils.flt(row.actual_quantity)
+                                * frappe.utils.flt(pinfo.rate) * fz_x, 2)
+                frappe.db.set_value("Work Actuals Employee", rn, "holiday_multiplier", fz_x, update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "employment_type", "Task Worker", update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "count_in_payroll", 1, update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "amount", new_amt, update_modified=False)

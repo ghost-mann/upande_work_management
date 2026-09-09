@@ -95,6 +95,7 @@
   "sb_offday_bonus",
   "pay_weekly_off_on_full_attendance",
   "weekly_off_bonus_amount",
+  "public_holiday_pay_multiplier",
   "sb_whopays",
   "tw_employment_type_rows",
   "tw_employment_types",
@@ -751,6 +752,14 @@
    "default": "387",
    "depends_on": "eval:doc.pay_weekly_off_on_full_attendance",
    "description": "What a qualifying rest day is worth. Defaults to the current daily wage (387). Set it to 0 to switch the bonus off without losing the setting."
+  },
+  {
+   "fieldname": "public_holiday_pay_multiplier",
+   "fieldtype": "Float",
+   "label": "Public holiday pay multiplier",
+   "default": "2",
+   "precision": "2",
+   "description": "What a day's work is worth when it falls on a PUBLIC holiday \u2014 a Holiday row on the worker's list WITHOUT \u201cWeekly Off\u201d ticked. 2 pays double; 1 switches it off. Applied when the work is valued, so it changes new actuals only and never re-prices what is already recorded. NOTE: a Settings field's default reaches a fresh install only \u2014 on a site that already exists this arrives as 0, and 0 is read as 1 (off) rather than as double pay, so turning it on is always somebody's decision."
   }
  ],
  "idx": 0,

@@ -29,6 +29,7 @@ def wm_actuals(**kwargs):
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
     STANDARD_DAY = _cfg["standard_day"]
+    HOLIDAY_X = _cfg["public_holiday_pay_multiplier"]
 
     # ==================================================================
     # SERVER SCRIPT — "WM Actuals" (API, api_method=wm_actuals)
@@ -946,6 +947,52 @@ def wm_actuals(**kwargs):
                 released_after = []
                 joined_before = []
                 cells = payload.split("|") if payload else []
+                # PUBLIC HOLIDAY PAY. A day worked on a public holiday is worth
+                # HOLIDAY_X times an ordinary day -- 2 on a site that has said so,
+                # 1 everywhere else, in which case none of this changes a figure.
+                #
+                # A PUBLIC holiday is a Holiday row on the worker's own list with
+                # `weekly_off` NOT ticked. A row WITH it ticked is their rest day,
+                # which is the off-day bonus's business and not this one's. Reading
+                # the flag the wrong way round pays double for every rest day.
+                #
+                # Read once for the whole payload rather than per cell: a full grid
+                # is one row per worker per day, and asking the Holiday table for
+                # each of them is the same answer several hundred times.
+                hx_days = {}
+                if HOLIDAY_X != 1:
+                    hx_emps = []
+                    hx_dates = []
+                    for c in cells:
+                        if not c:
+                            continue
+                        hx_b = c.split("~")
+                        if len(hx_b) < 3:
+                            continue
+                        if hx_b[0] not in hx_emps:
+                            hx_emps.append(hx_b[0])
+                        if hx_b[1] not in hx_dates:
+                            hx_dates.append(hx_b[1])
+                    if hx_emps and hx_dates:
+                        hx_list = {}
+                        for hx_r in frappe.db.sql("""
+                            SELECT name, holiday_list FROM `tabEmployee`
+                            WHERE name IN %(e)s AND IFNULL(holiday_list,'') != ''
+                        """, {"e": tuple(hx_emps)}, as_dict=True):
+                            hx_list[hx_r.name] = hx_r.holiday_list
+                        hx_pub = {}
+                        if hx_list:
+                            for hx_h in frappe.db.sql("""
+                                SELECT parent, holiday_date d FROM `tabHoliday`
+                                WHERE parent IN %(p)s AND holiday_date IN %(d)s
+                                  AND IFNULL(weekly_off, 0) = 0
+                            """, {"p": tuple(set(hx_list.values())),
+                                  "d": tuple(hx_dates)}, as_dict=True):
+                                hx_pub[(hx_h.parent, str(hx_h.d))] = 1
+                        for hx_e in hx_emps:
+                            for hx_d in hx_dates:
+                                if hx_list.get(hx_e) and hx_pub.get((hx_list[hx_e], hx_d)):
+                                    hx_days[(hx_e, hx_d)] = 1
                 for c in cells:
                     if not c:
                         continue
@@ -984,7 +1031,9 @@ def wm_actuals(**kwargs):
                         SELECT e.name FROM `tabEmployee` e WHERE e.name = %(n)s AND """ + TW_MATCH + """
                         LIMIT 1
                     """, {"n": emp}, as_dict=True) else 0
-                    amt = round(qty * (unit_value or rate), 2) if in_pay else 0
+                    # 1 on an ordinary day, so the arithmetic is unchanged there.
+                    hol_x = HOLIDAY_X if hx_days.get((emp, wdate)) else 1
+                    amt = round(qty * (unit_value or rate) * hol_x, 2) if in_pay else 0
                     row = d.append("employees", {})
                     row.employee = emp
                     row.work_date = wdate
@@ -993,6 +1042,14 @@ def wm_actuals(**kwargs):
                     row.hours = hrs
                     row.count_in_payroll = in_pay
                     row.amount = amt
+                    # STORED, INCLUDING THE 1. What the amount was multiplied by is
+                    # the only thing that makes it explainable six weeks later --
+                    # and storing it on ordinary rows too is what tells a row this
+                    # feature priced from a row written before it existed. Those
+                    # older rows carry nothing here, and the discrepancy check reads
+                    # that as "judge this one by the old rule", so history is never
+                    # retroactively flagged as underpaid.
+                    row.holiday_multiplier = hol_x
                     # RECORDED AFTER THEY WERE RELEASED. Warned, never refused: a
                     # clerk may be entering a day that genuinely predates the
                     # release, or correcting one, and blocking that would cost more

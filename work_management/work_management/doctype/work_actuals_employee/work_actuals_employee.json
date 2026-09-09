@@ -14,6 +14,7 @@
   "hours",
   "count_in_payroll",
   "amount",
+  "holiday_multiplier",
   "paid",
   "payment_ref",
   "custom_reviewed",
@@ -116,6 +117,14 @@
    "fieldtype": "Datetime",
    "label": "Reviewed At",
    "read_only": 1
+  },
+  {
+   "fieldname": "holiday_multiplier",
+   "fieldtype": "Float",
+   "label": "Holiday multiplier",
+   "precision": "2",
+   "read_only": 1,
+   "description": "What this row's amount was multiplied by when it was valued: 2 on a public holiday, 1 on an ordinary day. EMPTY means the row was priced before this field existed \u2014 which is what keeps history from being re-judged against a rule that did not apply to it."
   }
  ],
  "idx": 0,

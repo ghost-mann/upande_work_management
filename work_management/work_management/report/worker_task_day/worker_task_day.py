@@ -185,6 +185,7 @@ def _rows(filters):
 			t.subject task_subject,
 			COALESCE(NULLIF(pr.daily_target, 0), t.custom_daily_target) daily_target,
 			we.actual_quantity, we.amount, we.hours,
+			IFNULL(we.holiday_multiplier, 0) holiday_multiplier,
 			COALESCE(NULLIF(pr.uom, ''), t.custom_uom) uom,
 			""" + select_clock + """,
 			""" + select_att + """
@@ -243,6 +244,12 @@ def project_row(r, model=None):
 		# reads as on target rather than as half a worker.
 		"achieved_pct": (done / expected * 100) if expected else None,
 		"amount": _flt(r.get("amount")),
+		# WHY THIS AMOUNT IS TWICE THE OTHERS. An HR export where one Tuesday pays
+		# double and nothing says so reads as an error and gets queried; the marker
+		# is the answer. Empty on an ordinary day and on every row written before
+		# public-holiday pay existed -- 1 is not a fact worth a column.
+		"pay_multiplier": (_flt(r.get("holiday_multiplier"))
+			if _flt(r.get("holiday_multiplier")) > 1 else None),
 		# The scans first, Attendance second, then nothing. NEVER a computed
 		# departure: see the module docstring. `or None` rather than `or 0`,
 		# because zero is a time and absence is not.
@@ -311,6 +318,8 @@ COLUMNS = [
 	{"fieldname": "achieved_pct", "label": "Achieved %", "fieldtype": "Percent",
 		"width": 100},
 	{"fieldname": "amount", "label": "Amount", "fieldtype": "Currency", "width": 110},
+	{"fieldname": "pay_multiplier", "label": "×", "fieldtype": "Float",
+		"precision": 2, "width": 55},
 	{"fieldname": "clock_in", "label": "Clock in", "fieldtype": "Datetime", "width": 150},
 	{"fieldname": "clock_out", "label": "Clock out", "fieldtype": "Datetime", "width": 150},
 	{"fieldname": "actuals", "label": "Actuals", "fieldtype": "Link",
