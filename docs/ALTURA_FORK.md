@@ -75,12 +75,34 @@ hand.
 
 | Handoff item | Implemented here in | Mirror script that would need it |
 |---|---|---|
-| 0 — task-name stragglers on two screens | `public/js/work-planner.js`, `public/js/work-management-dashboard.js` (already committed in `e935e34`) | `web_pages/work-planner.js`, `web_pages/work-management-dashboard.js` |
-| 1 — §1 drawdown attribution by `master_plan` link, with the ambiguity guard and the unattributed remainder | `api/masterplan.py`, `api/planner.py`, `master_plan.py` | `wm_masterplan.py`, `wm_planner.py` |
-| 2 — Phase 3 remainder: planner screen wired to the configured chain | `api/planner.py`, `api/masterplan.py`, `public/js/work-planner.js` | `wm_planner.py`, `wm_masterplan.py`, `web_pages/work-planner.js` |
-| 3 — Phase 5: `custom_basic_pay` weekly feed with the off-day bonus | `api/payroll.py`, `api/payment.py`, `public/js/work-payment.js` | `wm_payroll.py`, `wm_payment.py`, `web_pages/work-payment.js` |
-| 4 — Phase 5b: public-holiday double pay | `api/actuals.py`, `api/payment.py`, `public/js/work-payment.js`, `report/worker_task_day` | `wm_actuals.py`, `wm_payment.py`, `web_pages/work-payment.js` |
-| 5 — Phase 6: mid-flight target raise | `api/planner.py`, `api/actuals.py`, `api/masterplan.py`, `public/js/work-planner.js` | `wm_planner.py`, `wm_actuals.py`, `wm_masterplan.py`, `web_pages/work-planner.js` |
+| 0 — task-name stragglers on two screens | `public/js/work-planner.js`, `public/js/work-management-dashboard.js` (committed in `e935e34`) | `web_pages/work-planner.js`, `web_pages/work-management-dashboard.js` |
+| 1 — §1 drawdown attribution by the `master_plan` link, with the ambiguity guard and the unattributed remainder | `master_plan.py` (`attributed_to_plan`, `unattributed_to_plan`), `api/masterplan.py`, `api/planner.py`, `public/js/work-planner.js`, `www/work-planner.html` | `wm_masterplan.py`, `wm_planner.py` — and the two SQL helpers have to be **inlined**, sandbox rules being what they are |
+| 2 — Phase 3 remainder: planner screen wired to the configured chain | `approvals.py` (`scoped` on the chain row), `api/planner.py` (`approve`, `reject`, `pending`), `api/masterplan.py` (the GM refusals), `public/js/work-planner.js`, `docs/ALTURA_APPROVAL_CHAINS.md` | `wm_planner.py`, `wm_masterplan.py`, `web_pages/work-planner.js` |
+| 3 — Phase 5: `custom_basic_pay` weekly feed with the off-day bonus | `pay_week.py` (new), `api/payroll.py`, `api/payment.py` (`task_worker_sql`, `weekly_earnings` lifted to module level), `public/js/work-payment.js`, `www/work-payment.html`, `install.py`, `patches/v1_0/add_the_basic_pay_field.py` | `wm_payroll.py`, `wm_payment.py`, `web_pages/work-payment.js` |
+| 4 — Phase 5b: public-holiday double pay | `api/config.py`, `api/actuals.py`, `api/payment.py`, `public/js/work-payment.js`, `www/work-payment.html`, `report/worker_task_day` | `wm_actuals.py`, `wm_payment.py`, `web_pages/work-payment.js` |
+| 5 — Phase 6: mid-flight target raise | `api/planner.py` (`raise_target`), the Work Management Planner doctype and its controller, `public/js/work-planner.js` | `wm_planner.py`, `web_pages/work-planner.js` |
+
+### Three things a reconciliation has to do by hand
+
+1. **Inline the new pure modules.** `master_plan.py` gained two SQL-building
+   helpers and `pay_week.py` is new. Both are pure and both are the single
+   statement of a rule several places share — which is exactly the shape the
+   mirror already re-inlines for `split_day.py` and `approvals.py`. Note that
+   `pay_week.py` uses `datetime`; the sandbox forbids imports, so a mirror copy
+   has to be rewritten against `frappe.utils.add_days` and `getdate`.
+2. **`api/payment.py` grew two module-level functions.** `task_worker_sql()` and
+   `weekly_earnings()` were lifted out of `wm_payment()` unchanged so
+   `api/payroll.py` could ask the same questions. The sandbox allows no `def`,
+   so the mirror keeps them inlined in each script that needs them — which means
+   `wm_payroll.py` would carry its own copy, and the two would have to be kept
+   in step by hand. `api/actuals.py` and `api/assigner.py` still hold their own
+   inlined copies of the task-worker filter here too; they were not touched.
+3. **Two doctypes gained fields, and one gained a controller.** Work Actuals
+   Employee has `holiday_multiplier`; Work Management Planner has `original_qty`,
+   `original_cost` and `allow_on_submit` on the six fields a target raise writes,
+   plus an `on_update_after_submit` guard. Those are app-side and port straight
+   across — but the guard is what stops the desk form bypassing the raise's role
+   check, so it must not be dropped in the move.
 
 The Settings fields, the `Employee.custom_basic_pay` custom-field fixture and
 every test for the above were always app-side, mirror or no mirror, and are not
