@@ -484,14 +484,20 @@
           // renders as "not started" however much work had actually been confirmed
           if(live){ a.planned_qty=live.planned_qty; a.planned_cost=live.planned_cost;
                     a.remaining_qty=live.remaining_qty; a.remaining_cost=live.remaining_cost;
-                    a.done_qty=live.done_qty; a.done_cost=live.done_cost; }
+                    a.done_qty=live.done_qty; a.done_cost=live.done_cost;
+                    // committed work in these dates that no plan may be charged
+                    // for: not in Planned, not in Left, and not invisible either
+                    a.unattributed_qty=live.unattributed_qty;
+                    a.unattributed_cost=live.unattributed_cost; }
         });
         return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:hd.spanning||[],
+                unattributed:hd.unattributed||null,
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
                 edited_lines:d.edited_lines, ok_lines:d.ok_lines};
       }).catch(function(){ return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:[],
+                unattributed:null,
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
@@ -593,6 +599,22 @@
         });
         h+='</ul></div>';
       }
+      // COMMITTED WORK THIS PLAN MAY NOT BE CHARGED FOR. A request raised before
+      // the master_plan link existed, sitting inside two approved plans at once:
+      // charging it to both is the double-count this release removed, charging it
+      // to one would be a guess. So it is charged to neither and said out loud --
+      // silence would leave the plan looking healthier than it is, with no trace
+      // of the money. Setting the link on those requests is what clears it.
+      if(res.unattributed && num(res.unattributed.qty)>0.005){
+        h+='<div class="mpp-span"><b>'+fmt(res.unattributed.qty)+' unit'+
+           (num(res.unattributed.qty)===1?'':'s')+' of work (KES '+
+           fmt(res.unattributed.cost,2)+') sits inside this plan\'s dates and '+
+           'another approved plan\'s, naming neither.</b> It is not counted against '+
+           'this plan and not against the other one either — two plans can budget '+
+           'the same activity from different money, so the dates cannot say which. '+
+           'Set the master plan on those requests and the figure moves into '+
+           'Planned, on the budget somebody chose.</div>';
+      }
       // requests that cross this period's edge are not counted against it -- say so
       // here rather than let the figures quietly disagree with the planner's list
       if((res.spanning||[]).length){
@@ -619,7 +641,12 @@
         h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(taskName(a.task))+'</td><td class="n m">'+fmt(a.man_days)+'</td>'+
            '<td class="n m">'+fmt(a.days)+'</td><td class="n m">'+fmt(a.work_qty)+'</td>'+
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
-           '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
+           '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+
+           // the line's share of the note above: which activity the unattributable
+           // work is on, which is what somebody fixing the links needs to know
+           (num(a.unattributed_qty)>0.005
+             ? '<span class="mpd-unatt" title="Requests inside two approved plans, naming neither. Not counted here or there.">+'+fmt(a.unattributed_qty)+' unattributed</span>'
+             : '')+'</td>'+
            '<td class="n m">'+fmt(a.remaining_qty)+
            (exhausted?' <span class="mpd-used">fully planned</span>':'')+'</td>'+
            // the bar answers "how is this going", not "can more be planned" -- the

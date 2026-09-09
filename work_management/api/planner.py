@@ -12,6 +12,7 @@ import json
 import frappe
 
 from work_management.api.config import get_config
+from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 
 @frappe.whitelist()
@@ -246,19 +247,43 @@ def wm_planner(**kwargs):
             out["period_from"] = str(tkm.period_from)
             out["period_to"] = str(tkm.period_to)
             out["blocked_reason"] = None
+            # WHAT IS LEFT ON THE BUDGET THE USER IS ABOUT TO DRAW FROM. One grouped
+            # read for the plan rather than one per line: the attribution rule carries
+            # a correlated subquery and the answer per task is the same either way.
+            # Charged by the stored link, not by dates -- two plans over one period
+            # were each shown the other's consumption, so both looked spent and every
+            # line read exhausted.
+            tk_args = {"f": farm, "plan": tkm.name,
+                       "pfrom": tkm.period_from, "pto": tkm.period_to}
+            tk_use = {}
+            for tk_u in frappe.db.sql("""
+                SELECT p.task task, COALESCE(SUM(p.quantity),0) q,
+                       COALESCE(SUM(p.total_cost),0) c
+                FROM `tabWork Management Planner` p
+                WHERE p.farm = %(f)s AND IFNULL(p.workflow_state,'') != 'Rejected'
+                  AND """ + attributed_to_plan("p") + """
+                GROUP BY p.task
+            """, tk_args, as_dict=True):
+                tk_use[tk_u.task] = tk_u
+            # committed work in these dates that no plan may be charged for; reported
+            # beside the line so the remaining figure is not read as the whole story
+            tk_un = {}
+            for tk_x in frappe.db.sql("""
+                SELECT p.task task, COALESCE(SUM(p.quantity),0) q,
+                       COALESCE(SUM(p.total_cost),0) c
+                FROM `tabWork Management Planner` p
+                WHERE p.farm = %(f)s AND IFNULL(p.workflow_state,'') != 'Rejected'
+                  AND """ + unattributed_to_plan("p") + """
+                GROUP BY p.task
+            """, tk_args, as_dict=True):
+                tk_un[tk_x.task] = tk_x
             for ta in frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": tkm.name, "consultant_state": "OK"},
                     fields=["name", "task", "uom", "rate", "work_qty", "cost"], order_by="idx"):
-                tk_used = frappe.db.sql("""
-                    SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
-                    FROM `tabWork Management Planner`
-                    WHERE task = %(t)s AND farm = %(f)s
-                      AND IFNULL(workflow_state,'') != 'Rejected'
-                      AND from_date >= %(pfrom)s AND to_date <= %(pto)s
-                """, {"t": ta.task, "f": farm,
-                      "pfrom": tkm.period_from, "pto": tkm.period_to}, as_dict=True)[0]
-                tk_rq = frappe.utils.flt(ta.work_qty) - frappe.utils.flt(tk_used.q)
-                tk_rc = frappe.utils.flt(ta.cost) - frappe.utils.flt(tk_used.c)
+                tk_used = tk_use.get(ta.task)
+                tk_unat = tk_un.get(ta.task)
+                tk_rq = frappe.utils.flt(ta.work_qty) - (frappe.utils.flt(tk_used.q) if tk_used else 0)
+                tk_rc = frappe.utils.flt(ta.cost) - (frappe.utils.flt(tk_used.c) if tk_used else 0)
                 ti = frappe.db.get_value("Task", ta.task,
                     ["subject", "custom_uom", "custom_daily_target", "custom_rate"], as_dict=True)
                 tasks.append({"name": ta.task, "subject": (ti.subject if ti else ta.task),
@@ -269,6 +294,8 @@ def wm_planner(**kwargs):
                               "work_qty": frappe.utils.flt(ta.work_qty),
                               "budget_cost": frappe.utils.flt(ta.cost),
                               "remaining_qty": tk_rq, "remaining_cost": tk_rc,
+                              "unattributed_qty": frappe.utils.flt(tk_unat.q) if tk_unat else 0,
+                              "unattributed_cost": frappe.utils.flt(tk_unat.c) if tk_unat else 0,
                               "exhausted": 1 if (tk_rq <= 0.005 or tk_rc <= 0.005) else 0})
         out["tasks"] = tasks
 
@@ -350,12 +377,14 @@ def wm_planner(**kwargs):
                 pb_act[pb_mp.name] = pb_rows
                 pb_seen = {}
                 for pb_u in frappe.db.sql("""
-                    SELECT task, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
-                    FROM `tabWork Management Planner`
-                    WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
-                      AND from_date >= %(pfrom)s AND to_date <= %(pto)s
-                    GROUP BY task
-                """, {"f": pr.get("farm"), "pfrom": pb_mp.period_from, "pto": pb_mp.period_to},
+                    SELECT p.task task, COALESCE(SUM(p.quantity),0) q,
+                           COALESCE(SUM(p.total_cost),0) c
+                    FROM `tabWork Management Planner` p
+                    WHERE p.farm = %(f)s AND IFNULL(p.workflow_state,'') != 'Rejected'
+                      AND """ + attributed_to_plan("p") + """
+                    GROUP BY p.task
+                """, {"f": pr.get("farm"), "plan": pb_mp.name,
+                      "pfrom": pb_mp.period_from, "pto": pb_mp.period_to},
                     as_dict=True):
                     pb_seen[pb_u.task] = pb_u
                 pb_use[pb_mp.name] = pb_seen
@@ -523,14 +552,25 @@ def wm_planner(**kwargs):
                                cm.name + " (" + str(cm.period_from) + " to " + str(cm.period_to) + ").")
                 else:
                     cap_line = cap_rows[0]
+                    # WHAT THE PLAN BEING DRAWN ON HAS ALREADY SPENT -- that plan's own
+                    # requests, by the link they carry, and not every request whose dates
+                    # happen to sit in the period. With two overlapping approved plans the
+                    # date rule charged each of them both plans' requests, so the cap
+                    # refused work that had budget for it and the refusal below quoted a
+                    # figure belonging to neither plan. cap_pick is the plan resolved for
+                    # THIS request a few lines up, so the cap and the stored link agree by
+                    # construction.
+                    # The ambiguous remainder is deliberately not charged here either:
+                    # never double-charge is the rule, and a request nobody can attribute
+                    # must not silently eat a named plan's headroom.
                     cap_used = frappe.db.sql("""
-                        SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
-                        FROM `tabWork Management Planner`
-                        WHERE task = %(t)s AND farm = %(f)s
-                          AND IFNULL(workflow_state,'') != 'Rejected'
-                          AND name != %(me)s
-                          AND from_date >= %(pfrom)s AND to_date <= %(pto)s
-                    """, {"t": task, "f": farm, "me": cap_me,
+                        SELECT COALESCE(SUM(p.quantity),0) q, COALESCE(SUM(p.total_cost),0) c
+                        FROM `tabWork Management Planner` p
+                        WHERE p.task = %(t)s AND p.farm = %(f)s
+                          AND IFNULL(p.workflow_state,'') != 'Rejected'
+                          AND p.name != %(me)s
+                          AND """ + attributed_to_plan("p") + """
+                    """, {"t": task, "f": farm, "me": cap_me, "plan": cm.name,
                           "pfrom": cm.period_from, "pto": cm.period_to}, as_dict=True)[0]
                     cap_rq = frappe.utils.flt(cap_line.work_qty) - frappe.utils.flt(cap_used.q)
                     cap_rc = frappe.utils.flt(cap_line.cost) - frappe.utils.flt(cap_used.c)
@@ -544,13 +584,19 @@ def wm_planner(**kwargs):
                     # identical arithmetic to d.total_cost = qty * rate below -- the cap
                     # must check the same figure the document is saved with, unrounded.
                     cap_cost = qty * cap_rate
+                    # The figures are one master plan's, so the message says which.
+                    # "12 left of 20" with two plans in force was unanswerable: the
+                    # reader could not tell whose budget had refused them, and the
+                    # number matched neither plan's own line.
                     if qty > cap_rq + 0.005:
-                        cap_err = ("Over the budgeted quantity for " + str(task) + ": " +
+                        cap_err = ("Over the budgeted quantity for " + str(task) +
+                                   " on " + str(cm.name) + ": " +
                                    str(round(cap_rq, 2)) + " left of " +
                                    str(frappe.utils.flt(cap_line.work_qty)) +
                                    ", this plan asks for " + str(qty) + ".")
                     elif cap_cost > cap_rc + 0.005:
-                        cap_err = ("Over the budgeted cost for " + str(task) + ": KES " +
+                        cap_err = ("Over the budgeted cost for " + str(task) +
+                                   " on " + str(cm.name) + ": KES " +
                                    str(round(cap_rc, 2)) + " left of " +
                                    str(frappe.utils.flt(cap_line.cost)) +
                                    ", this plan costs " + str(round(cap_cost, 2)) + ".")

@@ -75,6 +75,84 @@ def resolve_master_plan(stored, candidates):
 	return names[0], None
 
 
+# ------------------------------------------------------- drawdown attribution
+
+#: The four bind parameters every drawdown query below expects: the plan being
+#: charged, its farm, and its period. Named rather than positional because these
+#: strings are pasted into queries that already carry parameters of their own.
+DRAWDOWN_PARAMS = ("plan", "f", "pfrom", "pto")
+
+
+def attributed_to_plan(alias="p"):
+	"""SQL: the planner rows THIS master plan is charged for. Pure.
+
+	Two approved plans over one period used to be charged each other's requests.
+	Every drawdown query matched on dates alone -- `from_date >= period_from AND
+	to_date <= period_to` -- which is exact while a farm holds one budget per
+	period and wrong the moment it holds two: a request for 6 and a request for 9
+	both landed on both plans, and each plan read 15 planned. The stored link was
+	written and read for *which* plan, and never for *how much of it is spent*.
+
+	So the link decides. A request naming a plan is charged to that plan and to no
+	other, whatever its dates say -- the link is what the requester chose, and the
+	dates cannot overrule it.
+
+	A row with no link is the shape of every request raised before the field
+	existed, and dates are all it has. Containment still attributes it, but only
+	when exactly one approved plan contains it. Where two do, it is charged to
+	NEITHER: charging it to both is precisely the bug being removed here, and
+	picking one would be the guess that resolve_master_plan() refuses to make on
+	the way in. Those rows are real money and do not vanish -- see
+	unattributed_to_plan().
+
+	`alias` is the alias the caller gave `tabWork Management Planner`; the
+	correlated subquery needs to reach the row's own dates, so the table cannot be
+	left unaliased. The caller still supplies its own farm and workflow_state
+	filters -- this is the attribution rule, not the whole WHERE clause.
+
+	The mirror inlines this string, sandbox rules being what they are; keep the
+	two in step.
+	"""
+	return (
+		"({a}.master_plan = %(plan)s\n"
+		"     OR (IFNULL({a}.master_plan,'') = ''\n"
+		"         AND {a}.from_date >= %(pfrom)s AND {a}.to_date <= %(pto)s\n"
+		"         AND NOT EXISTS (\n"
+		"             SELECT 1 FROM `tabWork Management Master Plan` o\n"
+		"             WHERE o.farm = %(f)s AND o.name != %(plan)s\n"
+		"               AND o.workflow_state = 'Approved'\n"
+		"               AND o.period_from <= {a}.from_date"
+		" AND o.period_to >= {a}.to_date)))"
+	).format(a=alias)
+
+
+def unattributed_to_plan(alias="p"):
+	"""SQL: the rows inside this plan's period that nothing may be charged for.
+
+	The remainder attributed_to_plan() drops: no link, contained by this plan, and
+	contained by at least one other approved plan too. Reported per plan as
+	`unattributed_qty` / `unattributed_cost` and NEVER folded into planned_qty --
+	adding it back to both plans would restore the double-charge this exists to
+	prevent, and adding it to one would be the guess.
+
+	It is reported because it is real committed work whose budget nobody can name.
+	Silently dropping it would leave a plan looking healthier than it is, with no
+	trace of the money. A non-zero figure here means somebody should set the
+	`master_plan` link on those requests; then it moves into planned_qty, on the
+	plan a human chose.
+	"""
+	return (
+		"(IFNULL({a}.master_plan,'') = ''\n"
+		"     AND {a}.from_date >= %(pfrom)s AND {a}.to_date <= %(pto)s\n"
+		"     AND EXISTS (\n"
+		"         SELECT 1 FROM `tabWork Management Master Plan` o\n"
+		"         WHERE o.farm = %(f)s AND o.name != %(plan)s\n"
+		"           AND o.workflow_state = 'Approved'\n"
+		"           AND o.period_from <= {a}.from_date"
+		" AND o.period_to >= {a}.to_date))"
+	).format(a=alias)
+
+
 def check_plan_allowed(work_qty, cost, planned_qty, planned_cost, new_qty, new_cost):
 	"""May a plan for ``new_qty`` / ``new_cost`` be raised against this line?
 

@@ -256,3 +256,314 @@ class TestEveryHeadroomCallerNamesItsPlan(unittest.TestCase):
 		code = "\n".join(line.split("#")[0] for line in block.splitlines())
 		self.assertNotRegex(code, r"ORDER BY period_from DESC\s+LIMIT 1")
 		self.assertIn("ambiguous", code)
+
+
+# --------------------------------------------------------------------------
+# The drawdown itself: which requests each plan is charged for.
+# --------------------------------------------------------------------------
+
+import sqlite3
+
+from work_management.master_plan import attributed_to_plan, unattributed_to_plan
+
+PLANS = "`tabWork Management Master Plan`"
+REQUESTS = "`tabWork Management Planner`"
+
+SUM = ("SELECT COALESCE(SUM(p.quantity),0) q, COALESCE(SUM(p.total_cost),0) c "
+	"FROM " + REQUESTS + " p "
+	"WHERE p.farm = %(f)s AND IFNULL(p.workflow_state,'') != 'Rejected' AND ")
+
+
+def sqlite_query(text):
+	"""%(name)s is MySQLdb's placeholder; sqlite3 spells the same thing :name."""
+	return re.sub(r"%\((\w+)\)s", r":\1", text)
+
+
+class Ledger:
+	"""Two tables and the four rules, run for real against sqlite3.
+
+	The rest of this suite is pure and needs no site, and this stays that way:
+	the attribution rule IS a SQL string, so the only honest test of it executes
+	it. sqlite3 takes MySQL's backtick quoting and IFNULL unchanged, and the rule
+	uses nothing else -- a correlated NOT EXISTS and four comparisons. The same
+	four cases were also measured against the site's MariaDB before this was
+	written; this is what keeps them measured on every run.
+	"""
+
+	def __init__(self):
+		self.db = sqlite3.connect(":memory:")
+		self.db.execute("CREATE TABLE " + PLANS + " (name TEXT, farm TEXT, "
+			"period_from TEXT, period_to TEXT, workflow_state TEXT)")
+		self.db.execute("CREATE TABLE " + REQUESTS + " (name TEXT, farm TEXT, "
+			"task TEXT, master_plan TEXT, from_date TEXT, to_date TEXT, "
+			"quantity REAL, total_cost REAL, workflow_state TEXT)")
+
+	def plan(self, name, farm, period_from, period_to, state="Approved"):
+		self.db.execute("INSERT INTO " + PLANS + " VALUES (?,?,?,?,?)",
+			(name, farm, period_from, period_to, state))
+		return name
+
+	def request(self, name, farm, from_date, to_date, quantity, master_plan=None,
+			state="Approved", task="T1", cost=None):
+		self.db.execute("INSERT INTO " + REQUESTS + " VALUES (?,?,?,?,?,?,?,?,?)",
+			(name, farm, task, master_plan, from_date, to_date, quantity,
+			 cost if cost is not None else quantity * 10, state))
+		return name
+
+	def charged(self, plan, farm="F"):
+		return self._sum(attributed_to_plan("p"), plan, farm)
+
+	def unattributed(self, plan, farm="F"):
+		return self._sum(unattributed_to_plan("p"), plan, farm)
+
+	def _sum(self, rule, plan, farm):
+		row = self.db.execute(sqlite_query(SUM + rule), {
+			"f": farm, "plan": plan,
+			"pfrom": self.period(plan)[0], "pto": self.period(plan)[1],
+		}).fetchone()
+		return row[0]
+
+	def period(self, plan):
+		return self.db.execute("SELECT period_from, period_to FROM " + PLANS
+			+ " WHERE name = ?", (plan,)).fetchone()
+
+
+def overlapping():
+	"""The shape of the defect: two approved plans, one farm, sharing 11-04..07."""
+	led = Ledger()
+	led.plan("A", "F", "2026-11-02", "2026-11-07")
+	led.plan("B", "F", "2026-11-04", "2026-11-09")
+	return led
+
+
+class TestTwoPlansTwoRequests(unittest.TestCase):
+	"""Scenario 3d, which is where this was measured. Two overlapping approved
+	plans and one request naming each, for 6 and 9. Both plans read 15."""
+
+	def setUp(self):
+		self.led = overlapping()
+		self.led.request("R1", "F", "2026-11-05", "2026-11-05", 6, master_plan="A")
+		self.led.request("R2", "F", "2026-11-05", "2026-11-05", 9, master_plan="B")
+
+	def test_each_plan_is_charged_its_own_request(self):
+		self.assertEqual(self.led.charged("A"), 6)
+		self.assertEqual(self.led.charged("B"), 9)
+
+	def test_neither_is_charged_the_sum(self):
+		"""The regression itself: 15 on both, every plan charged every plan's
+		requests, and headroom persisting that figure onto the Activity rows."""
+		self.assertNotEqual(self.led.charged("A"), 15)
+		self.assertNotEqual(self.led.charged("B"), 15)
+
+	def test_a_row_naming_b_never_counts_against_a(self):
+		self.led.request("R3", "F", "2026-11-05", "2026-11-05", 100, master_plan="B")
+		self.assertEqual(self.led.charged("A"), 6)
+		self.assertEqual(self.led.charged("B"), 109)
+
+	def test_the_link_wins_over_the_dates(self):
+		"""A request naming a plan is charged to it even where the dates fall
+		outside: the link is what the requester chose."""
+		self.led.request("R4", "F", "2026-12-01", "2026-12-02", 5, master_plan="A")
+		self.assertEqual(self.led.charged("A"), 11)
+
+	def test_a_rejected_request_is_still_the_caller_s_filter(self):
+		"""The rule does not restate it, so the caller's WHERE has to carry it --
+		which is what the harness above reproduces."""
+		self.led.request("R5", "F", "2026-11-05", "2026-11-05", 50,
+			master_plan="A", state="Rejected")
+		self.assertEqual(self.led.charged("A"), 6)
+
+	def test_another_farm_s_request_is_not_this_farm_s(self):
+		self.led.request("R6", "G", "2026-11-05", "2026-11-05", 50, master_plan="A")
+		self.assertEqual(self.led.charged("A"), 6)
+
+
+class TestTheLegacyRowsWithNoLink(unittest.TestCase):
+	"""Every request raised before the field existed carries no link, and dates
+	are all it has. 664 of them on live at the time, 5 of them unlinked."""
+
+	def setUp(self):
+		self.led = overlapping()
+
+	def test_one_containing_plan_still_counts(self):
+		"""This is what keeps pre-backfill rows working, and it is the reason the
+		fallback exists at all."""
+		self.led.request("R1", "F", "2026-11-02", "2026-11-03", 7)
+		self.assertEqual(self.led.charged("A"), 7)
+		self.assertEqual(self.led.charged("B"), 0)
+
+	def test_two_containing_plans_count_against_neither(self):
+		"""Synthetic: the site has 5 unlinked requests and all 5 have ZERO
+		containing approved plans, so this case cannot be observed there."""
+		self.led.request("R1", "F", "2026-11-05", "2026-11-05", 4)
+		self.assertEqual(self.led.charged("A"), 0)
+		self.assertEqual(self.led.charged("B"), 0)
+
+	def test_the_ambiguous_row_is_surfaced_rather_than_dropped(self):
+		"""Real committed work whose budget nobody can name. Charging it to both
+		is the bug; charging it to one is the guess; dropping it silently leaves
+		the plan looking healthier than it is."""
+		self.led.request("R1", "F", "2026-11-05", "2026-11-05", 4)
+		self.assertEqual(self.led.unattributed("A"), 4)
+		self.assertEqual(self.led.unattributed("B"), 4)
+
+	def test_the_remainder_is_never_folded_back_in(self):
+		"""Charged and unattributed are disjoint. If a row could land in both,
+		the double-charge would be back by another route."""
+		self.led.request("R1", "F", "2026-11-05", "2026-11-05", 4)
+		self.led.request("R2", "F", "2026-11-02", "2026-11-03", 7)
+		self.led.request("R3", "F", "2026-11-05", "2026-11-05", 6, master_plan="A")
+		self.assertEqual(self.led.charged("A"), 13)
+		self.assertEqual(self.led.unattributed("A"), 4)
+
+	def test_a_linked_row_is_never_unattributed(self):
+		"""It has an answer. Only the ones with no link can be ambiguous."""
+		self.led.request("R1", "F", "2026-11-05", "2026-11-05", 4, master_plan="A")
+		self.assertEqual(self.led.unattributed("A"), 0)
+		self.assertEqual(self.led.unattributed("B"), 0)
+
+	def test_an_empty_string_link_reads_as_no_link(self):
+		"""Frappe writes '' as often as NULL for an unset Link."""
+		self.led.request("R1", "F", "2026-11-02", "2026-11-03", 7, master_plan="")
+		self.assertEqual(self.led.charged("A"), 7)
+
+	def test_only_an_APPROVED_other_plan_makes_it_ambiguous(self):
+		"""A plan still in Pending GM budgets nothing yet. Counting it would make
+		a row unattributable because of a plan that may never be approved."""
+		self.led.plan("C", "F", "2026-11-01", "2026-11-30", state="Pending GM")
+		self.led.request("R1", "F", "2026-11-02", "2026-11-03", 7)
+		self.assertEqual(self.led.charged("A"), 7)
+		self.assertEqual(self.led.unattributed("A"), 0)
+
+	def test_another_farm_s_plan_does_not_make_it_ambiguous(self):
+		self.led.plan("D", "G", "2026-11-01", "2026-11-30")
+		self.led.request("R1", "F", "2026-11-02", "2026-11-03", 7)
+		self.assertEqual(self.led.charged("A"), 7)
+
+	def test_a_plan_that_merely_overlaps_does_not_make_it_ambiguous(self):
+		"""Containment, not overlap: B starts on the 4th and cannot hold a
+		request that starts on the 2nd."""
+		self.led.request("R1", "F", "2026-11-02", "2026-11-05", 7)
+		self.assertEqual(self.led.charged("A"), 7)
+		self.assertEqual(self.led.unattributed("A"), 0)
+
+
+class TestTheMoneyMovesWithTheQuantity(unittest.TestCase):
+	def test_cost_is_attributed_the_same_way(self):
+		"""planned_cost is what the budget cap's money ceiling reads, and a rate
+		change can blow that without the quantity moving at all."""
+		led = overlapping()
+		led.request("R1", "F", "2026-11-05", "2026-11-05", 6, master_plan="A", cost=800)
+		led.request("R2", "F", "2026-11-05", "2026-11-05", 9, master_plan="B", cost=1200)
+		row = led.db.execute(sqlite_query(SUM + attributed_to_plan("p")),
+			{"f": "F", "plan": "A", "pfrom": "2026-11-02", "pto": "2026-11-07"}).fetchone()
+		self.assertEqual(row[1], 800)
+
+
+class TestEveryDrawdownAsksTheSameQuestion(unittest.TestCase):
+	"""The rule is only as good as the number of places that use it.
+
+	The defect was not that the rule was wrong -- api/dashboard.py had it right
+	and was the reference. The defect was that six other queries summed the same
+	table by dates alone, so fixing one left five wrong and nothing said which.
+	"""
+
+	MODULES = ("masterplan.py", "planner.py", "dashboard.py")
+	API = os.path.join(APP, "api")
+
+	def drawdowns(self, module):
+		"""Every frappe.db.sql() call that sums planner quantities.
+
+		Whole calls, not the SQL literals inside them: the rule is concatenated in
+		from master_plan.py, so half of each query's text is a function call, and a
+		test that read only the string literals would see a WHERE clause with no
+		attribution in it and be right for the wrong reason.
+
+		Cut at `as_dict`, which every one of these passes, so the window is the
+		call and not the paragraph after it.
+		"""
+		with open(os.path.join(self.API, module)) as handle:
+			src = handle.read()
+		found = []
+		for chunk in src.split("frappe.db.sql(")[1:]:
+			call = chunk[:chunk.index("as_dict")] if "as_dict" in chunk[:2000] else chunk[:1600]
+			if "tabWork Management Planner" not in call:
+				continue
+			if not re.search(r"SUM\(\s*\w*\.?(quantity|total_cost)", call):
+				continue
+			found.append((module, call))
+		return found
+
+	def all_drawdowns(self):
+		out = []
+		for module in self.MODULES:
+			out.extend(self.drawdowns(module))
+		return out
+
+	def attributed(self, call):
+		return ("attributed_to_plan" in call or "unattributed_to_plan" in call
+			or "master_plan" in call)
+
+	def by_period(self, call):
+		"""Scoped to a master plan's period. `\bpfrom\b` and not `pfrom`: the
+		dashboard has a `ppfrom` that is a dashboard date range and no plan."""
+		return bool(re.search(r"\bpfrom\b|period_from", call))
+
+	def test_there_are_drawdowns_to_check(self):
+		"""A matcher that matches nothing passes every assertion below."""
+		charged = [c for _, c in self.all_drawdowns() if self.attributed(c)]
+		self.assertGreaterEqual(len(charged), 6,
+			"found %d attributed drawdown queries; the matcher has probably rotted"
+			% len(charged))
+
+	def test_none_of_them_matches_on_dates_alone(self):
+		"""A planner sum scoped to a plan's period and nothing else IS the bug:
+		with two plans over that period it returns both plans' requests."""
+		for module, call in self.all_drawdowns():
+			if not self.by_period(call):
+				continue
+			with self.subTest(module=module, sql=" ".join(call.split())[:70]):
+				self.assertTrue(self.attributed(call),
+					"this sums planner quantities over a plan's period without "
+					"asking which master plan they were drawn against, so two "
+					"overlapping plans are each charged the other's requests")
+
+
+class TestTheCapNamesThePlanItRefusedFor(unittest.TestCase):
+	"""'12 left of 20' with two plans in force is unanswerable: the reader
+	cannot tell whose budget refused them, and pre-fix the figure belonged to
+	neither plan -- it was the sum across both."""
+
+	def source(self):
+		with open(os.path.join(APP, "api", "planner.py")) as handle:
+			return handle.read()
+
+	def refusals(self):
+		src = self.source()
+		return [src[at:at + 420] for at in
+			(m.start() for m in re.finditer(r'"Over the budgeted ', src))]
+
+	def test_both_refusals_are_still_there(self):
+		"""One for the quantity ceiling and one for the cost ceiling."""
+		self.assertEqual(len(self.refusals()), 2)
+
+	def test_each_names_the_master_plan(self):
+		for text in self.refusals():
+			with self.subTest(refusal=" ".join(text.split())[:60]):
+				self.assertIn("cm.name", text,
+					"the refusal quotes a remaining figure without saying which "
+					"plan it belongs to")
+
+	def test_the_figure_it_quotes_comes_from_the_attributed_sum(self):
+		"""cap_rq is cap_line.work_qty minus cap_used.q, and cap_used has to be
+		this plan's own consumption or the number in the message is the sum
+		across every overlapping plan -- which is the over-refusal itself."""
+		src = self.source()
+		at = src.index("cap_used = frappe.db.sql(")
+		block = src[at:at + 900]
+		self.assertIn("attributed_to_plan", block,
+			"the cap sums by dates, so its figure is every overlapping plan's "
+			"consumption and the message quotes a number belonging to no plan")
+		self.assertIn('"plan": cm.name', block,
+			"cm is the plan resolved for this request; charging any other plan "
+			"here would put the cap and the stored link out of step")

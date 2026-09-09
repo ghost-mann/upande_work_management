@@ -12,6 +12,7 @@ import json
 import frappe
 
 from work_management.api.config import get_config
+from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 
 @frappe.whitelist()
@@ -584,17 +585,24 @@ def wm_masterplan(**kwargs):
                 # too, and narrowing the period strands rows the same way.
                 # Mirrors check_cut_allowed() in upande_work_management/master_plan.py,
                 # which is unit-tested. Keep the two in step.
+                # What is already planned is what THIS plan is charged for, by the
+                # same rule the cap and headroom use. Not listed in the handoff, and
+                # the same defect: with two overlapping approved plans the date rule
+                # counted the other plan's requests here too, so a cut this plan's own
+                # spending left room for was refused, naming requests drawn on somebody
+                # else's budget.
                 if sv_post and not sv_cut:
                     for sv_t in sv_snap:
+                        sv_args = {"t": sv_t, "f": sv_farm, "plan": sv_name,
+                                   "pfrom": sv_old.period_from, "pto": sv_old.period_to}
                         sv_use = frappe.db.sql("""
-                            SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
-                            FROM `tabWork Management Planner`
-                            WHERE task = %(t)s AND farm = %(f)s
-                              AND IFNULL(workflow_state,'') != 'Rejected'
-                              AND from_date >= %(pfrom)s AND to_date <= %(pto)s
-                        """, {"t": sv_t, "f": sv_farm,
-                              "pfrom": sv_old.period_from, "pto": sv_old.period_to},
-                            as_dict=True)[0]
+                            SELECT COALESCE(SUM(p.quantity),0) q,
+                                   COALESCE(SUM(p.total_cost),0) c
+                            FROM `tabWork Management Planner` p
+                            WHERE p.task = %(t)s AND p.farm = %(f)s
+                              AND IFNULL(p.workflow_state,'') != 'Rejected'
+                              AND """ + attributed_to_plan("p") + """
+                        """, sv_args, as_dict=True)[0]
                         sv_pq = frappe.utils.flt(sv_use.q)
                         sv_pc = frappe.utils.flt(sv_use.c)
                         sv_to_q = frappe.utils.flt((sv_new.get(sv_t) or {}).get("q"))
@@ -613,15 +621,15 @@ def wm_masterplan(**kwargs):
                                       ("%.2f" % sv_pc) + " planned against it and "
                                       "cannot be cut to KES " + ("%.2f" % sv_to_c) + ".")
                         if sv_cut:
+                            # the same set the refusal was computed from, or "Held by"
+                            # names requests that are not the reason
                             sv_hold = frappe.db.sql("""
-                                SELECT name FROM `tabWork Management Planner`
-                                WHERE task = %(t)s AND farm = %(f)s
-                                  AND IFNULL(workflow_state,'') != 'Rejected'
-                                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
-                                ORDER BY creation
-                            """, {"t": sv_t, "f": sv_farm,
-                                  "pfrom": sv_old.period_from, "pto": sv_old.period_to},
-                                as_dict=True)
+                                SELECT p.name FROM `tabWork Management Planner` p
+                                WHERE p.task = %(t)s AND p.farm = %(f)s
+                                  AND IFNULL(p.workflow_state,'') != 'Rejected'
+                                  AND """ + attributed_to_plan("p") + """
+                                ORDER BY p.creation
+                            """, sv_args, as_dict=True)
                             if sv_hold:
                                 sv_cut = sv_cut + " Held by " + ", ".join(
                                     [x.name for x in sv_hold]) + "."
@@ -1121,6 +1129,12 @@ def wm_masterplan(**kwargs):
                 # the bar always describe one set of work. Matching actuals on their own
                 # dates would let a stray actual count against a plan whose request does
                 # not, and the bar would show delivery of work nobody planned here.
+                # "The same requests" now means the same ATTRIBUTION, not the same date
+                # window: attributed_to_plan() is what decides which requests are this
+                # plan's, and delivered has to ask it too or the two ends of the bar
+                # would go back to describing different sets of work.
+                hd_args = {"f": hd_farm, "plan": hd.name,
+                           "pfrom": hd.period_from, "pto": hd.period_to}
                 hd_done = {}
                 for hd_d in frappe.db.sql("""
                     SELECT pr.task task, COALESCE(SUM(ac.total_actual_qty),0) q,
@@ -1129,23 +1143,52 @@ def wm_masterplan(**kwargs):
                     INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
                     INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
                     WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
-                      AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s
                       AND ac.workflow_state = 'CONFIRMED'
+                      AND """ + attributed_to_plan("pr") + """
                     GROUP BY pr.task
-                """, {"f": hd_farm, "pfrom": hd.period_from, "pto": hd.period_to}, as_dict=True):
+                """, hd_args, as_dict=True):
                     hd_done[hd_d.task] = hd_d
+                # THE PLAN IS CHARGED ITS OWN REQUESTS AND NOBODY ELSE'S. Both reads
+                # are grouped over the plan rather than run once per activity line: the
+                # attribution rule carries a correlated subquery, and asking it N times
+                # for one plan is N times the work for the same answer.
+                hd_use = {}
+                for hd_u in frappe.db.sql("""
+                    SELECT p.task task, COALESCE(SUM(p.quantity),0) q,
+                           COALESCE(SUM(p.total_cost),0) c
+                    FROM `tabWork Management Planner` p
+                    WHERE p.farm = %(f)s AND IFNULL(p.workflow_state,'') != 'Rejected'
+                      AND """ + attributed_to_plan("p") + """
+                    GROUP BY p.task
+                """, hd_args, as_dict=True):
+                    hd_use[hd_u.task] = hd_u
+                # THE REMAINDER NOBODY MAY BE CHARGED. Unlinked requests that two
+                # approved plans both contain: reported so the money is visible, never
+                # added to planned_qty, because adding it to both plans is the bug and
+                # adding it to one is the guess. Backfilling their master_plan link is
+                # what moves them out of here.
+                hd_un = {}
+                for hd_x in frappe.db.sql("""
+                    SELECT p.task task, COALESCE(SUM(p.quantity),0) q,
+                           COALESCE(SUM(p.total_cost),0) c
+                    FROM `tabWork Management Planner` p
+                    WHERE p.farm = %(f)s AND IFNULL(p.workflow_state,'') != 'Rejected'
+                      AND """ + unattributed_to_plan("p") + """
+                    GROUP BY p.task
+                """, hd_args, as_dict=True):
+                    hd_un[hd_x.task] = hd_x
+                hd_uq_total = 0
+                hd_uc_total = 0
                 hd_out = []
                 for ha in hd_acts:
-                    hd_used = frappe.db.sql("""
-                        SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
-                        FROM `tabWork Management Planner`
-                        WHERE task = %(t)s AND farm = %(f)s
-                          AND IFNULL(workflow_state,'') != 'Rejected'
-                          AND from_date >= %(pfrom)s AND to_date <= %(pto)s
-                    """, {"t": ha.task, "f": hd_farm,
-                          "pfrom": hd.period_from, "pto": hd.period_to}, as_dict=True)[0]
-                    hd_pq = frappe.utils.flt(hd_used.q)
-                    hd_pc = frappe.utils.flt(hd_used.c)
+                    hd_used = hd_use.get(ha.task)
+                    hd_unat = hd_un.get(ha.task)
+                    hd_pq = frappe.utils.flt(hd_used.q) if hd_used else 0
+                    hd_pc = frappe.utils.flt(hd_used.c) if hd_used else 0
+                    hd_uq = frappe.utils.flt(hd_unat.q) if hd_unat else 0
+                    hd_uc = frappe.utils.flt(hd_unat.c) if hd_unat else 0
+                    hd_uq_total = hd_uq_total + hd_uq
+                    hd_uc_total = hd_uc_total + hd_uc
                     hd_rq = frappe.utils.flt(ha.work_qty) - hd_pq
                     hd_rc = frappe.utils.flt(ha.cost) - hd_pc
                     # report and persist the real figure, negative when over-consumed --
@@ -1163,26 +1206,40 @@ def wm_masterplan(**kwargs):
                                    "cost": frappe.utils.flt(ha.cost),
                                    "planned_qty": hd_pq, "planned_cost": hd_pc,
                                    "remaining_qty": hd_rq, "remaining_cost": hd_rc,
+                                   "unattributed_qty": hd_uq, "unattributed_cost": hd_uc,
                                    "done_qty": frappe.utils.flt(hd_dn.q) if hd_dn else 0,
                                    "done_cost": frappe.utils.flt(hd_dn.c, 2) if hd_dn else 0,
                                    "exhausted": 1 if (hd_rq <= TOLERANCE or hd_rc <= TOLERANCE) else 0})
                 frappe.db.commit()
                 out["activities"] = hd_out
+                # The plan's own total of the above, so a screen that shows no
+                # per-line detail still cannot miss committed money this plan is
+                # not being charged for.
+                out["unattributed"] = {"qty": hd_uq_total,
+                                       "cost": frappe.utils.flt(hd_uc_total, 2)}
                 # REQUESTS THAT STRADDLE THE PERIOD. A request counts against the plan it
                 # sits wholly inside, which is the rule the planner enforces when one is
                 # raised. Older requests predate that rule and can run across a boundary;
                 # they used to be charged IN FULL to every period they touched, so a
                 # month-long request emptied two weekly budgets at once and a plan that
-                # had not started read as used up. They are not counted here -- but they
-                # are real work in these dates, so they are reported rather than dropped.
+                # had not started read as used up. They are real work in these dates, so
+                # they are reported rather than dropped.
+                # `counted` is now the thing to read, not the mere presence of a row: a
+                # straddler that NAMES this plan is charged to it, because the link is
+                # what the requester chose and dates cannot overrule it. An unlinked one
+                # still counts against nothing, exactly as before. Dropping the named
+                # ones from this list instead would hide the only rows here whose money
+                # is in the figures above.
                 out["spanning"] = frappe.db.sql("""
-                    SELECT name, task, quantity, total_cost, from_date, to_date, workflow_state
+                    SELECT name, task, quantity, total_cost, from_date, to_date,
+                           workflow_state, master_plan,
+                           CASE WHEN master_plan = %(plan)s THEN 1 ELSE 0 END counted
                     FROM `tabWork Management Planner`
                     WHERE farm = %(f)s AND IFNULL(workflow_state,'') != 'Rejected'
                       AND from_date <= %(pto)s AND to_date >= %(pfrom)s
                       AND NOT (from_date >= %(pfrom)s AND to_date <= %(pto)s)
                     ORDER BY from_date
-                """, {"f": hd_farm, "pfrom": hd.period_from, "pto": hd.period_to}, as_dict=True)
+                """, hd_args, as_dict=True)
 
     elif action == "consumers":
         # Which plans are holding a line's budget. Without this, "why can't I plan
@@ -1196,15 +1253,32 @@ def wm_masterplan(**kwargs):
             cs_mp = frappe.db.get_value("Work Management Master Plan", cs.parent,
                 ["farm", "period_from", "period_to"], as_dict=True)
             out["line"] = cs
+            # "Which plans are holding THIS line's budget" has to be the same set of
+            # requests the line's planned_qty was computed from, or the answer to "why
+            # can't I plan Handling?" lists requests that are not the reason. Same
+            # attribution rule, therefore, and not date containment.
             out["plans"] = frappe.db.sql("""
-                SELECT name, from_date, to_date, quantity, total_cost, workflow_state,
-                       requested_by, block_section, creation
-                FROM `tabWork Management Planner`
-                WHERE task = %(t)s AND farm = %(f)s
-                  AND IFNULL(workflow_state,'') != 'Rejected'
-                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
-                ORDER BY creation
-            """, {"t": cs.task, "f": cs_mp.farm,
+                SELECT p.name, p.from_date, p.to_date, p.quantity, p.total_cost,
+                       p.workflow_state, p.requested_by, p.block_section, p.creation
+                FROM `tabWork Management Planner` p
+                WHERE p.task = %(t)s AND p.farm = %(f)s
+                  AND IFNULL(p.workflow_state,'') != 'Rejected'
+                  AND """ + attributed_to_plan("p") + """
+                ORDER BY p.creation
+            """, {"t": cs.task, "f": cs_mp.farm, "plan": cs.parent,
+                  "pfrom": cs_mp.period_from, "pto": cs_mp.period_to}, as_dict=True)
+            # The requests in these dates that no plan may be charged for. Without
+            # this the two lists do not add up to the work on the ground, and the
+            # difference is invisible.
+            out["unattributed_plans"] = frappe.db.sql("""
+                SELECT p.name, p.from_date, p.to_date, p.quantity, p.total_cost,
+                       p.workflow_state, p.requested_by, p.block_section, p.creation
+                FROM `tabWork Management Planner` p
+                WHERE p.task = %(t)s AND p.farm = %(f)s
+                  AND IFNULL(p.workflow_state,'') != 'Rejected'
+                  AND """ + unattributed_to_plan("p") + """
+                ORDER BY p.creation
+            """, {"t": cs.task, "f": cs_mp.farm, "plan": cs.parent,
                   "pfrom": cs_mp.period_from, "pto": cs_mp.period_to}, as_dict=True)
             out["stale_drafts"] = [p.name for p in out["plans"] if p.workflow_state == "Draft"]
 
