@@ -57,9 +57,19 @@ def read(path):
 
 
 def feed_block():
+	"""The whole feature: the read half, the write half, and the two actions.
+
+	It was one action's body until the panel's 417 forced it apart -- a loader
+	that called the write action could not be fixed while the two were the same
+	code. These tests are about what the feature does, not about where the lines
+	sit, so the block is stitched back together here rather than each assertion
+	being taught which half to look in.
+	"""
 	src = read(PAYROLL)
-	at = src.index('elif action == "%s":' % ACTION)
-	return src[at:src.index("\n    else:\n", at)]
+	helpers = src[src.index("def feed_preview("):src.index("@frappe.whitelist()")]
+	actions = src[src.index('elif action == "preview":'):
+		src.index('\n    else:\n        out["error"] = "unknown action')]
+	return helpers + "\n" + actions
 
 
 def feed_code():
@@ -184,6 +194,7 @@ class TestItSumsWhatThePaymentRunWouldSend(unittest.TestCase):
 
 	def test_the_feed_calls_it(self):
 		self.assertIn("weekly_earnings(", feed_block())
+		self.assertIn("for earned in weekly_earnings(", feed_block())
 
 	def test_the_eligibility_conditions_are_the_payment_runs_own(self):
 		"""Copied verbatim, not reworded. Each of the five excludes money that is
@@ -273,18 +284,18 @@ class TestWhatEarnsTheBonus(unittest.TestCase):
 		self.block = feed_block()
 
 	def test_the_working_days_are_everything_that_is_not_the_rest_day(self):
-		self.assertIn("fw_working = [d for d in fw_days if d not in fw_rest]", self.block)
+		self.assertIn("working = [d for d in days if d not in rest]", self.block)
 
 	def test_a_public_holiday_is_a_working_day(self):
 		"""It is NOT subtracted with the rest day. A casual who misses a public
 		holiday forfeits; one who attends earns doubled actuals and keeps the
 		streak. Subtracting it here would pay the bonus to somebody who was
 		absent on it."""
-		at = self.block.index("fw_working = [d for d in fw_days")
-		self.assertNotIn('fw_off["public"]', self.block[at - 300:at + 120])
+		at = self.block.index("working = [d for d in days if d not in rest]")
+		self.assertNotIn('off["public"]', self.block[at - 300:at + 120])
 
 	def test_missing_any_working_day_forfeits(self):
-		self.assertIn("elif fw_absent:", self.block)
+		self.assertIn("elif absent:", self.block)
 
 	def test_a_missed_holiday_is_named_as_such(self):
 		""""missed holiday" is the reason HR asked to see, because a worker who
@@ -292,7 +303,7 @@ class TestWhatEarnsTheBonus(unittest.TestCase):
 		self.assertIn("missed holiday", self.block)
 
 	def test_the_forfeit_names_the_days(self):
-		self.assertIn('", ".join(fw_absent[:4])', self.block)
+		self.assertIn('", ".join(absent[:4])', self.block)
 
 	def test_half_a_day_is_not_a_full_day(self):
 		"""PRESENT_STATUSES deliberately excludes Half Day: a full rest day for a
@@ -322,11 +333,11 @@ class TestWhatEarnsTheBonus(unittest.TestCase):
 		self.assertIn("off-day bonus is switched off in Settings", self.block)
 
 	def test_no_off_day_data_is_flagged_rather_than_assumed_quietly(self):
-		self.assertIn("fw_assumed = 1", self.block)
+		self.assertIn("assumed = 1", self.block)
 		self.assertIn('out["assumed_off_day"]', self.block)
 
 	def test_the_assumption_is_sunday(self):
-		at = self.block.index("fw_assumed = 1")
+		at = self.block.index("assumed = 1")
 		self.assertIn("weekday() == 6", self.block[at:at + 300])
 
 
@@ -339,8 +350,9 @@ class TestNothingIsWrittenUntilSomebodyHasSeenIt(unittest.TestCase):
 		self.js = read(SCREEN)
 
 	def test_preview_is_the_default_and_writing_is_opt_in(self):
-		self.assertIn('fw_write = frappe.utils.cint(frappe.form_dict.get("write"))', self.block)
-		self.assertIn('out["preview"] = 0 if fw_write else 1', self.block)
+		self.assertIn('elif action == "preview":', self.block)
+		self.assertIn('out["preview"] = 1', self.block)
+		self.assertIn('out["preview"] = 0', self.block)
 
 	def test_the_preview_carries_every_column_the_table_needs(self):
 		"""worker, actuals total, off day, bonus yes/no + reason, weekly total."""
@@ -365,10 +377,12 @@ class TestNothingIsWrittenUntilSomebodyHasSeenIt(unittest.TestCase):
 		at = self.js.index("function renderFeed(")
 		block = self.js[at:at + 4000]
 		self.assertIn("disabled title=", block)
-		self.assertIn("config_missing", block)
+		# the reason comes from the server as a sentence now, rather than the
+		# screen assembling one out of config_missing
+		self.assertIn("d.cannot_feed", block)
 
 	def test_the_server_refuses_too_rather_than_trusting_the_button(self):
-		self.assertIn('if fw_write and fw_missing:', self.block)
+		self.assertIn('elif not out.get("can_feed"):', self.block)
 
 	def test_a_missing_field_is_named_before_anything_is_attempted(self):
 		self.assertIn('get_field("custom_basic_pay")', self.block)
@@ -381,15 +395,15 @@ class TestTheWriteItself(unittest.TestCase):
 	def test_it_writes_exactly_the_fieldname_payroll_fetches(self):
 		"""A colleague owns the Salary Structure whose Basic component fetches
 		this. A near-miss fieldname writes to nothing."""
-		self.assertIn("fw_doc.custom_basic_pay = ", self.block)
+		self.assertIn("doc.custom_basic_pay = ", self.block)
 		self.assertIn('out["field"] = "custom_basic_pay"', self.block)
 
 	def test_it_is_a_versioned_doc_update(self):
 		"""This is somebody's pay. frappe.db.set_value(..., update_modified=False)
 		is the wrong tool: the change belongs in the Employee's history with who
 		made it and when, which a raw column write throws away."""
-		self.assertIn('frappe.get_doc("Employee", fw_e.employee)', self.block)
-		self.assertIn("fw_doc.save(ignore_permissions=True)", self.block)
+		self.assertIn('frappe.get_doc("Employee", row["employee"])', self.block)
+		self.assertIn("doc.save(ignore_permissions=True)", self.block)
 		self.assertNotIn("update_modified=False", feed_code())
 
 	def test_it_leaves_the_arithmetic_on_the_record(self):
@@ -397,10 +411,10 @@ class TestTheWriteItself(unittest.TestCase):
 		self.assertIn("off-day bonus", self.block)
 
 	def test_the_week_is_stamped(self):
-		self.assertIn("fw_doc.custom_basic_pay_week = fw_stamp", self.block)
+		self.assertIn('doc.custom_basic_pay_week = plan["week_stamp"]', self.block)
 
 	def test_re_feeding_the_same_week_is_a_no_op_that_says_so(self):
-		self.assertIn('str(fw_emp.get("custom_basic_pay_week") or "") == fw_stamp', self.block)
+		self.assertIn('str(emp.get("custom_basic_pay_week") or "") == stamp', self.block)
 		self.assertIn("already fed for ", self.block)
 
 	def test_both_fields_are_shipped_as_custom_field_fixtures(self):
@@ -430,14 +444,14 @@ class TestWhoIsSkippedAndWhy(unittest.TestCase):
 				self.assertIn(reason, self.block)
 
 	def test_every_skip_carries_its_reason(self):
-		self.assertIn('fw_row["skipped"] = fw_block', self.block)
-		self.assertIn('out["skipped"] = fw_skipped', self.block)
+		self.assertIn('row["skipped"] = block', self.block)
+		self.assertIn('out["skipped"] = skipped', self.block)
 
 	def test_a_zero_work_worker_is_skipped_and_not_written_as_zero(self):
 		"""Writing 0 says "this person earned nothing", which is a claim.
 		Not writing says "this feed has nothing to say about them"."""
 		self.assertIn("no confirmed unpaid work in this week", self.block)
-		self.assertIn('fw_row["hr_question"] = 1', self.block)
+		self.assertIn('row["hr_question"] = 1', self.block)
 
 	def test_that_is_raised_as_a_question_for_hr(self):
 		self.assertIn('out["hr_questions"]', self.block)
@@ -453,10 +467,10 @@ class TestTheWeekAskedForIsTheWeekFed(unittest.TestCase):
 		self.block = feed_block()
 
 	def test_a_date_in_the_middle_snaps_to_the_whole_week(self):
-		self.assertIn("pay_week.week_of(fw_from, fw_shape)", self.block)
+		self.assertIn("pay_week.week_of(week_from, shape)", self.block)
 
 	def test_no_week_asked_for_means_the_last_one_that_closed(self):
-		self.assertIn("pay_week.last_complete_week(fw_today, fw_shape)", self.block)
+		self.assertIn("pay_week.last_complete_week(today, shape)", self.block)
 
 	def test_a_range_that_is_not_one_pay_week_is_refused(self):
 		"""Quietly paying the week the start date lands in would pay days the
@@ -475,7 +489,7 @@ class TestTheControlIsReachable(unittest.TestCase):
 
 	def test_the_screen_calls_the_action(self):
 		js = read(SCREEN)
-		self.assertIn('action:"%s"' % ACTION, js)
+		self.assertIn('"feed_week_to_payroll" : "preview"', js)
 		self.assertIn('"wm_payroll"', js)
 
 	def test_the_markup_has_the_panel_the_screen_writes_into(self):

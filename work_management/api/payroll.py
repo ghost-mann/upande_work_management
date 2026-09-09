@@ -75,6 +75,271 @@ def off_days_in(holiday_list, week_from, week_to):
     return out
 
 
+def wants_post():
+    """True unless this arrived over HTTP as something other than POST.
+
+    A write reached by GET is a write anything can trigger with a link, a
+    prefetch or a browser tab restore, and it will not carry a CSRF token
+    either. Frappe's own `methods=["POST"]` is per WHITELISTED FUNCTION, and
+    this module answers several actions through one of those -- some of which
+    must stay readable -- so the check lives on the action instead.
+
+    No request at all is a console or a background job, and those may write:
+    that is how every hygiene action in this app is run.
+    """
+    request = getattr(frappe.local, "request", None)
+    return request is None or request.method == "POST"
+
+
+def feed_preview(week_from=None, week_to=None, farm=None, employee=None):
+    """What feeding a pay week WOULD do. Reads; never writes.
+
+    This is the panel's loader, so it has to answer honestly when the answer is
+    "you cannot do this yet": `can_feed` is 0 with `cannot_feed` naming the reason
+    in words a person can act on. A panel that fails to load because the feature
+    is unconfigured tells its reader nothing except that something is broken.
+
+    Every figure the panel shows comes from here, and the write below consumes
+    the same dict, so what somebody approves is exactly what gets written.
+    """
+    out = {}
+    shape = pay_week.shape(
+        frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on"),
+        frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on"),
+        frappe.db.get_single_value("Work Management Settings", "pay_day"))
+    bonus_on = frappe.utils.cint(frappe.db.get_single_value(
+        "Work Management Settings", "pay_weekly_off_on_full_attendance"))
+    bonus_amt = frappe.utils.flt(frappe.db.get_single_value(
+        "Work Management Settings", "weekly_off_bonus_amount"))
+    today = frappe.utils.today()
+
+    # The week: the one the caller asked for, snapped to its real boundaries so a
+    # date in the middle names the whole week, or the last one that closed. Never
+    # the week in progress by default -- feeding it would write a figure that is
+    # still growing, and payroll would read whichever value it happened to catch.
+    span = None
+    if week_from:
+        span = pay_week.week_of(week_from, shape)
+        if not span:
+            out["error"] = (str(week_from) + " falls on a weekday that belongs to no pay "
+                "week -- this project's week runs " + str(shape["days"]) +
+                " days, from " + pay_week.WEEKDAYS[shape["start_wd"]] +
+                " to " + pay_week.WEEKDAYS[shape["end_wd"]] + ".")
+            return out
+    else:
+        span = pay_week.last_complete_week(today, shape)
+    if not span:
+        out["error"] = "No pay week has closed yet."
+        return out
+    week_a = str(span[0])
+    week_b = str(span[1])
+    if week_to and str(week_to)[:10] != week_b:
+        # the caller named a range that is not one pay week. Say so rather than
+        # quietly paying the week their start date happens to land in.
+        out["error"] = (str(week_from) + " to " + str(week_to) + " is not one pay week. "
+            "The week containing " + str(week_from) + " runs " + week_a + " to " + week_b + ".")
+        return out
+
+    pay_on = str(pay_week.pay_date(week_b, shape))
+    stamp = week_a + " \u2192 " + week_b
+    days = [str(d) for d in pay_week.days_in(week_a, week_b)]
+    complete = 1 if pay_week.is_complete(week_b, today) else 0
+    out["week_from"] = week_a
+    out["week_to"] = week_b
+    out["pay_date"] = pay_on
+    out["week_stamp"] = stamp
+    out["bonus_enabled"] = bonus_on
+    out["bonus_amount"] = bonus_amt
+    out["field"] = "custom_basic_pay"
+    out["complete"] = complete
+
+    # CONFIGURATION THE BUTTON NEEDS. The bonus half is optional; the field is
+    # not, and writing to a fieldname that does not exist on this site would fail
+    # one Employee at a time with nothing said up front.
+    missing = []
+    if not frappe.get_meta("Employee").get_field("custom_basic_pay"):
+        missing.append("Employee.custom_basic_pay does not exist on this site")
+    if bonus_on and bonus_amt <= 0:
+        missing.append("the off-day bonus is switched on and its amount is 0")
+    out["config_missing"] = missing
+
+    rows = []
+    skipped = []
+    for earned in weekly_earnings(week_a, week_b, employee=employee, farm=farm):
+        emp = frappe.db.get_value("Employee", earned.employee,
+            ["status", "date_of_joining", "relieving_date", "employee_name",
+             "custom_basic_pay", "custom_basic_pay_week"], as_dict=True) or {}
+        name = earned.employee_name or emp.get("employee_name") or earned.employee
+
+        # WHICH DAY IS THEIRS OFF. Never Sunday by assumption -- workers sit on
+        # different weekly offs and assuming would pay a bonus for a day somebody
+        # actually worked, or refuse one they earned.
+        holiday_list = holiday_list_for(earned.employee, week_b)
+        off = off_days_in(holiday_list, week_a, week_b)
+        assumed = 0
+        rest = off["weekly_off"]
+        if not holiday_list or not rest:
+            # No off-day data at all. Sunday is the default this project has always
+            # run on, and it is FLAGGED rather than applied silently: a bonus paid
+            # on a guessed rest day is a bonus nobody can check.
+            assumed = 1
+            rest = [d for d in days if frappe.utils.getdate(d).weekday() == 6]
+
+        # Every day of the week that is NOT their rest day, PUBLIC HOLIDAYS
+        # INCLUDED. A public holiday is a working day for a casual: missing it
+        # forfeits the bonus, attending it earns doubled actuals and keeps the
+        # streak. Holiday.weekly_off is what separates the two, and reading it the
+        # other way round would pay a bonus for every public holiday in the year.
+        working = [d for d in days if d not in rest]
+        present = []
+        if working:
+            for att in frappe.db.sql("""
+                SELECT attendance_date d, status s FROM `tabAttendance`
+                WHERE employee = %(e)s AND docstatus < 2
+                  AND attendance_date IN %(days)s
+            """, {"e": earned.employee, "days": tuple(working)}, as_dict=True):
+                if att.s in PRESENT_STATUSES:
+                    present.append(str(att.d))
+        absent = [d for d in working if d not in present]
+
+        bonus = 0
+        why = None
+        if not bonus_on:
+            why = "off-day bonus is switched off in Settings"
+        elif not working:
+            why = "no working days in this week to attend"
+        elif absent:
+            # name the days, and say when one of them was a public holiday:
+            # "missed holiday" is the reason HR asked to see, because a worker who
+            # thought a holiday was a day off will come and ask.
+            missed_holiday = [d for d in absent if d in off["public"]]
+            why = ("no attendance on " + ", ".join(absent[:4])
+                + ("..." if len(absent) > 4 else ""))
+            if missed_holiday:
+                why = why + " (missed holiday: " + ", ".join(missed_holiday) + ")"
+        else:
+            bonus = bonus_amt
+
+        total = frappe.utils.flt(earned.owed) + bonus
+        row = {
+            "employee": earned.employee, "employee_name": name,
+            "actuals": frappe.utils.flt(earned.owed, 2),
+            "days_worked": frappe.utils.cint(earned.days),
+            "qty": frappe.utils.flt(earned.qty),
+            "holiday_list": holiday_list,
+            "off_day": ", ".join(rest) or None,
+            "off_day_assumed": assumed,
+            "public_holidays": ", ".join(off["public"]) or None,
+            "working_days": len(working),
+            "attended": len(present),
+            "bonus": bonus,
+            "bonus_reason": why,
+            "total": frappe.utils.flt(total, 2),
+            "was": frappe.utils.flt(emp.get("custom_basic_pay"), 2),
+            "was_week": emp.get("custom_basic_pay_week"),
+        }
+
+        # PRECONDITIONS, checked before anything is written. The same gates the
+        # payment run applies, for the same reason: a worker payroll cannot pay is
+        # a worker this must not quietly hand a figure to.
+        block = None
+        if emp.get("status") == "Inactive":
+            block = "employee is Inactive"
+        elif emp.get("relieving_date") and pay_on > str(emp["relieving_date"]):
+            block = ("pay date " + pay_on + " is after the relieving date "
+                + str(emp["relieving_date"]))
+        elif emp.get("date_of_joining") and pay_on < str(emp["date_of_joining"]):
+            block = ("pay date " + pay_on + " is before the joining date "
+                + str(emp["date_of_joining"]))
+        else:
+            ssa = frappe.db.sql("""
+                SELECT name FROM `tabSalary Structure Assignment`
+                WHERE employee = %(e)s AND docstatus = 1 AND from_date <= %(d)s LIMIT 1
+            """, {"e": earned.employee, "d": pay_on}, as_dict=True)
+            if not ssa:
+                block = "no submitted Salary Structure Assignment"
+        if total <= 0:
+            # A worker with a week of nothing is SKIPPED, not written as 0. Writing
+            # 0 would say "this person earned nothing this week", which is a claim;
+            # not writing says "this feed has nothing to say about them", which is
+            # the truth. Reported all the same, because a task worker with no
+            # confirmed work for a whole week is a question for HR either way.
+            block = "no confirmed unpaid work in this week"
+            row["hr_question"] = 1
+        if block:
+            row["skipped"] = block
+            skipped.append(row)
+            continue
+        if str(emp.get("custom_basic_pay_week") or "") == stamp:
+            # RE-FEEDING IS A NO-OP. The week is stamped the way the payment flow
+            # stamps payment_ref, so a second run of the same week says so instead
+            # of silently rewriting the same figure -- or a different one, if
+            # actuals moved underneath it.
+            row["skipped"] = "already fed for " + stamp
+            row["already_fed"] = 1
+            skipped.append(row)
+            continue
+        rows.append(row)
+
+    out["preview"] = 1
+    out["rows"] = rows
+    out["skipped"] = skipped
+    out["would_write"] = len(rows)
+    out["total"] = frappe.utils.flt(sum(r["total"] for r in rows), 2)
+    out["hr_questions"] = [r for r in skipped if r.get("hr_question")]
+    out["assumed_off_day"] = [r for r in (rows + skipped) if r.get("off_day_assumed")]
+    out["already_fed"] = [r for r in skipped if r.get("already_fed")]
+
+    # WHETHER THE BUTTON MAY BE PRESSED, and if not, why -- in a sentence, not a
+    # flag. Ordered so the reader is told the thing they have to fix FIRST: the
+    # configuration, then the week, then whether there is anything left to do.
+    reason = None
+    if missing:
+        reason = "not configured: " + "; ".join(missing)
+    elif not complete:
+        reason = ("the pay week " + stamp + " has not closed yet -- it can be fed "
+            "once it does")
+    elif not rows and out["already_fed"]:
+        reason = ("every worker with work in " + stamp + " has already been fed "
+            "(" + str(len(out["already_fed"])) + ")")
+    elif not rows and skipped:
+        reason = (str(len(skipped)) + " worker" + ("" if len(skipped) == 1 else "s")
+            + " have work in " + stamp + " and none can be fed -- see the reasons below")
+    elif not rows:
+        reason = "no confirmed unpaid work in " + stamp
+    out["can_feed"] = 0 if reason else 1
+    out["cannot_feed"] = reason
+    return out
+
+
+def feed_write(plan):
+    """Write what `plan` -- a feed_preview() result -- said it would.
+
+    Takes the preview rather than recomputing: what somebody approved on screen
+    is then exactly what lands, and a week that changed underneath them cannot be
+    written on the strength of a figure they never saw.
+    """
+    written = 0
+    for row in plan.get("rows") or []:
+        # A PROPER DOC UPDATE, not frappe.db.set_value(..., update_modified=False).
+        # This is somebody's pay: the change belongs in the Employee's version
+        # history with who made it and when, which is exactly what a raw column
+        # write throws away.
+        doc = frappe.get_doc("Employee", row["employee"])
+        doc.custom_basic_pay = row["total"]
+        doc.custom_basic_pay_week = plan["week_stamp"]
+        doc.flags.ignore_permissions = True
+        doc.save(ignore_permissions=True)
+        doc.add_comment("Comment",
+            "Basic pay fed from Work Management for " + plan["week_stamp"] + ": KES "
+            + str(row["total"]) + " (" + str(row["actuals"]) + " actuals"
+            + (" + " + str(row["bonus"]) + " off-day bonus" if row["bonus"] else "")
+            + ") by " + frappe.session.user)
+        written = written + 1
+    frappe.db.commit()
+    return written
+
+
 @frappe.whitelist()
 def wm_payroll(**kwargs):
     _cfg = get_config()
@@ -107,6 +372,7 @@ def wm_payroll(**kwargs):
     #   meta                 - configuration and coverage
     #   backfill_fields      - populate payroll_date / amount on existing documents
     #   as_preview           - what Additional Salary would be created for a document
+    #   preview              - what feeding a pay week would do (read-only)
     #   feed_week_to_payroll - one pay week's total onto Employee.custom_basic_pay
     # ==================================================================
     action = frappe.form_dict.get("action") or "meta"
@@ -199,237 +465,38 @@ def wm_payroll(**kwargs):
                     filters={"ref_doctype": "Work Management Payment", "ref_docname": ap_name},
                     fields=["name", "docstatus", "amount", "payroll_date", "salary_component"])
 
+    elif action == "preview":
+        # THE PANEL'S LOADER. Read-only by construction -- it calls feed_preview()
+        # and returns it -- so opening the payroll tab can never write, and a site
+        # that has not configured the feature gets a panel explaining that rather
+        # than an error.
+        out = feed_preview(
+            week_from=frappe.form_dict.get("week_from"),
+            week_to=frappe.form_dict.get("week_to"),
+            farm=frappe.form_dict.get("farm") or None,
+            employee=frappe.form_dict.get("employee") or None)
+
     elif action == "feed_week_to_payroll":
-        # ONE PAY WEEK'S TOTAL, ONTO Employee.custom_basic_pay.
-        #
-        # A colleague owns the Salary Structure whose Basic component fetches that
-        # field, so this writes the number and stops. What the number IS: the
-        # confirmed, unpaid, payroll-counted actuals the payment run would send for
-        # this week -- weekly_earnings() in api/payment.py, so the two cannot
-        # disagree -- plus the weekly off-day bonus where the worker earned it.
-        #
-        # PREVIEW FIRST, always. The write lands on a live Employee record that
-        # payroll reads, so nothing is written until somebody has seen the table:
-        # who, what their actuals came to, which day is their off day, whether the
-        # bonus was earned and why not where it was not, and the total.
-        fw_write = frappe.utils.cint(frappe.form_dict.get("write"))
-        fw_from = frappe.form_dict.get("week_from")
-        fw_to = frappe.form_dict.get("week_to")
-        fw_farm = frappe.form_dict.get("farm") or None
-        fw_only = frappe.form_dict.get("employee") or None
-
-        fw_shape = pay_week.shape(
-            frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on"),
-            frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on"),
-            frappe.db.get_single_value("Work Management Settings", "pay_day"))
-        fw_bonus_on = frappe.utils.cint(frappe.db.get_single_value(
-            "Work Management Settings", "pay_weekly_off_on_full_attendance"))
-        fw_bonus_amt = frappe.utils.flt(frappe.db.get_single_value(
-            "Work Management Settings", "weekly_off_bonus_amount"))
-        fw_today = frappe.utils.today()
-
-        # The week: the one the caller asked for, snapped to its real boundaries so
-        # a date in the middle names the whole week, or the last one that closed.
-        # Never the week in progress by default -- feeding it would write a figure
-        # that is still growing, and payroll would read whichever value it happened
-        # to catch.
-        fw_span = None
-        if fw_from:
-            fw_span = pay_week.week_of(fw_from, fw_shape)
-            if not fw_span:
-                out["error"] = (str(fw_from) + " falls on a weekday that belongs to no pay "
-                                "week -- this project's week runs " + str(fw_shape["days"]) +
-                                " days, from " + pay_week.WEEKDAYS[fw_shape["start_wd"]] +
-                                " to " + pay_week.WEEKDAYS[fw_shape["end_wd"]] + ".")
+        # THE WRITE. One pay week's total onto Employee.custom_basic_pay, which a
+        # colleague's Salary Structure fetches for its Basic component -- so this
+        # lands on a live payroll record and is never something a page load does.
+        if not wants_post():
+            out["error"] = ("Feeding a week to payroll writes to Employee records, "
+                            "so it has to be sent as a POST with a CSRF token. Load "
+                            "the panel with action=preview and press the button.")
         else:
-            fw_span = pay_week.last_complete_week(fw_today, fw_shape)
-        if not out.get("error") and not fw_span:
-            out["error"] = "No pay week has closed yet."
-        if not out.get("error"):
-            fw_a = str(fw_span[0])
-            fw_b = str(fw_span[1])
-            if fw_to and str(fw_to)[:10] != fw_b:
-                # the caller named a range that is not one pay week. Say so rather
-                # than quietly paying the week their start date happens to land in.
-                out["error"] = (str(fw_from) + " to " + str(fw_to) + " is not one pay week. "
-                                "The week containing " + str(fw_from) + " runs " + fw_a +
-                                " to " + fw_b + ".")
-        if not out.get("error"):
-            fw_pay_on = str(pay_week.pay_date(fw_b, fw_shape))
-            fw_stamp = fw_a + " → " + fw_b
-            fw_days = [str(d) for d in pay_week.days_in(fw_a, fw_b)]
-            out["week_from"] = fw_a
-            out["week_to"] = fw_b
-            out["pay_date"] = fw_pay_on
-            out["week_stamp"] = fw_stamp
-            out["bonus_enabled"] = fw_bonus_on
-            out["bonus_amount"] = fw_bonus_amt
-            out["field"] = "custom_basic_pay"
-            out["complete"] = 1 if pay_week.is_complete(fw_b, fw_today) else 0
-
-            # CONFIGURATION THE BUTTON NEEDS. The bonus half is optional; the field
-            # is not, and writing to a fieldname that does not exist on this site
-            # would fail one Employee at a time with nothing said up front.
-            fw_missing = []
-            if not frappe.get_meta("Employee").get_field("custom_basic_pay"):
-                fw_missing.append("Employee.custom_basic_pay does not exist on this site")
-            if fw_bonus_on and fw_bonus_amt <= 0:
-                fw_missing.append("the off-day bonus is switched on and its amount is 0")
-            out["config_missing"] = fw_missing
-
-            fw_rows = []
-            fw_skipped = []
-            fw_written = 0
-            for fw_e in weekly_earnings(fw_a, fw_b, employee=fw_only, farm=fw_farm):
-                fw_emp = frappe.db.get_value("Employee", fw_e.employee,
-                    ["status", "date_of_joining", "relieving_date", "employee_name",
-                     "custom_basic_pay", "custom_basic_pay_week"], as_dict=True) or {}
-                fw_name = fw_e.employee_name or fw_emp.get("employee_name") or fw_e.employee
-
-                # WHICH DAY IS THEIRS OFF. Never Sunday by assumption -- workers sit
-                # on different weekly offs and assuming would pay a bonus for a day
-                # somebody actually worked, or refuse one they earned.
-                fw_list = holiday_list_for(fw_e.employee, fw_b)
-                fw_off = off_days_in(fw_list, fw_a, fw_b)
-                fw_assumed = 0
-                fw_rest = fw_off["weekly_off"]
-                if not fw_list or not fw_rest:
-                    # No off-day data at all. Sunday is the default this project has
-                    # always run on, and it is FLAGGED rather than applied silently:
-                    # a bonus paid on a guessed rest day is a bonus nobody can check.
-                    fw_assumed = 1
-                    fw_rest = [d for d in fw_days
-                               if frappe.utils.getdate(d).weekday() == 6]
-
-                # Every day of the week that is NOT their rest day, PUBLIC HOLIDAYS
-                # INCLUDED. A public holiday is a working day for a casual: missing
-                # it forfeits the bonus, attending it earns doubled actuals and keeps
-                # the streak. Holiday.weekly_off is what separates the two, and
-                # reading it the other way round would pay a bonus for every public
-                # holiday in the calendar.
-                fw_working = [d for d in fw_days if d not in fw_rest]
-                fw_present = []
-                if fw_working:
-                    for fw_at in frappe.db.sql("""
-                        SELECT attendance_date d, status s FROM `tabAttendance`
-                        WHERE employee = %(e)s AND docstatus < 2
-                          AND attendance_date IN %(days)s
-                    """, {"e": fw_e.employee, "days": tuple(fw_working)}, as_dict=True):
-                        if fw_at.s in PRESENT_STATUSES:
-                            fw_present.append(str(fw_at.d))
-                fw_absent = [d for d in fw_working if d not in fw_present]
-
-                fw_earned = 0
-                fw_why = None
-                if not fw_bonus_on:
-                    fw_why = "off-day bonus is switched off in Settings"
-                elif not fw_working:
-                    fw_why = "no working days in this week to attend"
-                elif fw_absent:
-                    # name the days, and say when one of them was a public holiday:
-                    # "missed holiday" is the reason HR asked to see, because a
-                    # worker who thought a holiday was a day off will ask.
-                    fw_hol = [d for d in fw_absent if d in fw_off["public"]]
-                    fw_why = ("no attendance on " + ", ".join(fw_absent[:4])
-                              + ("..." if len(fw_absent) > 4 else ""))
-                    if fw_hol:
-                        fw_why = fw_why + " (missed holiday: " + ", ".join(fw_hol) + ")"
-                else:
-                    fw_earned = fw_bonus_amt
-
-                fw_total = frappe.utils.flt(fw_e.owed) + fw_earned
-                fw_row = {
-                    "employee": fw_e.employee, "employee_name": fw_name,
-                    "actuals": frappe.utils.flt(fw_e.owed, 2),
-                    "days_worked": frappe.utils.cint(fw_e.days),
-                    "qty": frappe.utils.flt(fw_e.qty),
-                    "holiday_list": fw_list,
-                    "off_day": ", ".join(fw_rest) or None,
-                    "off_day_assumed": fw_assumed,
-                    "public_holidays": ", ".join(fw_off["public"]) or None,
-                    "working_days": len(fw_working),
-                    "attended": len(fw_present),
-                    "bonus": fw_earned,
-                    "bonus_reason": fw_why,
-                    "total": frappe.utils.flt(fw_total, 2),
-                    "was": frappe.utils.flt(fw_emp.get("custom_basic_pay"), 2),
-                    "was_week": fw_emp.get("custom_basic_pay_week"),
-                }
-
-                # PRECONDITIONS, checked before anything is written. The same gates
-                # the payment run applies, for the same reason: a worker payroll
-                # cannot pay is a worker this must not quietly hand a figure to.
-                fw_block = None
-                if fw_emp.get("status") == "Inactive":
-                    fw_block = "employee is Inactive"
-                elif fw_emp.get("relieving_date") and fw_pay_on > str(fw_emp["relieving_date"]):
-                    fw_block = ("pay date " + fw_pay_on + " is after the relieving date "
-                                + str(fw_emp["relieving_date"]))
-                elif fw_emp.get("date_of_joining") and fw_pay_on < str(fw_emp["date_of_joining"]):
-                    fw_block = ("pay date " + fw_pay_on + " is before the joining date "
-                                + str(fw_emp["date_of_joining"]))
-                else:
-                    fw_ssa = frappe.db.sql("""
-                        SELECT name FROM `tabSalary Structure Assignment`
-                        WHERE employee = %(e)s AND docstatus = 1 AND from_date <= %(d)s LIMIT 1
-                    """, {"e": fw_e.employee, "d": fw_pay_on}, as_dict=True)
-                    if not fw_ssa:
-                        fw_block = "no submitted Salary Structure Assignment"
-                if fw_total <= 0:
-                    # A worker with a week of nothing is SKIPPED, not written as 0.
-                    # Writing 0 would say "this person earned nothing this week",
-                    # which is a claim; not writing says "this feed has nothing to
-                    # say about them", which is the truth. Reported all the same,
-                    # because a task worker with no confirmed work for a whole week
-                    # is a question for HR either way.
-                    fw_block = "no confirmed unpaid work in this week"
-                    fw_row["hr_question"] = 1
-                if fw_block:
-                    fw_row["skipped"] = fw_block
-                    fw_skipped.append(fw_row)
-                    continue
-                if str(fw_emp.get("custom_basic_pay_week") or "") == fw_stamp:
-                    # RE-FEEDING IS A NO-OP. The week is stamped the way the payment
-                    # flow stamps payment_ref, so a second run of the same week says
-                    # so instead of silently rewriting the same figure -- or a
-                    # different one, if actuals moved underneath it.
-                    fw_row["skipped"] = "already fed for " + fw_stamp
-                    fw_row["already_fed"] = 1
-                    fw_skipped.append(fw_row)
-                    continue
-                fw_rows.append(fw_row)
-
-                if fw_write and not fw_missing:
-                    # A PROPER DOC UPDATE, not frappe.db.set_value(...,
-                    # update_modified=False). This is somebody's pay: the change
-                    # belongs in the Employee's version history with who made it and
-                    # when, which is exactly what a raw column write throws away.
-                    fw_doc = frappe.get_doc("Employee", fw_e.employee)
-                    fw_doc.custom_basic_pay = fw_row["total"]
-                    fw_doc.custom_basic_pay_week = fw_stamp
-                    fw_doc.flags.ignore_permissions = True
-                    fw_doc.save(ignore_permissions=True)
-                    fw_doc.add_comment("Comment",
-                        "Basic pay fed from Work Management for " + fw_stamp + ": KES "
-                        + str(fw_row["total"]) + " (" + str(fw_row["actuals"])
-                        + " actuals" + (" + " + str(fw_earned) + " off-day bonus"
-                                        if fw_earned else "") + ") by "
-                        + frappe.session.user)
-                    fw_written = fw_written + 1
-
-            if fw_write and fw_missing:
-                out["error"] = ("Cannot write: " + "; ".join(fw_missing) + ".")
-            elif fw_write:
-                frappe.db.commit()
-            out["preview"] = 0 if fw_write else 1
-            out["rows"] = fw_rows
-            out["skipped"] = fw_skipped
-            out["written"] = fw_written
-            out["would_write"] = len(fw_rows)
-            out["total"] = frappe.utils.flt(sum(r["total"] for r in fw_rows), 2)
-            out["hr_questions"] = [r for r in fw_skipped if r.get("hr_question")]
-            out["assumed_off_day"] = [r for r in (fw_rows + fw_skipped)
-                                      if r.get("off_day_assumed")]
+            out = feed_preview(
+                week_from=frappe.form_dict.get("week_from"),
+                week_to=frappe.form_dict.get("week_to"),
+                farm=frappe.form_dict.get("farm") or None,
+                employee=frappe.form_dict.get("employee") or None)
+            if out.get("error"):
+                pass
+            elif not out.get("can_feed"):
+                out["error"] = "Cannot feed this week: " + str(out.get("cannot_feed"))
+            else:
+                out["written"] = feed_write(out)
+                out["preview"] = 0
 
     else:
         out["error"] = "unknown action: " + str(action)

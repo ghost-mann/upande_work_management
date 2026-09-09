@@ -763,9 +763,13 @@
   function feedWeek(write){
     var box=el("feed-week"); if(!box) return;
     box.innerHTML='<div class="loading">Working out the week&hellip;</div>';
-    var args={ action:"feed_week_to_payroll" };
+    // The loader asks `preview`, which reads and never writes; the button asks
+    // `feed_week_to_payroll`, which is POST-only and refuses a GET. Loading a
+    // panel by calling its write action was the bug: opening the tab attempted
+    // the write on every page load, and an unconfigured site got an error where
+    // it should have got an explanation.
+    var args={ action: write ? "feed_week_to_payroll" : "preview" };
     if(ST.feedFrom) args.week_from=ST.feedFrom;
-    if(write) args.write=1;
     call(args, write?true:false, "wm_payroll").then(function(d){
       ST.feed=d;
       if(d.week_from) ST.feedFrom=d.week_from;
@@ -785,7 +789,7 @@
   function renderFeed(){
     var box=el("feed-week"), d=ST.feed||{};
     if(d.error){ box.innerHTML='<div class="banner warn"><b>'+esc(d.error)+'</b></div>'; return; }
-    var rows=d.rows||[], skipped=d.skipped||[], blocked=(d.config_missing||[]).length;
+    var rows=d.rows||[], skipped=d.skipped||[], can=!!d.can_feed;
     var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px;align-items:center">'+
       '<span class="hint" style="font-weight:600;color:var(--ink)">Pay week</span>'+
       '<input type="date" id="fw-week" value="'+esc(d.week_from||"")+'">'+
@@ -794,14 +798,18 @@
       '<span class="hint">'+(d.bonus_enabled
         ? 'Off-day bonus '+money(d.bonus_amount)+' on full attendance'
         : 'Off-day bonus off')+'</span>'+
-      // Disabled with the reason IN the tooltip: a greyed button with no
-      // explanation is the thing that costs an afternoon.
-      '<button type="button" class="btn'+(blocked?"":" solid")+'" id="fw-write"'+
-        (blocked?' disabled title="'+esc((d.config_missing||[]).join("; "))+'"':'')+
-        (rows.length?'':' disabled title="Nothing to write for this week"')+
-        '>Write '+fmt(rows.length)+' to payroll</button></div>';
-    if(blocked){
-      h+='<div class="banner warn"><b>Not configured:</b> '+esc((d.config_missing||[]).join("; "))+'.</div>';
+      // The button is offered only when the server says the week can be fed, and
+      // when it cannot the REASON is in the tooltip and spelled out below. A
+      // greyed button with no explanation is the thing that costs an afternoon.
+      '<button type="button" class="btn'+(can?" solid":"")+'" id="fw-write"'+
+        (can?'':' disabled title="'+esc(d.cannot_feed||"Nothing to feed for this week")+'"')+
+        '>'+(can
+          ? 'Feed week to payroll — '+money(d.total)
+          : 'Feed week to payroll')+'</button></div>';
+    // The honest empty state: what stands between this week and being fed, in
+    // the server's own words.
+    if(d.cannot_feed){
+      h+='<div class="banner warn"><b>Not yet:</b> '+esc(d.cannot_feed)+'.</div>';
     }
     if((d.assumed_off_day||[]).length){
       h+='<div class="banner info"><b>'+fmt(d.assumed_off_day.length)+' worker'+
@@ -817,6 +825,11 @@
     if(!rows.length && !skipped.length){
       box.innerHTML=h+'<div class="empty"><b>Nothing to feed</b>No confirmed unpaid work for '+esc(d.week_stamp||"this week")+'.</div>';
       wireFeed(); return;
+    }
+    if((d.already_fed||[]).length){
+      h+='<div class="banner good"><b>'+fmt(d.already_fed.length)+' worker'+
+         (d.already_fed.length===1?'':'s')+' already fed for '+esc(d.week_stamp||"")+'</b>'+
+         ' — re-feeding the same week does nothing, by design.</div>';
     }
     h+='<table><thead><tr><th>Worker</th><th class="n">Actuals</th><th class="n">Days</th>'+
        '<th>Off day</th><th class="n">Attended</th><th>Bonus</th><th class="n">Weekly total</th></tr></thead><tbody>';
@@ -839,8 +852,9 @@
     if(el("fw-week")) el("fw-week").onchange=function(){ ST.feedFrom=this.value; feedWeek(false); };
     if(el("fw-write")) el("fw-write").onclick=function(){
       var d=ST.feed||{};
-      if(!confirm("Write "+(d.rows||[]).length+" worker totals to Employee.custom_basic_pay for "+
-                  d.week_stamp+"?\n\nThis updates live payroll records.")) return;
+      if(!confirm("Feed "+(d.rows||[]).length+" worker total"+((d.rows||[]).length===1?"":"s")+
+                  " ("+money(d.total)+") to payroll for "+d.week_stamp+
+                  "?\n\nThis writes Employee.custom_basic_pay on live payroll records.")) return;
       feedWeek(true);
     };
   }

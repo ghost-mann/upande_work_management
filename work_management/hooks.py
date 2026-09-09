@@ -69,6 +69,13 @@ override_whitelisted_methods = {
 	"wm_payment": "work_management.api.payment.wm_payment",
 	"wm_rates": "work_management.api.rates.wm_rates",
 	"wm_masterplan": "work_management.api.masterplan.wm_masterplan",
+	# The screens address these by SHORT NAME -- /api/method/wm_payment, not the
+	# dotted path -- so a script the map does not carry is not reachable at all.
+	# `wm_payroll` was added to the payment screen without a line here, and every
+	# call to it answered "Failed to get method for command wm_payroll", which
+	# surfaces to the browser as a 417 and reads like the action refusing rather
+	# than the endpoint not existing. It would have failed by POST too.
+	"wm_payroll": "work_management.api.payroll.wm_payroll",
 }
 
 scheduler_events = {
