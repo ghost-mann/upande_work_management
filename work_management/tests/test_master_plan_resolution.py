@@ -20,6 +20,7 @@ import os
 import unittest
 
 from work_management.master_plan import resolve_master_plan
+from work_management.tests import mirror as mirror_checkout
 from work_management.tests.mirror import WEB_PAGES
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -282,6 +283,10 @@ class TestTheScreenSendsTheChoice(unittest.TestCase):
 		self.assertIn("plan_name", self.screen())
 
 	def test_the_app_and_mirror_copies_agree(self):
+		# The third byte-compare of the same pair, and it skips for the same
+		# reason as the two in test_no_capability_is_stranded.py.
+		if mirror_checkout.forked():
+			self.skipTest(mirror_checkout.FORK_SKIP)
 		mirror = os.path.join(WEB_PAGES, "work-planner.js")
 		if not os.path.exists(mirror):
 			self.skipTest("mirror not present")

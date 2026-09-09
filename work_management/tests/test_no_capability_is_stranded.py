@@ -15,7 +15,10 @@ it and not the markup the JS needs.
 
 So: every action api/payment.py answers has a caller, every id the ported code
 asks for exists, and the four screens' JS is byte-identical between app and
-mirror. The HTML deliberately is NOT -- the app's is jinja-templated for the
+mirror -- that last one except on a forked branch, where the app's copy is the
+live one and the byte-compare skips by design (docs/ALTURA_FORK.md).
+
+The HTML deliberately is NOT compared -- the app's is jinja-templated for the
 configurable taxonomy where the mirror hardcodes Kaitet's words -- so parity is
 asserted on the JS only.
 """
@@ -45,6 +48,11 @@ class TestTheAppAndMirrorScreensAgree(unittest.TestCase):
 	whose fixes land on half the users."""
 
 	def test_every_screen_matches_the_mirror_byte_for_byte(self):
+		# On a forked branch public/js/ IS the live screen -- there is no mirror
+		# copy downstream of it, so byte-identity is not a property to hold.
+		# Gated on the fork declaration, not on the checkout: see tests/mirror.py.
+		if mirror.forked():
+			self.skipTest(mirror.FORK_SKIP)
 		if not mirror.present(mirror.WEB_PAGES):
 			self.skipTest("mirror not checked out at " + mirror.ROOT)
 		for screen in SCREENS:

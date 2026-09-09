@@ -13,6 +13,12 @@ through a full green run. It runs here now, so the next one fails a test on
 the way in.
 
 A missing mirror checkout is a skip, never a failure: see tests/mirror.py.
+
+On a branch that has declared api/ to be source -- `altura`, which deploys the
+packaged app and runs no porter downstream of it -- this check has nothing to
+prove and skips deliberately, gated on docs/ALTURA_FORK.md rather than on the
+mirror's absence. It is kept, not deleted: reconciling the fork back into the
+mirror deletes that file and re-arms this.
 """
 
 import os
@@ -27,6 +33,8 @@ CHECKER = os.path.join(mirror.ROOT, "scripts", "check_ported.py")
 
 class TestTheGeneratedFilesAreNotHandEdited(unittest.TestCase):
 	def test_a_fresh_port_reproduces_every_api_module(self):
+		if mirror.forked():
+			raise unittest.SkipTest(mirror.FORK_SKIP)
 		if not mirror.present() or not os.path.exists(CHECKER):
 			raise unittest.SkipTest("mirror not checked out at " + mirror.ROOT)
 		done = subprocess.run([sys.executable, CHECKER], capture_output=True,
