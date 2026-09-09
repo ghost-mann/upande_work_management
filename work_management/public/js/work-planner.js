@@ -1751,6 +1751,10 @@
     var b=el("appr-body"); b.className="loading"; b.innerHTML="Loading…";
     call({action:"pending"}).then(function(d){
       ST._apprRows=d.pending||[];
+      // the steps this person may take, in chain order. Needed even when nothing
+      // is waiting: "nothing awaiting approval" and "no step here is yours" are
+      // different answers and the empty state used to give the first for both.
+      ST._apprSteps=d.steps||[];
       renderAppr();
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load: '+esc(e&&e.message?e.message:e)+'</div>'; });
   }
@@ -1758,6 +1762,11 @@
   // approval already holds its budget -- rejecting it hands the budget back -- so
   // these figures are what approving leaves behind, not what is free before it.
   function apprBudget(r){
+    // Two approved plans cover these dates and the request names neither, so
+    // which ceiling it draws on is not a thing the screen may decide. Showing
+    // one of them would be the guess the planner refuses to make on the way in.
+    if(r.budget_ambiguous)
+      return '<span class="gg-alt" style="font-size:10.5px">Two approved master plans cover these dates and this request names neither — set its master plan before deciding</span>';
     if(!r.budget_plan)
       return '<span class="gg-alt" style="font-size:10.5px">No approved master plan covers these dates</span>';
     if(r.budget_qty==null)
@@ -1771,19 +1780,40 @@
   function renderAppr(){
     var b=el("appr-body"); if(!b) return;
     var all=ST._apprRows||[];
-    if(!all.length){ b.className=""; b.innerHTML='<div class="empty">Nothing awaiting approval.</div>'; return; }
+    var steps=ST._apprSteps||[];
+    var mine=steps.filter(function(x){ return x.mine; });
+    // Two steps in the chain is a different screen from one: the column that says
+    // which is only worth its width when there is a choice to be told apart.
+    var multi=steps.length>1;
+    if(!all.length){
+      b.className="";
+      b.innerHTML='<div class="empty">'+
+        (steps.length && !mine.length
+          ? 'No approval step here is yours. This project\'s planner chain is '+
+            esc(steps.map(function(x){ return (x.label||x.key)+" ("+(x.role||"no role set")+")"; }).join(" → "))+'.'
+          : 'Nothing awaiting approval.')+'</div>';
+      return;
+    }
     b.className="";
-    b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row for full details. Approve, reject — or <b>Edit</b> to adjust the plan yourself; edits send it back through Pending Approval.</div>'
+    b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row for full details. Approve, reject — or <b>Edit</b> to adjust the plan yourself; edits send it back through Pending Approval.'+
+      (multi ? ' This project runs '+fmt(steps.length)+' approval steps — '+
+        esc(steps.map(function(x){ return x.label||x.key; }).join(" → "))+
+        ' — and the Step column says which one a request is waiting in.' : '')+'</div>'
       + fbar(all,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task, requested by…"});
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
               hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.requested_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th><th>Action</th></tr></thead><tbody>';
+      var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th>'+(multi?'<th>Step</th>':'')+'<th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r, i){
-        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td><td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
-        h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="13" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
+        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td>'+
+           (multi?('<td style="font-size:10.5px">'+esc(r.step_label||r.workflow_state||"")+'</td>'):'')+
+           // the button says what the step calls the decision -- "HR Approve" is
+           // the configured action, and a button labelled "Approve" on a screen
+           // running two of them tells the approver nothing about which they take
+           '<td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">'+esc(r.step_action||"Approve")+'</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+        h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="'+(multi?14:13)+'" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
       wireReqExpand(body, rows);

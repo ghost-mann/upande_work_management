@@ -156,11 +156,17 @@ def wm_masterplan(**kwargs):
     STAGE_NEXT = {}
     STAGE_ON = {}
     STAGE_ROLE = {}
+    STAGE_LABEL = {}
     for sr_row in STAGE_ROWS:
         STAGE_STATE[sr_row["key"]] = sr_row["state"]
         STAGE_NEXT[sr_row["key"]] = sr_row["next_state"]
         STAGE_ON[sr_row["key"]] = sr_row["on"]
         STAGE_ROLE[sr_row["key"]] = sr_row.get("role")
+        # What this step is CALLED here. The gate below already asks the configured
+        # role; the refusals said "the general manager" regardless, so on a chain
+        # where somebody else takes that step the message named the wrong person and
+        # sent them to the wrong desk.
+        STAGE_LABEL[sr_row["key"]] = sr_row.get("label")
 
     # The GM of a master plan is whoever the chain's GM step names -- one answer, not
     # a second list that could disagree with it.
@@ -828,7 +834,11 @@ def wm_masterplan(**kwargs):
         rc_name = frappe.form_dict.get("name")
         rc_state = frappe.db.get_value("Work Management Master Plan", rc_name, "workflow_state")
         if not CAN_GM:
-            out["error"] = "Only the general manager can send a plan back to the consultants."
+            out["error"] = ("Only " + str(STAGE_ROLE.get("masterplan_gm")
+                                           or "a role nobody has configured") +
+                            " — who takes the " + str(STAGE_LABEL.get("masterplan_gm")
+                                                      or "GM") +
+                            " step — can send a plan back to the consultants.")
         elif not rc_state:
             out["error"] = "no such master plan: " + str(rc_name)
         elif rc_state != STAGE_STATE["masterplan_gm"]:
@@ -864,7 +874,9 @@ def wm_masterplan(**kwargs):
                     pb_failed.append({"name": pb_n, "why": "no such master plan"})
                 elif pb_op == "approve":
                     if not CAN_GM:
-                        pb_failed.append({"name": pb_n, "why": "only the general manager can approve"})
+                        pb_failed.append({"name": pb_n, "why": "only " +
+                            str(STAGE_ROLE.get("masterplan_gm")
+                                or "a role nobody has configured") + " can approve"})
                     elif pb_st != "Pending GM":
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not awaiting the GM"})
                     else:
@@ -978,7 +990,11 @@ def wm_masterplan(**kwargs):
         ga_name = frappe.form_dict.get("name")
         ga_state = frappe.db.get_value("Work Management Master Plan", ga_name, "workflow_state")
         if not CAN_GM:
-            out["error"] = "Only the general manager can approve a master plan."
+            out["error"] = ("Only " + str(STAGE_ROLE.get("masterplan_gm")
+                                           or "a role nobody has configured") +
+                            " can take the " + str(STAGE_LABEL.get("masterplan_gm")
+                                                   or "GM") +
+                            " step and approve a master plan. You do not hold it.")
         elif not STAGE_ON["masterplan_gm"]:
             out["error"] = "The GM step is switched off for this project."
         elif ga_state != STAGE_STATE["masterplan_gm"]:

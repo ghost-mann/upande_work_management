@@ -98,6 +98,28 @@ def wm_planner(**kwargs):
     MY_ROLES = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user},
                                  pluck="role")
 
+    # THE PLANNER'S OWN APPROVAL STEPS, in chain order and enabled only.
+    # `approve` used to name planner_farm_approval and nothing else, which was the
+    # whole chain while the Planner had one approval. A site that switches a second
+    # one on -- Altura, where HR signs after the farm manager -- got a request that
+    # reached Pending HR Approval and stopped there: the generated desk workflow
+    # moves it correctly, and this screen, which is where the work happens, had no
+    # button for it. Keyed off the configured chain now, so a step added in Settings
+    # arrives on the screen without a release.
+    AP_STEPS = []
+    AP_STEP_AT = {}
+    for sr_row in STAGE_ROWS:
+        if (sr_row.get("document_type") == "Work Management Planner"
+                and sr_row.get("kind") == "Approval" and sr_row.get("on")
+                and sr_row.get("state")):
+            AP_STEPS.append(sr_row)
+            AP_STEP_AT[sr_row["state"]] = sr_row
+    # Where the chain ends. A step that leads here is the last one, and only the
+    # last one submits the document -- approving an intermediate step used to set
+    # docstatus = 1 as well, which with two approvals would submit a request that
+    # HR had not seen yet.
+    AP_TERMINAL = "Approved"
+
 
     action = frappe.form_dict.get("action") or "meta"
     out = {}
@@ -328,44 +350,98 @@ def wm_planner(**kwargs):
         out["last"] = rows[0] if rows else None
 
     elif action == "pending":
-        # FARM SCOPING: a farm manager only sees plans awaiting approval for their own farm(s).
-        # GM / System Manager / HR see all. Uses farm-specific roles (same signal as Assigner/Actuals).
-        pflt = {"workflow_state": STAGE_STATE["planner_farm_approval"]}
+        # EVERY STEP THIS PERSON MAY TAKE, not the one step the code used to name.
+        # One query per step rather than one for all of them: a farm-scoped step is
+        # narrowed to the farms this person decides, and an unscoped step must NOT
+        # be -- HR decides for the business. A single filtered query would either
+        # hide HR's queue from an HR head with no farm role, or hand a farm manager
+        # every farm's HR queue.
+        #
+        # FARM SCOPING (unchanged for the scoped step): a farm manager only sees
+        # plans awaiting approval for their own farm(s). GM / System Manager / HR
+        # see all. Uses farm-specific roles, the same signal as Assigner/Actuals.
         prl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         pbypass = ("System Manager" in prl) or ("General Manager" in prl) or any(_r_ in prl for _r_ in HR_HEAD_ROLES) or (frappe.session.user == "Administrator")
-        if not pbypass:
-            pallowed = []
-            for _farm_, _role_ in FARM_APPROVER_ROLE.items():
-                if _role_ in prl: pallowed.append(_farm_)
-            pflt["farm"] = ["in", pallowed] if pallowed else ["in", ["__none__"]]
-        out["pending"] = frappe.db.get_all("Work Management Planner",
-            filters=pflt,
-            fields=["name","farm","block_section","task","quantity","people_per_day","person_days",
-                    "total_hours","total_cost","from_date","to_date","requested_by","request_date",
-                    "workflow_state","uom","daily_target","rate","working_days"],
-            order_by="request_date desc", limit=200)
+        pallowed = []
+        for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+            if _role_ in prl: pallowed.append(_farm_)
+        pfields = ["name","farm","block_section","task","quantity","people_per_day","person_days",
+                   "total_hours","total_cost","from_date","to_date","requested_by","request_date",
+                   "workflow_state","uom","daily_target","rate","working_days","master_plan"]
+        out["pending"] = []
+        # what the screen needs to label its buttons and its empty state: the steps
+        # this person may take, in chain order, whether or not any request waits
+        out["steps"] = []
+        for p_step in AP_STEPS:
+            p_may = False
+            pflt = {"workflow_state": p_step["state"]}
+            if p_step.get("scoped"):
+                p_may = bool(pbypass or pallowed)
+                if not pbypass:
+                    pflt["farm"] = ["in", pallowed] if pallowed else ["in", ["__none__"]]
+            else:
+                # may_take_step()'s rule: the step's own role, System Manager as the
+                # unstick-the-pipeline bypass, and General Manager deliberately not
+                p_may = bool(p_step.get("role") and (p_step["role"] in prl
+                                                     or "System Manager" in prl))
+            out["steps"].append({"key": p_step["key"], "label": p_step.get("label"),
+                                 "action": p_step.get("action"), "state": p_step["state"],
+                                 "scoped": p_step.get("scoped") or 0,
+                                 "role": p_step.get("role"), "mine": 1 if p_may else 0})
+            if not p_may:
+                continue
+            for p_row in frappe.db.get_all("Work Management Planner", filters=pflt,
+                    fields=pfields, order_by="request_date desc", limit=200):
+                # which step it waits in travels with the row, so the screen labels
+                # the button with the step's own action rather than always "Approve"
+                p_row["step"] = p_step["key"]
+                p_row["step_label"] = p_step.get("label")
+                p_row["step_action"] = p_step.get("action") or "Approve"
+                out["pending"].append(p_row)
 
         # WHAT APPROVING THIS LEAVES. An approver could see the request but not the
         # ceiling it draws on, so "is there room for this?" was unanswerable without
         # opening the master plan in another tab. Remaining here already counts this
         # request -- Pending Approval holds budget the same way Approved does -- so
         # these figures read as "with this request counted", and rejecting returns them.
-        pb_plan = {}   # farm|from|to -> the approved plan covering it, or None
+        pb_plan = {}   # link|farm|from|to -> the plan this request draws on, or None
+        pb_amb = {}    # ... -> 1 where the dates alone cannot say which
         pb_act = {}    # plan -> task -> the budget line
         pb_use = {}    # plan -> task -> what every live request has drawn
         for pr in out["pending"]:
-            pb_key = str(pr.get("farm")) + "|" + str(pr.get("from_date")) + "|" + str(pr.get("to_date"))
+            # WHICH BUDGET THIS REQUEST DRAWS ON -- the link it carries, which is
+            # what the requester chose. This took whichever approved plan started
+            # latest, which is exact while a farm holds one budget per period and a
+            # silent wrong answer once it can hold two: the approver was shown a
+            # ceiling belonging to a plan the request had nothing to do with, and
+            # decided against it. resolve_master_plan()'s rule, applied to reading
+            # rather than writing.
+            pb_key = (str(pr.get("master_plan")) + "|" + str(pr.get("farm")) + "|"
+                      + str(pr.get("from_date")) + "|" + str(pr.get("to_date")))
             if pb_key not in pb_plan:
-                pb_hit = frappe.db.sql("""
-                    SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
-                    WHERE farm = %(f)s AND workflow_state = 'Approved'
-                      AND period_from <= %(a)s AND period_to >= %(b)s
-                    ORDER BY period_from DESC LIMIT 1
-                """, {"f": pr.get("farm"), "a": pr.get("from_date"), "b": pr.get("to_date")},
-                    as_dict=True)
+                pb_amb[pb_key] = 0
+                if pr.get("master_plan"):
+                    pb_hit = frappe.db.sql("""
+                        SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
+                        WHERE name = %(n)s AND workflow_state = 'Approved'
+                    """, {"n": pr.get("master_plan")}, as_dict=True)
+                else:
+                    pb_hit = frappe.db.sql("""
+                        SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
+                        WHERE farm = %(f)s AND workflow_state = 'Approved'
+                          AND period_from <= %(a)s AND period_to >= %(b)s
+                        ORDER BY period_from DESC
+                    """, {"f": pr.get("farm"), "a": pr.get("from_date"), "b": pr.get("to_date")},
+                        as_dict=True)
+                    if len(pb_hit) > 1:
+                        # two budgets could have funded this and the request names
+                        # neither. Showing one of them is the guess; say so instead.
+                        pb_amb[pb_key] = 1
+                        pb_hit = []
                 pb_plan[pb_key] = pb_hit[0] if pb_hit else None
             pb_mp = pb_plan[pb_key]
             pr["budget_plan"] = pb_mp.name if pb_mp else None
+            pr["budget_ambiguous"] = pb_amb.get(pb_key) or 0
             if not pb_mp:
                 continue
             if pb_mp.name not in pb_act:
@@ -676,41 +752,98 @@ def wm_planner(**kwargs):
         ap_doc = frappe.db.get_value("Work Management Planner", nm,
             ["workflow_state", "farm"], as_dict=True)
         cur_ws = ap_doc.workflow_state if ap_doc else None
+        # WHICH STEP THIS REQUEST IS WAITING IN, from the configured chain rather
+        # than from a step named in the code. One action serves every approval the
+        # chain holds, which is what lets a site add one.
+        ap_step = AP_STEP_AT.get(cur_ws)
+        # Two dimensions gate a step and only one applies to each. A FARM-SCOPED
+        # step asks which farms this person may decide -- the farm manager's own,
+        # the GM's and the HR head's being all of them. An unscoped step asks
+        # whether they hold the step's own role: may_take_step()'s rule, where
+        # System Manager bypasses and General Manager deliberately does not,
+        # because a GM taking the HR step erases the separation the chain exists
+        # to express. Asking the farm question of an unscoped step would let any
+        # farm manager take HR's decision.
+        ap_ok = True
+        ap_why = None
+        if ap_step and ap_step.get("scoped"):
+            if not AP_BYPASS and ap_doc and ap_doc.farm not in AP_FARMS:
+                ap_ok = False
+                ap_why = ("You cannot approve plans for " + str(ap_doc.farm) +
+                          ". A farm manager decides their own farm; the general manager "
+                          "and the HR head decide any farm.")
+        elif ap_step:
+            if not (ap_step.get("role") and (ap_step.get("role") in MY_ROLES
+                                             or "System Manager" in MY_ROLES)):
+                ap_ok = False
+                ap_why = ("Only " + str(ap_step.get("role") or "a role nobody has configured") +
+                          " can take the " + str(ap_step.get("label") or "") +
+                          " step. You do not hold it.")
         if not ap_doc:
             out["error"] = "no such plan: " + str(nm)
-        elif not AP_BYPASS and ap_doc.farm not in AP_FARMS:
-            out["error"] = ("You cannot approve plans for " + str(ap_doc.farm) +
-                            ". A farm manager decides their own farm; the general manager "
-                            "and the HR head decide any farm.")
-        elif not STAGE_ON["planner_farm_approval"]:
-            out["error"] = "The Farm Approval step is switched off for this project."
-        elif cur_ws != STAGE_STATE["planner_farm_approval"]:
+        elif not ap_step:
+            # Either the request is not awaiting anything, or it waits in a step
+            # that has since been switched off. Both are "nothing to approve here",
+            # and the state is in the message because the two look identical from
+            # the screen.
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
+        elif not ap_ok:
+            out["error"] = ap_why
         else:
-            frappe.db.set_value("Work Management Planner", nm, "workflow_state", STAGE_NEXT["planner_farm_approval"], update_modified=False)
-            frappe.db.set_value("Work Management Planner", nm, "docstatus", 1, update_modified=False)
-            frappe.db.set_value("Work Management Planner", nm, "approved_by", frappe.session.user, update_modified=False)
-            frappe.db.set_value("Work Management Planner", nm, "approval_date", frappe.utils.today(), update_modified=False)
-            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["planner_farm_approval"]
+            ap_next = ap_step.get("next_state")
+            frappe.db.set_value("Work Management Planner", nm, "workflow_state", ap_next, update_modified=False)
+            if ap_next == AP_TERMINAL:
+                # the last approval, and the only one that submits the document
+                frappe.db.set_value("Work Management Planner", nm, "docstatus", 1, update_modified=False)
+                frappe.db.set_value("Work Management Planner", nm, "approved_by", frappe.session.user, update_modified=False)
+                frappe.db.set_value("Work Management Planner", nm, "approval_date", frappe.utils.today(), update_modified=False)
+            else:
+                # An intermediate step has no field of its own on this doctype --
+                # `approved_by` means the final approval and must keep meaning it --
+                # so who took it is recorded where the document already keeps its
+                # history, rather than not at all.
+                frappe.get_doc("Work Management Planner", nm).add_comment(
+                    "Comment", str(ap_step.get("label") or ap_step.get("key")) +
+                    " taken by " + frappe.session.user + " — now " + str(ap_next))
+            out["name"] = nm; out["workflow_state"] = ap_next
+            out["step"] = ap_step.get("key"); out["step_label"] = ap_step.get("label")
 
     elif action == "reject":
         nm = frappe.form_dict.get("name")
         rj_doc = frappe.db.get_value("Work Management Planner", nm,
             ["workflow_state", "farm"], as_dict=True)
         cur_ws = rj_doc.workflow_state if rj_doc else None
+        # Rejecting is available at every approval step, not only the first: a
+        # request HR refuses is rejected the same way the farm manager's is, and
+        # whoever may approve a step may refuse it.
+        rj_step = AP_STEP_AT.get(cur_ws)
+        rj_ok = True
+        rj_why = None
+        if rj_step and rj_step.get("scoped"):
+            if not AP_BYPASS and rj_doc and rj_doc.farm not in AP_FARMS:
+                rj_ok = False
+                rj_why = ("You cannot reject plans for " + str(rj_doc.farm) +
+                          ". A farm manager decides their own farm; the general manager "
+                          "and the HR head decide any farm.")
+        elif rj_step:
+            if not (rj_step.get("role") and (rj_step.get("role") in MY_ROLES
+                                             or "System Manager" in MY_ROLES)):
+                rj_ok = False
+                rj_why = ("Only " + str(rj_step.get("role") or "a role nobody has configured") +
+                          " can take the " + str(rj_step.get("label") or "") +
+                          " step. You do not hold it.")
         if not rj_doc:
             out["error"] = "no such plan: " + str(nm)
-        elif not AP_BYPASS and rj_doc.farm not in AP_FARMS:
-            out["error"] = ("You cannot reject plans for " + str(rj_doc.farm) +
-                            ". A farm manager decides their own farm; the general manager "
-                            "and the HR head decide any farm.")
-        elif cur_ws != STAGE_STATE["planner_farm_approval"]:
+        elif not rj_step:
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
+        elif not rj_ok:
+            out["error"] = rj_why
         else:
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", "Rejected", update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approved_by", None, update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approval_date", None, update_modified=False)
             out["name"] = nm; out["workflow_state"] = "Rejected"
+            out["step"] = rj_step.get("key"); out["step_label"] = rj_step.get("label")
 
     # ===== ASSIGNER (a_) =====
     elif action == "plan_detail":

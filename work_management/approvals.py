@@ -326,7 +326,7 @@ def effective_chain(settings=_UNSET, rows=None, document_type=None):
 	`get_config()` into a Server Script where it has to survive serialising:
 
 	    {"key", "label", "document_type", "kind", "state", "action",
-	     "next_state", "on"}
+	     "next_state", "on", "role", "scoped"}
 
 	A **disabled** step is still returned, with `on` false. The screens need to
 	know it exists so its action can refuse, rather than writing a state nothing
@@ -374,6 +374,14 @@ def effective_chain(settings=_UNSET, rows=None, document_type=None):
 				# default. The screens had no access to this at all, so the Role
 				# column reached the desk workflow and nothing else.
 				"role": stage_role(stage, rows),
+				# whether the step is decided per farm. A screen gating an approve
+				# button has to know which dimension gates it: a farm-scoped step
+				# asks "which farms may you decide", an unscoped one asks "do you
+				# hold this step's role", and asking the wrong question either
+				# refuses everybody or nobody. Without this the screens had to
+				# recognise the step by key, which is the hardcoding the
+				# configurable chain exists to remove.
+				"scoped": 1 if stage.scoped else 0,
 			})
 	return out
 

@@ -89,12 +89,21 @@ straight to `Approved`, and HR's approval is what finishes the chain. The
 `Pending HR Approval` Workflow State record is created automatically when the
 workflows regenerate.
 
-> **Deferred:** the planner *web screen*'s approve action is still keyed to
-> `planner_farm_approval` only, so a request sitting in `Pending HR Approval`
-> will show its button on the **desk** (the generated workflow is complete and
-> correct) but not yet on the planner screen. Wiring the screen needs a
-> generated `api/` module and is in the mirror session's list. Until then, HR
-> approves Planner requests from the desk.
+The planner **web screen** takes it too. Its Approvals tab is keyed off the
+configured chain rather than off `planner_farm_approval`: a request waiting in
+`Pending HR Approval` is offered to holders of the step's role with an **HR
+Approve** button, a Step column appears saying which step each request waits in,
+and the farm-scoped step keeps its farm scoping while the HR step -- which is
+not farm-scoped -- does not inherit it. Somebody holding neither role is told
+which roles the chain runs on rather than shown an empty list.
+
+With the step **off** the screen is byte-for-byte the experience it was: one
+approval, one button reading Approve, no Step column.
+
+*(This was deferred when the chains were written, on the grounds that the screen
+needed a generated `api/` module. On the `altura` branch `api/` is source --
+see `docs/ALTURA_FORK.md` -- so it is done here rather than in a mirror
+session.)*
 
 ## 3. Assigner — Daniel → Phillip only
 

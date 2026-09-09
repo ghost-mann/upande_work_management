@@ -23,9 +23,20 @@ in Settings, beside the rest of its chain.
         work_management.tests.test_the_planner_takes_a_second_approval -v
 """
 
+import os
+import re
 import unittest
 
 from work_management import approvals
+
+APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PLANNER_API = os.path.join(APP, "api", "planner.py")
+PLANNER_JS = os.path.join(APP, "public", "js", "work-planner.js")
+
+
+def read(path):
+	with open(path) as handle:
+		return handle.read()
 
 PLANNER = "Work Management Planner"
 TERMINAL = approvals.CHAIN_ENDS[PLANNER]["terminal"][0]
@@ -241,3 +252,194 @@ class TestSeedingAnExistingSite(unittest.TestCase):
 		chain = approvals.configured_stages(Settings(rows))
 		self.assertEqual([s.key for s in chain], ["finance_signoff"])
 		self.assertFalse(chain[0].default_off)
+
+
+# --------------------------------------------------------------------------
+# The other half: the step reaches the screen, not only the desk.
+# --------------------------------------------------------------------------
+
+
+class TestTheChainSaysWhichDimensionGatesAStep(unittest.TestCase):
+	"""A screen deciding whether to offer an approve button has to know which
+	question to ask. A farm-scoped step asks "which farms may you decide"; an
+	unscoped one asks "do you hold this step's role". Asking the wrong one
+	refuses everybody or nobody -- and without `scoped` on the chain row, the
+	screens had to recognise the step by key, which is the hardcoding the
+	configurable chain exists to remove."""
+
+	def test_every_step_carries_it(self):
+		for step in approvals.effective_chain(settings=None):
+			with self.subTest(step=step["key"]):
+				self.assertIn("scoped", step)
+
+	def test_the_farm_approval_is_scoped_and_the_hr_one_is_not(self):
+		by_key = resolved(planner_chain(**{HR_APPROVAL: 1}))
+		self.assertTrue(by_key[FARM_APPROVAL]["scoped"])
+		self.assertFalse(by_key[HR_APPROVAL]["scoped"],
+			"HR approves for the business; the farm dimension is already carried "
+			"by the step before it")
+
+
+class TestTheApproveActionReadsTheChain(unittest.TestCase):
+	"""It named planner_farm_approval and nothing else, which WAS the whole chain
+	while the Planner had one approval. Switch a second one on and the request
+	reached Pending HR Approval and stopped: the generated desk workflow moved it
+	correctly, and the screen -- where the work happens -- had no button."""
+
+	def setUp(self):
+		self.src = read(PLANNER_API)
+		at = self.src.index('elif action == "approve":')
+		self.block = self.src[at:self.src.index('elif action == "reject":')]
+
+	def test_the_planner_s_steps_are_derived_from_the_configured_chain(self):
+		self.assertIn('sr_row.get("document_type") == "Work Management Planner"', self.src)
+		self.assertIn('sr_row.get("kind") == "Approval"', self.src)
+		self.assertIn('sr_row.get("on")', self.src)
+
+	def test_approve_no_longer_names_a_step(self):
+		self.assertNotIn("planner_farm_approval", self.block,
+			"one approval action serves every approval the chain holds, or adding "
+			"a step is a release again")
+
+	def test_it_finds_the_step_by_the_state_the_request_waits_in(self):
+		self.assertIn("AP_STEP_AT.get(cur_ws)", self.block)
+
+	def test_it_moves_to_that_step_s_own_next_state(self):
+		self.assertIn('ap_step.get("next_state")', self.block)
+
+	def test_only_the_last_step_submits_the_document(self):
+		"""docstatus was set on every approval. With two of them that submits a
+		request HR has not seen, and `approved_by` would name the wrong person."""
+		self.assertIn("if ap_next == AP_TERMINAL:", self.block)
+		at = self.block.index("if ap_next == AP_TERMINAL:")
+		terminal_branch = self.block[at:self.block.index("else:", at)]
+		self.assertIn('"docstatus", 1', terminal_branch)
+		self.assertIn('"approved_by"', terminal_branch)
+		self.assertNotIn('"docstatus", 1', self.block[:at],
+			"an intermediate approval submits the document")
+
+	def test_an_intermediate_step_is_recorded_somewhere(self):
+		"""The Planner has one approved_by field and it means the final approval.
+		Who took a middle step still has to be answerable."""
+		self.assertIn("add_comment", self.block)
+
+	def test_a_scoped_step_is_gated_on_the_farm_and_an_unscoped_one_on_its_role(self):
+		self.assertIn('ap_step.get("scoped")', self.block)
+		self.assertIn("AP_FARMS", self.block)
+		self.assertIn('ap_step.get("role") in MY_ROLES', self.block)
+
+	def test_general_manager_is_not_a_bypass_for_an_unscoped_step(self):
+		"""may_take_step()'s rule. GM bypassing the farm dimension is right; GM
+		taking the HR step erases the separation the chain exists to express."""
+		at = self.block.index('ap_step.get("role") in MY_ROLES')
+		gate = self.block[at:at + 200]
+		self.assertIn("System Manager", gate)
+		self.assertNotIn("General Manager", gate)
+
+	def test_a_step_with_no_role_refuses_everybody(self):
+		"""A misconfigured gate must close, not open."""
+		self.assertIn('ap_step.get("role") and', self.block)
+
+
+class TestRejectingIsAvailableAtEveryStep(unittest.TestCase):
+	"""HR refusing a request is a rejection like the farm manager's. Keyed to one
+	state, HR could approve and not refuse."""
+
+	def setUp(self):
+		src = read(PLANNER_API)
+		at = src.index('elif action == "reject":')
+		self.block = src[at:src.index("# ===== ASSIGNER (a_) =====")]
+
+	def test_it_finds_the_step_the_same_way(self):
+		self.assertIn("AP_STEP_AT.get(cur_ws)", self.block)
+
+	def test_it_no_longer_names_a_step(self):
+		self.assertNotIn("planner_farm_approval", self.block)
+
+	def test_whoever_may_approve_a_step_may_refuse_it(self):
+		self.assertIn('rj_step.get("scoped")', self.block)
+		self.assertIn('rj_step.get("role") in MY_ROLES', self.block)
+
+
+class TestThePendingListServesEveryStep(unittest.TestCase):
+	"""One filtered query for all the steps would either hide HR's queue from an
+	HR head with no farm role, or hand a farm manager every farm's HR queue."""
+
+	def setUp(self):
+		src = read(PLANNER_API)
+		at = src.index('elif action == "pending":')
+		self.block = src[at:src.index('# WHAT APPROVING THIS LEAVES', at)]
+
+	def test_it_loops_the_steps_rather_than_naming_one(self):
+		self.assertIn("for p_step in AP_STEPS:", self.block)
+		self.assertNotIn('STAGE_STATE["planner_farm_approval"]', self.block)
+
+	def test_the_farm_filter_is_applied_only_to_the_scoped_step(self):
+		at = self.block.index('if p_step.get("scoped"):')
+		scoped_branch = self.block[at:self.block.index("else:", at)]
+		self.assertIn('pflt["farm"]', scoped_branch)
+		self.assertNotIn('pflt["farm"]', self.block[self.block.index("else:", at):])
+
+	def test_each_row_carries_the_step_it_waits_in(self):
+		for field in ('p_row["step"]', 'p_row["step_label"]', 'p_row["step_action"]'):
+			with self.subTest(field=field):
+				self.assertIn(field, self.block)
+
+	def test_the_steps_are_reported_even_when_nothing_is_waiting(self):
+		""""Nothing awaiting approval" and "no step here is yours" are different
+		answers, and the screen gave the first for both."""
+		self.assertIn('out["steps"]', self.block)
+		self.assertIn('"mine": 1 if p_may else 0', self.block)
+
+
+class TestTheScreenOffersTheStepsButton(unittest.TestCase):
+	"""Until this, Altura's Planner HR approval worked from the desk and not from
+	the planner screen -- a caveat that had to be written into
+	docs/ALTURA_APPROVAL_CHAINS.md."""
+
+	def setUp(self):
+		self.js = read(PLANNER_JS)
+
+	def test_the_screen_keeps_the_steps_it_was_given(self):
+		self.assertIn("ST._apprSteps", self.js)
+
+	def test_the_button_is_labelled_with_the_step_s_own_action(self):
+		""""HR Approve" is what the step calls the decision. A button reading
+		"Approve" on a screen running two of them says nothing about which."""
+		self.assertIn("r.step_action", self.js)
+
+	def test_a_second_step_earns_a_column_saying_which(self):
+		self.assertIn("r.step_label", self.js)
+		self.assertIn("multi", self.js)
+
+	def test_the_empty_state_can_say_no_step_here_is_yours(self):
+		at = self.js.index("function renderAppr(")
+		block = self.js[at:at + 2000]
+		self.assertIn("No approval step here is yours", block)
+
+	def test_the_detail_row_spans_the_extra_column(self):
+		"""A colspan short by one leaves the panel misaligned under the table."""
+		self.assertIn("multi?14:13", self.js)
+
+
+class TestTheMasterPlanRefusalNamesTheConfiguredStep(unittest.TestCase):
+	"""The gate already asked the chain which role takes the GM step. The refusal
+	said "the general manager" regardless, so on Altura's chain -- where HR takes
+	it -- the message named the wrong person and sent them to the wrong desk."""
+
+	def setUp(self):
+		self.src = read(os.path.join(APP, "api", "masterplan.py"))
+
+	def test_the_chain_s_label_is_available_to_the_messages(self):
+		self.assertIn("STAGE_LABEL[sr_row[\"key\"]] = sr_row.get(\"label\")", self.src)
+
+	def test_no_approval_refusal_still_hardcodes_the_general_manager(self):
+		stale = re.findall(r'"[^"]*[Oo]nly the general manager[^"]*"', self.src)
+		self.assertEqual(stale, [],
+			"a refusal naming a role the chain may not use: " + ", ".join(stale))
+
+	def test_the_gm_approve_refusal_names_the_role_and_the_step(self):
+		at = self.src.index('elif action == "gm_approve":')
+		block = self.src[at:at + 900]
+		self.assertIn('STAGE_ROLE.get("masterplan_gm")', block)
+		self.assertIn('STAGE_LABEL.get("masterplan_gm")', block)
