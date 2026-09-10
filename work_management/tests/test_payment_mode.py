@@ -349,6 +349,197 @@ class TestAMisFedWeekIsCorrectable(unittest.TestCase):
 		self.assertIn("back to unpaid", js[at:at + 1800])
 
 
+class TestNoSurfaceOffersASendInFeedMode(unittest.TestCase):
+	"""The sweep, kept as a test.
+
+	Gating the buttons one screenshot at a time is how two of them survived the
+	first pass: the review sheet's primary footer button and the Pay workers
+	banner both went on describing a step the project has not got. So every place
+	the payment screen says "to accounts" is enumerated here, and each has to be
+	either inside a `pays_by_feed` branch, downstream of a control that is, or
+	named below as deliberately mode-neutral.
+	"""
+
+	# Sites that mention the accounts path and SHOULD, whatever the mode.
+	# Each is a fact about data that already exists rather than an offer to act.
+	MODE_NEUTRAL = (
+		# a pay_status VALUE on historical rows -- a run sent before the switch
+		# is still "Sent to accounts", and relabelling history would be a lie
+		'w.pay_status==="Sent to accounts"',
+		'var order={"Unpaid":0,"Sent to accounts":1,"Paid":2}',
+		'"In run (awaiting accounts)":"submitted"',
+		# a comment on ST.canSend's declaration
+		'// only HR head / accounting / GM may send work to accounts',
+	)
+
+	def setUp(self):
+		self.js = read(SCREEN)
+		self.lines = self.js.splitlines()
+
+	def offer_lines(self):
+		"""Every line that names the accounts path, minus the neutral ones."""
+		out = []
+		for i, line in enumerate(self.lines, 1):
+			if "to accounts" not in line and "Mark paid" not in line:
+				continue
+			if any(n in line for n in self.MODE_NEUTRAL):
+				continue
+			if line.strip().startswith("//"):
+				continue
+			out.append((i, line.strip()))
+		return out
+
+	def test_the_sweep_finds_something(self):
+		"""A matcher that matches nothing passes every assertion below."""
+		self.assertGreater(len(self.offer_lines()), 8)
+
+	def test_every_send_control_is_gated_or_downstream_of_one(self):
+		"""`approveWorker` is the single funnel for the send action and all three
+		of its call sites are gated, so the check is that each RENDER site sits in
+		a mode branch."""
+		gated = ("ST.paysByFeed", "ST.canSend")
+		for line_no, line in self.offer_lines():
+			if 'data-send="' not in line and 'data-approve="' not in line:
+				continue
+			window = "\n".join(self.lines[max(0, line_no - 4):line_no])
+			with self.subTest(line=line_no):
+				self.assertTrue(any(g in window for g in gated),
+					"a send control with no mode gate above it at line %d" % line_no)
+
+	def test_the_send_funnel_refuses_in_feed_mode(self):
+		at = self.js.index("function approveWorker(")
+		block = self.js[at:at + 900]
+		self.assertIn("if(ST.paysByFeed){", block)
+		self.assertIn("return;", block)
+
+	def test_the_bulk_send_button_is_gated_at_its_source(self):
+		self.assertIn('ST.canSend?\'<button type="button" class="btn good sm" id="bulk-send"', self.js)
+		self.assertIn("ST.canSend=!!d.can_send && !ST.paysByFeed", self.js)
+
+	def test_mark_paid_is_gated_in_both_places_it_is_offered(self):
+		"""The run card on the accounts queue, and the run-detail modal -- which
+		is reachable from History and so survives the queue being hidden."""
+		self.assertIn("if(canPay && !ST.paysByFeed){", self.js)
+		self.assertIn('p.workflow_state==="Unpaid" && ST.isAccounts && !ST.paysByFeed', self.js)
+
+	def test_the_release_queue_is_not_rendered_or_loaded(self):
+		self.assertIn('if(!ST.paysByFeed) loadAccounts();', self.js)
+		at = self.js.index("function applyPaymentMode(")
+		self.assertIn('el("acc-queue-wrap")', self.js[at:at + 900])
+
+
+class TestTheCopyThatDescribesTheAccountsPath(unittest.TestCase):
+	"""A sentence naming a step this project has not got sends the reader looking
+	for a button that is deliberately absent."""
+
+	def setUp(self):
+		self.js = read(SCREEN)
+
+	def test_the_pay_workers_banner_has_a_feed_variant(self):
+		at = self.js.index('id="bulk-hint"')
+		block = self.js[at:at + 900]
+		self.assertIn("ST.paysByFeed", block)
+		self.assertIn("This project pays through the payroll feed", block)
+		self.assertIn("feed the week on the Payroll tab", block)
+
+	def test_it_still_has_both_accounts_variants(self):
+		"""Can-send and cannot-send were the two states before; they stay."""
+		at = self.js.index('id="bulk-hint"')
+		block = self.js[at:at + 900]
+		self.assertIn("Tick workers to send them to accounts", block)
+		self.assertIn("done by the HR head, accounting or the general manager", block)
+
+	def test_the_build_tab_note_has_one(self):
+		self.assertIn("ST.paysByFeed\n      ? '<div class=\"note\">Unpaid &rarr; feed the week to payroll", self.js)
+
+	def test_the_audit_workers_hint_has_one(self):
+		at = self.js.index("function renderAuditWorkers(")
+		block = self.js[at:at + 1200]
+		self.assertIn("ST.paysByFeed", block)
+		self.assertIn("paid by feeding payroll on the Payroll tab", block)
+
+	def test_the_issues_empty_state_has_one(self):
+		"""The four gates it reports block a feed exactly as they block a send, so
+		the tab is mode-neutral and only the sentence changes."""
+		at = self.js.index("function loadIssues(")
+		block = self.js[at:at + 1200]
+		self.assertIn("ST.paysByFeed", block)
+		self.assertIn("when the week is fed", block)
+
+	def test_the_discrepancy_hint_has_one(self):
+		self.assertIn("ST.paysByFeed?'payroll feed':'send to accounts'", self.js)
+
+
+class TestTheReviewSheetFooterReportsInsteadOfOffering(unittest.TestCase):
+	"""The screenshot: "Submit & send KES 1,989.25 to accounts" on a project with
+	no accounts step. The footer's job on this path is to say where the money
+	stands."""
+
+	def setUp(self):
+		self.js = read(SCREEN)
+		self.api = read(PAYMENT)
+		at = self.js.index('var ap=el("pd-approve"), rv=el("pd-review");')
+		self.block = self.js[at:at + 2200]
+
+	def test_the_action_branch_is_second_now(self):
+		self.assertIn("if(ST.paysByFeed){", self.block)
+		self.assertLess(self.block.index("if(ST.paysByFeed){"),
+			self.block.index("Submit & send "))
+
+	def test_the_button_carries_no_handler_in_feed_mode(self):
+		at = self.block.index("if(ST.paysByFeed){")
+		branch = self.block[at:self.block.index("} else if(unpaid>0.001){")]
+		self.assertIn("ap.onclick=null;", branch)
+		self.assertIn("ap.disabled=true;", branch)
+		self.assertNotIn("approveWorker(", branch)
+
+	def test_the_accounts_footer_is_unchanged(self):
+		self.assertIn('ap.textContent="Submit & send "+money(unpaid)+" to accounts";', self.block)
+		self.assertIn("approveWorker(info.employee", self.block)
+
+	def test_all_three_states_come_from_the_server(self):
+		for state in ('"paid"', '"blocked"', '"eligible"'):
+			with self.subTest(state=state):
+				self.assertIn('out["feed_status"] = ' + state, self.api)
+
+	def test_the_screen_renders_each_of_them(self):
+		self.assertIn("Paid via payroll feed", self.block)
+		self.assertIn("Cannot be fed to payroll", self.block)
+		self.assertIn("Included in the next payroll feed", self.block)
+
+	def test_the_sentence_is_the_server_s_not_the_screen_s(self):
+		"""So the review sheet says what the payroll panel says about the same
+		worker, rather than two screens inventing two wordings."""
+		self.assertIn("info.feed_note", self.block)
+		self.assertIn('out["feed_note"]', self.api)
+
+	def test_the_blocked_reason_is_the_feed_s_own_reason(self):
+		"""Not a second copy of the four gates -- payroll_preconditions() is
+		shared, so 'no submitted Salary Structure Assignment' here is the same
+		string the payroll panel gives."""
+		self.assertIn("def payroll_preconditions(", self.api)
+		self.assertIn("payroll_preconditions(emp, frappe.utils.today())", self.api)
+		self.assertIn("payroll_preconditions(", read(PAYROLL))
+
+	def test_the_feed_no_longer_carries_its_own_copy_of_those_gates(self):
+		payroll = read(PAYROLL)
+		at = payroll.index("PRECONDITIONS, checked before anything is written")
+		block = payroll[at:at + 700]
+		self.assertIn("payroll_preconditions(", block)
+		self.assertNotIn('"employee is Inactive"', block)
+
+	def test_which_path_made_a_run_survives_into_the_payload(self):
+		"""The column was selected and the hand-built dict dropped it, so the
+		"Paid via payroll feed" state could never fire."""
+		at = self.api.index("runlist.append({")
+		self.assertIn('"kind": r.kind or ""', self.api[at:at + 700])
+
+	def test_row_editing_is_untouched(self):
+		"""Correcting a day is not part of either payment path."""
+		self.assertIn("wireDayEdits(", self.js)
+		self.assertIn('elif action == "pay_worker_edit_day":', self.api)
+
+
 class TestAccountsReleaseModeIsUntouched(unittest.TestCase):
 	"""The guardrail on this release: default mode behaves exactly as before."""
 

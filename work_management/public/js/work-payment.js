@@ -375,9 +375,14 @@
       '<span class="hint" id="bulk-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
       (ST.canSend?'<button type="button" class="btn good sm" id="bulk-send" style="display:none">Review &amp; send to accounts</button>':'')+
       '<button type="button" class="btn sm" id="bulk-clear" style="display:none">Clear</button>'+
-      '<span class="hint" id="bulk-hint">'+(ST.canSend
-        ? 'Tick workers to send them to accounts in one go, or open each one for the full check first.'
-        : 'You can review and audit here. Sending work to accounts is done by the HR head, accounting or the general manager.')+'</span></div>';
+      // Three states, not two: on the feed path nobody sends anything to accounts,
+      // so "sending is done by the HR head" describes a step this project has not
+      // got and sends the reader looking for a button that is deliberately absent.
+      '<span class="hint" id="bulk-hint">'+(ST.paysByFeed
+        ? 'This project pays through the payroll feed — correct any unpaid rows here, then feed the week on the Payroll tab.'
+        : (ST.canSend
+          ? 'Tick workers to send them to accounts in one go, or open each one for the full check first.'
+          : 'You can review and audit here. Sending work to accounts is done by the HR head, accounting or the general manager.'))+'</span></div>';
     h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
       '<th class="c" style="width:34px"><input type="checkbox" id="bulk-all" title="Select every actionable worker shown"></th>'+
       '<th>Worker</th><th>ID</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
@@ -1167,7 +1172,11 @@
     if(!box) return;
     var r=issRange();
     if(!r.from || !r.to){
-      box.innerHTML='<div class="empty"><b>Pick a date range</b>Choose From and To dates, then Apply, to check for workers who were sent to accounts but got no payroll record.</div>';
+      // The four gates this tab reports block a payroll FEED exactly as they
+      // block a send to accounts -- Inactive, relieving, joining, no salary
+      // structure are facts about the worker. So the tab is mode-neutral and
+      // only the sentence naming the path has to change.
+      box.innerHTML='<div class="empty"><b>Pick a date range</b>Choose From and To dates, then Apply, to check for workers who cannot get a payroll record'+(ST.paysByFeed?" when the week is fed":" when they are sent to accounts")+'.</div>';
       ISQ.data=null;
       updateIssBadge();
       return;
@@ -1794,7 +1803,9 @@
     var h='<div class="filters" style="margin-bottom:10px">'+
       '<input type="text" id="auw-q" placeholder="Search worker, ID or task&hellip;" style="min-width:230px;flex:0 1 auto">'+
       '<span class="hint" id="auw-count"></span><span style="flex:1"></span>'+
-      '<span class="hint">Review each person, then approve &amp; send their pay to accounts &mdash; one at a time.</span></div>'+
+      '<span class="hint">'+(ST.paysByFeed
+        ? 'Review each person here; the week is paid by feeding payroll on the Payroll tab.'
+        : 'Review each person, then approve &amp; send their pay to accounts &mdash; one at a time.')+'</span></div>'+
       '<div id="auw-body"></div>';
     box.innerHTML=h;
     var q=el("auw-q");
@@ -2030,7 +2041,7 @@
     (runs||[]).forEach(function(r){ if(r.kind==="Payroll Feed" && !feedRun) feedRun=r; });
     if(ST.paysByFeed && feedRun){
       h+='<div class="banner good" style="margin-top:14px"><b>Paid via payroll feed '+
-         esc(feedRun.run)+'.</b> The week was fed to payroll on '+esc(dshort(feedRun.rdate))+
+         esc(feedRun.run)+'.</b> The week was fed to payroll on '+esc(dshort(feedRun.date))+
          ', which created this run already paid and wrote the total to the worker\'s basic pay.</div>';
     } else if(ST.paysByFeed && k.unpaid_amt>0.001){
       h+='<div class="banner info" style="margin-top:14px"><b>Included in the next payroll feed</b> ('+
@@ -2058,7 +2069,7 @@
     if(!nIss){
       h+='<div class="empty"><b>Clean.</b> No attendance conflicts on any of this worker\'s day-rows in this window.</div>';
     } else {
-      h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Presence key: <b style="color:#0a7a43">in 06:42</b> check-in time · <b style="color:#0a7a43">P</b> marked present (no scan) · <b style="color:#b91c1c">absent</b> marked Absent · <b style="color:#a06000">?</b> no record either way. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every send to accounts is logged.</div>';
+      h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Presence key: <b style="color:#0a7a43">in 06:42</b> check-in time · <b style="color:#0a7a43">P</b> marked present (no scan) · <b style="color:#b91c1c">absent</b> marked Absent · <b style="color:#a06000">?</b> no record either way. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every '+(ST.paysByFeed?'payroll feed':'send to accounts')+' is logged.</div>';
       var wsc2=ISS.absent.filter(function(r){ return r.scan_in; }).length;
       var groups=[
         {k:"absent", title:"Recorded on marked-Absent days", about:"Submitted attendance says Absent, yet work is recorded. "+(wsc2?wsc2+" of these days HAVE a scan — the attendance record itself is probably wrong; ask HR to correct it.":"No scans on these days — scrutinise the entries."), rows:ISS.absent},
@@ -2164,8 +2175,30 @@
     var unpaid=k.unpaid_amt||0;
     if(rv){ rv.style.display="none"; rv.onclick=null; }   // review step removed — send directly
     if(ap){
-      if(unpaid>0.001){
+      if(ST.paysByFeed){
+        // NOT AN ACTION ON THIS PATH. There is no accounts step to submit to, so
+        // the footer reports where this worker's money stands instead -- the
+        // server decides which of the three states it is and supplies the
+        // sentence, so this says the same thing the payroll panel says about the
+        // same person. Row editing above is untouched: correcting a day is not
+        // part of either payment path.
+        ap.onclick=null;
+        var note=info.feed_note||"";
+        if(note){
+          ap.style.display="";
+          ap.disabled=true;
+          ap.className="btn";
+          ap.textContent=(info.feed_status==="paid" ? "Paid via payroll feed "+(info.feed_run||"")
+            : info.feed_status==="blocked" ? "Cannot be fed to payroll"
+            : "Included in the next payroll feed");
+          ap.title=note;
+        } else {
+          ap.style.display="none";
+        }
+      } else if(unpaid>0.001){
         ap.style.display="";
+        ap.disabled=false;
+        ap.className="btn good";
         ap.textContent="Submit & send "+money(unpaid)+" to accounts";
         ap.onclick=function(){
           approveWorker(info.employee, info.employee_name||info.employee, unpaid, WR);
@@ -2223,6 +2256,16 @@
   }
 
   function approveWorker(emp, nm, amount, win){
+    // ONE FUNNEL, ONE GUARD. Every control that reaches here is hidden in feed
+    // mode, so this should be unreachable -- which is exactly why it is worth
+    // saying once, in one place, rather than trusting that all three call sites
+    // stay gated through the next change. The server refuses too; this makes the
+    // refusal legible instead of arriving from an endpoint the user did not know
+    // they had called.
+    if(ST.paysByFeed){
+      toast("This project pays through the payroll feed — feed the week on the Payroll tab.","bad");
+      return;
+    }
     win=win||auditWindow();
     // Workers are paid weekly, so ask the server which COMPLETED pay weeks the
     // unpaid work falls in before committing to anything — one payment per week.
@@ -2555,7 +2598,12 @@
         }
         el("pr-body").innerHTML=h;
         // if this run is pending and the user is accounts, offer mark-paid from the modal too
-        if(p.workflow_state==="Unpaid" && ST.isAccounts){
+        // Releasing a run is the accounts path's last step. A feed-mode run is
+        // created Paid and never sits in Unpaid, so this could not fire for one --
+        // but a site switched over mid-week can still be holding runs sent before
+        // the switch, and offering to release them would take the very step
+        // pay_mark_paid now refuses server-side.
+        if(p.workflow_state==="Unpaid" && ST.isAccounts && !ST.paysByFeed){
           var foot=el("pr-foot");
           foot.innerHTML='<button type="button" class="btn" id="pr-dismiss">Close</button>'+
                          '<button type="button" class="btn good" id="pr-paid">Mark paid</button>';

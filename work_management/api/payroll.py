@@ -13,8 +13,8 @@ import frappe
 
 from work_management import pay_week
 from work_management.api.config import ACCOUNTS_RELEASE, PAYROLL_FEED, get_config
-from work_management.api.payment import (payroll_feed_run, weekly_earnings,
-                                          weekly_spoken_for)
+from work_management.api.payment import (payroll_feed_run, payroll_preconditions,
+                                          weekly_earnings, weekly_spoken_for)
 
 
 #: Attendance statuses that count as having turned up. "Half Day" deliberately
@@ -242,23 +242,9 @@ def feed_preview(week_from=None, week_to=None, farm=None, employee=None):
 
         # PRECONDITIONS, checked before anything is written. The same gates the
         # payment run applies, for the same reason: a worker payroll cannot pay is
-        # a worker this must not quietly hand a figure to.
-        block = None
-        if emp.get("status") == "Inactive":
-            block = "employee is Inactive"
-        elif emp.get("relieving_date") and pay_on > str(emp["relieving_date"]):
-            block = ("pay date " + pay_on + " is after the relieving date "
-                + str(emp["relieving_date"]))
-        elif emp.get("date_of_joining") and pay_on < str(emp["date_of_joining"]):
-            block = ("pay date " + pay_on + " is before the joining date "
-                + str(emp["date_of_joining"]))
-        else:
-            ssa = frappe.db.sql("""
-                SELECT name FROM `tabSalary Structure Assignment`
-                WHERE employee = %(e)s AND docstatus = 1 AND from_date <= %(d)s LIMIT 1
-            """, {"e": earned.employee, "d": pay_on}, as_dict=True)
-            if not ssa:
-                block = "no submitted Salary Structure Assignment"
+        # a worker this must not quietly hand a figure to. Shared with the worker
+        # review sheet, so the two screens give one answer rather than two.
+        block = payroll_preconditions(earned.employee, pay_on, emp=emp)
         if total <= 0:
             # A worker with a week of nothing is SKIPPED, not written as 0. Writing
             # 0 would say "this person earned nothing this week", which is a claim;

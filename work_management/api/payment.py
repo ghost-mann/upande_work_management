@@ -181,6 +181,42 @@ def weekly_spoken_for(week_from, week_to, employee=None, farm=None):
     """, params, as_dict=True)
 
 
+def payroll_preconditions(employee, pay_date, emp=None):
+    """Why payroll could not pay this worker on this date, or None.
+
+    The four gates the payment run has always applied before writing anything --
+    they mirror hrms Additional Salary.validate(), so a worker who fails one is a
+    worker ERPNext would refuse, and creating a payment for them would leave a
+    document payroll can never settle.
+
+    Lifted out of feed_preview()'s inline copy so the worker review sheet can say
+    the SAME sentence the payroll panel says. Two wordings for one condition is
+    how a screen ends up contradicting the screen next to it.
+
+    `emp` is the Employee row when the caller already has it, so the review sheet
+    and the feed do not each re-read it per worker.
+    """
+    if emp is None:
+        emp = frappe.db.get_value("Employee", employee,
+            ["status", "date_of_joining", "relieving_date"], as_dict=True) or {}
+    pay_date = str(pay_date)
+    if emp.get("status") == "Inactive":
+        return "employee is Inactive"
+    if emp.get("relieving_date") and pay_date > str(emp["relieving_date"]):
+        return ("pay date " + pay_date + " is after the relieving date "
+                + str(emp["relieving_date"]))
+    if emp.get("date_of_joining") and pay_date < str(emp["date_of_joining"]):
+        return ("pay date " + pay_date + " is before the joining date "
+                + str(emp["date_of_joining"]))
+    ssa = frappe.db.sql("""
+        SELECT name FROM `tabSalary Structure Assignment`
+        WHERE employee = %(e)s AND docstatus = 1 AND from_date <= %(d)s LIMIT 1
+    """, {"e": employee, "d": pay_date}, as_dict=True)
+    if not ssa:
+        return "no submitted Salary Structure Assignment"
+    return None
+
+
 def payment_mode():
     """Which payment path this site runs. One read, so nothing can disagree."""
     return get_config().get("payment_mode")
@@ -1533,8 +1569,51 @@ def wm_payment(**kwargs):
                     "run": r.run, "title": r.title, "date": str(r.rdate) if r.rdate else None,
                     "state": r.state, "amount": frappe.utils.flt(r.amount),
                     "days": frappe.utils.cint(r.days), "qty": frappe.utils.flt(r.qty),
+                    # WHICH PATH MADE THIS RUN. Selected by the query above and then
+                    # dropped here, which silently cost the review sheet its "Paid
+                    # via payroll feed" state: the column was fetched, the dict was
+                    # built by hand, and the key never made the journey.
+                    "kind": r.kind or "",
                 })
             out["runs"] = runlist
+
+            # WHAT THE FOOTER SHOULD SAY, decided here rather than guessed in the
+            # browser. On this path the footer's whole job is to report a state
+            # rather than offer an action, so the state comes from the server that
+            # owns it -- including the refusal, which is the same sentence the
+            # payroll panel gives for the same worker, because both ask
+            # payroll_preconditions(). After out["runs"], which it reads.
+            if out["pays_by_feed"]:
+                fed_run = None
+                for wr_r in runlist:
+                    if wr_r.get("kind") == FEED_KIND:
+                        fed_run = wr_r
+                        break
+                wr_unpaid = frappe.utils.flt((out.get("kpi") or {}).get("unpaid_amt"))
+                if fed_run:
+                    out["feed_status"] = "paid"
+                    out["feed_run"] = fed_run.get("run")
+                    out["feed_note"] = ("Paid via payroll feed " + str(fed_run.get("run"))
+                        + " — the week was fed to payroll, which created that run already "
+                        "paid and wrote the total to this worker's basic pay.")
+                elif wr_unpaid > 0.001:
+                    # The pay date the feed would use belongs to the pay week, which
+                    # this arbitrary window does not know. Today is the honest
+                    # stand-in: these four gates are facts about the WORKER -- their
+                    # status, their dates, their salary structure -- not about which
+                    # week is being paid.
+                    wr_why = payroll_preconditions(emp, frappe.utils.today())
+                    if wr_why:
+                        out["feed_status"] = "blocked"
+                        out["feed_note"] = ("Cannot be fed to payroll: " + wr_why
+                            + ". Fix that in HR, then feed the week on the Payroll tab.")
+                    else:
+                        out["feed_status"] = "eligible"
+                        out["feed_note"] = ("Included in the next payroll feed. Correct any "
+                            "unpaid rows here, then feed the week on the Payroll tab.")
+                else:
+                    out["feed_status"] = "nothing"
+                    out["feed_note"] = None
 
     elif action == "pay_cancel_feed":
         # A MIS-FED WEEK HAS TO BE CORRECTABLE. The feed is terminal, so there is

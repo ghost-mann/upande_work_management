@@ -189,8 +189,9 @@ class TestItSumsWhatThePaymentRunWouldSend(unittest.TestCase):
 
 	def test_the_aggregate_is_exposed_rather_than_re_implemented(self):
 		self.assertIn("def weekly_earnings(", self.payment)
-		self.assertIn("weekly_earnings", read(PAYROLL).split("\n\n")[0]
-			+ "".join(l for l in read(PAYROLL).splitlines() if l.startswith("from ")))
+		imports = "\n".join(l for l in read(PAYROLL).splitlines()[:30])
+		self.assertIn("weekly_earnings", imports)
+		self.assertIn("from work_management.api.payment import", imports)
 
 	def test_the_feed_calls_it(self):
 		self.assertIn("weekly_earnings(", feed_block())
@@ -437,11 +438,20 @@ class TestWhoIsSkippedAndWhy(unittest.TestCase):
 
 	def test_the_payment_runs_own_preconditions_are_applied(self):
 		"""A worker payroll cannot pay is a worker this must not quietly hand a
-		figure to. Same four gates as pay_worker_submit."""
+		figure to. Same four gates as pay_worker_submit.
+
+		They live in payroll_preconditions() in api/payment.py now, shared with
+		the worker review sheet so the two screens give one answer rather than
+		two wordings for one condition. The property being held down is that the
+		feed applies them -- not where the strings sit."""
+		self.assertIn("payroll_preconditions(", self.block)
+		gate = read(PAYMENT)
+		at = gate.index("def payroll_preconditions(")
+		gate = gate[at:gate.index("def payment_mode():")]
 		for reason in ("employee is Inactive", "is after the relieving date",
 				"is before the joining date", "no submitted Salary Structure Assignment"):
 			with self.subTest(reason=reason):
-				self.assertIn(reason, self.block)
+				self.assertIn(reason, gate)
 
 	def test_every_skip_carries_its_reason(self):
 		self.assertIn('row["skipped"] = block', self.block)
