@@ -434,9 +434,19 @@
       }
       var busy = e.allocated_elsewhere?true:false;
       if(busy){
-        var tag = ' <span class="allocb">assigned elsewhere'+(e.allocated_farm?(" · "+esc(e.allocated_farm)):"")+'</span>';
-        h+='<div class="emrow busy" data-emp="'+esc(e.name)+'" title="Already on '+esc(e.allocated_asg||"")+' ('+esc(e.allocated_task||"")+') for an overlapping period">'+
-           '<input type="checkbox" disabled>'+
+        // BUSY IS A FAULT OR A PLAN, and the switch is what decides which. With a
+        // split day allowed this worker may be picked -- the chip warns, the row
+        // stays live, and the click asks for confirmation. Rendering the hard block
+        // regardless is what made the switch look broken: the server had been
+        // flag-aware here since the feature shipped, and the picker greyed the row
+        // out anyway, so the people the switch exists to allow were the exact
+        // people it hid.
+        var tag = ST._empSplitOk
+          ? ' <span class="allocb warn">on another task — day will split</span>'
+          : ' <span class="allocb">assigned elsewhere'+(e.allocated_farm?(" · "+esc(e.allocated_farm)):"")+'</span>';
+        var where = 'Already on '+esc(e.allocated_asg||"")+' ('+esc(e.allocated_task||"")+') for an overlapping period';
+        h+='<div class="emrow '+(ST._empSplitOk?"split":"busy")+(ST._empSplitOk?on:"")+'" data-emp="'+esc(e.name)+'" title="'+where+(ST._empSplitOk?'. Selecting them splits the day — record the hours each task took on the actuals screen.':'')+'">'+
+           '<input type="checkbox" '+(ST._empSplitOk?(ST.picked[e.name]?"checked":""):"disabled")+'>'+
            '<span class="en">'+esc(e.employee_name||e.name)+tag+'</span>'+
            '<span class="ed">'+esc(e.designation||"")+' · '+esc(e.employment_type||"")+'</span></div>';
       } else {
@@ -452,8 +462,9 @@
       // Busy elsewhere is non-selectable only while a shared day is a fault. With
       // the split-day switch on it is a plan, and refusing to select these rows
       // would hide exactly the people the switch permits -- the server warns
-      // instead of refusing, so the screen should too.
-      if(row.classList.contains("busy") && !ST._empSplitOk) return;
+      // instead of refusing, so the screen should too. `.busy` is now rendered
+      // only in the hard-block case, so this is belt and braces.
+      if(row.classList.contains("busy")) return;
       row.onclick=function(){
         var id=row.getAttribute("data-emp");
         if(!ST.picked[id]){
@@ -464,6 +475,14 @@
           if(aw2.length){
             var nm=(emp.employee_name||id);
             if(!window.confirm("Attendance check — "+nm+" is "+aw2.join(", and ")+".\n\nSelect this worker anyway?")) return;
+          }
+          // SPLITTING A DAY IS DELIBERATE, so it is confirmed rather than assumed.
+          // Same shape as the attendance consent above, and the same words the
+          // server uses when it warns on submit.
+          if(emp && emp.allocated_elsewhere && ST._empSplitOk){
+            var nm2=(emp.employee_name||id);
+            if(!window.confirm(nm2+" is already assigned to "+(emp.allocated_task||emp.allocated_asg||"another task")+
+              " over these dates.\n\nTheir day will be split between the two. Record the hours each task took on the actuals screen, or the day counts twice.\n\nAdd them to this crew?")) return;
           }
         }
         ST.picked[id]=!ST.picked[id];
@@ -554,6 +573,18 @@
 
   function afterSubmit(d, submitNow){
     var verb = d.editing ? (submitNow?"Updated & submitted ":"Draft updated ") : (submitNow?"Submitted ":"Draft saved ");
+    // WHAT THE SERVER ALLOWED BUT WANTED SAID. With a split day permitted the
+    // submit stops refusing and starts warning -- about a crew larger than the
+    // plan's people/day, and about workers whose day is now shared -- and both
+    // warnings were being computed and then dropped on the floor here, so the
+    // one screen that could act on them never showed them. Same treatment the
+    // Add-to-crew path already gives them.
+    var notes=[];
+    if(d.crew_warning) notes.push(d.crew_warning);
+    if(d.split_warning) notes.push(d.split_warning);
+    if(notes.length){
+      window.alert(verb+d.name+" · "+d.workflow_state+"\n\n\u2022 "+notes.join("\n\n\u2022 "));
+    }
     toast(verb+d.name+" · "+d.workflow_state+(d.att_overridden?(" · attendance override logged for "+d.att_overridden):""));
     clearEdit();
     ST.plan=null; ST.picked={}; ST.planDetail=null; ST.employees=[];
@@ -697,12 +728,16 @@
       // active workers = candidates to be substituted OUT
       var actives=(a.workers||[]).filter(function(w){ return (w.status||"Active")==="Active"; });
       call({action:"a_sub_candidates", assignment:name}).then(function(cd){
-        var cands=cd.candidates||[];
-        showSubDialog(a, actives, cands);
+        // Two pools, because swap and add have two different write paths: swap
+        // refuses a busy replacement whatever the flag, add allows one when the
+        // flag is on. The payload carries the flag too, so this dialog no longer
+        // depends on state some earlier flow happened to leave behind.
+        ST._empSplitOk=!!cd.allow_split_day;
+        showSubDialog(a, actives, cd.candidates||[], cd.add_candidates||cd.candidates||[]);
       });
     });
   }
-  function showSubDialog(a, actives, cands){
+  function showSubDialog(a, actives, cands, addCands){
     var ov=el("wa-subdialog");
     var uom=a.uom||"";
     var pct = a.target_qty>0 ? (a.fulfilled_qty/a.target_qty*100) : 0;
@@ -765,7 +800,12 @@
     // Add offers the same candidates, plus -- where a split day is allowed --
     // the ones already assigned elsewhere, tagged so the picker is honest about
     // it. Hiding them would hide exactly the people the switch permits.
-    var addPool = ST._empSplitOk ? (ST._empAll || cands) : cands;
+    //
+    // The server builds this pool now. It used to be assembled here from
+    // `ST._empAll`, which only the assign and edit flows ever fill: opening
+    // Manage crew directly left it undefined, so the pool silently fell back to
+    // the free-workers-only list and the switch did nothing on this screen.
+    var addPool = addCands || cands;
     var onRoster = {};
     (a.workers||[]).forEach(function(w){ onRoster[w.employee]=1; });
     var addOpts = addPool.filter(function(c){ return !onRoster[c.name]; })

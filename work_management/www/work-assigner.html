@@ -146,6 +146,13 @@
 #wap .emrow.busy .en{font-weight:500;color:#94a3b8}
 #wap .emrow.busy input{cursor:not-allowed}
 #wap .allocb, .allocb{display:inline-block;font-size:8px;font-weight:700;text-transform:uppercase;background:#b91c1c;color:#fff;padding:2px 7px;border-radius:999px;margin-left:6px;letter-spacing:.04em}
+/* A shared day is a fault or a plan, and the switch decides which. Where it is a
+   plan the row stays live and picked-looking; only the chip changes colour, so
+   the warning reads as a warning rather than as a refusal. */
+#wap .allocb.warn{background:#fff7ed;color:#7c2d12;border:1px solid #fed7aa}
+#wap .emrow.split{cursor:pointer}
+#wap .emrow.split .en{color:var(--ink)}
+#wap .emrow.split:hover{background:var(--wash)}
 /* approvals sub-queue pills + list filter bar */
 #wap .subtabs{display:inline-flex;gap:2px;flex-wrap:wrap;margin:2px 0 12px;background:var(--wash);border:1px solid var(--line);border-radius:999px;padding:3px}
 #wap .subtab{font-family:inherit;font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:6px 13px;border:1px solid transparent;background:transparent;color:var(--mute);border-radius:999px;cursor:pointer;transition:all .12s}

@@ -919,11 +919,12 @@ def wm_assigner(**kwargs):
         already_map = {}
         for e in already:
             already_map[e] = 1
-        # workers busy elsewhere on an overlapping live assignment
+        # workers busy elsewhere on an overlapping live assignment, WITH what they
+        # are busy on -- the picker names the other task rather than just refusing
         busy_map = {}
         if adates and adates.from_date and adates.to_date:
             busyrows = frappe.db.sql("""
-                SELECT DISTINCT we.employee emp
+                SELECT we.employee emp, a.name asg, a.task task, a.farm farm
                 FROM `tabWork Assignment Employee` we
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
@@ -932,16 +933,47 @@ def wm_assigner(**kwargs):
                   AND a.from_date <= %s AND a.to_date >= %s
             """, (nm, adates.to_date, adates.from_date), as_dict=True)
             for r in busyrows:
-                busy_map[r.emp] = 1
+                if r.emp and r.emp not in busy_map:
+                    busy_map[r.emp] = {"assignment": r.asg, "task": r.task, "farm": r.farm}
+        # TWO POOLS, because the two verbs on this screen have two different write
+        # paths and a picker that disagrees with its own server is the bug this is
+        # fixing. `candidates` feeds SWAP, whose a_substitute refuses a replacement
+        # who is busy elsewhere whatever the split-day flag says -- so offering one
+        # would offer something the server then refuses. `add_candidates` feeds ADD,
+        # whose a_add_crew allows a busy worker when the flag is on and merely warns
+        # -- so hiding them there hides exactly the people the switch permits.
         cands = []
+        add_cands = []
         for emp in frappe.db.sql("""
                 SELECT e.name, e.employee_name FROM `tabEmployee` e
                 WHERE e.status = 'Active' AND e.custom_farm = %(f)s AND """ + TW_MATCH + """
                 ORDER BY e.employee_name LIMIT 1000
             """, {"f": farm}, as_dict=True):
-            if not already_map.get(emp.name) and not busy_map.get(emp.name):
+            if already_map.get(emp.name):
+                # already on THIS roster -- refused by both verbs, whatever the flag.
+                # Adding somebody twice is a mistake rather than a split day, and
+                # a_add_crew says so in as many words.
+                continue
+            busy = busy_map.get(emp.name)
+            if not busy:
                 cands.append(emp)
+                add_cands.append(emp)
+                continue
+            if ALLOW_SPLIT_DAY:
+                tagged = dict(emp)
+                tagged["allocated_elsewhere"] = 1
+                tagged["allocated_asg"] = busy["assignment"]
+                tagged["allocated_task"] = busy["task"]
+                tagged["allocated_farm"] = busy["farm"]
+                add_cands.append(tagged)
         out["candidates"] = cands
+        out["add_candidates"] = add_cands
+        # The screen no longer has to remember a flag it read during some earlier
+        # flow: this payload carries it. The Manage crew dialog never calls
+        # a_employees, so it was reading whatever `allow_split_day` a previous
+        # assign had left in page state -- undefined on a fresh load, which meant
+        # the split-day switch did nothing here at all.
+        out["allow_split_day"] = 1 if ALLOW_SPLIT_DAY else 0
 
     elif action == "a_add_crew":
         # The third verb the crew never had. Swap needs somebody to take the
