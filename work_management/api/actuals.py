@@ -1581,6 +1581,10 @@ def wm_actuals(**kwargs):
         # Settings -- they used to be these role names, compiled in.
         out["is_clerk"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("enter_work") or []))) else 0
+        # System Manager passes, as it already does for is_clerk and is_accounts
+        # beside it: every approve action here accepts System Manager, so without
+        # this the endpoint permits the HR Head step while the screen hides the way
+        # to reach it.
         out["is_hr_head"] = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES)
         out["is_gm"] = "General Manager" in rl
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
