@@ -71,7 +71,127 @@ def execute(filters=None):
 			filters.to_date, filters.from_date))
 
 	rows = _rows(filters)
-	return _columns(), rows
+	# THE SAME REPORT IS THE DAILY SUMMARY. The client asked for "a daily summary
+	# report that can be displayed, exported via excel or demonstrated through
+	# graphs" -- and a second report would be a second thing to keep in step with
+	# this one, drifting the first time a column changes here and not there. So
+	# the grain is a filter: the detail rows are rolled up, never re-queried.
+	if str(filters.get("group_by") or "").lower().startswith("daily"):
+		summary = summarise_by_day(rows)
+		return _summary_columns(), summary, None, chart_for(summary, filters, daily=True)
+	return _columns(), rows, None, chart_for(rows, filters, daily=False)
+
+
+#: What the chart may plot. Quantity is the default because it is the figure the
+#: report is named for; the other two answer "what did it cost" and "how much
+#: labour was that", which are the next two questions anybody asks.
+DATASETS = {
+	"qty": ("actual_quantity", "Actual qty"),
+	"amount": ("amount", "Amount (KES)"),
+	"mandays": ("man_days", "Man-days"),
+}
+
+
+def summarise_by_day(rows):
+	"""One row per day: who, how many tasks, and the three totals.
+
+	Rolled up from the detail rows this report already produced, so the summary
+	cannot disagree with the detail -- it IS the detail, added up. Workers and
+	tasks are counted distinctly, because a worker on three tasks in one day is
+	one worker and three tasks touched.
+	"""
+	days = {}
+	for row in rows:
+		key = str(row.get("work_date") or "")
+		day = days.get(key)
+		if day is None:
+			day = days[key] = {
+				"work_date": row.get("work_date"),
+				"_workers": set(), "_tasks": set(),
+				"actual_quantity": 0.0, "amount": 0.0, "man_days": 0.0,
+			}
+		if row.get("employee"):
+			day["_workers"].add(row["employee"])
+		if row.get("task"):
+			day["_tasks"].add(row["task"])
+		day["actual_quantity"] += _flt(row.get("actual_quantity"))
+		day["amount"] += _flt(row.get("amount"))
+		day["man_days"] += _man_days(row)
+	out = []
+	for key in sorted(days):
+		day = days[key]
+		out.append({
+			"work_date": day["work_date"],
+			"workers": len(day.pop("_workers")),
+			"tasks": len(day.pop("_tasks")),
+			"actual_quantity": day["actual_quantity"],
+			"amount": day["amount"],
+			"man_days": round(day["man_days"], 2),
+		})
+	return out
+
+
+def _man_days(row):
+	"""One row's share of a person-day: hours given over the day's standard.
+
+	The same ratio split_day.py uses everywhere else -- a day is measured, not
+	counted, or a worker who split Tuesday between two tasks reads as two days.
+	`hours` is None on every row written before the field existed, and that means
+	a whole standard day, which is what those rows were.
+	"""
+	hours = row.get("hours")
+	standard = split_day.standard_hours(row.get("work_date"))
+	if not standard:
+		return 0.0
+	if hours is None:
+		return 1.0
+	return _flt(hours) / standard
+
+
+def chart_for(rows, filters, daily=False):
+	"""A bar per day of whichever figure the filter asked for.
+
+	Frappe renders `chart` above the table on a Script Report, and the export and
+	print surfaces come with it -- so the client's "displayed, exported via excel
+	or demonstrated through graphs" is one report rather than three.
+	"""
+	field, label = DATASETS.get(str(filters.get("dataset") or "qty"), DATASETS["qty"])
+	if daily:
+		points = [(str(r.get("work_date") or ""), _flt(r.get(field))) for r in rows]
+	else:
+		totals = {}
+		for row in rows:
+			key = str(row.get("work_date") or "")
+			totals[key] = totals.get(key, 0.0) + (
+				_man_days(row) if field == "man_days" else _flt(row.get(field)))
+		points = sorted(totals.items())
+	if not points:
+		return None
+	return {
+		"data": {
+			"labels": [p[0] for p in points],
+			"datasets": [{"name": _(label), "values": [round(p[1], 2) for p in points]}],
+		},
+		"type": "bar",
+		"colors": ["#2563eb"],
+		"fieldtype": "Currency" if field == "amount" else "Float",
+	}
+
+
+SUMMARY_COLUMNS = [
+	{"fieldname": "work_date", "label": "Date", "fieldtype": "Date", "width": 110},
+	{"fieldname": "workers", "label": "Workers", "fieldtype": "Int", "width": 90},
+	{"fieldname": "tasks", "label": "Tasks touched", "fieldtype": "Int", "width": 120},
+	{"fieldname": "actual_quantity", "label": "Actual qty", "fieldtype": "Float",
+		"precision": 2, "width": 120},
+	{"fieldname": "man_days", "label": "Man-days", "fieldtype": "Float",
+		"precision": 2, "width": 110},
+	{"fieldname": "amount", "label": "Amount", "fieldtype": "Currency", "width": 130},
+]
+
+
+def _summary_columns():
+	return [dict(column, label=_(column["label"])) for column in SUMMARY_COLUMNS]
 
 
 #: `_states(..., settings=FROM_SITE)` reads the chain this installation runs.

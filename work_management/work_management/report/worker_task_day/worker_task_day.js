@@ -38,6 +38,33 @@ frappe.query_reports["Worker Task Day"] = {
 			options: "Task",
 		},
 		{
+			// THE SAME REPORT IS THE DAILY SUMMARY. A second report would be a
+			// second thing to keep in step with this one, and it would drift the
+			// first time a column changed here and not there. The rows are the
+			// same rows either way -- the summary is them, added up.
+			fieldname: "group_by",
+			label: __("Group by"),
+			fieldtype: "Select",
+			options: [
+				{ value: "Detail", label: __("Detail — one row per worker, task and day") },
+				{ value: "Daily summary", label: __("Daily summary — one row per day") },
+			],
+			default: "Detail",
+		},
+		{
+			// What the bars plot. Quantity is what the report is named for; the
+			// other two answer the next two questions anybody asks of it.
+			fieldname: "dataset",
+			label: __("Chart shows"),
+			fieldtype: "Select",
+			options: [
+				{ value: "qty", label: __("Actual quantity") },
+				{ value: "amount", label: __("Amount (KES)") },
+				{ value: "mandays", label: __("Man-days") },
+			],
+			default: "qty",
+		},
+		{
 			// Confirmed only by default: this report is payroll-adjacent, and
 			// quantities still moving through approval would mislead whoever
 			// reads it as a record of what happened.
@@ -60,6 +87,8 @@ frappe.query_reports["Worker Task Day"] = {
 	formatter: function (value, row, column, data, default_formatter) {
 		var out = default_formatter(value, row, column, data);
 		if (!data) return out;
+		// The summary grouping has none of the columns below -- no clock, no
+		// achieved percentage -- so nothing here applies to it.
 
 		// A missing clock reads as an explicit dash, not an empty cell: blank
 		// looks like a rendering fault, "—" reads as "nothing was recorded".
