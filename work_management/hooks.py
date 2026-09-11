@@ -59,6 +59,22 @@ doc_events = {
 	"Task": {
 		"on_update": "work_management.rates.task_on_update",
 	},
+	# Payroll linkage: the Additional Salary a payment run raises only actually
+	# pays once its Salary Slip is submitted, and cancelling the run must take
+	# the Additional Salary with it. See work_management/api/payment.py.
+	"Salary Slip": {
+		"on_submit": "work_management.api.payment.on_salary_slip_submit",
+		"on_cancel": "work_management.api.payment.on_salary_slip_cancel",
+	},
+	"Work Management Payment": {
+		# Not on_cancel: this doctype's docstatus never leaves 0 by design, so
+		# its workflow's Cancel action is a plain save, not a real
+		# doc.cancel() -- see on_payment_update()'s docstring.
+		"on_update": "work_management.api.payment.on_payment_update",
+	},
+	"Additional Salary": {
+		"on_cancel": "work_management.api.payment.on_additional_salary_cancel",
+	},
 }
 
 override_whitelisted_methods = {

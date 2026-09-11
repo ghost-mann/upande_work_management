@@ -4,11 +4,11 @@ Three lists in Work Management Settings decide whether a person's work is paid
 per unit: their employment type, their designation, or their category. Any one
 match is enough -- they are ORed.
 
-The lists are free text whose contents end up inside a SQL `IN (...)`, so
-reading them is the part that has actually broken in production: a newline that
-survived into a value once discarded the whole list and stopped 315 task
-workers being payable. parse_list() is that reader, kept here with tests
-because the failure mode is silent non-payment rather than an error.
+These used to be free text typed into a box, parsed and interpolated into a SQL
+`IN (...)` -- a newline that survived into a value once discarded the whole
+list and stopped 315 task workers being payable. That reader is gone along with
+the boxes themselves; every site now picks from real child tables instead, so
+there is nothing left to mis-parse.
 
 The second half of this module exists because `count_in_payroll` and `amount`
 are decided once, when a row is written, and never revisited. Change an
@@ -17,36 +17,12 @@ the old answer -- at zero, with nothing anywhere reporting it. disagreements()
 is the missing check.
 """
 
-# Characters a real job title uses. Anything else is dropped, because these
-# values are interpolated into SQL.
-ALLOWED_CHARS = " -_/&().'"
-
-# (legacy text field, child table, field on the child row, Employee field).
-#
-# The lists are moving from free text people type to values they pick. Both are
-# read, child rows first, so payroll is never down for the moment in between:
-# code deployed with the tables still empty behaves exactly as before, and a
-# list migrated one at a time does not disturb the others.
+# (child table, field on the child row, Employee field).
 LISTS = (
-	("tw_employment_types", "tw_employment_type_rows", "employment_type", "employment_type"),
-	("tw_designations", "tw_designation_rows", "designation", "designation"),
-	("tw_categories", "tw_category_rows", "category", "custom_category"),
+	("tw_employment_type_rows", "employment_type", "employment_type"),
+	("tw_designation_rows", "designation", "designation"),
+	("tw_category_rows", "category", "custom_category"),
 )
-
-
-def parse_list(raw):
-	"""The usable values in one Settings box.
-
-	Commas and newlines both separate, because a multi-line box invites either.
-	A value carrying anything a job title would not is dropped **on its own** --
-	never taking the rest of the list with it, which is the bug this guards.
-	"""
-	values = set()
-	for part in str(raw or "").replace("\r", "\n").replace("\n", ",").split(","):
-		part = part.strip()
-		if part and all(c.isalnum() or c in ALLOWED_CHARS for c in part):
-			values.add(part)
-	return values
 
 
 def picked_values(rows, field):
@@ -65,16 +41,11 @@ def picked_values(rows, field):
 
 
 def rule_from(settings):
-	"""{employee field: allowed values} read off a Settings document or dict.
-
-	A list that has been picked wins outright over whatever text it replaced --
-	the old box is history at that point, not an addition to it.
-	"""
+	"""{employee field: allowed values} read off a Settings document or dict."""
 	getter = settings.get if hasattr(settings, "get") else lambda k: None
 	rule = {}
-	for box, table, child_field, employee_field in LISTS:
-		values = picked_values(getter(table), child_field)
-		rule[employee_field] = values or parse_list(getter(box))
+	for table, child_field, employee_field in LISTS:
+		rule[employee_field] = picked_values(getter(table), child_field)
 	return rule
 
 

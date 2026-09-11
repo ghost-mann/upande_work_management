@@ -184,6 +184,18 @@ class TestTerminalStates(unittest.TestCase):
 			moves(plan("Work Management Payment", settings())),
 		)
 
+	def test_nothing_can_manually_mark_a_payment_paid(self):
+		"""payment_accounts ships with a blank action on purpose: a run
+		becomes Paid exactly one way, payroll submitting the Salary Slip that
+		carries its Additional Salary (on_salary_slip_submit() in
+		api/payment.py) -- never a button. Cancel, the reject action, still
+		works normally; only the forward one is suppressed."""
+		result = plan("Work Management Payment", settings())
+		self.assertNotIn("Mark Paid", [t["action"] for t in result["transitions"]])
+		self.assertNotIn(
+			"Unpaid", [t["state"] for t in result["transitions"] if t["next_state"] == "Paid"],
+		)
+
 	def test_rejection_returns_to_the_first_approval_not_the_draft(self):
 		result = plan("Work Management Assigner", settings())
 		resubmits = [t for t in result["transitions"] if t["action"] == "Re-submit"]

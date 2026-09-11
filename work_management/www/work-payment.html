@@ -601,7 +601,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   <div class="wm-ph">
     <div class="wm-ph__eyebrow">Upande &middot; Work Management</div>
     <h1 class="wm-ph__title">Payment</h1>
-    <p class="wm-ph__sub">Pay workers one at a time: review each person’s confirmed work, approve it, and accounts releases the money.</p>
+    <p class="wm-ph__sub">Pay workers one at a time: review each person’s confirmed work and send it for payroll processing — it is Paid once payroll submits the Salary Slip.</p>
   </div>
 
 
@@ -610,7 +610,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
   <nav class="tabs" id="pay-tabs">
     <button data-tab="build" aria-selected="true">Pay workers</button>
-    <button data-tab="accounts" aria-selected="false">Awaiting accounts <span class="cnt" id="tab-acc-cnt" style="display:none">0</span></button>
+    <button data-tab="accounts" aria-selected="false">Awaiting payroll <span class="cnt" id="tab-acc-cnt" style="display:none">0</span></button>
     <button data-tab="issues" aria-selected="false">Issues <span class="cnt" id="tab-iss-cnt" style="display:none">0</span></button>
     <button data-tab="mine" aria-selected="false">History</button>
     <button data-tab="audit" aria-selected="false">Audit</button>
@@ -622,7 +622,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <div class="kpis" id="build-kpis">
       <div class="kpi" style="--kc:var(--pay)"><div class="k">Payable now</div><div class="v" id="k-owed">&mdash;</div><div class="u">KES &middot; unpaid confirmed</div></div>
       <div class="kpi" style="--kc:var(--blue)"><div class="k">To review</div><div class="v" id="k-toreview">&mdash;</div><div class="u">unpaid, ready to send</div></div>
-      <div class="kpi" style="--kc:var(--good)"><div class="k">Sent</div><div class="v" id="k-sent">&mdash;</div><div class="u">awaiting release by accounts</div></div>
+      <div class="kpi" style="--kc:var(--good)"><div class="k">Sent</div><div class="v" id="k-sent">&mdash;</div><div class="u">awaiting payroll to pay it</div></div>
     </div>
 
     <div class="filters">
@@ -667,9 +667,9 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
     
 
-  <!-- ═══════════ AWAITING ACCOUNTS ═══════════ -->
+  <!-- ═══════════ AWAITING PAYROLL ═══════════ -->
   <div class="panel" id="p-accounts">
-    <div class="sech">Runs awaiting accounts <span class="hint">approve to release payment and stamp worker rows paid</span></div>
+    <div class="sech">Runs sent to payroll <span class="hint">shown here until payroll submits the Salary Slip that pays them</span></div>
     <div id="pay-acc-banner"></div>
     <div id="accounts-body"><div class="loading">Loading pending runs&hellip;</div></div>
   </div>
@@ -704,7 +704,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
   <!-- ═══════════ MY RUNS ═══════════ -->
   <div class="panel" id="p-mine">
-    <div class="sech">My payment runs <span class="hint">everything you&rsquo;ve prepared</span></div>
+    <div class="sech">My payment runs <span class="hint">runs payroll has actually paid &mdash; still-pending runs are on Awaiting payroll; cancelled runs are in the Work Management Payment list on the Desk</span></div>
     <div id="mine-body"><div class="loading">Loading your runs&hellip;</div></div>
   </div>
 
@@ -758,7 +758,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
       <div class="modal-foot">
         <button type="button" class="btn" id="pd-dismiss">Close</button>
         <button type="button" class="btn pay" id="pd-review" style="display:none">Mark reviewed</button>
-        <button type="button" class="btn good" id="pd-approve" style="display:none">Approve &amp; send to accounts</button>
+        <button type="button" class="btn good" id="pd-approve" style="display:none">Approve &amp; send to payroll</button>
       </div>
     </div>
   </div>

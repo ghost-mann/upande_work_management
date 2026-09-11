@@ -90,8 +90,19 @@ CATALOGUE = [
 	_stage("actuals_gm", "Actuals: GM", "Work Management Actuals",
 		"Approval", "Pending GM", "GM Approve", "System Manager"),
 
+	# Payment's own forward action is deliberately blank: nothing should ever
+	# manually mark a run Paid. That happens exactly one way -- payroll
+	# submitting the Salary Slip that carries the run's Additional Salary; see
+	# on_salary_slip_submit() in api/payment.py. A blank action still counts
+	# as the required step ("Unpaid" is where a run sits until that happens),
+	# but plan_workflow() skips generating a transition for it, so no "Mark
+	# Paid" button reaches the Actions dropdown. The reject action, "Cancel",
+	# still generates normally -- kind="Approval" pairs it automatically -- so
+	# accounts still get a real, working Cancel from the same dropdown every
+	# other stage in this app uses, including from the terminal state
+	# (cancel_from_terminal below): see on_payment_update()'s docstring.
 	_stage("payment_accounts", "Payment: Accounts", "Work Management Payment",
-		"Approval", "Unpaid", "Mark Paid", "System Manager", required=True),
+		"Approval", "Unpaid", None, "System Manager", required=True),
 ]
 
 # Where each chain ends, and where a rejection lands. Taken from the workflows
@@ -128,7 +139,11 @@ CHAIN_ENDS = {
 		"reject": "Cancelled",
 		"resubmit": None,
 		# Accounts called it cancelling, not rejecting, and a payment already
-		# marked paid could still be cancelled. Both kept.
+		# marked paid could still be cancelled. Both kept. doc_status stays 0
+		# for every state in this chain, Paid included -- nothing here ever
+		# calls doc.submit(), by design, so a real docstatus=1 is never
+		# reached and apply_workflow() always resolves every transition as a
+		# plain save. See on_payment_update()'s docstring in api/payment.py.
 		"reject_action": "Cancel",
 		"cancel_from_terminal": True,
 	},
@@ -680,7 +695,12 @@ def plan_workflow(document_type, rows=None, settings=None):
 		next_state = leads_to.get(stage.key, terminal_state)
 		for scope, role in transition_groups(stage, rows, settings):
 			condition = f'doc.{SCOPE_FIELD} == "{scope}"' if scope else None
-			add_transition(stage.state, stage.action, next_state, role, condition)
+			# A blank action means nothing should ever move this stage forward
+			# by hand -- Payment's payment_accounts is the one case (see its
+			# definition in CATALOGUE). The reject/cancel pairing below still
+			# generates normally.
+			if stage.action:
+				add_transition(stage.state, stage.action, next_state, role, condition)
 			if stage.kind == "Approval":
 				add_transition(stage.state, reject_action, reject_state, role, condition)
 

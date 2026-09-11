@@ -39,15 +39,15 @@ def wm_assigner(**kwargs):
     # employment_type alone -- as this script used to -- disagreed with payment the
     # moment anyone configured a designation or a category instead, and produced
     # assignments whose work could never be paid.
-    # An employee qualifies if ANY of the three configured lists matches.
-    # Read the pickers first and the old typed boxes second, so both shapes work
-    # while sites migrate: an empty picker changes nothing at all. A picked value is
-    # a Link target or a Select option rather than something typed, so it needs no
-    # character check -- an apostrophe in a designation is a docname, not a hazard.
+    # An employee qualifies if ANY of the three configured lists matches. Each
+    # list is a picked child table -- the free-text boxes they used to be are
+    # gone, so there is no character check to make: a Link target or a Select
+    # option is a docname, not typing, and an apostrophe in a designation is not
+    # a hazard.
     TW_SOURCES = [
-        ("employment_type", "Work Management Payable Employment Type", "employment_type", "tw_employment_types"),
-        ("designation", "Work Management Payable Designation", "designation", "tw_designations"),
-        ("custom_category", "Work Management Payable Category", "category", "tw_categories"),
+        ("employment_type", "Work Management Payable Employment Type", "employment_type"),
+        ("designation", "Work Management Payable Designation", "designation"),
+        ("custom_category", "Work Management Payable Category", "category"),
     ]
     # Only the Employee columns THIS site actually has. employment_type and
     # designation are standard; custom_category is a custom field one site created,
@@ -62,7 +62,7 @@ def wm_assigner(**kwargs):
             TW_COLUMNS.append(tw_mc)
 
     TW_CLAUSES = []
-    for tw_col, tw_child, tw_cfield, tw_box in TW_SOURCES:
+    for tw_col, tw_child, tw_cfield in TW_SOURCES:
         # the three lists are ORed, so dropping the column this site lacks costs
         # nothing -- there is no Settings list it could have matched anyway
         if tw_col not in TW_COLUMNS:
@@ -76,22 +76,6 @@ def wm_assigner(**kwargs):
                 tw_p = str(tw_r.get(tw_cfield) or "").strip()
                 if tw_p:
                     tw_vals.append("'" + tw_p.replace("'", "''") + "'")
-        if not tw_vals:
-            # the Settings fields are multi-line boxes, so people list one value per line
-            # as readily as they comma-separate them. Accept either: a newline that
-            # survived into a value used to fail the character check below and take the
-            # WHOLE list with it, silently, which stopped 315 task workers being payable.
-            tw_raw = frappe.db.get_single_value("Work Management Settings", tw_box)
-            for tw_v in str(tw_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
-                tw_c = tw_v.strip()
-                # values come from Settings and land in SQL, so allow only the shapes a
-                # job title can actually take and drop anything else outright
-                tw_ok = 1
-                for tw_ch in tw_c:
-                    if not (tw_ch.isalnum() or tw_ch in " -_/&().'"):
-                        tw_ok = 0
-                if tw_c and tw_ok:
-                    tw_vals.append("'" + tw_c.replace("'", "''") + "'")
         if tw_vals:
             TW_CLAUSES.append("e." + tw_col + " IN (" + ", ".join(tw_vals) + ")")
     if not TW_CLAUSES:

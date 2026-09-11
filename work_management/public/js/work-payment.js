@@ -87,7 +87,7 @@
     // taken out of the screen. Its code below still loads and its four server
     // actions still answer, so restoring it is putting the tab back -- but
     // nothing reaches it from the UI now.
-    ["build","accounts","mine","insights"].forEach(function(n){
+    ["build","accounts","issues","mine","insights"].forEach(function(n){
       var p=el("p-"+n); if(p) p.classList.toggle("on", n===name);
     });
     document.querySelectorAll("#pay-tabs button").forEach(function(b){
@@ -322,8 +322,10 @@
   function renderBuildKpis(d){
     var payable=0, toreview=0, sent=0;
     ST.workers.forEach(function(w){
-      if(w.pay_status==="Unpaid"){ toreview+=1; payable+=(w.unpaid_amt||w.owed||0); }
-      else if(w.pay_status==="Sent to accounts"){ sent+=1; }
+      // "Partially sent" still has a genuine payable remainder -- part of a
+      // window already sent is not a reason to hide the rest of it here.
+      if(w.pay_status==="Unpaid" || w.pay_status==="Partially sent"){ toreview+=1; payable+=(w.payable_amt||0); }
+      if((w.sent_amt||0)>0.001){ sent+=1; }
     });
     el("k-owed").textContent=fmt(payable);
     el("k-toreview").textContent=fmt(toreview);
@@ -364,36 +366,40 @@
       box.innerHTML='<div class="empty"><b>No workers here</b>No confirmed work matches this window and filter. Widen the dates or clear the '+esc(TX("top_singular","Farm")).toLowerCase()+' filter.</div>';
       return;
     }
-    var order={"Unpaid":0,"Sent to accounts":1,"Paid":2};
+    var order={"Unpaid":0,"Partially sent":0,"Sent to payroll":1,"Paid":2};
     rows.sort(function(a,b){
       var oa=order[a.pay_status]!=null?order[a.pay_status]:0, ob=order[b.pay_status]!=null?order[b.pay_status]:0;
       if(oa!==ob) return oa-ob;
-      return (b.unpaid_amt||b.owed||0)-(a.unpaid_amt||a.owed||0);
+      return (b.payable_amt||0)-(a.payable_amt||0);
     });
     var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px"><span class="hint" id="pw-count">'+
       fmt(rows.length)+' of '+fmt((ST.workers||[]).length)+' workers</span>'+
       '<span class="hint" id="bulk-info" style="font-weight:600;color:var(--ink)"></span><span style="flex:1"></span>'+
-      (ST.canSend?'<button type="button" class="btn good sm" id="bulk-send" style="display:none">Review &amp; send to accounts</button>':'')+
+      (ST.canSend?'<button type="button" class="btn good sm" id="bulk-send" style="display:none">Review &amp; send to payroll</button>':'')+
       '<button type="button" class="btn sm" id="bulk-clear" style="display:none">Clear</button>'+
       '<span class="hint" id="bulk-hint">'+(ST.canSend
-        ? 'Tick workers to send them to accounts in one go, or open each one for the full check first.'
-        : 'You can review and audit here. Sending work to accounts is done by the HR head, accounting or the general manager.')+'</span></div>';
+        ? 'Tick workers to send them for payroll processing in one go, or open each one for the full check first.'
+        : 'You can review and audit here. Sending work to payroll is done by the HR head, accounting or the general manager.')+'</span></div>';
     h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
       '<th class="c" style="width:34px"><input type="checkbox" id="bulk-all" title="Select every actionable worker shown"></th>'+
       '<th>Worker</th><th>ID</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period worked</th><th class="n">Tasks</th><th class="n">Days</th><th class="n">Qty</th>'+
       '<th class="n">Earned KES</th><th class="n">Paid KES</th><th class="n">Unpaid KES</th><th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
     var tq=0, te=0, tp=0, tu=0;
     rows.forEach(function(w){
-      var unpaid=w.unpaid_amt!=null?w.unpaid_amt:w.owed;
-      tq+=(w.qty||0); te+=(w.owed||0); tp+=(w.paid_amt||0); tu+=(unpaid||0);
+      // payable_amt: what's actually still sendable -- excludes anything
+      // already sent (payment_ref set) even if it isn't confirmed Paid yet,
+      // so a mid-week partial send never blocks or double-counts the rest.
+      var unpaid=w.payable_amt||0;
+      tq+=(w.qty||0); te+=(w.owed||0); tp+=(w.paid_amt||0); tu+=unpaid;
       var acts='<button type="button" class="btn sm" data-review="'+esc(w.emp)+'">Review</button>';
-      if(ST.canSend && w.pay_status==="Unpaid"){
-        acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+(unpaid||0)+'">Send to accounts</button>';
+      if(ST.canSend && (w.pay_status==="Unpaid" || w.pay_status==="Partially sent")){
+        acts+=' <button type="button" class="btn good sm" data-send="'+esc(w.emp)+'" data-nm="'+esc(w.emp_name||w.emp)+'" data-amt="'+unpaid+'">Send to payroll</button>';
       }
-      var actionable=w.pay_status==="Unpaid" && (unpaid||0)>0.001;
+      var actionable=(w.pay_status==="Unpaid" || w.pay_status==="Partially sent") && unpaid>0.001;
       var cb=actionable?
-        '<input type="checkbox" class="bpick" data-emp="'+esc(w.emp)+'" data-status="'+esc(w.pay_status)+'" data-amt="'+(unpaid||0)+'" data-nm="'+esc(w.emp_name||w.emp)+'"'+(ST.bulk[w.emp]?" checked":"")+'>':'';
-      var runRef=w.run_ref?('<div style="font-size:9px;color:var(--mute);margin-top:2px">'+esc(w.run_ref)+'</div>'):'';
+        '<input type="checkbox" class="bpick" data-emp="'+esc(w.emp)+'" data-status="'+esc(w.pay_status)+'" data-amt="'+unpaid+'" data-nm="'+esc(w.emp_name||w.emp)+'"'+(ST.bulk[w.emp]?" checked":"")+'>':'';
+      var runRef=w.run_ref?('<div style="font-size:9px;color:var(--mute);margin-top:2px">'+esc(w.run_ref)+
+        ((w.sent_amt||0)>0.001?' · '+money(w.sent_amt)+' of this already sent':'')+'</div>'):'';
       h+='<tr data-emp="'+esc(w.emp)+'" class="'+(w.pay_status==="Paid"?"notpay":"")+(ST.bulk[w.emp]?" picked":"")+'">'+
         '<td class="c">'+cb+'</td>'+
         '<td><span class="rowlink" data-review="'+esc(w.emp)+'">'+esc(w.emp_name||w.emp)+'</span>'+
@@ -414,7 +420,7 @@
     h+='</tbody><tfoot><tr><th colspan="7">TOTAL &middot; '+fmt(rows.length)+' workers</th>'+
        '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te,2)+'</th><th class="n">'+fmt(tp,2)+'</th><th class="n">'+fmt(tu,2)+'</th>'+
        '<th colspan="2"></th></tr></tfoot></table></div></div>';
-    h+='<div class="note">Unpaid &rarr; review the worker and send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
+    h+='<div class="note">Unpaid &rarr; review the worker and send to payroll &middot; Sent &rarr; Paid once payroll submits the Salary Slip. Each send raises a single-worker Additional Salary automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to payroll</b> &mdash; each worker still gets their own payment reference.</div>';
     box.innerHTML=h;
     box.querySelectorAll("[data-review]").forEach(function(a){
       a.onclick=function(){ openWorkerReview(a.getAttribute("data-review"), payWindow()); };
@@ -431,7 +437,7 @@
     wireBulk(box);
   }
 
-  // ── bulk review / send-to-accounts across ticked workers ──
+  // ── bulk review / send-to-payroll across ticked workers ──
   function wireBulk(box){
     // drop stale picks that no longer exist or stopped being actionable
     var live={};
@@ -493,7 +499,7 @@
     }
     if(hint) hint.style.display="none";
     info.textContent=fmt(n)+" selected · "+money(s.amt);
-    if(bs){ bs.style.display=""; bs.textContent="Send "+fmt(n)+" to accounts · "+money(s.amt); }
+    if(bs){ bs.style.display=""; bs.textContent="Send "+fmt(n)+" to payroll · "+money(s.amt); }
     if(bc) bc.style.display="";
   }
 
@@ -522,11 +528,11 @@
     if(!s.all.length){ toast("Tick at least one worker","bad"); return; }
     var win=payWindow();
     confirmModal(
-      "Send "+fmt(s.all.length)+" workers to accounts",
-      '<p style="margin:0 0 10px">Send <b>'+fmt(s.all.length)+' workers</b> totalling <b>'+money(s.amt)+'</b> to accounts?</p>'+
+      "Send "+fmt(s.all.length)+" workers to payroll",
+      '<p style="margin:0 0 10px">Send <b>'+fmt(s.all.length)+' workers</b> totalling <b>'+money(s.amt)+'</b> for payroll processing?</p>'+
       '<p style="margin:0 0 10px">Work is <b>'+esc(spanNote())+'</b>.</p>'+
-      '<p class="note" style="margin:0">Each worker gets their own payment reference (exactly as when sent one at a time) and lands in <b>Awaiting accounts</b> as Unpaid. Your user and the time are stamped on every included day-row.</p>',
-      "Send all to accounts",
+      '<p class="note" style="margin:0">Each worker gets their own Additional Salary (exactly as when sent one at a time) and lands in <b>Awaiting payroll</b> as Unpaid — Paid once payroll submits the Salary Slip. Your user and the time are stamped on every included day-row.</p>',
+      "Send all to payroll",
       function(){
         var bs=el("bulk-send"); if(bs){ bs.disabled=true; bs.textContent="Sending…"; }
         chunkCalls("pay_bulk_submit", s.all, win, function(err, agg){
@@ -536,7 +542,7 @@
           else if(errs.length){
             toast(fmt(agg.sent)+" sent ("+money(agg.sent_total)+") · "+fmt(errs.length)+" skipped: "+errs.slice(0,3).map(function(r){ return r.employee+" — "+r.error; }).join("; ")+(errs.length>3?"…":""),"bad");
           } else {
-            toast(fmt(agg.sent)+" workers sent to accounts · "+money(agg.sent_total),"good");
+            toast(fmt(agg.sent)+" workers sent to payroll · "+money(agg.sent_total),"good");
           }
           ST.bulk={};
           win.refresh();
@@ -753,7 +759,7 @@
   }
 
   // ════════════════════════════════════════════════
-  //  AWAITING ACCOUNTS
+  //  AWAITING PAYROLL
   // ════════════════════════════════════════════════
   function loadAccounts(reset){
     var box=el("accounts-body");
@@ -839,10 +845,10 @@
     var box=el("accounts-body"), rows=ST.accRows||[];
     var bn=el("pay-acc-banner");
     if(!ST.isAccounts){
-      bn.innerHTML='<div class="banner info"><b>View only.</b> You can see runs awaiting accounts, but only an Accounts user can mark them paid.</div>';
+      bn.innerHTML='<div class="banner info"><b>View only.</b> You can see runs sent to payroll here. Paid is set automatically once payroll submits the Salary Slip.</div>';
     } else { bn.innerHTML=''; }
     if(!ST.accTotal && !ST.accFiltered && !ST.accWeek){
-      box.innerHTML=accFilterBar()+'<div class="empty"><b>Nothing awaiting accounts</b>Runs you send from the Pay workers tab appear here for release.</div>';
+      box.innerHTML=accFilterBar()+'<div class="empty"><b>Nothing awaiting payroll</b>Runs you send from the Pay workers tab appear here until payroll submits the Salary Slip that pays them.</div>';
       wireAccFilters(box);
       return;
     }
@@ -853,7 +859,7 @@
       return;
     }
     var h=accFilterBar();
-    // pay weeks: accounts releases a week at a time, so the queue is filtered by week
+    // pay weeks: payroll picks up a week at a time, so the queue is filtered by week
     h+='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:6px;flex-wrap:wrap">'+
       '<span class="hint" style="font-weight:600;color:var(--ink)">Pay week</span>'+
       '<button type="button" class="btn sm'+(ST.accWeek?"":" good")+'" data-accwk="">All · '+fmt(ST.accTotal)+'</button>';
@@ -892,9 +898,6 @@
     }
     foot+='<button type="button" class="btn sm" data-view="'+esc(r.name)+'">View lines</button>';
     foot+='<button type="button" class="btn sm" data-withdraw="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" style="color:var(--warn);border-color:#fde68a">Return to unpaid</button>';
-    if(canPay){
-      foot+='<button type="button" class="btn good sm" data-paid="'+esc(r.name)+'">Mark paid</button>';
-    }
     return '<div class="runcard">'+
       '<div class="rc-head">'+
         '<input type="checkbox" class="awpick" data-name="'+esc(r.name)+'" data-nm="'+esc(r.employee_name||r.run_title||r.name)+'" data-amt="'+(r.amount||0)+'" title="Select for bulk return to unpaid" style="margin:0 10px 0 0;flex-shrink:0;align-self:center"'+(ST.accBulk[r.name]?" checked":"")+'>'+
@@ -907,6 +910,11 @@
         '<div class="rc-fig"><div class="rf-k">Worker'+(r.total_workers===1?'':'s')+'</div><div class="rf-v">'+(r.total_workers===1?esc(r.employee_name||"1"):fmt(r.total_workers))+'</div></div>'+
         '<div class="rc-fig"><div class="rf-k">Amount</div><div class="rf-v">'+money(r.amount)+'</div></div>'+
       '</div>'+
+      (r.candidate_slip
+        ? '<div class="note" style="margin:0 0 10px;color:var(--warn)">A submitted Salary Slip already covers this pay date but doesn\'t reference it -- '+
+          '<a href="/app/salary-slip/'+encodeURIComponent(r.candidate_slip)+'" target="_blank">'+esc(r.candidate_slip)+'</a>. '+
+          'Not fixed automatically; check whether that slip should carry this run\'s Additional Salary.</div>'
+        : '')+
       '<div class="rc-foot">'+foot+'</div>'+
     '</div>';
   }
@@ -920,9 +928,6 @@
   function wireRunCards(box){
     box.querySelectorAll("[data-view]").forEach(function(b){
       b.onclick=function(){ openRunDetail(b.getAttribute("data-view")); };
-    });
-    box.querySelectorAll("[data-paid]").forEach(function(b){
-      b.onclick=function(){ markPaid(b.getAttribute("data-paid")); };
     });
     box.querySelectorAll("[data-wreview]").forEach(function(b){
       b.onclick=function(){ openWorkerReview(b.getAttribute("data-wreview"), accountsWindow(b)); };
@@ -966,7 +971,7 @@
     var amt=0; keys.forEach(function(k){ amt+=ST.accBulk[k].amt; });
     confirmModal(
       "Return "+fmt(keys.length)+" entries to unpaid",
-      '<p style="margin:0 0 10px">Take <b>'+fmt(keys.length)+' payment entr'+(keys.length===1?'y':'ies')+'</b> totalling <b>'+money(amt)+'</b> out of the accounts queue?</p>'+
+      '<p style="margin:0 0 10px">Take <b>'+fmt(keys.length)+' payment entr'+(keys.length===1?'y':'ies')+'</b> totalling <b>'+money(amt)+'</b> out of the payroll queue?</p>'+
       '<p class="note" style="margin:0">Each payment reference is removed, the workers go back to <b>Unpaid</b> and their reviews are cleared — correct the days if needed, then review and send again.</p>',
       "Return all to unpaid",
       function(){
@@ -999,7 +1004,7 @@
   function withdrawRun(name, nm){
     confirmModal(
       "Return to unpaid",
-      '<p style="margin:0 0 10px">Take <b>'+esc(nm)+'</b> ('+esc(name)+') out of the accounts queue?</p>'+
+      '<p style="margin:0 0 10px">Take <b>'+esc(nm)+'</b> ('+esc(name)+') out of the payroll queue?</p>'+
       '<p class="note" style="margin:0">The payment reference is removed, the worker goes back to <b>Unpaid</b> and their review is cleared — correct the days if needed, then review and send again.</p>',
       "Return to unpaid",
       function(){
@@ -1016,25 +1021,8 @@
     );
   }
 
-  function markPaid(name){
-    confirmModal(
-      "Mark run paid",
-      '<p style="margin:0 0 10px">Release <b>'+esc(name)+'</b> and stamp every included worker row as paid?</p>'+
-      '<p class="note" style="margin:0">This finalises the run and can’t be undone from here. Worker earnings in the run’s window are marked paid.</p>',
-      "Mark paid",
-      function(){
-        call({ action:"pay_mark_paid", name:name }, true).then(function(d){
-          if(d.error){ toast(d.error,"bad"); return; }
-          toast("Run "+esc(name)+" marked paid","good");
-          loadAccounts();
-        }).catch(function(e){ toast("Could not mark paid: "+e.message,"bad"); });
-      },
-      "good"
-    );
-  }
-
   // ════════════════════════════════════════════════
-  //  ISSUES — workers sent to accounts who got no payroll record
+  //  ISSUES — workers sent to payroll who got no payroll record
   //  (the throw that used to kill a whole bulk send is now guarded server-side;
   //  this tab is the only place that failure is visible)
   // ════════════════════════════════════════════════
@@ -1060,7 +1048,7 @@
     if(!box) return;
     var r=issRange();
     if(!r.from || !r.to){
-      box.innerHTML='<div class="empty"><b>Pick a date range</b>Choose From and To dates, then Apply, to check for workers who were sent to accounts but got no payroll record.</div>';
+      box.innerHTML='<div class="empty"><b>Pick a date range</b>Choose From and To dates, then Apply, to check for workers who were sent to payroll but got no payroll record.</div>';
       ISQ.data=null;
       updateIssBadge();
       return;
@@ -1219,18 +1207,22 @@
     call({ action:"pay_my" }).then(function(d){
       var rows=d.runs||[];
       if(!rows.length){
-        box.innerHTML='<div class="empty"><b>No runs yet</b>Create your first payment run from the Build tab.</div>';
+        box.innerHTML='<div class="empty"><b>Nothing here yet</b>Runs land here once payroll actually pays them &mdash; check Awaiting payroll for anything still pending.</div>';
         return;
       }
       var h='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+
-        '<th>Run</th><th>Title</th><th class="n">Workers</th><th class="n">Total</th><th class="c">Status</th><th>Date</th></tr></thead><tbody>';
+        '<th>Run</th><th>Title</th><th class="n">Workers</th><th class="n">Total</th><th class="c">Status</th><th>Date</th><th>Salary Slip</th></tr></thead><tbody>';
       rows.forEach(function(r){
+        var slipCell=r.salary_slip
+          ? '<a href="/app/salary-slip/'+encodeURIComponent(r.salary_slip)+'" target="_blank" class="m">'+esc(r.salary_slip)+'</a>'
+          : '<span class="m" style="color:var(--mute)">'+(r.workflow_state==="Paid"?"—":"none")+'</span>';
         h+='<tr><td><span class="rowlink" data-view="'+esc(r.name)+'">'+esc(r.name)+'</span></td>'+
            '<td>'+esc(r.run_title||"—")+'</td>'+
            '<td class="n m">'+fmt(r.total_workers)+'</td>'+
            '<td class="n m">'+money(r.amount)+'</td>'+
            '<td class="c">'+stateTag(r.workflow_state)+'</td>'+
-           '<td>'+esc(r.payroll_date||"")+'</td></tr>';
+           '<td>'+esc(r.payroll_date||"")+'</td>'+
+           '<td>'+slipCell+'</td></tr>';
       });
       h+='</tbody></table></div></div>';
       box.innerHTML=h;
@@ -1324,7 +1316,7 @@
   }
 
   function payTag(s){
-    var m={"Paid":"paid","Part paid":"submitted","In run (awaiting accounts)":"submitted","Unpaid":"unpaid","Sent to accounts":"sent","Submitted":"sent"};
+    var m={"Paid":"paid","Part paid":"submitted","In run (awaiting payroll)":"submitted","Unpaid":"unpaid","Partially sent":"submitted","Sent to payroll":"sent","Submitted":"sent"};
     var c=m[s]||"";
     return '<span class="tag '+c+'">'+esc(s||"")+'</span>';
   }
@@ -1623,7 +1615,8 @@
       var g=map[r.emp];
       if(!g){
         g={ emp:r.emp, nm:r.emp_name||r.emp, type:r.emp_type||"", farms:{}, tasks:{}, days:{},
-            first:null, last:null, qty:0, amount:0, paid_amt:0, unpaid_amt:0, runs:{} };
+            first:null, last:null, qty:0, amount:0, paid_amt:0, unpaid_amt:0,
+            payable_amt:0, sent_amt:0, runs:{} };
         map[r.emp]=g;
       }
       if(r.farm) g.farms[r.farm]=1;
@@ -1635,8 +1628,19 @@
       }
       g.qty+=(r.qty||0);
       g.amount+=(r.amount||0);
+      // a day-row's own pay_status already distinguishes never-sent from
+      // sent-awaiting-payroll (see pay_audit's detail query) -- unpaid_amt keeps
+      // the old "not yet paid, sent or not" total; payable_amt is what a Send
+      // button here may actually still act on.
       if(r.pay_status==="Paid"){ g.paid_amt+=(r.amount||0); }
-      else if(r.in_payroll){ g.unpaid_amt+=(r.amount||0); if(!r.reviewed) g.unreviewed_amt=(g.unreviewed_amt||0)+(r.amount||0); }
+      else if(r.pay_status==="Sent to payroll"){
+        g.unpaid_amt+=(r.amount||0); g.sent_amt+=(r.amount||0);
+        if(!r.reviewed) g.unreviewed_amt=(g.unreviewed_amt||0)+(r.amount||0);
+      }
+      else if(r.in_payroll){
+        g.unpaid_amt+=(r.amount||0); g.payable_amt+=(r.amount||0);
+        if(!r.reviewed) g.unreviewed_amt=(g.unreviewed_amt||0)+(r.amount||0);
+      }
       if(r.run_ref) g.runs[r.run_ref]=1;
     });
     var rows=Object.keys(map).map(function(k){
@@ -1647,10 +1651,12 @@
       g.run_list=Object.keys(g.runs).sort().join(", ");
       if(g.amount>0 && g.paid_amt>=g.amount-0.001) g.status="Paid";
       else if(g.paid_amt>0) g.status="Part paid";
+      else if(g.payable_amt>0.001 && g.sent_amt>0.001) g.status="Partially sent";
+      else if(g.payable_amt<=0.001 && g.sent_amt>0.001) g.status="Sent to payroll";
       else g.status="Unpaid";
       return g;
     });
-    rows.sort(function(a,b){ return b.unpaid_amt-a.unpaid_amt || b.amount-a.amount; });
+    rows.sort(function(a,b){ return b.payable_amt-a.payable_amt || b.amount-a.amount; });
     return rows;
   }
 
@@ -1660,7 +1666,7 @@
     var h='<div class="filters" style="margin-bottom:10px">'+
       '<input type="text" id="auw-q" placeholder="Search worker, ID or task&hellip;" style="min-width:230px;flex:0 1 auto">'+
       '<span class="hint" id="auw-count"></span><span style="flex:1"></span>'+
-      '<span class="hint">Review each person, then approve &amp; send their pay to accounts &mdash; one at a time.</span></div>'+
+      '<span class="hint">Review each person, then approve &amp; send their pay for payroll processing &mdash; one at a time.</span></div>'+
       '<div id="auw-body"></div>';
     box.innerHTML=h;
     var q=el("auw-q");
@@ -1677,16 +1683,16 @@
         '<th class="c">Status</th><th class="c">Actions</th></tr></thead><tbody>';
       var tq=0, te=0, tp=0, tu=0;
       flt.forEach(function(g){
-        tq+=g.qty; te+=g.amount; tp+=g.paid_amt; tu+=g.unpaid_amt;
+        tq+=g.qty; te+=g.amount; tp+=g.paid_amt; tu+=g.payable_amt;
         var acts='<button type="button" class="btn sm" data-review="'+esc(g.emp)+'">Review</button>';
-        if(ST.canSend && g.unpaid_amt>0.001 && g.status==="Unpaid"){
-          acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.unpaid_amt+'">Send to accounts</button>';
+        if(ST.canSend && g.payable_amt>0.001 && (g.status==="Unpaid" || g.status==="Partially sent")){
+          acts+=' <button type="button" class="btn good sm" data-approve="'+esc(g.emp)+'" data-nm="'+esc(g.nm)+'" data-amt="'+g.payable_amt+'">Send to payroll</button>';
         }
         t+='<tr><td><span class="rowlink" data-review="'+esc(g.emp)+'">'+esc(g.nm)+'</span></td>'+
           '<td class="m">'+esc(g.emp)+'</td><td>'+esc(g.farm_list)+'</td>'+
           '<td class="m">'+esc(dshort(g.first))+' &rarr; '+esc(dshort(g.last))+'</td>'+
           '<td class="n m">'+fmt(g.task_count)+'</td><td class="n m">'+fmt(g.day_count)+'</td><td class="n m">'+fmt(g.qty)+'</td>'+
-          '<td class="n m">'+fmt(g.amount)+'</td><td class="n m">'+fmt(g.paid_amt)+'</td><td class="n m">'+fmt(g.unpaid_amt)+'</td>'+
+          '<td class="n m">'+fmt(g.amount)+'</td><td class="n m">'+fmt(g.paid_amt)+'</td><td class="n m">'+fmt(g.payable_amt)+'</td>'+
           '<td class="c">'+payTag(g.status)+'</td><td class="c" style="white-space:nowrap">'+acts+'</td></tr>';
       });
       t+='</tbody><tfoot><tr><th colspan="6">TOTAL &middot; '+fmt(flt.length)+' workers</th>'+
@@ -1786,7 +1792,7 @@
     h+='<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">'+
       '<div class="kpi" style="--kc:var(--pay)"><div class="k">Earned</div><div class="v">'+fmt(k.earned,2)+'</div><div class="u">KES · window</div></div>'+
       '<div class="kpi" style="--kc:var(--good)"><div class="k">Paid</div><div class="v">'+fmt(k.paid_amt,2)+'</div><div class="u">KES</div></div>'+
-      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Unpaid</div><div class="v">'+fmt(k.unpaid_amt,2)+'</div><div class="u">KES · payable</div></div>'+
+      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Unpaid</div><div class="v">'+fmt(k.payable_amt,2)+'</div><div class="u">KES · payable</div></div>'+
       '<div class="kpi" style="--kc:var(--blue)"><div class="k">Days</div><div class="v">'+fmt(k.days)+'</div><div class="u">worked</div></div>'+
       '<div class="kpi"><div class="k">Tasks</div><div class="v">'+fmt(tasks.length)+'</div><div class="u">'+fmt(k.qty)+' units total</div></div>'+
       '<div class="kpi"><div class="k">Avg / day</div><div class="v">'+fmt(k.avg_per_day)+'</div><div class="u">KES</div></div>'+
@@ -1802,11 +1808,11 @@
           '<td class="m">'+esc(t.standard||"—")+'</td>'+
           '<td class="m">'+esc(dshort(t.work_from))+' &rarr; '+esc(dshort(t.work_to))+'</td>'+
           '<td class="n m">'+fmt(t.days)+'</td><td class="n m">'+fmt(t.qty)+'</td><td class="n m">'+fmt(t.rate,2)+'</td>'+
-          '<td class="n m">'+fmt(t.amount,2)+'</td><td class="n m">'+fmt(t.unpaid_amt,2)+'</td>'+
+          '<td class="n m">'+fmt(t.amount,2)+'</td><td class="n m">'+fmt(t.payable_amt,2)+'</td>'+
           '<td class="c">'+payTag(t.pay_status)+'</td></tr>';
       });
       h+='</tbody><tfoot><tr><th colspan="4">TOTAL</th><th class="n">'+fmt(k.days)+'</th><th class="n">'+fmt(k.qty)+'</th><th></th>'+
-         '<th class="n">'+fmt(k.earned,2)+'</th><th class="n">'+fmt(k.unpaid_amt,2)+'</th><th></th></tr></tfoot></table></div>';
+         '<th class="n">'+fmt(k.earned,2)+'</th><th class="n">'+fmt(k.payable_amt,2)+'</th><th></th></tr></tfoot></table></div>';
     }
     // people involved (union)
     var seenWho={}, whoAll=[];
@@ -1864,7 +1870,10 @@
       });
       h+='</tbody><tfoot><tr><th>'+fmt(t.days)+' days</th><th></th>'+
          '<th class="n">'+fmt(t.qty)+'</th><th class="n">'+fmt(t.rate,2)+' avg</th><th class="n">'+fmt(t.amount,2)+'</th>'+
-         '<th class="c" colspan="2">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
+         '<th class="c" colspan="2">'+(t.payable_amt>0.001? fmt(t.payable_amt,2)+' unpaid'
+            : t.pay_status==="Paid" ? 'fully paid'
+            : t.sent_amt>0.001 ? 'sent, awaiting payroll'
+            : 'fully paid')+'</th></tr></tfoot></table></div>'+
       '</div>';
     });
     if(tasks.length){
@@ -1878,12 +1887,15 @@
     // ════ TAB 3 · PAYMENTS ════
     h+='<div class="wr-sec" id="wr-pay" style="display:none">';
     h+='<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">'+
-      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Payable now</div><div class="v">'+fmt(k.unpaid_amt,2)+'</div><div class="u">KES · confirmed, unpaid</div></div>'+
+      '<div class="kpi" style="--kc:var(--warn)"><div class="k">Payable now</div><div class="v">'+fmt(k.payable_amt,2)+'</div><div class="u">KES · confirmed, unpaid</div></div>'+
       '<div class="kpi" style="--kc:var(--good)"><div class="k">Paid to date</div><div class="v">'+fmt(k.paid_amt,2)+'</div><div class="u">KES · this window</div></div>'+
       '<div class="kpi"><div class="k">Runs</div><div class="v">'+fmt(runs.length)+'</div><div class="u">payment runs</div></div>'+
     '</div>';
-    if(k.unpaid_amt>0.001){
-      h+='<div class="banner info" style="margin-top:14px"><b>Ready to pay.</b> “Approve &amp; send to accounts” below creates a payment run for this worker alone ('+money(k.unpaid_amt)+') and hands it to accounts for release.</div>';
+    if((k.sent_amt||0)>0.001){
+      h+='<div class="hint" style="margin-top:10px">'+money(k.sent_amt)+' of this window has already been sent to payroll and is awaiting a Salary Slip &mdash; not counted in Payable now.</div>';
+    }
+    if(k.payable_amt>0.001){
+      h+='<div class="banner info" style="margin-top:14px"><b>Ready to pay.</b> “Approve &amp; send to payroll” below raises an Additional Salary for this worker alone ('+money(k.payable_amt)+') &mdash; Paid once payroll submits the Salary Slip.</div>';
     }
     h+='<div class="sech" style="margin-top:16px">Payment runs including this worker</div>';
     if(!runs.length){ h+='<div class="empty">Not included in any payment run yet.</div>'; }
@@ -1905,7 +1917,7 @@
     if(!nIss){
       h+='<div class="empty"><b>Clean.</b> No attendance conflicts on any of this worker\'s day-rows in this window.</div>';
     } else {
-      h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Presence key: <b style="color:#0a7a43">in 06:42</b> check-in time · <b style="color:#0a7a43">P</b> marked present (no scan) · <b style="color:#b91c1c">absent</b> marked Absent · <b style="color:#a06000">?</b> no record either way. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every send to accounts is logged.</div>';
+      h+='<div class="hint" style="margin-bottom:12px">Day-rows whose pay conflicts with this worker\'s attendance evidence. Presence key: <b style="color:#0a7a43">in 06:42</b> check-in time · <b style="color:#0a7a43">P</b> marked present (no scan) · <b style="color:#b91c1c">absent</b> marked Absent · <b style="color:#a06000">?</b> no record either way. Fix the day with <b>Edit</b> in Work &amp; days, or override knowingly — every send to payroll is logged.</div>';
       var wsc2=ISS.absent.filter(function(r){ return r.scan_in; }).length;
       var groups=[
         {k:"absent", title:"Recorded on marked-Absent days", about:"Submitted attendance says Absent, yet work is recorded. "+(wsc2?wsc2+" of these days HAVE a scan — the attendance record itself is probably wrong; ask HR to correct it.":"No scans on these days — scrutinise the entries."), rows:ISS.absent},
@@ -2008,12 +2020,12 @@
     wireDayEdits(el("pd-body"), info);
     // footer: review first, then approve — one worker at a time
     var ap=el("pd-approve"), rv=el("pd-review");
-    var unpaid=k.unpaid_amt||0;
+    var unpaid=k.payable_amt||0;
     if(rv){ rv.style.display="none"; rv.onclick=null; }   // review step removed — send directly
     if(ap){
       if(unpaid>0.001){
         ap.style.display="";
-        ap.textContent="Submit & send "+money(unpaid)+" to accounts";
+        ap.textContent="Submit & send "+money(unpaid)+" to payroll";
         ap.onclick=function(){
           approveWorker(info.employee, info.employee_name||info.employee, unpaid, WR);
         };
@@ -2084,7 +2096,7 @@
           return;
         }
         var tot=0; ready.forEach(function(w){ tot+=w.amount||0; });
-        var body='<p style="margin:0 0 10px">Send <b>'+esc(nm)+'</b>&rsquo;s unpaid confirmed earnings to accounts as <b>'+
+        var body='<p style="margin:0 0 10px">Send <b>'+esc(nm)+'</b>&rsquo;s unpaid confirmed earnings for payroll processing as <b>'+
           ready.length+' weekly payment'+(ready.length>1?'s':'')+'</b>, totalling <b>'+money(tot)+'</b>?</p>'+
           '<table style="width:100%;margin:0 0 10px"><thead><tr><th>Pay week</th><th class="n">Days</th><th class="n">Amount</th></tr></thead><tbody>';
         ready.forEach(function(w){
@@ -2097,9 +2109,9 @@
             held.map(function(w){ return esc(w.week_from)+' → '+esc(w.week_to)+' ('+money(w.amount)+')'; }).join(", ")+
             ' — that week is still in progress and can be sent once it closes.</p>';
         }
-        body+='<p class="note" style="margin:0">Each week becomes its own payment reference, handed to accounts as <b>Unpaid</b>, '+
-          'so payroll picks up one line per worker per week.</p>';
-        confirmModal("Approve & send to accounts", body,
+        body+='<p class="note" style="margin:0">Each week raises its own Additional Salary and lands here as <b>Unpaid</b> &mdash; '+
+          'Paid once payroll submits the Salary Slip that carries it.</p>';
+        confirmModal("Approve & send to payroll", body,
           "Send "+ready.length+" week"+(ready.length>1?"s":""),
           function(){
             call({ action:"pay_worker_submit", employee:emp, from_date:win.from||"", to_date:win.to||"" }, true)
@@ -2107,7 +2119,7 @@
                 if(d.error){ toast(d.error,"bad"); return; }
                 var made=d.created||[];
                 toast((made.length&&made[0].employee_name?made[0].employee_name:emp)+" · "+
-                      made.length+" weekly payment"+(made.length>1?"s":"")+" · "+money(tot)+" sent to accounts","good");
+                      made.length+" weekly payment"+(made.length>1?"s":"")+" · "+money(tot)+" sent to payroll","good");
                 var m=el("pay-detail-modal"); if(m) m.classList.remove("on");
                 if(win.refresh) win.refresh();
               })
@@ -2206,16 +2218,16 @@
       ["Window", (WR.from||"start")+" → "+(WR.to||"today"), "Worked", (k.first_day||"")+" → "+(k.last_day||"")],
       [],
       ["Earned KES", k.earned||0, "Paid KES", k.paid_amt||0],
-      ["Unpaid KES", k.unpaid_amt||0, "Days worked", k.days||0],
+      ["Unpaid KES", k.payable_amt||0, "Days worked", k.days||0],
       ["Tasks", tasks.length, "Total qty", k.qty||0],
       [],
       ["Task",TX("unit_singular","Block"),"Standard",TX("top_singular","Farm"),"Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
     ];
     tasks.forEach(function(t){
       s1.push([taskName(t.task), t.block||"", t.standard||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,
-               Math.round((t.rate||0)*100)/100, t.amount||0, t.unpaid_amt||0, t.pay_status||""]);
+               Math.round((t.rate||0)*100)/100, t.amount||0, t.payable_amt||0, t.pay_status||""]);
     });
-    s1.push(["TOTAL","","","","", k.days||0, k.qty||0, "", k.earned||0, k.unpaid_amt||0, ""]);
+    s1.push(["TOTAL","","","","", k.days||0, k.qty||0, "", k.earned||0, k.payable_amt||0, ""]);
     // ── sheet 2: one table per task, day rows underneath — the Work & days view ──
     var s2=[];
     tasks.forEach(function(t){
@@ -2234,7 +2246,10 @@
                  r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll", r.run_ref||""]);
       });
       s2.push([(t.days||0)+" days", t.qty||0, Math.round((t.rate||0)*100)/100+" avg", t.amount||0,
-               (t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+" unpaid":"fully paid"), ""]);
+               (t.payable_amt>0.001? fmt(t.payable_amt,2)+" unpaid"
+                 : t.pay_status==="Paid" ? "fully paid"
+                 : t.sent_amt>0.001 ? "sent, awaiting payroll"
+                 : "fully paid"), ""]);
       s2.push([]);
     });
     if(!s2.length) s2.push(["No confirmed work in this window"]);
@@ -2401,14 +2416,6 @@
           h+='</tbody><tfoot><tr><td colspan="4">Amount</td><td class="n m">'+money(p.amount)+'</td></tr></tfoot></table></div></div>';
         }
         el("pr-body").innerHTML=h;
-        // if this run is pending and the user is accounts, offer mark-paid from the modal too
-        if(p.workflow_state==="Unpaid" && ST.isAccounts){
-          var foot=el("pr-foot");
-          foot.innerHTML='<button type="button" class="btn" id="pr-dismiss">Close</button>'+
-                         '<button type="button" class="btn good" id="pr-paid">Mark paid</button>';
-          el("pr-dismiss").onclick=function(){ m.classList.remove("on"); };
-          el("pr-paid").onclick=function(){ m.classList.remove("on"); markPaid(name); };
-        }
       })
       .catch(function(){ el("pr-body").innerHTML='<div class="err">Could not load run lines.</div>'; });
   }

@@ -64,32 +64,19 @@ def wm_payroll_recompute(**kwargs):
         return out
     else:
         RC_LISTS = [
-            ("employment_type", "Work Management Payable Employment Type", "employment_type", "tw_employment_types"),
-            ("designation", "Work Management Payable Designation", "designation", "tw_designations"),
-            ("custom_category", "Work Management Payable Category", "category", "tw_categories"),
+            ("employment_type", "Work Management Payable Employment Type", "employment_type"),
+            ("designation", "Work Management Payable Designation", "designation"),
+            ("custom_category", "Work Management Payable Category", "category"),
         ]
         RC_RULE = {}
-        for rc_col, rc_child, rc_cfield, rc_box in RC_LISTS:
+        for rc_col, rc_child, rc_cfield in RC_LISTS:
             rc_vals = []
-            # Pickers first, the old typed boxes second -- the same order the entry
-            # screen reads them in. If these two disagreed, the detector would report
-            # drift that the screen does not see, or miss drift that it does.
             if frappe.db.exists("DocType", rc_child):
                 for rc_r in frappe.get_all(rc_child,
                         filters={"parenttype": "Work Management Settings"}, fields=[rc_cfield]):
                     rc_p = str(rc_r.get(rc_cfield) or "").strip()
                     if rc_p:
                         rc_vals.append(rc_p)
-            if not rc_vals:
-                rc_raw = frappe.db.get_single_value("Work Management Settings", rc_box)
-                for rc_v in str(rc_raw or "").replace("\r", "\n").replace("\n", ",").split(","):
-                    rc_c = rc_v.strip()
-                    rc_ok = 1
-                    for rc_ch in rc_c:
-                        if not (rc_ch.isalnum() or rc_ch in " -_/&().'"):
-                            rc_ok = 0
-                    if rc_c and rc_ok:
-                        rc_vals.append(rc_c)
             RC_RULE[rc_col] = rc_vals
         out["rule"] = RC_RULE
 

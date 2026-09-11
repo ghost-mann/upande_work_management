@@ -10,42 +10,6 @@ import unittest
 from work_management import payroll_rule as rule
 
 
-class TestReadingTheConfiguredLists(unittest.TestCase):
-	"""These are free-text boxes whose contents are interpolated into SQL. A
-	newline in one of them once took the whole list down silently and stopped
-	315 task workers being payable, so how the text is read is the part that
-	has actually broken in production.
-	"""
-
-	def test_a_comma_separated_list_is_read(self):
-		self.assertEqual(rule.parse_list("Contract, Permanent"), {"Contract", "Permanent"})
-
-	def test_a_newline_separated_list_is_read_too(self):
-		"""The regression that stopped 315 people being paid."""
-		self.assertEqual(rule.parse_list("Task Worker\nSecurity Guard"),
-			{"Task Worker", "Security Guard"})
-
-	def test_a_windows_newline_is_read_too(self):
-		self.assertEqual(rule.parse_list("Task Worker\r\nSecurity Guard"),
-			{"Task Worker", "Security Guard"})
-
-	def test_padding_is_trimmed(self):
-		self.assertEqual(rule.parse_list("  Contract  ,  Permanent "), {"Contract", "Permanent"})
-
-	def test_an_empty_box_reads_as_nothing(self):
-		self.assertEqual(rule.parse_list(""), set())
-		self.assertEqual(rule.parse_list(None), set())
-
-	def test_a_value_that_could_break_out_of_the_sql_is_dropped(self):
-		"""Dropped on its own -- never taking the rest of the list with it."""
-		self.assertEqual(rule.parse_list("Contract, Rob'; drop table--, Permanent"),
-			{"Contract", "Permanent"})
-
-	def test_the_punctuation_a_job_title_really_uses_is_kept(self):
-		self.assertEqual(rule.parse_list("Cook / Cleaner, Director's Aide, Fixed-Term"),
-			{"Cook / Cleaner", "Director's Aide", "Fixed-Term"})
-
-
 class TestWhoQualifies(unittest.TestCase):
 	"""Any one of the three lists is enough -- they are ORed, not ANDed."""
 
@@ -113,29 +77,17 @@ class TestSpottingRowsTheRuleNoLongerAgreesWith(unittest.TestCase):
 		self.assertEqual(rule.disagreements([self.row("999", 0)], self.RULE, {}), [])
 
 
-class TestReadingEitherShape(unittest.TestCase):
-	"""The three lists are moving from free text to picked values, and payroll
-	cannot be down for a moment in between. So the reader accepts both: child
-	rows if the table has any, otherwise the legacy text. Every intermediate
-	state -- code deployed but tables empty, tables filled but text still there
-	-- resolves to the same rule.
+class TestReadingThePickedLists(unittest.TestCase):
+	"""The three lists are picked child rows, not typed text. rule_from() just
+	reads the values chosen in each table.
 	"""
 
 	def settings(self, **kw):
-		base = {"tw_employment_types": "", "tw_designations": "", "tw_categories": "",
-			"tw_employment_type_rows": [], "tw_designation_rows": [], "tw_category_rows": []}
+		base = {"tw_employment_type_rows": [], "tw_designation_rows": [], "tw_category_rows": []}
 		base.update(kw)
 		return base
 
-	def test_the_legacy_text_is_still_read_when_no_rows_exist(self):
-		"""The state live is in today. Nothing may change for it."""
-		r = rule.rule_from(self.settings(tw_employment_types="Contract",
-			tw_designations="Task Worker\nSecurity Guard", tw_categories="Value Adder"))
-		self.assertEqual(r["employment_type"], {"Contract"})
-		self.assertEqual(r["designation"], {"Task Worker", "Security Guard"})
-		self.assertEqual(r["custom_category"], {"Value Adder"})
-
-	def test_picked_rows_are_read_when_they_exist(self):
+	def test_picked_rows_are_read(self):
 		r = rule.rule_from(self.settings(
 			tw_employment_type_rows=[{"employment_type": "Contract"}],
 			tw_designation_rows=[{"designation": "Task Worker"}, {"designation": "Security Guard"}],
@@ -144,24 +96,10 @@ class TestReadingEitherShape(unittest.TestCase):
 		self.assertEqual(r["designation"], {"Task Worker", "Security Guard"})
 		self.assertEqual(r["custom_category"], {"Value Adder"})
 
-	def test_rows_win_over_leftover_text(self):
-		"""Once a list is picked, the old text is history -- not an addition."""
-		r = rule.rule_from(self.settings(tw_employment_types="Permanent, Intern",
-			tw_employment_type_rows=[{"employment_type": "Contract"}]))
-		self.assertEqual(r["employment_type"], {"Contract"})
-
-	def test_the_two_shapes_can_be_mixed_per_list(self):
-		"""Migrating one list at a time must not disturb the others."""
-		r = rule.rule_from(self.settings(
-			tw_employment_type_rows=[{"employment_type": "Contract"}],
-			tw_designations="Task Worker"))
-		self.assertEqual(r["employment_type"], {"Contract"})
-		self.assertEqual(r["designation"], {"Task Worker"})
-
 	def test_blank_rows_are_ignored_rather_than_matching_everyone(self):
 		r = rule.rule_from(self.settings(tw_employment_type_rows=[{"employment_type": ""},
-			{"employment_type": None}], tw_employment_types="Contract"))
-		self.assertEqual(r["employment_type"], {"Contract"})
+			{"employment_type": None}]))
+		self.assertEqual(r["employment_type"], set())
 
 	def test_a_picked_value_needs_no_character_check(self):
 		"""A Link value is a docname, not typing. Apostrophes stay."""
