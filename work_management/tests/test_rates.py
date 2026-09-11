@@ -12,6 +12,7 @@ Every case below is a real row from the Kaitet live Task master as at
 2026-08-04, not an invented number.
 """
 
+import os
 import unittest
 
 from work_management.rates import KNOWN_DAILY_WAGES, LEGACY_DAILY_WAGE, classify
@@ -162,6 +163,69 @@ class TestWageUplift(unittest.TestCase):
 		for target in (25, 200, 1250, 7, 3, 75, 1):
 			rate = 387.0 / target
 			self.assertAlmostEqual(rate * target, 387.0, places=9)
+
+
+class TestNoWriteSendsNullToANotNullColumn(unittest.TestCase):
+	"""`daily_wage_basis` is a Currency field, so its column is NOT NULL.
+
+	Saving a Task died with
+
+	    MySQLdb.IntegrityError: (1048, "Column 'daily_wage_basis' cannot be null")
+
+	from `task_on_update`, on the branch that amends a rate period already
+	starting today. A rate that is not wage-derived has no basis to record, and
+	the code said so with None.
+
+	The two sibling writes get away with it: they build the row through
+	`frappe.new_doc(...).update(...)`, and `get_valid_dict` defaults to
+	`sanitize=True`, which puts every Currency through `flt()` -- so None lands
+	as 0.0. `frappe.db.set_value` builds SQL straight from the dict and coerces
+	nothing, so the same None reaches the column intact and MariaDB refuses it.
+
+	0 is not a fudge here: it is already what the data holds. Every one of the
+	364 not-derived rate cards on kaitet-group reads 0.0, and not one row in the
+	table is NULL -- because the ORM has been quietly making them 0 all along.
+
+	Asserted against the source rather than a live write, because reproducing it
+	needs a database; the invariant is simply that no write anywhere in the
+	module offers None for that column.
+	"""
+
+	SOURCE = os.path.join(
+		os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rates.py"
+	)
+
+	def source(self):
+		with open(self.SOURCE) as handle:
+			return handle.read()
+
+	def test_daily_wage_basis_is_never_set_to_none(self):
+		offenders = [
+			line.strip()
+			for line in self.source().splitlines()
+			if "daily_wage_basis" in line and "None" in line
+		]
+		self.assertEqual(
+			offenders,
+			[],
+			"a NOT NULL Currency column is offered None:\n  " + "\n  ".join(offenders),
+		)
+
+	def test_the_column_is_still_written_somewhere(self):
+		"""Deleting the writes would also make the test above pass."""
+		self.assertGreaterEqual(self.source().count("daily_wage_basis"), 3)
+
+	def test_the_reported_task_takes_the_branch_that_broke(self):
+		"""20. Sprayline installation: 15.00 per Meter at 20 Meters a day.
+
+		`classify` returns the nearest tier whatever the verdict, so the third
+		value is not a "no basis" signal -- the caller records it only when the
+		verdict is `derived`. This rate is not, so the else-branch is what runs,
+		which is exactly the branch that offered None.
+		"""
+		verdict, implied, _nearest = classify(15.0, 20.0)
+		self.assertEqual(verdict, "not_derived")
+		self.assertEqual(implied, 300.0)
 
 
 if __name__ == "__main__":
