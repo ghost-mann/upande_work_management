@@ -106,6 +106,8 @@ after_migrate = [
 	"work_management.approvals.after_migrate",
 	"work_management.install.drop_stale_link_options",
 	"work_management.taxonomy.apply_labels",
+	# after approvals.after_migrate, which is what settles the chain this reads
+	"work_management.report_access.after_migrate",
 	"work_management.desk.sync",
 ]
 
