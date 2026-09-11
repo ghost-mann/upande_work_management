@@ -1203,18 +1203,18 @@
                 hay:((r.name||"")+" "+(r.farm||"")+" "+taskName(r.task)).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
+        var h='<table><thead><tr><th class="c" style="width:34px"></th><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
           var editable = (r.workflow_state==="Draft" || r.workflow_state==="Rejected");
           var editcell = editable ? '<span class="editlink" data-asg="'+esc(r.assignment)+'">Edit →</span>' : '';
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+editcell+'</td></tr>';
+          h+='<tr data-x="'+i+'"><td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+editcell+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
           elk.style.cursor="pointer";
           elk.onclick=function(ev){ ev.stopPropagation(); var asg=elk.getAttribute("data-asg"); if(asg) resumeActual(asg); };
         });
-        wireExpand(body, 9, function(i){
+        wireExpand(body, 10, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
             rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Status",esc(r.workflow_state)]])+
@@ -1300,13 +1300,116 @@
       });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load close requests.</div>'; });
   }
+  // ── BULK APPROVE / REJECT ───────────────────────────────────────────────
+  // The client: "the system allows submission and approval of one task at a
+  // time... time consuming with a large number of people." The server runs each
+  // document through the very branch its own row button uses, so nothing here
+  // decides anything -- this only chooses WHICH documents and renders what came
+  // back. See work_management/bulk.py.
+  //
+  // This tab shows ONE stage at a time, and the bulk call carries that stage:
+  // approving across stages in one press would approve work the user is not
+  // looking at.
+  var BULK={picked:{}};
+  function bulkPicked(rows){
+    var live={}; (rows||[]).forEach(function(r){ live[r.name]=1; });
+    return Object.keys(BULK.picked).filter(function(n){ return BULK.picked[n] && live[n]; });
+  }
+  function bulkBar(rows){
+    var n=bulkPicked(rows).length;
+    return '<div class="filters" id="bulk-bar" style="margin-bottom:8px;padding:8px 14px;gap:8px;align-items:center">'+
+      '<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;cursor:pointer">'+
+        '<input type="checkbox" id="bulk-all"> Select all shown</label>'+
+      '<span class="hint" id="bulk-n" style="font-weight:600;color:var(--ink)">'+(n?fmt(n)+" selected":"")+'</span>'+
+      '<span style="flex:1"></span>'+
+      '<button type="button" class="btn solid" id="bulk-app"'+(n?'':' disabled')+'>Approve selected'+(n?' ('+fmt(n)+')':'')+'</button>'+
+      '<button type="button" class="btn" id="bulk-rej"'+(n?'':' disabled')+'>Reject selected'+(n?' ('+fmt(n)+')':'')+'</button>'+
+      '</div>'+
+      // revealed by "Reject selected", so the reason is typed against a
+      // selection that is still visible
+      '<div id="bulk-why" style="display:none;margin-bottom:8px;padding:10px 14px;border:1px solid #fed7aa;background:#fff7ed;border-radius:var(--r)">'+
+        '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#7c2d12;font-weight:700;margin-bottom:5px">Why are these being rejected? (recorded on every one)</label>'+
+        '<textarea id="bulk-why-text" rows="2" style="font-family:inherit;font-size:12.5px;border:1px solid var(--line);padding:7px 9px;width:100%;background:#fff;color:var(--ink);resize:vertical"></textarea>'+
+        '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">'+
+          '<button type="button" class="btn sm" id="bulk-why-cancel">Cancel</button>'+
+          '<button type="button" class="btn solid sm" id="bulk-why-go">Reject '+fmt(n)+'</button>'+
+        '</div></div>'+
+      '<div id="bulk-result"></div>';
+  }
+  // Partial success is the normal case with a mixed queue, so it renders as a
+  // result to read rather than one alert per document.
+  function bulkResult(d){
+    var box=el("bulk-result"); if(!box) return;
+    if(!d || (!d.ok && !d.failed)){ box.innerHTML=""; return; }
+    var ok=d.ok||[], bad=d.failed||[];
+    var h='<div class="banner '+(bad.length?(ok.length?'info':'warn'):'good')+'" style="margin-bottom:10px;display:block">'+
+      '<b>'+esc(d.summary||"")+'</b>';
+    if(bad.length){
+      h+='<ul style="margin:8px 0 0 16px;padding:0">';
+      bad.forEach(function(f){ h+='<li>'+esc(f.name)+' — '+esc(f.why)+'</li>'; });
+      h+='</ul>';
+    }
+    box.innerHTML=h+'</div>';
+  }
+  function wireBulk(body, rows, stageKey, reload){
+    var all=el("bulk-all"), napp=el("bulk-app"), nrej=el("bulk-rej");
+    var sync=function(){
+      var n=bulkPicked(rows).length;
+      if(el("bulk-n")) el("bulk-n").textContent=n?fmt(n)+" selected":"";
+      if(napp){ napp.disabled=!n; napp.textContent="Approve selected"+(n?" ("+fmt(n)+")":""); }
+      if(nrej){ nrej.disabled=!n; nrej.textContent="Reject selected"+(n?" ("+fmt(n)+")":""); }
+    };
+    body.querySelectorAll("[data-bpick]").forEach(function(cb){
+      cb.onclick=function(ev){ ev.stopPropagation(); BULK.picked[cb.getAttribute("data-bpick")]=cb.checked; sync(); };
+    });
+    if(all) all.onclick=function(){
+      body.querySelectorAll("[data-bpick]").forEach(function(cb){
+        cb.checked=all.checked; BULK.picked[cb.getAttribute("data-bpick")]=all.checked;
+      });
+      sync();
+    };
+    var send=function(which, reason){
+      var names=bulkPicked(rows);
+      if(!names.length) return;
+      var args={ action:which, names:JSON.stringify(names), stage:stageKey };
+      if(reason) args.reason=reason;
+      if(napp) napp.disabled=true; if(nrej) nrej.disabled=true;
+      call(args, true).then(function(d){
+        if(d.error){ toast("Error: "+d.error); sync(); return; }
+        BULK.picked={};
+        toast(d.summary||"Done");
+        reload(d);
+      }).catch(function(e){ toast(e && e.message ? e.message : "Bulk action failed"); sync(); });
+    };
+    // THE REASON IS A FIELD, NOT A BROWSER PROMPT. It sits in the bar with the
+    // selection still on screen, so whoever is rejecting can see what they are
+    // rejecting while they type why -- and a prompt() cannot be styled, cannot
+    // be a textarea, and disappears the moment focus moves.
+    var why=el("bulk-why");
+    if(nrej) nrej.onclick=function(){
+      if(!bulkPicked(rows).length) return;
+      if(why){ why.style.display="block"; var t=el("bulk-why-text"); if(t) t.focus(); }
+    };
+    var cancel=el("bulk-why-cancel");
+    if(cancel) cancel.onclick=function(){ if(why) why.style.display="none"; };
+    var confirm=el("bulk-why-go");
+    if(confirm) confirm.onclick=function(){
+      var t=el("bulk-why-text"), text=String((t&&t.value)||"").trim();
+      if(!text){ toast("A reason is required to reject"); if(t) t.focus(); return; }
+      if(why) why.style.display="none";
+      send("act_reject_bulk", text);
+    };
+    if(napp) napp.onclick=function(){ send("act_approve_bulk"); };
+    sync();
+  }
+
   function loadStage(bodyId, stage, approveAction){
     var b=el(bodyId); b.className="loading"; b.innerHTML="Loading…";
     call({action:"act_pending",stage:stage}).then(function(d){
       var rows=d.pending||[];
       if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">Nothing at this stage.</div>'; return; }
       b.className="";
-      b.innerHTML=fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task, entered by…"});
+      b.innerHTML=fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task, entered by…"}) + bulkBar(rows);
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)+" "+(r.entered_by||"")).toLowerCase()};
@@ -1326,6 +1429,9 @@
         body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act(approveAction, btn.getAttribute("data-app"), bodyId, stage, approveAction); }; });
         body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("act_reject", btn.getAttribute("data-rej"), bodyId, stage, approveAction); }; });
         body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ var asg=btn.getAttribute("data-edit"); if(!asg){ toast("No assignment link on this record"); return; } openActualForEdit(asg, btn.getAttribute("data-doc"), stage); }; });
+        // the stage key the server wants: act_fm_approve -> fm
+        wireBulk(body, list, String(approveAction||"").split("_")[1],
+          function(d){ loadStage(bodyId, stage, approveAction); setTimeout(function(){ bulkResult(d); }, 250); });
       });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load.</div>'; });
   }

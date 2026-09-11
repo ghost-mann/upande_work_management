@@ -675,12 +675,15 @@
           var editable = (r.workflow_state==="Draft"||r.workflow_state==="Rejected"||r.workflow_state==="Pending HR Head");
           var canSub = (r.workflow_state==="Assigned");
           var actionBtn = editable ? '<button class="btn" data-edit="'+esc(r.name)+'">Edit</button>' : (canSub ? '<button class="btn solid" data-sub="'+esc(r.name)+'">Manage crew</button>' : '');
-          h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
+          h+='<tr data-xa="'+esc(r.name)+'"><td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ openAsgForEdit(btn.getAttribute("data-edit")); }; });
         body.querySelectorAll("[data-sub]").forEach(function(btn){ btn.onclick=function(){ openSubstitute(btn.getAttribute("data-sub")); }; });
-        wireExpandAsg(body, 10);
+        wireExpandAsg(body, 11);
+      // the stage key the server wants: a_fm_approve -> fm
+      wireBulk(body, rows, String(c.approveAction||"").split("_")[1],
+        function(d){ loadStage(bodyId, c.stage, c.approveAction); setTimeout(function(){ bulkResult(d); }, 250); });
       });
     });
   }
@@ -911,6 +914,109 @@
     }
   }
 
+  // ── BULK APPROVE / REJECT ───────────────────────────────────────────────
+  // The client: "the system allows submission and approval of one task at a
+  // time... time consuming with a large number of people." The server runs each
+  // document through the very branch its own row button uses, so nothing here
+  // decides anything -- this only chooses WHICH documents and renders what came
+  // back. See work_management/bulk.py.
+  //
+  // This tab shows ONE stage at a time, and the bulk call carries that stage:
+  // approving across stages in one press would approve work the user is not
+  // looking at.
+  var BULK={picked:{}};
+  function bulkPicked(rows){
+    var live={}; (rows||[]).forEach(function(r){ live[r.name]=1; });
+    return Object.keys(BULK.picked).filter(function(n){ return BULK.picked[n] && live[n]; });
+  }
+  function bulkBar(rows){
+    var n=bulkPicked(rows).length;
+    return '<div class="filters" id="bulk-bar" style="margin-bottom:8px;padding:8px 14px;gap:8px;align-items:center">'+
+      '<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;cursor:pointer">'+
+        '<input type="checkbox" id="bulk-all"> Select all shown</label>'+
+      '<span class="hint" id="bulk-n" style="font-weight:600;color:var(--ink)">'+(n?fmt(n)+" selected":"")+'</span>'+
+      '<span style="flex:1"></span>'+
+      '<button type="button" class="btn solid" id="bulk-app"'+(n?'':' disabled')+'>Approve selected'+(n?' ('+fmt(n)+')':'')+'</button>'+
+      '<button type="button" class="btn" id="bulk-rej"'+(n?'':' disabled')+'>Reject selected'+(n?' ('+fmt(n)+')':'')+'</button>'+
+      '</div>'+
+      // revealed by "Reject selected", so the reason is typed against a
+      // selection that is still visible
+      '<div id="bulk-why" style="display:none;margin-bottom:8px;padding:10px 14px;border:1px solid #fed7aa;background:#fff7ed;border-radius:var(--r)">'+
+        '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#7c2d12;font-weight:700;margin-bottom:5px">Why are these being rejected? (recorded on every one)</label>'+
+        '<textarea id="bulk-why-text" rows="2" style="font-family:inherit;font-size:12.5px;border:1px solid var(--line);padding:7px 9px;width:100%;background:#fff;color:var(--ink);resize:vertical"></textarea>'+
+        '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">'+
+          '<button type="button" class="btn sm" id="bulk-why-cancel">Cancel</button>'+
+          '<button type="button" class="btn solid sm" id="bulk-why-go">Reject '+fmt(n)+'</button>'+
+        '</div></div>'+
+      '<div id="bulk-result"></div>';
+  }
+  // Partial success is the normal case with a mixed queue, so it renders as a
+  // result to read rather than one alert per document.
+  function bulkResult(d){
+    var box=el("bulk-result"); if(!box) return;
+    if(!d || (!d.ok && !d.failed)){ box.innerHTML=""; return; }
+    var ok=d.ok||[], bad=d.failed||[];
+    var h='<div class="banner '+(bad.length?(ok.length?'info':'warn'):'good')+'" style="margin-bottom:10px;display:block">'+
+      '<b>'+esc(d.summary||"")+'</b>';
+    if(bad.length){
+      h+='<ul style="margin:8px 0 0 16px;padding:0">';
+      bad.forEach(function(f){ h+='<li>'+esc(f.name)+' — '+esc(f.why)+'</li>'; });
+      h+='</ul>';
+    }
+    box.innerHTML=h+'</div>';
+  }
+  function wireBulk(body, rows, stageKey, reload){
+    var all=el("bulk-all"), napp=el("bulk-app"), nrej=el("bulk-rej");
+    var sync=function(){
+      var n=bulkPicked(rows).length;
+      if(el("bulk-n")) el("bulk-n").textContent=n?fmt(n)+" selected":"";
+      if(napp){ napp.disabled=!n; napp.textContent="Approve selected"+(n?" ("+fmt(n)+")":""); }
+      if(nrej){ nrej.disabled=!n; nrej.textContent="Reject selected"+(n?" ("+fmt(n)+")":""); }
+    };
+    body.querySelectorAll("[data-bpick]").forEach(function(cb){
+      cb.onclick=function(ev){ ev.stopPropagation(); BULK.picked[cb.getAttribute("data-bpick")]=cb.checked; sync(); };
+    });
+    if(all) all.onclick=function(){
+      body.querySelectorAll("[data-bpick]").forEach(function(cb){
+        cb.checked=all.checked; BULK.picked[cb.getAttribute("data-bpick")]=all.checked;
+      });
+      sync();
+    };
+    var send=function(which, reason){
+      var names=bulkPicked(rows);
+      if(!names.length) return;
+      var args={ action:which, names:JSON.stringify(names), stage:stageKey };
+      if(reason) args.reason=reason;
+      if(napp) napp.disabled=true; if(nrej) nrej.disabled=true;
+      call(args, true).then(function(d){
+        if(d.error){ toast("Error: "+d.error); sync(); return; }
+        BULK.picked={};
+        toast(d.summary||"Done");
+        reload(d);
+      }).catch(function(e){ toast(e && e.message ? e.message : "Bulk action failed"); sync(); });
+    };
+    // THE REASON IS A FIELD, NOT A BROWSER PROMPT. It sits in the bar with the
+    // selection still on screen, so whoever is rejecting can see what they are
+    // rejecting while they type why -- and a prompt() cannot be styled, cannot
+    // be a textarea, and disappears the moment focus moves.
+    var why=el("bulk-why");
+    if(nrej) nrej.onclick=function(){
+      if(!bulkPicked(rows).length) return;
+      if(why){ why.style.display="block"; var t=el("bulk-why-text"); if(t) t.focus(); }
+    };
+    var cancel=el("bulk-why-cancel");
+    if(cancel) cancel.onclick=function(){ if(why) why.style.display="none"; };
+    var confirm=el("bulk-why-go");
+    if(confirm) confirm.onclick=function(){
+      var t=el("bulk-why-text"), text=String((t&&t.value)||"").trim();
+      if(!text){ toast("A reason is required to reject"); if(t) t.focus(); return; }
+      if(why) why.style.display="none";
+      send("a_reject_bulk", text);
+    };
+    if(napp) napp.onclick=function(){ send("a_approve_bulk"); };
+    sync();
+  }
+
   function loadStage(bodyId, stage, approveAction){
     var b=el(bodyId); b.className="loading"; b.innerHTML="Loading…";
     call({action:"a_pending", stage:stage}).then(function(d){
@@ -927,13 +1033,13 @@
     var all=c.rows||[];
     if(!all.length){ b.className=""; b.innerHTML='<div class="empty">Nothing at this stage.</div>'; return; }
     b.className="";
-    b.innerHTML=fbar(all,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task, assigned by…"});
+    b.innerHTML=fbar(all,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task, assigned by…"}) + bulkBar(all);
     fwire(b, all, function(r){
       return {farm:r.farm||"", status:"", date:isodate(r.from_date),
               hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)+" "+(r.assigned_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th class="n">Cost</th><th>By</th><th>Action</th></tr></thead><tbody>';
+      var h='<table><thead><tr><th class="c" style="width:34px"></th><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th class="n">Cost</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r){
         h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });

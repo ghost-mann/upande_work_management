@@ -418,8 +418,11 @@ class TestTheScreenOffersTheStepsButton(unittest.TestCase):
 		self.assertIn("No approval step here is yours", block)
 
 	def test_the_detail_row_spans_the_extra_column(self):
-		"""A colspan short by one leaves the panel misaligned under the table."""
-		self.assertIn("multi?14:13", self.js)
+		"""A colspan short by one leaves the panel misaligned under the table.
+
+		13 base + 1 for the Step column when the chain runs two approvals + 1 for
+		the bulk tick-box column."""
+		self.assertIn("multi?15:14", self.js)
 
 
 class TestTheMasterPlanRefusalNamesTheConfiguredStep(unittest.TestCase):

@@ -12,6 +12,7 @@ import json
 import frappe
 
 from work_management.api.config import get_config
+from work_management import bulk
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 
@@ -1010,6 +1011,30 @@ def wm_planner(**kwargs):
             out["name"] = nm; out["workflow_state"] = ap_next
             out["step"] = ap_step.get("key"); out["step_label"] = ap_step.get("label")
 
+    elif action in ("approve_bulk", "reject_bulk"):
+        # SEVERAL AT A TIME, one at a time. Each document goes through the single
+        # `approve` / `reject` branch below -- same role gate, same stage check,
+        # same writes -- because this re-enters this very dispatcher rather than
+        # restating any of it. See work_management/bulk.py.
+        bk_names = frappe.form_dict.get("names")
+        try:
+            bk_names = json.loads(bk_names or "[]")
+        except Exception:
+            bk_names = []
+        bk_reject = action == "reject_bulk"
+        bk_reason = frappe.form_dict.get("reason")
+        bk_bad = bulk.check_selection(bk_names, bk_reason, needs_reason=bk_reject)
+        if bk_bad:
+            out["error"] = bk_bad
+        else:
+            bk_ok, bk_failed = bulk.run_bulk(
+                wm_planner, "reject" if bk_reject else "approve", bk_names,
+                base={"reason": bk_reason} if bk_reject else None)
+            out["ok"] = bk_ok
+            out["failed"] = bk_failed
+            out["summary"] = bulk.summarise(bk_ok, bk_failed,
+                "rejected" if bk_reject else "approved")
+
     elif action == "reject":
         nm = frappe.form_dict.get("name")
         rj_doc = frappe.db.get_value("Work Management Planner", nm,
@@ -1044,8 +1069,20 @@ def wm_planner(**kwargs):
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", "Rejected", update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approved_by", None, update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approval_date", None, update_modified=False)
+            # WHY, where the document keeps its history. A rejection with no
+            # reason sends the requester back to a screen that tells them nothing,
+            # and the person who rejected has moved on. Optional on the single
+            # action so nothing that calls it today breaks; required when
+            # rejecting in bulk, where the reason is the only thing distinguishing
+            # one refusal from twenty.
+            rj_why = str(frappe.form_dict.get("reason") or "").strip()
+            if rj_why:
+                frappe.get_doc("Work Management Planner", nm).add_comment(
+                    "Comment", "Rejected by " + frappe.session.user + " at the " +
+                    str(rj_step.get("label") or rj_step.get("key")) + " step: " + rj_why)
             out["name"] = nm; out["workflow_state"] = "Rejected"
             out["step"] = rj_step.get("key"); out["step_label"] = rj_step.get("label")
+            out["reason"] = rj_why or None
 
     # ===== ASSIGNER (a_) =====
     elif action == "plan_detail":

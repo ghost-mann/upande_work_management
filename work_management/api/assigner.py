@@ -11,6 +11,7 @@ import json
 
 import frappe
 
+from work_management import bulk
 from work_management.api.config import get_config
 
 
@@ -827,6 +828,41 @@ def wm_assigner(**kwargs):
                 pass
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_gm"]
 
+    elif action in ("a_approve_bulk", "a_reject_bulk"):
+        # SEVERAL AT A TIME, one at a time. Every document goes through the very
+        # branch its own button uses -- same role gate, same stage check, same
+        # writes -- because this re-enters this dispatcher rather than restating
+        # any of it. See work_management/bulk.py.
+        #
+        # `stage` picks WHICH approval, and the screen only ever sends the stage
+        # whose queue is on screen: this tab shows one stage at a time, and
+        # approving across stages in one press would mean approving work the user
+        # is not looking at.
+        bk_stages = {"fm": "a_fm_approve", "hr": "a_hr_approve", "gm": "a_gm_approve"}
+        bk_names = frappe.form_dict.get("names")
+        try:
+            bk_names = json.loads(bk_names or "[]")
+        except Exception:
+            bk_names = []
+        bk_reject = action == "a_reject_bulk"
+        bk_stage = str(frappe.form_dict.get("stage") or "").strip()
+        bk_reason = frappe.form_dict.get("reason")
+        bk_bad = bulk.check_selection(bk_names, bk_reason, needs_reason=bk_reject)
+        if not bk_reject and bk_stage not in bk_stages:
+            bk_bad = ("stage must be one of " + ", ".join(sorted(bk_stages))
+                      + " -- the queue on screen decides it")
+        if bk_bad:
+            out["error"] = bk_bad
+        else:
+            bk_ok, bk_failed = bulk.run_bulk(
+                wm_assigner,
+                "a_reject" if bk_reject else bk_stages[bk_stage], bk_names,
+                base={"reason": bk_reason} if bk_reject else None)
+            out["ok"] = bk_ok
+            out["failed"] = bk_failed
+            out["summary"] = bulk.summarise(bk_ok, bk_failed,
+                "rejected" if bk_reject else "approved")
+
     elif action == "a_reject":
         nm = frappe.form_dict.get("name")
         cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
@@ -836,7 +872,15 @@ def wm_assigner(**kwargs):
             frappe.db.set_value("Work Management Assigner", nm, "workflow_state", "Rejected", update_modified=False)
             frappe.db.set_value("Work Management Assigner", nm, "approved_by", None, update_modified=False)
             frappe.db.set_value("Work Management Assigner", nm, "approval_date", None, update_modified=False)
+            # WHY, on the document's own history. Optional here so nothing that
+            # calls this today changes; required when rejecting in bulk, where it
+            # is the only thing telling one refusal from twenty.
+            rj_why = str(frappe.form_dict.get("reason") or "").strip()
+            if rj_why:
+                frappe.get_doc("Work Management Assigner", nm).add_comment(
+                    "Comment", "Rejected by " + frappe.session.user + ": " + rj_why)
             out["name"] = nm; out["workflow_state"] = "Rejected"
+            out["reason"] = rj_why or None
 
     elif action == "a_roles":
         roles = frappe.db.get_all("Has Role", filters={"parent":frappe.session.user}, fields=["role"])
