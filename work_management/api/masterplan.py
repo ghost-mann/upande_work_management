@@ -11,6 +11,7 @@ import json
 
 import frappe
 
+from work_management import audit
 from work_management.api.config import get_config
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
@@ -1290,6 +1291,23 @@ def wm_masterplan(**kwargs):
                       AND NOT (from_date >= %(pfrom)s AND to_date <= %(pto)s)
                     ORDER BY from_date
                 """, hd_args, as_dict=True)
+
+    elif action == "trail":
+        # WHAT CHANGED ON THIS RECORD, AND WHO DECIDED IT. Versions say what a
+        # field became; audit comments say what somebody decided and why -- a
+        # rejection reason, a target adjustment, a post-approval edit. Read either
+        # alone and the record looks like it changed for no reason, or like it was
+        # discussed and never changed. Merged and newest-first, in one place, so
+        # the screens render a trail rather than assemble one.
+        tr_name = frappe.form_dict.get("name")
+        if not tr_name or not frappe.db.exists("Work Management Master Plan", tr_name):
+            out["error"] = "no such record: " + str(tr_name)
+        else:
+            out["trail"] = audit.change_trail("Work Management Master Plan", tr_name)
+            # The banner, computed here rather than in the browser: a summary
+            # recomputed in JavaScript is a second implementation of the same
+            # question, and the two disagree the first time either moves.
+            out["amended"] = audit.amended_summary("Work Management Master Plan", tr_name)
 
     elif action == "consumers":
         # Which plans are holding a line's budget. Without this, "why can't I plan

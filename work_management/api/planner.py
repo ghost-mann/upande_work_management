@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management.api.config import get_config
-from work_management import bulk
+from work_management import audit, bulk
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 
@@ -981,6 +981,23 @@ def wm_planner(**kwargs):
             out["people_per_day"] = frappe.utils.flt(rd.people_per_day)
             out["person_days"] = frappe.utils.flt(rd.person_days)
 
+    elif action == "trail":
+        # WHAT CHANGED ON THIS RECORD, AND WHO DECIDED IT. Versions say what a
+        # field became; audit comments say what somebody decided and why -- a
+        # rejection reason, a target adjustment, a post-approval edit. Read either
+        # alone and the record looks like it changed for no reason, or like it was
+        # discussed and never changed. Merged and newest-first, in one place, so
+        # the screens render a trail rather than assemble one.
+        tr_name = frappe.form_dict.get("name")
+        if not tr_name or not frappe.db.exists("Work Management Planner", tr_name):
+            out["error"] = "no such record: " + str(tr_name)
+        else:
+            out["trail"] = audit.change_trail("Work Management Planner", tr_name)
+            # The banner, computed here rather than in the browser: a summary
+            # recomputed in JavaScript is a second implementation of the same
+            # question, and the two disagree the first time either moves.
+            out["amended"] = audit.amended_summary("Work Management Planner", tr_name)
+
     elif action == "approve":
         nm = frappe.form_dict.get("name")
         ap_doc = frappe.db.get_value("Work Management Planner", nm,
@@ -1031,6 +1048,14 @@ def wm_planner(**kwargs):
                 frappe.db.set_value("Work Management Planner", nm, "docstatus", 1, update_modified=False)
                 frappe.db.set_value("Work Management Planner", nm, "approved_by", frappe.session.user, update_modified=False)
                 frappe.db.set_value("Work Management Planner", nm, "approval_date", frappe.utils.today(), update_modified=False)
+                # A DATE CANNOT ANCHOR AN AUDIT. `approval_date` is day-granular
+                # and Version.creation is a timestamp, so "was this edited after
+                # approval" compared a datetime against a date and read every
+                # same-day edit -- including ones made minutes BEFORE the
+                # approval -- as an amendment. The field for the moment already
+                # existed on this doctype and nothing was writing it.
+                frappe.db.set_value("Work Management Planner", nm, "custom_approved_at",
+                    frappe.utils.now(), update_modified=False)
             else:
                 # An intermediate step has no field of its own on this doctype --
                 # `approved_by` means the final approval and must keep meaning it --

@@ -553,6 +553,9 @@
       // about the wrong budget. headroom now says `ambiguous` rather than
       // guessing, so not naming it here returned no activities at all and every
       // Progress and Left cell read zero.
+      // the trail alongside, so the detail can ribbon an amended plan
+      call({ action:"trail", name:name }, "wm_masterplan")
+        .then(function(t){ MP._trail=t; }).catch(function(){ MP._trail=null; });
       return call({ action:"headroom", farm:p.farm, from_date:p.period_from,
                     to_date:p.period_to, master_plan:name },
                   "wm_masterplan").then(function(hd){
@@ -711,6 +714,7 @@
         });
         h+='</ul></div>';
       }
+      h+=amendedRibbon((MP._trail||{}).amended);
       h+='<div class="note" style="margin-bottom:8px">Click an activity to trace it the whole way down — requested, crewed, recorded, confirmed and paid — including stale drafts still holding the line.</div>';
       var mpColspan = 11;
       h+='<div class="mpf-tablewrap"><table><thead><tr><th>Activity</th><th class="n">Man days</th><th class="n">Days</th>'+
@@ -747,6 +751,10 @@
            '<div class="mp-consumers" data-panel="'+i+'"></div></td></tr>';
       });
       h+='</tbody></table></div>';
+      // the same trail the plan-trace overlay shows, for the budget rather
+      // than for one week drawn against it
+      h+='<div class="sech" style="margin-top:16px">Changes</div>';
+      h+=trailHtml((MP._trail||{}).trail);
       box.innerHTML=h;
       ggPaint(box);
       var mpBack=el("mp-back");
@@ -2096,18 +2104,44 @@
       (u?'<div style="font-size:9.5px;color:var(--mute)">'+u+'</div>':'')+'</div>';
   }
   function trWho(x){ return x ? esc(String(x).split("@")[0]) : '<span style="color:var(--mute)">not yet</span>'; }
+  // ── WHAT CHANGED, AND WHO DECIDED IT ────────────────────────────────────
+  // Versions say what a field became; audit comments say what somebody decided
+  // and why. Merged server-side (work_management/audit.py) so both screens show
+  // one trail rather than each assembling its own.
+  function amendedRibbon(summary){
+    if(!summary) return '';
+    return '<div class="mpp-span" style="margin-bottom:12px"><b>'+esc(summary)+'</b></div>';
+  }
+  function trailHtml(trail){
+    if(!trail || !(trail.entries||[]).length)
+      return '<div class="empty">No recorded changes yet.</div>';
+    var h='<table><thead><tr><th>When</th><th>Who</th><th>What changed</th></tr></thead><tbody>';
+    trail.entries.forEach(function(e){
+      h+='<tr><td class="m" style="font-size:10px;white-space:nowrap">'+esc(String(e.when||"").slice(0,16))+'</td>'+
+         '<td style="font-size:10.5px">'+esc(String(e.who||"—").split("@")[0])+'</td>'+
+         '<td'+(e.is_note?' style="color:var(--mute)"':'')+'>'+esc(e.what||"")+'</td></tr>';
+    });
+    h+='</tbody></table>';
+    if(trail.older>0)
+      h+='<div class="hint" style="margin-top:6px">'+fmt(trail.older)+' older entr'+(trail.older===1?'y':'ies')+' not shown.</div>';
+    return h;
+  }
+
   function openPlanTrace(name){
     ensurePlanModal();
     el("wp-tr-overlay").style.display="block";
     el("wp-tr-title").textContent=name;
     el("wp-tr-sub").textContent="Loading…";
     el("wp-tr-body").innerHTML='<div class="empty">Following the plan through…</div>';
+    call({ action:"trail", name:name }).then(function(t){ ST._trace_trail=t; })
+      .catch(function(){ ST._trace_trail=null; });
     call({ action:"plan_trace", plan:name }).then(function(d){
       if(d.error){ el("wp-tr-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
       var p=d.plan||{}, dv=d.delivery||{};
       el("wp-tr-title").textContent=taskName(p.task)||name;
       el("wp-tr-sub").textContent=name+" · "+(p.farm||"")+" · "+p.from_date+" → "+p.to_date+" · "+(p.workflow_state||"");
-      var h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
+      var h=amendedRibbon((ST._trace_trail||{}).amended);
+      h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
       h+=trTile("Target", fmt(dv.target)+" "+esc(p.uom||""), "planned quantity");
       h+=trTile("Delivered", fmt(dv.actual)+" "+esc(p.uom||""),
                 fmt(dv.achieved_pct,0)+"% of target",
@@ -2192,6 +2226,10 @@
         });
         h+='</tbody></table></div>';
       }
+      // THE TRAIL, last: it is the reference somebody scrolls to, not the
+      // thing they opened the overlay for.
+      h+='<div class="sech" style="margin-top:16px">Changes</div>';
+      h+=trailHtml((ST._trace_trail||{}).trail);
       el("wp-tr-body").innerHTML=h;
     }).catch(function(e){
       el("wp-tr-body").innerHTML='<div class="empty">Could not follow the plan: '+esc(e.message)+'</div>';

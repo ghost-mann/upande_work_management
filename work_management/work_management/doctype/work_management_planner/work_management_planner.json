@@ -80,7 +80,7 @@
    "label": "Master Plan",
    "options": "Work Management Master Plan",
    "read_only": 1,
-   "description": "The budget this request draws against. Set from the plan chosen on the planner screen; where it is empty the request's dates still resolve it, which is how requests raised before this field keep working. Settable after submission, because it records which budget an already-submitted request drew from \u2014 the backfill needs that, and so does correcting a plan later.",
+   "description": "The budget this request draws against. Set from the plan chosen on the planner screen; where it is empty the request's dates still resolve it, which is how requests raised before this field keep working. Settable after submission, because it records which budget an already-submitted request drew from — the backfill needs that, and so does correcting a plan later.",
    "allow_on_submit": 1
   },
   {
@@ -440,7 +440,7 @@
    "fieldtype": "Currency",
    "label": "Original cost",
    "read_only": 1,
-   "description": "The cost of the originally approved quantity. Kept beside it so \u201cwhat did we agree to\u201d is answerable without recomputing a rate that may since have moved.",
+   "description": "The cost of the originally approved quantity. Kept beside it so “what did we agree to” is answerable without recomputing a rate that may since have moved.",
    "allow_on_submit": 1
   }
  ],
@@ -491,5 +491,6 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 1
+ "track_changes": 1,
+ "track_seen": 1
 }

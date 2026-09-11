@@ -1,0 +1,20 @@
+[
+ {
+  "doctype": "Client Script",
+  "name": "WM Work Management Master Plan \u2014 amended after approval",
+  "dt": "Work Management Master Plan",
+  "view": "Form",
+  "enabled": 1,
+  "module": "Work Management",
+  "script": "// Shipped by work_management. A record whose approved figures have\n// moved says so at the top of its own form -- the same sentence the\n// web screens show, fetched from the server rather than recomputed\n// here, because two implementations of one question disagree the\n// first time either moves.\nfrappe.ui.form.on('Work Management Master Plan', {\n\trefresh: function (frm) {\n\t\tif (frm.is_new()) return;\n\t\tfrappe.call({\n\t\t\tmethod: 'work_management.audit.amended_summary',\n\t\t\targs: { doctype: frm.doc.doctype, name: frm.doc.name },\n\t\t\tcallback: function (r) {\n\t\t\t\tif (r && r.message) frm.set_intro(r.message, 'orange');\n\t\t\t},\n\t\t});\n\t},\n});\n"
+ },
+ {
+  "doctype": "Client Script",
+  "name": "WM Work Management Planner \u2014 amended after approval",
+  "dt": "Work Management Planner",
+  "view": "Form",
+  "enabled": 1,
+  "module": "Work Management",
+  "script": "// Shipped by work_management. A record whose approved figures have\n// moved says so at the top of its own form -- the same sentence the\n// web screens show, fetched from the server rather than recomputed\n// here, because two implementations of one question disagree the\n// first time either moves.\nfrappe.ui.form.on('Work Management Planner', {\n\trefresh: function (frm) {\n\t\tif (frm.is_new()) return;\n\t\tfrappe.call({\n\t\t\tmethod: 'work_management.audit.amended_summary',\n\t\t\targs: { doctype: frm.doc.doctype, name: frm.doc.name },\n\t\t\tcallback: function (r) {\n\t\t\t\tif (r && r.message) frm.set_intro(r.message, 'orange');\n\t\t\t},\n\t\t});\n\t},\n});\n"
+ }
+]

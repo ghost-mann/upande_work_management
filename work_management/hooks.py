@@ -149,6 +149,16 @@ fixtures = [
 		],
 	},
 	{
+		# The two "amended after approval" form banners. Shipped as a fixture so
+		# they DEPLOY: a Client Script created in the desk lives on one site and
+		# nowhere else, and is the first thing lost when a site is rebuilt.
+		"dt": "Client Script",
+		"filters": [["name", "in", [
+			"WM Work Management Master Plan — amended after approval",
+			"WM Work Management Planner — amended after approval",
+		]]],
+	},
+	{
 		"dt": "Workflow Action Master",
 		"filters": [
 			[

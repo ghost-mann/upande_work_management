@@ -204,5 +204,6 @@
  "sort_order": "DESC",
  "states": [],
  "title_field": "plan_name",
- "track_changes": 1
+ "track_changes": 1,
+ "track_seen": 1
 }
