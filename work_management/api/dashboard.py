@@ -1514,8 +1514,66 @@ def wm_dashboard(**kwargs):
             WHERE """ + dconds + """
             GROUP BY ac.task ORDER BY pay DESC LIMIT 10
         """, tuple(dparams), as_dict=True)
-        out["top_tasks"] = [{"label": r.label, "pay": frappe.utils.flt(r.pay),
+        # The docname, under its own name. It used to go out as "label", which read
+        # as already-resolved and was not: the chart printed TASK-2026-00103 long
+        # after the five screens learned to name a task, because nothing in the
+        # screen file mentioned `.task` for a name-resolution check to catch.
+        out["top_tasks"] = [{"task": r.label, "pay": frappe.utils.flt(r.pay),
             "qty": frappe.utils.flt(r.qty), "workers": frappe.utils.cint(r.workers)} for r in tt]
+
+        # THE STAGE STRIP -- five stages and the four hand-offs between them.
+        #
+        # Served from `charts`, not `dash`, because the strip sits directly under this
+        # card's farm and date controls and `dash` takes no parameters at all: its
+        # state_counts() is a bare GROUP BY over each table. A number under a filter
+        # that ignores the filter is a lie the reader has no way to spot.
+        #
+        # Keys and counts only. The screen supplies the wording -- the same split
+        # "What the numbers are doing" got wrong when it shipped ac.task in a field
+        # called `label` and the chart printed ids for months.
+        #
+        # Each stage is its own doctype with its own dates, so the window is an
+        # OVERLAP test rather than one column compared to one date: a plan running
+        # 31 Aug to 4 Sep belongs to any window touching those days, and comparing a
+        # single column would silently drop everything straddling the edge.
+        def stage_count(sc_table, sc_states, sc_from_col, sc_to_col):
+            sc_conds = "workflow_state IN %(st)s"
+            sc_vals = {"st": tuple(sc_states)}
+            if cfarm:
+                sc_conds = sc_conds + " AND farm = %(f)s"
+                sc_vals["f"] = cfarm
+            if cfrom:
+                sc_conds = sc_conds + " AND IFNULL(" + sc_to_col + ", '2999-12-31') >= %(a)s"
+                sc_vals["a"] = cfrom
+            if cto:
+                sc_conds = sc_conds + " AND IFNULL(" + sc_from_col + ", '1900-01-01') <= %(b)s"
+                sc_vals["b"] = cto
+            return frappe.utils.cint(frappe.db.sql(
+                "SELECT COUNT(*) n FROM `tab" + sc_table + "` WHERE " + sc_conds,
+                sc_vals, as_dict=True)[0].n)
+
+        MP = "Work Management Master Plan"
+        PL = "Work Management Planner"
+        AS = "Work Management Assigner"
+        AC = "Work Management Actuals"
+        PY_ = "Work Management Payment"
+        WAIT = ("Pending Farm Manager", "Pending HR Head", "Pending GM")
+        out["stages"] = {
+            "master_plan": stage_count(MP, ("Approved",), "period_from", "period_to"),
+            "planned": stage_count(PL, ("Approved",), "from_date", "to_date"),
+            "assigned": stage_count(AS, ("Assigned",), "from_date", "to_date"),
+            "actual": stage_count(AC, ("CONFIRMED",), "from_date", "to_date"),
+            "paid": stage_count(PY_, ("Paid",), "period_from", "period_to"),
+        }
+        # What is waiting at each hand-off: approved upstream, not yet through the
+        # step that carries it on. This is the half a funnel usually leaves out --
+        # how much passed is easy, where it is stuck is the question people ask.
+        out["stage_waiting"] = {
+            "to_planned": stage_count(PL, ("Pending Approval",), "from_date", "to_date"),
+            "to_assigned": stage_count(AS, WAIT, "from_date", "to_date"),
+            "to_actual": stage_count(AC, WAIT, "from_date", "to_date"),
+            "to_paid": stage_count(PY_, ("Unpaid",), "period_from", "period_to"),
+        }
         # farm share
         fsh = frappe.db.sql("""
             SELECT ac.farm farm, COALESCE(SUM(we.amount),0) pay,

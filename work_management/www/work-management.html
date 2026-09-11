@@ -162,6 +162,20 @@
 
 /* ===== command-center stage cards ===== */
 #wmp .stagegrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:14px}
+/* stage strip: five circles joined by rails, the waiting count on each rail */
+#wmp .stagestrip{display:flex;align-items:flex-start;gap:0;margin:4px 0 18px;overflow-x:auto;padding:6px 2px 2px}
+#wmp .ss-node{display:flex;flex-direction:column;align-items:center;flex:0 0 auto;min-width:96px}
+#wmp .ss-circle{width:52px;height:52px;border-radius:50%;border:2px solid var(--line,#e5e5e5);
+  background:var(--card,#fff);display:flex;align-items:center;justify-content:center;
+  font-size:17px;font-weight:800;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+#wmp .ss-circle[data-first]{box-shadow:0 0 0 6px rgba(79,70,229,.12),0 1px 3px rgba(0,0,0,.06)}
+#wmp .ss-label{margin-top:9px;font-size:11px;color:var(--mute,#6b7280);text-align:center;line-height:1.3;max-width:104px}
+#wmp .ss-rail{flex:1 1 auto;min-width:34px;height:52px;display:flex;align-items:center;justify-content:center;position:relative}
+#wmp .ss-rail:before{content:"";position:absolute;left:-2px;right:-2px;height:3px;border-radius:2px;background:var(--line,#e5e5e5)}
+#wmp .ss-dot{position:relative;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;
+  justify-content:center;padding:0 5px;box-shadow:0 0 0 3px var(--card,#fff)}
+#wmp .ss-dot em{font-style:normal;font-size:10px;font-weight:800;color:#fff}
+@media(max-width:640px){ #wmp .ss-node{min-width:74px} #wmp .ss-label{font-size:10px} }
 #wmp .stagecard{border:1px solid var(--line);border-radius:var(--r);padding:15px 17px;background:#fff;box-shadow:var(--sh);transition:transform .15s,box-shadow .15s}
 #wmp .stagecard:hover{transform:translateY(-2px);box-shadow:var(--shm)}
 #wmp .sc-h{font-size:11px;font-weight:800;letter-spacing:.1em;margin-bottom:10px}
@@ -400,7 +414,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
         <a href="/me" role="menuitem" id="wm-account-me">My account</a>
         <a href="/app" role="menuitem" id="wm-account-desk">Open Desk</a>
         <a href="/login" role="menuitem" id="wm-account-login" style="display:none">Log in</a>
-        <a href="/?cmd=web_logout" role="menuitem" class="danger" id="wm-account-logout">Log out</a>
+        <a href="/logout" role="menuitem" class="danger" id="wm-account-logout">Log out</a>
       </div>
     </div></div>
   </header>

@@ -828,6 +828,10 @@ def wm_assigner(**kwargs):
         # Settings -- they used to be these role names, compiled in.
         out["is_clerk"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("enter_work") or []))) else 0
+        # System Manager passes, as it already does for is_clerk and is_accounts
+        # beside it: every approve action here accepts System Manager, so without
+        # this the endpoint permits the HR Head step while the screen hides the way
+        # to reach it.
         out["is_hr_head"] = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES)
         out["is_gm"] = "General Manager" in rl
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
@@ -941,7 +945,7 @@ def wm_assigner(**kwargs):
             if aw.strip() and aw.strip() not in add_who:
                 add_who.append(aw.strip())
         rl = frappe.get_roles(frappe.session.user)
-        add_may = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
+        add_may = any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
             or ("System Manager" in rl)
         for rr in rl:
             if rr.startswith("Farm Manager"):
@@ -1108,7 +1112,7 @@ def wm_assigner(**kwargs):
             if rw.strip():
                 rel_who.append(rw.strip())
         rl = frappe.get_roles(frappe.session.user)
-        rel_may = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
+        rel_may = any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
             or ("System Manager" in rl)
         for rr in rl:
             if rr.startswith("Farm Manager"):

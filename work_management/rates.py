@@ -204,7 +204,7 @@ def task_on_update(doc, method=None):
 				"uom": doc.get("custom_uom"),
 				"daily_target": target,
 				"derived": 1 if verdict == "derived" else 0,
-				"daily_wage_basis": matched_wage if verdict == "derived" else None,
+				"daily_wage_basis": matched_wage if verdict == "derived" else 0,
 				"source": "Task list edit",
 			},
 		)
@@ -232,7 +232,7 @@ def task_on_update(doc, method=None):
 			"rate": rate,
 			"uom": doc.get("custom_uom"),
 			"daily_target": target,
-			"daily_wage_basis": matched_wage if verdict == "derived" else None,
+			"daily_wage_basis": matched_wage if verdict == "derived" else 0,
 			"derived": 1 if verdict == "derived" else 0,
 			"source": "Task list edit",
 		}
@@ -343,7 +343,7 @@ def backfill_from_task_master(epoch=None, wages=None, dry_run=True):
 				"rate": flt(task.custom_rate),
 				"uom": task.custom_uom,
 				"daily_target": flt(task.custom_daily_target),
-				"daily_wage_basis": wage if verdict == "derived" else None,
+				"daily_wage_basis": wage if verdict == "derived" else 0,
 				"derived": 1 if verdict == "derived" else 0,
 				"source": "backfill from Task master",
 				"notes": note,

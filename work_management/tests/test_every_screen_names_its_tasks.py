@@ -169,6 +169,50 @@ class TestTheServerSideStillServesIt(unittest.TestCase):
 		self.assertIn('"is_group": 0', text)
 
 
+class TestAServerSuppliedLabelIsStillADocname(unittest.TestCase):
+	"""The top-tasks chart printed ids, and the rule above could not see it.
+
+	Every other place names a task by rendering `.task` through `taskName()`, and
+	RENDERS_RAW catches the ones that do not. This chart renders neither: the
+	dashboard endpoint sends `top_tasks` with a field called `label`, the screen
+	passes that key straight to the bar renderer, and nothing in the file ever
+	mentions `.task` at all.
+
+	But `label` held `ac.task` -- the docname. A field named for the thing it is
+	not is exactly the shape a name-resolution test cannot catch, so "What the
+	numbers are doing" went on showing TASK-2026-00103 long after the five
+	screens were fixed.
+
+	So the endpoint sends `task`, which is what it is, and the screen resolves it
+	the same way as everywhere else. The identity stays server-side; only the
+	label moves -- the distinction the module docstring already draws.
+	"""
+
+	def endpoint(self):
+		from work_management.api import dashboard
+		import inspect
+
+		return inspect.getsource(dashboard.wm_dashboard)
+
+	def test_the_endpoint_sends_the_docname_under_its_own_name(self):
+		text = self.endpoint()
+		block = text[text.index('out["top_tasks"]'):][:220]
+		self.assertIn('"task"', block,
+			"top_tasks still ships the docname under a label key: " + block.split("\n")[0])
+
+	def test_it_does_not_ship_a_label_it_has_not_resolved(self):
+		text = self.endpoint()
+		block = text[text.index('out["top_tasks"]'):][:220]
+		self.assertNotIn('"label": r.label', block)
+
+	def test_the_chart_resolves_the_name_on_the_screen(self):
+		"""taskName() is the one place that knows the map."""
+		text = source("work-management-dashboard")
+		chart = text[text.index("AN.data.top_tasks"):][:400]
+		self.assertIn("taskName(", chart,
+			"the top-tasks chart still prints whatever the server called a label")
+
+
 if __name__ == "__main__":
 	unittest.main()
 

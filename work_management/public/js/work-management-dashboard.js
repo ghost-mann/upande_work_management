@@ -739,6 +739,7 @@
             '<label>To <input type="date" id="an-to" /></label>'+
             '<button id="an-clear" class="pex-clear">Clear</button>'+
           '</div>'+
+          '<div id="wm-stage-strip"></div>'+
           '<div id="wm-an-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div><div id="wm-an-body" style="min-height:180px;color:var(--mute)">Loading charts…</div></div></div>'+
       // ===== pipeline + per-farm comparison (one card, pill tabs) =====
       '<div class="sech">Pipeline Explorer &mdash; drill into planning, assigning, actuals &amp; payment</div>'+
@@ -1021,6 +1022,40 @@
     g+='</svg>';
     return g+'<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+capText+' Hover any bar for its exact value.</div>';
   }
+  // ── STAGE STRIP ─────────────────────────────────────────────────────────
+  // Master Plan -> Planned Tasks -> Worker Assignment -> Actual Done -> Paid Work,
+  // with the number waiting at each hand-off on the rail between two circles.
+  //
+  // The endpoint sends keys and counts; the words live here. Stage names are the
+  // app's own vocabulary rather than the site's, so the taxonomy does not rename
+  // them -- a farm may rename a block, but "Master Plan" is what this pipeline is.
+  var STAGE_STEPS=[["master_plan","Master Plan","#4f46e5"],
+                   ["planned","Planned Tasks","#2563eb"],
+                   ["assigned","Worker Assignment","#d97706"],
+                   ["actual","Actual Done","#0a7a43"],
+                   ["paid","Paid Work","#7c3aed"]];
+  var STAGE_GAPS=["to_planned","to_assigned","to_actual","to_paid"];
+  function stageStrip(d){
+    var st=(d && d.stages)||{}, wait=(d && d.stage_waiting)||{};
+    var h='<div class="stagestrip" role="list">';
+    STAGE_STEPS.forEach(function(sp,i){
+      var n=Number(st[sp[0]])||0;
+      h+='<div class="ss-node" role="listitem">'+
+           '<div class="ss-circle"'+(i===0?' data-first="1"':'')+' style="border-color:'+sp[2]+'">'+
+             '<span style="color:'+sp[2]+'">'+fmt(n)+'</span></div>'+
+           '<div class="ss-label">'+esc(sp[1])+'</div>'+
+         '</div>';
+      if(i<STAGE_GAPS.length){
+        var w=Number(wait[STAGE_GAPS[i]])||0;
+        h+='<div class="ss-rail" title="'+esc(String(w))+' waiting to move on">'+
+             (w>0?'<span class="ss-dot" style="background:'+STAGE_STEPS[i+1][2]+'">'+
+                  '<em>'+fmt(w)+'</em></span>':'')+
+           '</div>';
+      }
+    });
+    return h+'</div>';
+  }
+
   function anBarsH(rows, labelKey, color, valFn, subFn, capText){
     if(!rows||!rows.length) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
     var max=0, total=0;
@@ -1107,6 +1142,8 @@
   }
   function drawAnalytic(){
     var bd=el("wm-an-body"); if(!bd) return;
+    var sb=el("wm-stage-strip");
+    if(sb) sb.innerHTML=stageStrip(AN.data||{});
     if(!AN.data){ bd.innerHTML='<div style="padding:16px;color:var(--mute)">Loading charts…</div>'; return; }
     var wk=AN.data.weekly||[];
     if(AN.tab==="out"){
@@ -1119,7 +1156,11 @@
       bd.innerHTML=anBarsV(wk,"workers","#2563eb",function(v){return fmt(v);},
         "How many different people did confirmed work each week.","Workers (count)");
     } else if(AN.tab==="task"){
-      bd.innerHTML=anBarsH(AN.data.top_tasks||[],"label","#0a7a43",
+      // the endpoint sends the docname; taskName() is the one place that knows
+      // the map, so resolve here rather than teaching the bar renderer about tasks
+      var anTT=(AN.data.top_tasks||[]).map(function(r){
+        var o={}; for(var k in r){ o[k]=r[k]; } o.label=taskName(r.task); return o; });
+      bd.innerHTML=anBarsH(anTT,"label","#0a7a43",
         function(v,pct){ return "KES "+money(v)+" · "+pct+"%"; },
         function(r){ return money(r.qty)+" units · "+fmt(r.workers)+" people"; },
         "Your 10 biggest tasks by confirmed pay.");
