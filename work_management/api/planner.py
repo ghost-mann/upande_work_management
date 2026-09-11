@@ -764,7 +764,7 @@ def wm_planner(**kwargs):
                 out["blocks"] = block_list
                 out["editing"] = editing
 
-    elif action == "raise_target":
+    elif action in ("raise_target", "adjust_target"):
         # MORE OF THE SAME WORK, ON A REQUEST ALREADY APPROVED.
         #
         # A week's plan is approved for 500 and the crew can clearly do 700. Today
@@ -772,12 +772,21 @@ def wm_planner(**kwargs):
         # under way -- or an edit, which sends the approved plan back to Draft and
         # loses the approval it already has. So: raise the quantity in place.
         #
-        # UPWARD ONLY. Lowering it is a different act with a different risk: the
-        # actuals cap and the completion gate both read this figure live, so a cut
-        # below what is already recorded would make recorded work exceed its own
-        # target and leave the plan unable to complete. check_cut_allowed() refuses
-        # exactly that on the master plan line, for the same reason, and this stays
-        # on the safe side of the same line by not offering the cut at all.
+        # UP, OR DOWN TO WHAT IS ALREADY RECORDED. The client also asked for
+        # "flexibility in adjusting the number of people already planned for a
+        # specific task and targets for the day", and a plan that over-asked has
+        # to be closable honestly.
+        #
+        # The floor is the work already recorded against this request -- the very
+        # sum the actuals HARD TARGET CAP counts against the target, so the floor
+        # here and the ceiling there are one number. Below it, recorded work would
+        # exceed its own target and the plan could never reach 100% and therefore
+        # never be submitted. check_cut_allowed() refuses the same move on a
+        # master plan line for the same reason.
+        #
+        # Lowering FREES the master plan line: its consumption is summed from the
+        # requests drawn against it, so the headroom comes back by arithmetic
+        # rather than by anything here putting it back.
         #
         # NO NEW APPROVAL STAGE. Managers agree a spend increase offline, by
         # decision; what this needs is that the person recording the decision is
@@ -865,12 +874,13 @@ def wm_planner(**kwargs):
                       + "You hold none of them.")
         elif rt_qty <= 0:
             rt_err = "A target has to be a number greater than zero."
-        elif rt_qty < frappe.utils.flt(rt.quantity) - 0.005:
-            rt_err = ("A target can only be raised here, not lowered: this request "
-                      "is at " + str(frappe.utils.flt(rt.quantity)) + " and " +
-                      str(rt_qty) + " is less. Recorded work reads the target live, "
-                      "so lowering it would put work already done over its own "
-                      "target and leave the plan unable to complete.")
+        elif rt_qty < rt_recorded - 0.005:
+            rt_err = (str(rt_recorded) + " is already recorded against this request, "
+                      "so its target cannot go below that: " + str(rt_qty) +
+                      " is less. Recorded work reads the target live, so a target "
+                      "under the work already done puts that work over its own "
+                      "target and leaves the plan unable to complete. Lower it to " +
+                      str(rt_recorded) + " or more.")
         elif abs(rt_qty - frappe.utils.flt(rt.quantity)) <= 0.005:
             rt_err = ("This request is already at " + str(frappe.utils.flt(rt.quantity)) + ".")
         elif not rt.master_plan:
@@ -879,7 +889,7 @@ def wm_planner(**kwargs):
         elif not rt_line:
             rt_err = (str(rt.task) + " is not an approved activity on " +
                       str(rt.master_plan) + ", so its budget cannot fund a raise.")
-        elif rt_delta > rt_left_q + 0.005:
+        elif rt_delta > 0 and rt_delta > rt_left_q + 0.005:
             # Refused in the same style as the planner's raise cap, and pointing at
             # the same fix: the master plan line can itself be raised first --
             # check_cut_allowed() permits raises and refuses only cuts below what is
@@ -888,7 +898,7 @@ def wm_planner(**kwargs):
                       str(rt.master_plan) + ": " + str(round(rt_left_q, 2)) +
                       " left of " + str(frappe.utils.flt(rt_line.work_qty)) +
                       ", this raise asks for " + str(round(rt_delta, 2)) + " more.")
-        elif rt_delta * rt_rate > rt_left_c + 0.005:
+        elif rt_delta > 0 and rt_delta * rt_rate > rt_left_c + 0.005:
             rt_err = ("Over the budgeted cost for " + str(rt.task) + " on " +
                       str(rt.master_plan) + ": KES " + str(round(rt_left_c, 2)) +
                       " left of " + str(frappe.utils.flt(rt_line.cost)) +
@@ -905,6 +915,8 @@ def wm_planner(**kwargs):
             out["current_qty"] = frappe.utils.flt(rt.quantity)
             out["current_cost"] = frappe.utils.flt(rt.total_cost)
             out["recorded_qty"] = rt_recorded
+            # the lowest this target may go: what is already recorded against it
+            out["floor_qty"] = rt_recorded
             out["original_qty"] = frappe.utils.flt(rt.original_qty) or None
             out["new_qty"] = rt_qty
             out["new_cost"] = frappe.utils.flt(rt_qty * rt_rate, 2)
@@ -952,13 +964,16 @@ def wm_planner(**kwargs):
             # this; the fields it touches carry it for exactly this reason.
             rd.save(ignore_permissions=True)
             rd.add_comment("Comment",
-                "Target raised by " + frappe.session.user + " on " +
+                ("Target raised by " if rt_qty > rt_was_q else "Target lowered by ")
+                + frappe.session.user + " on " +
                 frappe.utils.today() + ": " + str(rt_was_q) + " → " + str(rt_qty) +
                 " " + str(rt.uom or "") + " (KES " + str(round(rt_was_c, 2)) + " → " +
                 str(round(rt_qty * rt_rate, 2)) + "), against " + str(rt.master_plan) +
                 ". Agreed offline; no separate approval step.")
             frappe.db.commit()
             out["raised"] = 1
+            out["direction"] = "up" if rt_qty > rt_was_q else "down"
+            out["floor"] = rt_recorded
             out["was_qty"] = rt_was_q
             out["was_cost"] = rt_was_c
             out["quantity"] = frappe.utils.flt(rd.quantity)

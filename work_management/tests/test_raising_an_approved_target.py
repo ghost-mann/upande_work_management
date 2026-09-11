@@ -62,7 +62,7 @@ def fields():
 
 def action_block():
 	src = read(PLANNER_API)
-	at = src.index('elif action == "%s":' % ACTION)
+	at = src.index('elif action in ("raise_target", "adjust_target"):')
 	return src[at:src.index('elif action == "approve":', at)]
 
 
@@ -115,11 +115,15 @@ class TestTheDocumentGuardsItself(unittest.TestCase):
 	def test_it_compares_against_what_was_there_before(self):
 		self.assertIn("get_doc_before_save()", self.src)
 
-	def test_lowering_is_refused(self):
+	def test_lowering_below_the_recorded_floor_is_refused(self):
+		"""Lowering to the floor is how a plan that over-asked is closed
+		honestly; below it strands recorded work."""
 		self.assertIn("if now < was - TOLERANCE:", self.src)
+		self.assertIn("if now < floor - TOLERANCE:", self.src)
 
 	def test_the_refusal_says_why_rather_than_just_no(self):
 		self.assertIn("reads the target live", self.src)
+		self.assertIn("unable to complete", self.src)
 
 	def test_it_asks_the_configured_chain_who_may(self):
 		"""Named roles here would go stale the moment a site renamed one or added
@@ -188,8 +192,12 @@ class TestWhatItRefuses(unittest.TestCase):
 		self.assertIn('rt.workflow_state != "Approved"', self.block)
 		self.assertIn("Edit it instead", self.block)
 
-	def test_lowering(self):
-		self.assertIn("can only be raised here, not lowered", self.block)
+	def test_lowering_below_what_is_recorded(self):
+		"""Lowering itself is allowed now -- see
+		test_adjusting_what_was_approved.py -- down to the work already recorded
+		against the request, and no further."""
+		self.assertIn("elif rt_qty < rt_recorded - 0.005:", self.block)
+		self.assertIn("is already recorded against this request", self.block)
 
 	def test_a_raise_to_the_same_figure(self):
 		self.assertIn("is already at", self.block)

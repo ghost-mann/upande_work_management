@@ -1,10 +1,10 @@
 # Copyright (c) 2026, Upande Ltd and contributors
 # For license information, please see license.txt
 
-"""A request's target may be raised after approval — by an approver, upward only.
+"""A request's target may be adjusted after approval — by an approver, within limits.
 
-`quantity` carries `allow_on_submit`, because raising a target mid-flight is the
-whole point of the `raise_target` action: a week approved for 500 that the crew
+`quantity` carries `allow_on_submit`, because adjusting a target mid-flight is
+the whole point of the `adjust_target` action: a week approved for 500 that the crew
 can clearly finish at 700 should not need a second trip through the chain for
 work already under way, and editing the request instead sends an approved plan
 back to Draft and throws its approval away.
@@ -17,11 +17,18 @@ so it is true of every path that reaches it.
 
 Two things are refused:
 
-**Downward.** The actuals cap and the completion gate both read this figure live
-at save time. Cut it below what is already recorded and recorded work exceeds its
-own target, while the plan can never reach 100% and so can never be submitted.
+**A cut below what is already recorded.** The actuals cap and the completion gate
+both read this figure live at save time, so a target under the work already done
+puts that work over its own target and leaves the plan unable to reach 100% --
+and therefore unable to be submitted, ever. Down to exactly what is recorded is
+fine and is how a plan that over-asked is closed honestly; below it is not.
 `check_cut_allowed()` refuses the same move on a master plan line for the same
 reason. Upward is always safe: nothing already recorded stops being valid.
+
+The client asked for this half: *"flexibility in adjusting the number of people
+already planned for a specific task and targets for the day."* Lowering frees the
+master plan line's headroom, because the line's consumption is summed from the
+requests drawn against it.
 
 **By anyone who could not have approved it.** Raising your own approved target is
 approving your own request, one step later and with nobody looking. So it takes
@@ -70,6 +77,28 @@ def may_raise_target(user_roles, user=None):
 	return bool(held & set(approver_roles()))
 
 
+def recorded_quantity(planner):
+	"""What is already recorded against this request -- the floor under its target.
+
+	The same sum the actuals HARD TARGET CAP counts against the target, so the
+	floor here and the ceiling there are one number. States in flight count:
+	work sitting at Pending HR Head is recorded work whose document is simply not
+	finished, and a target cut underneath it would strand it.
+	"""
+	rows = frappe.db.sql(
+		"""
+		SELECT COALESCE(SUM(ac.total_actual_qty), 0) q
+		FROM `tabWork Management Actuals` ac
+		INNER JOIN `tabWork Management Assigner` a ON ac.assignment = a.name
+		WHERE a.planner_request = %(p)s
+		  AND ac.workflow_state IN ('Pending HR Head', 'Pending GM', 'CONFIRMED')
+		""",
+		{"p": planner},
+		as_dict=True,
+	)
+	return frappe.utils.flt(rows[0].q) if rows else 0.0
+
+
 class WorkManagementPlanner(Document):
 	def on_update_after_submit(self):
 		"""Guard the one field `allow_on_submit` makes editable after approval."""
@@ -81,25 +110,29 @@ class WorkManagementPlanner(Document):
 		if abs(now - was) <= TOLERANCE:
 			return
 		if now < was - TOLERANCE:
-			frappe.throw(
-				_(
-					"An approved request's target can be raised, not lowered: this one "
-					"is at {0} and {1} is less. Recorded work reads the target live, so "
-					"lowering it would put work already done over its own target and "
-					"leave the plan unable to complete."
-				).format(was, now),
-				title=_("Target cannot be lowered"),
-			)
+			floor = recorded_quantity(self.name)
+			if now < floor - TOLERANCE:
+				frappe.throw(
+					_(
+						"{0} is already recorded against this request, so its target "
+						"cannot go below that: {1} is less. "
+						"Recorded work reads the target live, "
+						"so a target under the work already done puts that work over "
+						"its own target and leaves the plan unable to complete. "
+						"Lower it to {0} or more."
+					).format(floor, now),
+					title=_("Target cannot go below what is recorded"),
+				)
 		if not may_raise_target(frappe.get_roles(), frappe.session.user):
 			roles = approver_roles()
 			frappe.throw(
 				_(
-					"Raising an approved target is the approver's decision. {0}You hold "
+					"Adjusting an approved target is the approver's decision. {0}You hold "
 					"none of them."
 				).format(
 					_("Only {0} or the general manager may take it. ").format(", ".join(roles))
 					if roles
 					else ""
 				),
-				title=_("Not yours to raise"),
+				title=_("Not yours to adjust"),
 			)

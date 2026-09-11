@@ -329,19 +329,19 @@
     dlg.innerHTML=
       '<div style="background:#fff;max-width:520px;width:94%;border:2px solid var(--ink)">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--faint)">'+
-          '<div style="font-size:13px;font-weight:700">Raise target</div>'+
+          '<div style="font-size:13px;font-weight:700">Adjust target</div>'+
           '<button type="button" id="wpr-x" style="border:none;background:none;font-size:20px;line-height:1;color:var(--mute);cursor:pointer">&times;</button>'+
         '</div>'+
         '<div style="padding:16px 18px">'+
-          '<div style="font-size:12px;color:#444;margin-bottom:10px">More of the same work on <b>'+esc(plan)+'</b>, without a second approval. '+
-            'Managers agree the spend offline; this records it. Upward only.</div>'+
+          '<div style="font-size:12px;color:#444;margin-bottom:10px">Change what <b>'+esc(plan)+'</b> is for, without a second approval. '+
+            'Managers agree the spend offline; this records it. It may go up freely, or down to what has already been recorded against it.</div>'+
           '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">New target</label>'+
           '<input type="number" id="wpr-qty" min="0" step="any" style="font-family:inherit;font-size:14px;border:1px solid var(--line);padding:8px 10px;width:180px;background:#fff;color:var(--ink)">'+
           '<div id="wpr-figs" style="margin-top:14px;font-size:12px"></div>'+
         '</div>'+
         '<div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--faint)">'+
           '<button type="button" class="btn" id="wpr-cancel">Cancel</button>'+
-          '<button type="button" class="btn solid" id="wpr-go" disabled>Raise it</button>'+
+          '<button type="button" class="btn solid" id="wpr-go" disabled>Apply</button>'+
         '</div>'+
       '</div>';
     dlg.style.display="flex";
@@ -373,7 +373,7 @@
           }
           if(num(d.recorded_qty)>0){
             h+='<div style="margin-top:8px;color:var(--mute)">'+fmt(d.recorded_qty)+
-               ' already recorded against this request — a target may never go below it.</div>';
+               ' already recorded against this request — the target may not go below it.</div>';
           }
           if(d.original_qty){
             h+='<div style="margin-top:4px;color:var(--mute)">Originally approved for '+fmt(d.original_qty)+'.</div>';
@@ -392,7 +392,7 @@
       call({action:"raise_target", name:plan, quantity:num(qty.value)}, true).then(function(d){
         if(d.error){ toast("Error: "+d.error); go.disabled=false; return; }
         shut();
-        toast("Target raised: "+fmt(d.was_qty)+" → "+fmt(d.quantity));
+        toast("Target "+(d.direction==="down"?"lowered":"raised")+": "+fmt(d.was_qty)+" → "+fmt(d.quantity));
         if(typeof onDone==="function") onDone();
       }).catch(function(e){ toast("Raise failed"); go.disabled=false; });
     };
@@ -1856,8 +1856,8 @@
       (editableState(r.workflow_state) ? '<div style="padding:0 14px 14px"><button class="btn solid" data-edit="'+esc(r.name)+'">Edit this plan</button></div>' : '')+
       // Approved is the one state where editing would cost the approval, and so
       // the one state this control belongs in. Anything earlier is simply edited.
-      (r.workflow_state==="Approved" ? '<div style="padding:0 14px 14px"><button class="btn" data-raise="'+esc(r.name)+'">Raise target</button>'+
-        '<span class="hint" style="margin-left:10px">More of the same work, without a second approval. Approver only, upward only.</span></div>' : '');
+      (r.workflow_state==="Approved" ? '<div style="padding:0 14px 14px"><button class="btn" data-raise="'+esc(r.name)+'">Adjust target</button>'+
+        '<span class="hint" style="margin-left:10px">More of the same work, or less — down to what is already recorded. Approver only.</span></div>' : '');
     var eb=box.querySelector('[data-edit]');
     if(eb){ eb.onclick=function(ev){ ev.stopPropagation(); openPlanForEdit(eb.getAttribute("data-edit")); }; }
     var rb=box.querySelector('[data-raise]');

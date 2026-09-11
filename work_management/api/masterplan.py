@@ -535,6 +535,17 @@ def wm_masterplan(**kwargs):
                 sv_md = 0
                 sv_cost = 0
                 sv_changed = []
+                # THE PERIOD ITSELF, when it moves. Only activity lines were ever
+                # recorded here, so an approved plan could have its dates changed
+                # and the document said nothing about it -- the one edit most
+                # likely to strand somebody's week.
+                if sv_old:
+                    if str(sv_from) != str(sv_old.period_from):
+                        sv_changed.append("period from " + str(sv_old.period_from) +
+                                          " → " + str(sv_from))
+                    if str(sv_to) != str(sv_old.period_to):
+                        sv_changed.append("period to " + str(sv_old.period_to) +
+                                          " → " + str(sv_to))
                 for sr in sv_rows:
                     ti = frappe.db.get_value("Task", sr.get("task"), ["custom_uom"], as_dict=True)
                     # the rate in force when the budget starts, then frozen on the line
@@ -640,24 +651,47 @@ def wm_masterplan(**kwargs):
                                 sv_cut = sv_cut + " Held by " + ", ".join(
                                     [x.name for x in sv_hold]) + "."
                             break
-                    # narrowing the period strands every row that falls outside the new
-                    # window: its budget silently disappears from under it
-                    if not sv_cut and (str(sv_from) > str(sv_old.period_from) or
-                                       str(sv_to) < str(sv_old.period_to)):
+                    # NARROWING THE PERIOD STRANDS WHATEVER FALLS OUTSIDE IT. A
+                    # request belongs to the plan whose period CONTAINS it -- the
+                    # rule the planner enforces when one is raised -- so a period
+                    # that no longer contains a request it is charged for takes the
+                    # budget out from under that request.
+                    #
+                    # Three things this checks that its first version did not:
+                    #
+                    #   · every request THIS PLAN is charged for, by the attribution
+                    #     rule, rather than only ones whose task happened to be in
+                    #     the edit. A request for an untouched line is stranded just
+                    #     as thoroughly.
+                    #   · requests that STRADDLE the new edge, not only ones that
+                    #     fall entirely outside it. Starting inside and ending after
+                    #     is exactly as uncontained, and the planner would refuse to
+                    #     raise it against these dates.
+                    #   · widening as well as narrowing -- moving the start forward
+                    #     strands the same way, and "shortening" was too narrow a
+                    #     word for what the edit can do.
+                    if not sv_cut and (str(sv_from) != str(sv_old.period_from) or
+                                       str(sv_to) != str(sv_old.period_to)):
                         sv_lost = frappe.db.sql("""
-                            SELECT name, from_date, to_date FROM `tabWork Management Planner`
-                            WHERE farm = %(f)s AND task IN %(ts)s
-                              AND IFNULL(workflow_state,'') != 'Rejected'
-                              AND from_date <= %(opto)s AND to_date >= %(opfrom)s
-                              AND (from_date > %(pto)s OR to_date < %(pfrom)s)
-                            ORDER BY creation
-                        """, {"f": sv_farm, "ts": tuple(sv_snap.keys()) or ("",),
-                              "opfrom": sv_old.period_from, "opto": sv_old.period_to,
-                              "pfrom": sv_from, "pto": sv_to}, as_dict=True)
+                            SELECT p.name, p.task, p.from_date, p.to_date
+                            FROM `tabWork Management Planner` p
+                            WHERE p.farm = %(f)s
+                              AND IFNULL(p.workflow_state,'') != 'Rejected'
+                              AND """ + attributed_to_plan("p") + """
+                              AND NOT (p.from_date >= %(nfrom)s AND p.to_date <= %(nto)s)
+                            ORDER BY p.creation
+                        """, {"f": sv_farm, "plan": sv_name,
+                              "pfrom": sv_old.period_from, "pto": sv_old.period_to,
+                              "nfrom": sv_from, "nto": sv_to}, as_dict=True)
                         if sv_lost:
-                            sv_cut = ("Shortening the period would strand " +
-                                      str(len(sv_lost)) + " weekly plan(s) that hold this "
-                                      "budget: " + ", ".join([x.name for x in sv_lost]) + ".")
+                            sv_cut = ("These dates would no longer cover " +
+                                      str(len(sv_lost)) + " request" +
+                                      ("" if len(sv_lost) == 1 else "s") +
+                                      " drawing on this plan: " +
+                                      ", ".join([x.name + " (" + str(x.from_date) + " → " +
+                                                 str(x.to_date) + ")" for x in sv_lost[:6]]) +
+                                      ("" if len(sv_lost) <= 6 else ", and more") +
+                                      ". Move those requests or leave the period covering them.")
                 if sv_cut:
                     out["error"] = sv_cut
                 else:
