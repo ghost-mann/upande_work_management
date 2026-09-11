@@ -1119,7 +1119,11 @@
       bd.innerHTML=anBarsV(wk,"workers","#2563eb",function(v){return fmt(v);},
         "How many different people did confirmed work each week.","Workers (count)");
     } else if(AN.tab==="task"){
-      bd.innerHTML=anBarsH(AN.data.top_tasks||[],"label","#0a7a43",
+      // the endpoint sends the docname; taskName() is the one place that knows
+      // the map, so resolve here rather than teaching the bar renderer about tasks
+      var anTT=(AN.data.top_tasks||[]).map(function(r){
+        var o={}; for(var k in r){ o[k]=r[k]; } o.label=taskName(r.task); return o; });
+      bd.innerHTML=anBarsH(anTT,"label","#0a7a43",
         function(v,pct){ return "KES "+money(v)+" · "+pct+"%"; },
         function(r){ return money(r.qty)+" units · "+fmt(r.workers)+" people"; },
         "Your 10 biggest tasks by confirmed pay.");

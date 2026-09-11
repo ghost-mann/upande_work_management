@@ -1514,7 +1514,11 @@ def wm_dashboard(**kwargs):
             WHERE """ + dconds + """
             GROUP BY ac.task ORDER BY pay DESC LIMIT 10
         """, tuple(dparams), as_dict=True)
-        out["top_tasks"] = [{"label": r.label, "pay": frappe.utils.flt(r.pay),
+        # The docname, under its own name. It used to go out as "label", which read
+        # as already-resolved and was not: the chart printed TASK-2026-00103 long
+        # after the five screens learned to name a task, because nothing in the
+        # screen file mentioned `.task` for a name-resolution check to catch.
+        out["top_tasks"] = [{"task": r.label, "pay": frappe.utils.flt(r.pay),
             "qty": frappe.utils.flt(r.qty), "workers": frappe.utils.cint(r.workers)} for r in tt]
         # farm share
         fsh = frappe.db.sql("""
