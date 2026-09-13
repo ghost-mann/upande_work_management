@@ -7,7 +7,7 @@ The decisions are pure and tested without a site::
 
 import unittest
 
-from work_management.wiki_guest_redirect import login_url, should_redirect
+from work_management.wiki_guest_redirect import login_url, should_look_up, should_redirect
 
 
 class TestWhoGetsSentToLogin(unittest.TestCase):
@@ -30,6 +30,26 @@ class TestWhoGetsSentToLogin(unittest.TestCase):
 	def test_a_public_page_is_left_to_the_wiki(self):
 		# Making a space guest-readable must keep working.
 		self.assertFalse(should_redirect("Guest", "some-doc", guest_may_read=True))
+
+
+class TestWhetherToAskTheDatabaseAtAll(unittest.TestCase):
+	"""can_render runs on every request the site serves. On a bench without the
+	wiki app there is no Wiki Document table, so looking anyway costs a failed
+	query per page load -- caught and harmless, but asked and answered nowhere.
+	"""
+
+	def test_no_wiki_installed_means_no_lookup(self):
+		self.assertFalse(should_look_up("Guest", wiki_installed=False))
+
+	def test_a_guest_on_a_wiki_site_is_worth_looking_up(self):
+		self.assertTrue(should_look_up("Guest", wiki_installed=True))
+
+	def test_a_signed_in_user_is_never_looked_up(self):
+		# They may legitimately be refused; that is the wiki's call, not ours.
+		self.assertFalse(should_look_up("james@upande.com", wiki_installed=True))
+
+	def test_a_signed_in_user_on_a_wikiless_site_is_doubly_skipped(self):
+		self.assertFalse(should_look_up("james@upande.com", wiki_installed=False))
 
 
 class TestWhereTheySentBack(unittest.TestCase):

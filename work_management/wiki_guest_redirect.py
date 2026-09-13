@@ -30,6 +30,9 @@ from frappe.website.page_renderers.base_renderer import BaseRenderer
 
 GUEST = "Guest"
 
+#: The Frappe Wiki app. This renderer only has work to do where it is present.
+WIKI_APP = "wiki"
+
 
 # ---------------------------------------------------------------- decisions
 
@@ -42,6 +45,21 @@ def login_url(path):
 	lands back on this site.
 	"""
 	return "/login?redirect-to=" + quote("/" + (path or "").strip("/ "), safe="/")
+
+
+def should_look_up(user, wiki_installed):
+	"""Whether it is worth asking the database anything at all.
+
+	``can_render`` runs on *every* request the site serves, so the free checks
+	come first. A signed-in visitor is never redirected, and a site without the
+	wiki app has no ``Wiki Document`` table to look in -- querying it anyway is
+	a failed query on every page load, which is what this app was doing on
+	benches where the wiki is not installed.
+
+	The lookup below is already wrapped in ``try``/``except``, so nothing broke;
+	it was simply asking a question that could never be answered.
+	"""
+	return user == GUEST and bool(wiki_installed)
 
 
 def should_redirect(user, page_exists, guest_may_read):
@@ -59,7 +77,7 @@ def should_redirect(user, page_exists, guest_may_read):
 
 class WikiGuestLoginRedirect(BaseRenderer):
 	def can_render(self):
-		if frappe.session.user != GUEST:
+		if not should_look_up(frappe.session.user, WIKI_APP in frappe.get_installed_apps()):
 			return False
 		name = self._published_page()
 		if not name:
