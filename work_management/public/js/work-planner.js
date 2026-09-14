@@ -334,7 +334,9 @@
         '</div>'+
         '<div style="padding:16px 18px">'+
           '<div style="font-size:12px;color:#444;margin-bottom:10px">Change what <b>'+esc(plan)+'</b> is for, without a second approval. '+
-            'Managers agree the spend offline; this records it. It may go up freely, or down to what has already been recorded against it.</div>'+
+            'Managers agree the spend offline; this records it. It may go up within the '+
+            'master plan\'s remaining budget — raise the master plan line first if it refuses — '+
+            'or down to what has already been recorded against it.</div>'+
           '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">New target</label>'+
           '<input type="number" id="wpr-qty" min="0" step="any" style="font-family:inherit;font-size:14px;border:1px solid var(--line);padding:8px 10px;width:180px;background:#fff;color:var(--ink)">'+
           '<div id="wpr-figs" style="margin-top:14px;font-size:12px"></div>'+
@@ -379,11 +381,22 @@
             h+='<div style="margin-top:4px;color:var(--mute)">Originally approved for '+fmt(d.original_qty)+'.</div>';
           }
         }
+        // WHERE TO FIX IT, not just what is wrong. The orange box says the line
+        // has no room; the next step is to raise the line, and that belongs on
+        // the control that is refusing as well as in the message.
+        var overBudget = !!d.error && /Over the budgeted/.test(String(d.error));
+        var fixHere = overBudget && d.master_plan
+          ? 'Raise the budget on '+d.master_plan+' first, then come back.'
+          : '';
         if(d.error){
-          h+='<div style="margin-top:10px;padding:9px 12px;border:1px solid #fed7aa;background:#fff7ed;color:#7c2d12;border-radius:8px">'+esc(d.error)+'</div>';
+          h+='<div style="margin-top:10px;padding:9px 12px;border:1px solid #fed7aa;background:#fff7ed;color:#7c2d12;border-radius:8px">'+esc(d.error)+
+             (fixHere?'<div style="margin-top:6px;font-weight:700">'+esc(fixHere)+'</div>':'')+'</div>';
         }
         figs.innerHTML=h||'<span class="gg-alt">Type a new target.</span>';
         go.disabled=!!d.error || !v;
+        go.title = go.disabled
+          ? (fixHere || (d.error ? String(d.error) : 'Type a new target above.'))
+          : '';
       }).catch(function(e){ figs.innerHTML='<span class="gg-alt">Could not check: '+esc(e&&e.message?e.message:e)+'</span>'; });
     }
     qty.oninput=function(){ if(num(qty.value)>0) look(); else { figs.innerHTML=''; go.disabled=true; } };
@@ -1786,12 +1799,10 @@
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.requested_by||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th class="c" style="width:34px"></th><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Period</th>'+(fs?'<th>By</th>':'')+'<th>Status</th></tr></thead><tbody>';
         var cols=fs?12:11;
         list.forEach(function(r, i){
-          h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer">'+
-           '<td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td>'+
-           '<td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
+          h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td>'+(fs?'<td>'+(r.mine?'<b>me</b>':esc(shortUser(r.requested_by)))+'</td>':'')+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
           h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="'+cols+'" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
@@ -2046,9 +2057,12 @@
               hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+(r.task||"")+" "+(r.requested_by||"")).toLowerCase()};
     }, function(body, rows){
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-      var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th>'+(multi?'<th>Step</th>':'')+'<th>Action</th></tr></thead><tbody>';
+      var h='<table><thead><tr><th class="c" style="width:34px"></th><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Ppl/Day</th><th class="n">Mandays</th><th class="n">Hours</th><th class="n">Cost (KES)</th><th>Budget after this</th><th>Period</th><th>By</th>'+(multi?'<th>Step</th>':'')+'<th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r, i){
-        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td>'+
+        h+='<tr class="expandrow" data-i="'+i+'" style="cursor:pointer">'+
+           // stopPropagation on the box keeps a tick from also expanding the row
+           '<td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td>'+
+           '<td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td>'+
            (multi?('<td style="font-size:10.5px">'+esc(r.step_label||r.workflow_state||"")+'</td>'):'')+
            // the button says what the step calls the decision -- "HR Approve" is
            // the configured action, and a button labelled "Approve" on a screen

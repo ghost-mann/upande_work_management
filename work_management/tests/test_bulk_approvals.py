@@ -43,6 +43,34 @@ def read(path):
 		return handle.read()
 
 
+def js_function(src, name):
+	"""One JS function body, declaration to the next one at column 2.
+
+	Every assertion about a screen affordance is scoped through this. Searching
+	the whole FILE is what let the first version of this feature ship broken: the
+	row checkbox was rendered, `assertIn('data-bpick=', src)` passed, and the
+	checkbox was in loadMine -- the History tab -- while the bulk bar it was
+	supposed to feed sat on the Approvals tab. Both halves existed; neither could
+	see the other; the tests were happy.
+	"""
+	at = src.index("  function %s(" % name)
+	nxt = src.find("\n  function ", at + 10)
+	return src[at:nxt if nxt > 0 else len(src)]
+
+
+#: Which function renders each screen's approval queue -- the one place the
+#: bar, the tick-boxes and the wiring all have to agree.
+APPROVALS_RENDER = {
+	"work-planner.js": "renderAppr",
+	"work-assigner.js": "renderStage",
+	"work-actuals.js": "loadStage",
+}
+
+#: The tab that must NOT grow bulk machinery. It has no bulk bar and no bulk
+#: action; a tick-box there selects into a state nothing reads.
+NO_BULK_RENDER = "loadMine"
+
+
 class Recorder:
 	"""A dispatcher stand-in: records what form_dict held when it was called.
 
@@ -277,6 +305,115 @@ class TestStagesAreNotMixed(unittest.TestCase):
 				self.assertIn('String(%s||"").split("_")[1]' % derive, src)
 
 
+class TestTheControlsAndTheRowsAreOnTheSameTab(unittest.TestCase):
+	"""The bug this class exists for.
+
+	The bar rendered on the Approvals tab and the tick-box rendered on the
+	History tab, so "Select all shown" ticked nothing, the counter stayed at 0
+	and "Approve selected" never enabled. Every assertion below is scoped to ONE
+	function, because the previous ones searched the whole file and a feature
+	split across two tabs satisfied all of them.
+	"""
+
+	SCREENS = ("work-planner.js", "work-assigner.js", "work-actuals.js")
+
+	def render(self, screen):
+		return js_function(read(os.path.join(JS, screen)), APPROVALS_RENDER[screen])
+
+	def test_the_bar_is_in_the_approvals_render(self):
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				self.assertIn("bulkBar(", self.render(screen))
+
+	def test_the_row_checkbox_is_in_the_SAME_function(self):
+		"""The assertion the first version needed and did not have."""
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				self.assertIn('data-bpick="', self.render(screen),
+					"%s renders the bulk bar but no row tick-box, so the "
+					"selection is always empty" % APPROVALS_RENDER[screen])
+
+	def test_the_wiring_is_in_the_same_function_too(self):
+		"""A checkbox nothing wires is a checkbox that ticks and does nothing."""
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				self.assertIn("wireBulk(", self.render(screen))
+
+	def test_the_checkbox_carries_the_row_s_own_name(self):
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				self.assertIn('data-bpick="\'+esc(r.name)+\'"', self.render(screen))
+
+	def test_it_reflects_a_selection_already_made(self):
+		"""Filter or reload the list and a ticked row must come back ticked."""
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				self.assertIn('(BULK.picked[r.name]?" checked":"")', self.render(screen))
+
+	def test_the_header_offers_select_all(self):
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				src = read(os.path.join(JS, screen))
+				self.assertIn('id="bulk-all"', js_function(src, "bulkBar"))
+
+	def test_the_selection_column_has_a_header_cell(self):
+		"""Without one the header is a column short of its rows and every cell
+		after it sits under the wrong title."""
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				self.assertIn('<th class="c" style="width:34px"></th>',
+					self.render(screen))
+
+	def test_the_history_tab_grew_none_of_it(self):
+		"""It has no bulk bar and no bulk action, so a tick-box there selects
+		into a state nothing reads -- which is exactly where they were."""
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				mine = js_function(read(os.path.join(JS, screen)), NO_BULK_RENDER)
+				self.assertNotIn("data-bpick", mine)
+				self.assertNotIn("bulkBar(", mine)
+				self.assertNotIn("wireBulk(", mine)
+
+
+class TestTheApprovalTableIsNotMisaligned(unittest.TestCase):
+	"""Adding a column to the header and not the rows -- or the reverse -- shifts
+	every cell under the wrong title. It happened on the assigner: an
+	eleven-column header over ten-column rows."""
+
+	SCREENS = ("work-planner.js", "work-assigner.js", "work-actuals.js")
+
+	def counts(self, screen):
+		block = js_function(read(os.path.join(JS, screen)), APPROVALS_RENDER[screen])
+		lines = block.split("\n")
+		header = "".join(l for l in lines if "<thead><tr>" in l)
+		row, grabbing = "", False
+		for line in lines:
+			if re.search(r"h\+='<tr", line) and "detailrow" not in line:
+				grabbing = True
+			if grabbing:
+				row += line
+			if grabbing and "</tr>'" in line:
+				break
+		return (header.replace("<thead", "").count("<th"), header.count("?'<th"),
+			row.count("<td"), len(re.findall(r"\?\s*\(?'<td", row)))
+
+	def test_the_header_and_the_rows_have_the_same_number_of_columns(self):
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				th, _cth, td, _ctd = self.counts(screen)
+				self.assertEqual(th, td,
+					"%s: %d header cells over %d row cells"
+					% (APPROVALS_RENDER[screen], th, td))
+
+	def test_and_the_same_number_of_conditional_ones(self):
+		"""A column that appears only sometimes has to appear in both, or the
+		table is aligned for one kind of user and skewed for the other."""
+		for screen in self.SCREENS:
+			with self.subTest(screen=screen):
+				_th, cth, _td, ctd = self.counts(screen)
+				self.assertEqual(cth, ctd)
+
+
 class TestTheScreensOfferIt(unittest.TestCase):
 	SCREENS = ("work-planner.js", "work-assigner.js", "work-actuals.js")
 
@@ -291,10 +428,13 @@ class TestTheScreensOfferIt(unittest.TestCase):
 				self.assertIn('id="bulk-app"', src)
 				self.assertIn('id="bulk-rej"', src)
 
-	def test_every_row_carries_a_checkbox(self):
+	def test_a_live_count_is_shown_beside_the_buttons(self):
+		"""Parity with the master plan tab, which has had one all along."""
 		for screen in self.SCREENS:
 			with self.subTest(screen=screen):
-				self.assertIn('data-bpick="', self.src(screen))
+				src = self.src(screen)
+				self.assertIn('id="bulk-n"', src)
+				self.assertIn('" selected"', src)
 
 	def test_the_action_counts_what_is_selected(self):
 		for screen in self.SCREENS:

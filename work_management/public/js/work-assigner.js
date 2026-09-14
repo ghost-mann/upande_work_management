@@ -675,15 +675,12 @@
           var editable = (r.workflow_state==="Draft"||r.workflow_state==="Rejected"||r.workflow_state==="Pending HR Head");
           var canSub = (r.workflow_state==="Assigned");
           var actionBtn = editable ? '<button class="btn" data-edit="'+esc(r.name)+'">Edit</button>' : (canSub ? '<button class="btn solid" data-sub="'+esc(r.name)+'">Manage crew</button>' : '');
-          h+='<tr data-xa="'+esc(r.name)+'"><td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
+          h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ openAsgForEdit(btn.getAttribute("data-edit")); }; });
         body.querySelectorAll("[data-sub]").forEach(function(btn){ btn.onclick=function(){ openSubstitute(btn.getAttribute("data-sub")); }; });
-        wireExpandAsg(body, 11);
-      // the stage key the server wants: a_fm_approve -> fm
-      wireBulk(body, rows, String(c.approveAction||"").split("_")[1],
-        function(d){ loadStage(bodyId, c.stage, c.approveAction); setTimeout(function(){ bulkResult(d); }, 250); });
+        wireExpandAsg(body, 10);
       });
     });
   }
@@ -1041,13 +1038,19 @@
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
       var h='<table><thead><tr><th class="c" style="width:34px"></th><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th class="n">Cost</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r){
-        h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+        h+='<tr data-xa="'+esc(r.name)+'">'+
+           // stopPropagation on the box keeps a tick from also expanding the row
+           '<td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td>'+
+           '<td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
-      wireExpandAsg(body, 10);
+      wireExpandAsg(body, 11);
       body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act(c.approveAction, btn.getAttribute("data-app"), bodyId, c.stage, c.approveAction); }; });
       body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("a_reject", btn.getAttribute("data-rej"), bodyId, c.stage, c.approveAction); }; });
       body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ openAsgForEdit(btn.getAttribute("data-edit")); }; });
+      // the stage key the server wants: a_fm_approve -> fm
+      wireBulk(body, rows, String(c.approveAction||"").split("_")[1],
+        function(d){ loadStage(bodyId, c.stage, c.approveAction); setTimeout(function(){ bulkResult(d); }, 250); });
     });
   }
   function act(which,name,bodyId,stage,approveAction){

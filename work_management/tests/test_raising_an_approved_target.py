@@ -56,6 +56,19 @@ def read(path):
 		return handle.read()
 
 
+def js_function(src, name):
+	"""One JS function body, declaration to the next one at column 2.
+
+	These assertions used to take a fixed 4,200-character slice of the file and
+	search that. Adding four lines of copy to the dialog pushed the code they
+	were looking for past the end of the window, and two tests failed for a
+	reason that had nothing to do with what they were testing.
+	"""
+	at = src.index("  function %s(" % name)
+	nxt = src.find("\n  function ", at + 10)
+	return src[at:nxt if nxt > 0 else len(src)]
+
+
 def fields():
 	return {f["fieldname"]: f for f in json.load(open(DOCTYPE))["fields"]}
 
@@ -350,14 +363,40 @@ class TestTheControlOnTheScreen(unittest.TestCase):
 	def test_a_refusal_still_shows_the_figures(self):
 		"""'You cannot' without the numbers leaves the person no way to decide
 		what to ask for instead."""
-		at = self.js.index("function openRaiseDialog(")
-		block = self.js[at:at + 4200]
+		block = js_function(self.js, "openRaiseDialog")
 		self.assertLess(block.index("d.current_qty!=null"), block.index("if(d.error)"))
 
 	def test_the_write_is_a_post(self):
-		at = self.js.index("function openRaiseDialog(")
-		block = self.js[at:at + 4600]
-		self.assertIn('quantity:num(qty.value)}, true)', block)
+		self.assertIn('quantity:num(qty.value)}, true)',
+			js_function(self.js, "openRaiseDialog"))
+
+	def test_the_copy_does_not_promise_an_uncapped_raise(self):
+		"""It said "it may go up freely". The master plan line caps it, and the
+		refusal was arriving as a surprise."""
+		block = js_function(self.js, "openRaiseDialog")
+		self.assertNotIn("go up freely", block)
+		self.assertIn("within the ", block)
+		self.assertIn("remaining budget", block)
+
+	def test_a_budget_refusal_says_where_to_fix_it(self):
+		"""The orange box says the line has no room; the next step is to raise
+		the line, and that was nowhere on screen."""
+		block = js_function(self.js, "openRaiseDialog")
+		self.assertIn("Raise the budget on ", block)
+		self.assertIn("d.master_plan", block)
+
+	def test_the_disabled_button_carries_the_same_next_step(self):
+		"""A greyed control with no explanation is the thing that costs an
+		afternoon -- this app has been bitten by it before."""
+		block = js_function(self.js, "openRaiseDialog")
+		self.assertIn("go.title", block)
+		self.assertIn("fixHere", block)
+
+	def test_the_pointer_is_only_for_a_budget_refusal(self):
+		"""Telling somebody to raise the master plan when the problem is a cut
+		below recorded work sends them to the wrong screen."""
+		block = js_function(self.js, "openRaiseDialog")
+		self.assertIn("/Over the budgeted/", block)
 
 	def test_the_list_is_reloaded_afterwards(self):
 		"""Otherwise the row on screen keeps showing the target that was just
