@@ -31,6 +31,10 @@
 #wpp nav.tabs.mp-stages{margin:2px 0 12px}
 #wpp nav.tabs.mp-stages .cnt{display:inline-block;min-width:17px;padding:1px 5px;margin-left:6px;border-radius:999px;background:var(--line);color:var(--ink);font-size:9.5px;font-weight:700;vertical-align:1px}
 #wpp nav.tabs.mp-stages button[aria-selected=true] .cnt{background:rgba(255,255,255,.24);color:#fff}
+/* a step switched off that still holds plans: on the strip only so the queue
+   can be drained, and gone once the last one is decided */
+#wpp nav.tabs.mp-stages .mp-legacy{margin-left:5px;font-size:8.5px;letter-spacing:.1em;color:var(--amber);font-weight:700}
+#wpp nav.tabs.mp-stages button[aria-selected=true] .mp-legacy{color:rgba(255,255,255,.72)}
 #wpp .mpd-stagenote{font-size:11px;color:var(--mute);margin:-4px 0 10px}
 #wpp .mp-buds{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 #wpp .mp-buds .bud{font-family:inherit;text-align:left;border:1px solid var(--line);background:#fff;border-radius:var(--rs);padding:7px 12px;cursor:pointer;font-size:11.5px;font-weight:700;color:var(--ink);box-shadow:var(--sh);transition:all .12s}
@@ -808,14 +812,13 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
       <button type="button" class="btn solid" id="mp-refresh">Show</button>
       <button type="button" class="btn" id="mp-new" style="display:none">New master plan</button>
     </div>
-    <nav class="tabs mp-stages" id="mp-stages">
-      <button data-stage="Pending Consultant" aria-selected="true">Consultant <span class="cnt" id="mpc-consultant">0</span></button>
-      <button data-stage="Pending GM" aria-selected="false">General Manager <span class="cnt" id="mpc-gm">0</span></button>
-      <button data-stage="Approved" aria-selected="false">Approved <span class="cnt" id="mpc-appr">0</span></button>
-      <button data-stage="Draft" aria-selected="false">Draft <span class="cnt" id="mpc-draft">0</span></button>
-      <button data-stage="Rejected" aria-selected="false">Rejected <span class="cnt" id="mpc-rej">0</span></button>
-    </nav>
-    <input type="hidden" id="mp-state" value="Pending Consultant">
+    <!-- Built by renderMpStages(), not written here. Consultant and General
+         Manager were this app's shipped chain and stopped being the chain when
+         the chain became configurable; Approved / Draft / Rejected are not steps
+         and are appended by the same function. The starting state is whatever
+         the first tab turns out to be, which is why the input below is empty. -->
+    <nav class="tabs mp-stages" id="mp-stages"></nav>
+    <input type="hidden" id="mp-state" value="">
     <div id="mp-body" class="empty">Pick a farm and status, then Show.</div>
   </div>
 

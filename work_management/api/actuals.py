@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk
+from work_management import bulk, stage_pills
 from work_management.api.config import get_config
 
 
@@ -1691,6 +1691,13 @@ def wm_actuals(**kwargs):
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
         out["is_farm_manager"] = ("Farm Manager" in rl) or any(_r_ in rl for _r_ in FARM_APPROVER_ROLE.values())
+        # THE TAB STRIP, from the configured chain rather than from a list
+        # written into the screen. NOT filtered by `rl`: which queues exist is
+        # not a question about who is looking, and answering it that way hid the
+        # farm manager's queue from everybody else. See
+        # work_management/stage_pills.py.
+        out["stages"] = stage_pills.for_document_type(
+            "Work Management Actuals", STAGE_ROWS, FARM_APPROVER_ROLE, rl)
 
     # ===== ACTUALS (act_) =====
     elif action == "a_sub_candidates":

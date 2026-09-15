@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import audit
+from work_management import audit, stage_pills
 from work_management.api.config import get_config
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
@@ -250,6 +250,13 @@ def wm_masterplan(**kwargs):
             SELECT workflow_state st, COUNT(*) n
             FROM `tabWork Management Master Plan` GROUP BY workflow_state
         """, as_dict=True)
+        # The chain half of the status strip. Consultant and General Manager were
+        # written into the markup and stopped being the chain the moment the
+        # chain became configurable; Approved / Draft / Rejected are not steps at
+        # all and stay where they are. See work_management/stage_pills.py.
+        out["stages"] = stage_pills.for_document_type(
+            "Work Management Master Plan", STAGE_ROWS, FARM_APPROVER_ROLE,
+            frappe.get_roles())
 
     elif action == "period_free":
         # Does this farm already have a budget over these dates? The form asks the

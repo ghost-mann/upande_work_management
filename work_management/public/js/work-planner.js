@@ -418,20 +418,63 @@
 
   // ── master plan: the budget the planner draws down against ──────────────
   var MP = { roles:null, inited:false };
+
+  //: The three that are not steps. A plan is Approved, a Draft or Rejected
+  //: whatever chain a site runs, so these are appended rather than configured.
+  var MP_TERMINALS = [
+    {key:"approved", label:"Approved", state:"Approved"},
+    {key:"draft",    label:"Draft",    state:"Draft"},
+    {key:"rejected", label:"Rejected", state:"Rejected"}
+  ];
+
+  // The status strip. `Consultant` and `General Manager` were written into the
+  // markup, which was this app's shipped chain and stopped being the chain when
+  // the chain became configurable: rename the consultant step and the tab kept
+  // the old name, switch it off and the tab stayed forever empty, add one and it
+  // got no tab at all. The chain half now comes from the server -- the same
+  // chain the approve actions consult -- and the three terminals are appended.
+  function mpStages(m){
+    var counts={}; ((m||{}).counts||[]).forEach(function(c){ counts[c.st]=c.n; });
+    var pills=((m||{}).stages||[]).map(function(x){
+      return {key:x.key, label:x.short_label||x.label, state:x.state,
+              count:x.count, legacy:x.legacy};
+    });
+    MP_TERMINALS.forEach(function(t){
+      pills.push({key:t.key, label:t.label, state:t.state,
+                  count:counts[t.state]||0, legacy:0});
+    });
+    return pills;
+  }
+  function renderMpStages(m){
+    var nav=el("mp-stages"); if(!nav) return;
+    var pills=mpStages(m);
+    var input=el("mp-state");
+    var current=(input&&input.value)||"";
+    var live=pills.filter(function(p){ return p.state===current; }).length;
+    // the state that was selected may have been switched off and drained since
+    // the last look, so fall back to the first tab rather than to nothing
+    if(!live && pills.length){ current=pills[0].state; if(input) input.value=current; }
+    var h="";
+    pills.forEach(function(p){
+      h+='<button type="button" data-stage="'+esc(p.state)+'" aria-selected="'+
+         (p.state===current?"true":"false")+'"'+
+         (p.legacy?' title="Switched off, so nothing new is routed here \u2014 but these plans are still waiting. Deciding them needs the step switched back on in Settings; the tab goes once the last one is decided."':'')+'>'+
+         esc(p.label)+' <span class="cnt">'+fmt(p.count||0)+'</span>'+
+         (p.legacy?' <span class="mp-legacy">off</span>':'')+'</button>';
+    });
+    nav.innerHTML=h;
+    nav.querySelectorAll("[data-stage]").forEach(function(b){
+      b.onclick=function(){
+        if(input) input.value=b.getAttribute("data-stage");
+        loadMasterPlans();
+      };
+    });
+  }
   function loadMasterPlans(){
     if(!MP.inited){
       MP.inited=true;
       el("mp-refresh").onclick=loadMasterPlans;
       el("mp-farm").onchange=loadMasterPlans;
-      var stages=el("mp-stages");
-      if(stages) stages.querySelectorAll("[data-stage]").forEach(function(b){
-        b.onclick=function(){
-          stages.querySelectorAll("[data-stage]").forEach(function(x){ x.setAttribute("aria-selected","false"); });
-          b.setAttribute("aria-selected","true");
-          el("mp-state").value=b.getAttribute("data-stage");
-          loadMasterPlans();
-        };
-      });
       el("mp-new").onclick=function(){ mpOpenForm(null, loadMasterPlans); };
     }
     var box=el("mp-body");
@@ -448,12 +491,7 @@
       // raising a plan belongs to the farm managers, the HR head and the GM; a
       // consultant reviews and may correct in place, so can_edit is the wrong flag
       if(el("mp-new")) el("mp-new").style.display = m.can_create ? "" : "none";
-      var cnt={}; (m.counts||[]).forEach(function(c){ cnt[c.st]=c.n; });
-      var badge={ "mpc-consultant":"Pending Consultant", "mpc-gm":"Pending GM",
-                  "mpc-appr":"Approved", "mpc-draft":"Draft", "mpc-rej":"Rejected" };
-      Object.keys(badge).forEach(function(id){
-        var e=el(id); if(e) e.textContent=fmt(cnt[badge[id]]||0);
-      });
+      renderMpStages(m);
       return call({ action:"list", farm:(el("mp-farm").value||""),
                     state:(el("mp-state").value||"") }, "wm_masterplan");
     }).then(function(d){

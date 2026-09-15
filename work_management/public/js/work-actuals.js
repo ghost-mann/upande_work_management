@@ -153,11 +153,21 @@
     if(name==="acrej") loadRejected();
     if(name==="acappr") renderApprovals();
   }
+  // THE QUEUES THIS INSTALLATION HAS. Two things were wrong with the list this
+  // replaces. It named the shipped chain -- so a reconfigured one showed stale
+  // tabs, empty tabs, and no tab at all for a step somebody added -- and it
+  // hid tabs by ROLE, which answered "is this queue yours?" with "does this
+  // queue exist?". An HR person may read the farm manager's queue; whether
+  // they can act on what is in it is the buttons' question, and the server's.
+  //
+  // Close Requests is not a step in any chain, so it stays exactly as it was,
+  // and it stays the GM's.
   function apprQueues(){
-    var r=ST.roles||{}, q=[];
-    if(r.is_farm_manager) q.push({key:"fm",label:"Farm Manager",stage:"Pending Farm Manager",action:"act_fm_approve"});
-    if(r.is_hr_head) q.push({key:"hr",label:"HR Head",stage:"Pending HR Head",action:"act_hr_approve"});
-    q.push({key:"gm",label:"GM",stage:"Pending GM",action:"act_gm_approve"});
+    var r=ST.roles||{};
+    var q=(r.stages||[]).map(function(s){
+      return {key:s.key, label:s.short_label||s.label, stage:s.state,
+              action:s.action, count:s.count, legacy:s.legacy};
+    });
     if(r.is_gm) q.push({key:"close",label:"Close Requests"});
     return q;
   }
@@ -169,7 +179,16 @@
     var bar=el("ac-appr-subtabs");
     if(bar){
       var h="";
-      queues.forEach(function(q){ h+='<button type="button" class="subtab'+(q.key===ST._apprKey?" on":"")+'" data-sub="'+q.key+'">'+q.label+'</button>'; });
+      // label, count, and -- for a step switched off that still holds work --
+      // the marker that says why a queue nobody routes to is still on screen
+      queues.forEach(function(q){
+        h+='<button type="button" class="subtab'+(q.key===ST._apprKey?" on":"")+
+           '" data-sub="'+esc(q.key)+'"'+(q.legacy?' title="Switched off, so nothing new is routed here \u2014 but these are still waiting. Approving them needs the step switched back on in Settings; the tab goes once the last one is decided."':'')+'>'+
+           esc(q.label)+
+           (q.count ? ' <span class="cnt">'+fmt(q.count)+'</span>' : '')+
+           (q.legacy ? ' <span class="subtab-legacy">off</span>' : '')+
+           '</button>';
+      });
       bar.innerHTML=h;
       bar.querySelectorAll("[data-sub]").forEach(function(b){ b.onclick=function(){ ST._apprKey=b.getAttribute("data-sub"); renderApprovals(); }; });
     }

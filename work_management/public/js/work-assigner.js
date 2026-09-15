@@ -147,12 +147,19 @@
     if(name==="arej") loadRejected();
     if(name==="aappr") renderApprovals();
   }
+  // THE QUEUES THIS INSTALLATION HAS, not the three this file used to name.
+  // Farm Manager / HR Head / GM was the shipped chain and stopped being the
+  // chain the moment the chain became configurable: a step switched off kept a
+  // tab that could never fill, a renamed step kept its old name, and a step
+  // ADDED got no tab at all. The server sends the strip -- label, state, action,
+  // count, and whether it is a switched-off step still holding work -- built
+  // from the same chain the approve actions consult. See
+  // work_management/stage_pills.py.
   function apprQueues(){
-    return [
-      {key:"fm",label:"Farm Manager",stage:"Pending Farm Manager",action:"a_fm_approve"},
-      {key:"hr",label:"HR Head",stage:"Pending HR Head",action:"a_hr_approve"},
-      {key:"gm",label:"GM",stage:"Pending GM",action:"a_gm_approve"}
-    ];
+    return ((ST.roles||{}).stages||[]).map(function(s){
+      return {key:s.key, label:s.short_label||s.label, stage:s.state,
+              action:s.action, count:s.count, legacy:s.legacy};
+    });
   }
   function renderApprovals(){
     var queues=apprQueues();
@@ -162,7 +169,16 @@
     var bar=el("wa-appr-subtabs");
     if(bar){
       var h="";
-      queues.forEach(function(q){ h+='<button type="button" class="subtab'+(q.key===ST._apprKey?" on":"")+'" data-sub="'+q.key+'">'+q.label+'</button>'; });
+      // label, count, and -- for a step switched off that still holds work --
+      // the marker that says why a queue nobody routes to is still on screen
+      queues.forEach(function(q){
+        h+='<button type="button" class="subtab'+(q.key===ST._apprKey?" on":"")+
+           '" data-sub="'+esc(q.key)+'"'+(q.legacy?' title="Switched off, so nothing new is routed here \u2014 but these are still waiting. Approving them needs the step switched back on in Settings; the tab goes once the last one is decided."':'')+'>'+
+           esc(q.label)+
+           (q.count ? ' <span class="cnt">'+fmt(q.count)+'</span>' : '')+
+           (q.legacy ? ' <span class="subtab-legacy">off</span>' : '')+
+           '</button>';
+      });
       bar.innerHTML=h;
       bar.querySelectorAll("[data-sub]").forEach(function(b){ b.onclick=function(){ ST._apprKey=b.getAttribute("data-sub"); renderApprovals(); }; });
     }
