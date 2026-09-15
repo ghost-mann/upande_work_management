@@ -198,6 +198,52 @@ than three things to maintain.
 
 ---
 
+## Two switches that are not chains, and are not defaults
+
+Both ship **off**, and Altura runs with both **on**. This is a decision, not a
+preference: the client confirmed it as policy at the meeting of **14 September
+2026**, and the deploy checklist has to flip them deliberately rather than
+inherit the shipped default.
+
+| Work Management Settings | Ships | Altura |
+|---|---|---|
+| Allow more than one approved master plan per Farm at a time | off | **on** |
+| Allow a worker's day to be split between tasks | off | **on** |
+
+**Why, in the client's own scenario.** A worker finishes Bed-making early. A new
+master plan and a new plan are raised for another task over the same dates and
+the same block, and he has to be assignable to it. The first switch is what lets
+the second budget be approved at all; the second is what lets him be on both
+before he is released from the first.
+
+**What each one changes.**
+
+- *Concurrent master plans* — a farm may hold two approved budgets over the same
+  days. Every request stores the plan it drew down, so attribution is the link
+  rather than the dates. Where two plans cover the dates and a request names
+  neither, the screen asks instead of guessing: the task picker reports
+  *"KenTrout Farm has more than one approved master plan over ..."* and offers
+  nothing until a plan is chosen, and the approvals queue says the request
+  *"names neither — set its master plan before deciding"*. That prompt is the
+  switch working, not a fault.
+- *Split day* — one worker on two live assignments over the same dates is
+  allowed and **said**: *"Already assigned elsewhere over these dates: ... Their
+  day will be split, so record the hours each task took on the actuals screen."*
+  The hours typed on each actuals row are what keep the day counting once, so
+  entering hours stops being optional hygiene and starts being how pay is right.
+  A worker already released from the first crew raises no warning at all — that
+  is the finished-early case, and he is simply free.
+
+Nothing else moves. The plan level never refused an overlap and still does not;
+the master plan line each request names is the only ceiling. The discrepancy
+audit keys a duplicate day on the **task** as well as the worker and the date,
+so a deliberate split is not "Paid twice for the same day".
+
+Pinned in `work_management/tests/test_concurrent_planning_end_to_end.py`, which
+carries the measured walk-through.
+
+---
+
 ## After saving
 
 - The five workflows regenerate from these two tables, on save and on every
@@ -207,6 +253,8 @@ than three things to maintain.
 - **Verify:** open *Work Management Settings → Approvals*, confirm each chain
   shows the steps above with the right On flags, and walk one throwaway request
   from Draft to Approved to see it stop where it should.
+- **Verify the two switches above are on.** They are on a different tab from
+  the chains and are easy to walk past; both are off in a fresh install.
 - **Reordering caveat:** if anyone ever drags a *shipped* step to a new
   position, `seed_stages()` re-emits shipped rows in catalogue order on the next
   `bench migrate` and the reorder is silently lost. None of the chains above
