@@ -1394,29 +1394,67 @@
     });
   }
 
-  // A master plan can budget a whole month; a request under it is usually a week.
-  // Choosing a plan therefore bounds the request rather than replacing it: the
-  // date inputs get the plan's period as min/max so the picker itself will not
-  // stray outside, and dates already inside the plan are left exactly as they
-  // were. Only dates that hang outside are moved, and only to the nearest edge.
+  // CLICKING A PLAN PILL PLANS INSIDE THAT BUDGET.
   //
-  // The server never asked for more than this -- `tasks` looks for a plan with
-  // period_from <= from_date AND period_to >= to_date, which is containment. The
-  // screen was the only thing insisting on the whole period.
-  function boundDatesToPlan(pf, pt){
+  // This used to only CLAMP: put the plan's period on the pickers as min/max,
+  // then pull whichever edge hung outside back to it. That works while the
+  // request straddles the plan and does nothing at all when it sits wholly
+  // AFTER it -- `from` is not below period_from so it is left where it is,
+  // `to` is pulled back to period_to and then pushed forward again to meet
+  // `from`. Both dates end up outside the window they were meant to move into,
+  // the banner stays up, the task list stays empty, and the next render clears
+  // the chosen plan again because nothing covers the dates. The pill read as
+  // dead. Measured against WMMP-00001 (7-13 Sep): 20-26 Sep came back 20-20 Sep.
+  //
+  // Clamping is kept where it can work, because it is the better answer and was
+  // its own deliberate fix: a request that OVERLAPS the plan keeps the part of
+  // itself that is valid -- 25 Aug to 4 Sep under an August budget becomes 25-31
+  // Aug, not the whole of August. See test_planner_period, which owns that rule.
+  // Clamping only fails where there is nothing to clamp onto, and that is the
+  // case this adds: no overlap at all, so both edges have to be placed rather
+  // than pulled. Start at today where the plan is still running, because the
+  // common case is planning the rest of a period, and at period_from where it is
+  // not -- planning in the past is legal, so a finished plan opens at its own
+  // start rather than being refused.
+  function planInside(pf, pt){
     ["f-from","f-to"].forEach(function(id){
       var e=el(id); if(!e) return;
       e.min=pf; e.max=pt;
     });
     var f=el("f-from"), t=el("f-to");
-    if(!f||!t) return;
+    if(!f||!t||!pf||!pt) return;
     if(!f.value || !t.value){
       // nothing entered, so there is no intent to preserve
       f.value=pf; t.value=pt; return;
     }
+    if(f.value>pt || t.value<pf){
+      // wholly outside the plan, either side of it: nothing here overlaps, so
+      // there is no intent to keep and the whole window is the answer
+      var now=today();
+      f.value = (now<=pt && now>pf) ? now : pf;
+      t.value = pt;
+      return;
+    }
     if(f.value < pf) f.value=pf;
     if(t.value > pt) t.value=pt;
     if(t.value < f.value) t.value=f.value;
+  }
+
+  // "7-13 Sep", or "28 Sep - 4 Oct" across a month boundary. The year only when
+  // it is not the current one: a plan for next April is worth saying twice and
+  // one for this month is not.
+  var MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function planSpan(pf, pt){
+    if(!pf || !pt) return "";
+    var a=String(pf).split("-"), b=String(pt).split("-");
+    if(a.length<3 || b.length<3) return pf+" \u2192 "+pt;
+    var thisYear=today().slice(0,4);
+    var yr=(a[0]===thisYear && b[0]===thisYear) ? "" : (" "+b[0]);
+    var ma=MONTHS[parseInt(a[1],10)-1]||a[1], mb=MONTHS[parseInt(b[1],10)-1]||b[1];
+    var da=parseInt(a[2],10), db=parseInt(b[2],10);
+    return (a[0]===b[0] && a[1]===b[1])
+      ? (da+"\u2013"+db+" "+ma+yr)
+      : (da+" "+ma+" \u2013 "+db+" "+mb+yr);
   }
 
   // The working-days slider sets `to` from `from` plus a count, which can run
@@ -1462,21 +1500,51 @@
     if(covering.length===1) ST.masterPlan = covering[0].name;
     else if(covering.length!==1 && ST.masterPlan &&
             !covering.filter(function(b){ return b.name===ST.masterPlan; }).length) ST.masterPlan = "";
+    // The screen's own choice first. In the ambiguous state the server answers
+    // `master_plan: null` on purpose -- it will not guess between two -- so
+    // reading only the response would leave the pill the person just clicked
+    // looking unclicked.
+    var chosenName = ST.masterPlan || active || "";
+    var chosen = chosenName
+      ? buds.filter(function(b){ return b.name===chosenName; })[0] || null
+      : null;
+    // A choice, rather than the only plan there is. Nothing to clear when there
+    // was nothing to decide.
+    var wasAChoice = !!chosen && covering.length!==1;
     bar.className = inside ? "mp-period" : "mp-period out";
-    var h = (inside
-      ? "Plan period &mdash; the request must fit inside one:"
-      : "<b>These dates cannot be planned.</b> A request has to sit wholly inside one "+
+    var lead = !inside
+      ? "<b>These dates cannot be planned.</b> A request has to sit wholly inside one "+
         "approved plan period, and "+esc(ST.farm||("this "+TX("top_singular","Farm").toLowerCase()))+"&rsquo;s plans are below. "+
-        "Pick one to plan inside it:") + "<div class=\"mp-buds\">";
+        "Pick one to plan inside it:"
+      : (covering.length>1 && !ST.masterPlan
+          ? ("<b>"+fmt(covering.length)+" approved plans cover these dates.</b> They can budget the "+
+             "same activity from different money, so the dates cannot say which this request "+
+             "draws on. Say which:")
+          : "Plan period &mdash; the request must fit inside one:");
+    var h = lead + "<div class=\"mp-buds\">";
     buds.forEach(function(b){
-      var on = (active===b.name) || (b.period_from===f && b.period_to===t);
+      var on = chosenName ? (chosenName===b.name) : (b.period_from===f && b.period_to===t);
       h += '<button type="button" class="bud'+(on?" on":"")+'" data-bf="'+esc(b.period_from)+
-           '" data-bt="'+esc(b.period_to)+'" data-bn="'+esc(b.name)+'">'+
+           '" data-bt="'+esc(b.period_to)+'" data-bn="'+esc(b.name)+'"'+
+           (on?' aria-pressed="true"':' aria-pressed="false"')+'>'+
            esc(b.plan_name||b.name)+
            '<span>'+esc(b.period_from)+' &rarr; '+esc(b.period_to)+
            ' · '+fmt(b.activities)+' activit'+(b.activities===1?"y":"ies")+'</span></button>';
     });
-    txt.innerHTML = h+"</div>";
+    h += "</div>";
+    if(chosen){
+      h += '<div class="mp-chosen">Planning inside <b>'+esc(chosen.name)+'</b> &middot; '+
+           esc(planSpan(chosen.period_from, chosen.period_to))+'</div>';
+    }
+    txt.innerHTML = h;
+    // The dead "Use these dates" button, doing the job the chosen line needs:
+    // somewhere to put it back. It is only offered where there was a decision.
+    if(wasAChoice){
+      btn.style.display=""; btn.textContent="Clear";
+      btn.onclick=function(){ ST.masterPlan=""; loadPlannableTasks(); };
+    } else {
+      btn.style.display="none"; btn.onclick=null;
+    }
     bar.querySelectorAll("[data-bf]").forEach(function(x){
       x.onclick=function(){
         // Which plan, not only which dates. A farm may hold two plans over the
@@ -1484,7 +1552,7 @@
         // dates cannot say which budget this request draws down -- the person
         // choosing the chip can, and the answer travels with the request.
         ST.masterPlan = x.getAttribute("data-bn") || "";
-        boundDatesToPlan(x.getAttribute("data-bf"), x.getAttribute("data-bt"));
+        planInside(x.getAttribute("data-bf"), x.getAttribute("data-bt"));
         syncSlider(); recalc(); loadPlannableTasks();
       };
     });

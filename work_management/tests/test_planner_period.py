@@ -16,6 +16,13 @@ The JS is not importable, so the rules are asserted twice: the pure decision is
 duplicated here in Python and checked against the cases that matter, and
 test_the_screen_still_implements_these_rules() greps the shipped script for the
 markers, so the two cannot silently part company.
+
+`clamp_into_plan()` below is the rule for a request that OVERLAPS the plan, and
+that is all it ever claimed. A request with no overlap at all -- wholly before
+or wholly after -- cannot be clamped into the plan: the clamp leaves one edge
+where it was and pushes the other to meet it, so both end up outside. That case
+is placed rather than pulled, and lives in
+`work_management/tests/test_the_plan_pill_is_a_picker`.
 """
 
 import os
@@ -102,7 +109,22 @@ class TestTheScreenStillImplementsTheseRules(unittest.TestCase):
 		)
 
 	def test_it_bounds_the_date_inputs_to_the_chosen_plan(self):
-		self.assertIn("boundDatesToPlan", self.js)
+		"""The function was renamed `planInside` when it grew a second branch for
+		a request that does not overlap the plan at all -- where there is nothing
+		to clamp onto and both edges have to be placed. That branch and its cases
+		live in test_the_plan_pill_is_a_picker; the clamping asserted here is
+		unchanged and still what runs for everything that overlaps."""
+		self.assertIn("planInside", self.js)
+		self.assertNotIn("boundDatesToPlan", self.js)
+
+	def test_the_clamp_is_still_the_answer_wherever_it_can_be(self):
+		at = self.js.index("  function planInside(")
+		fn = self.js[at:self.js.index("\n  function ", at + 10)]
+		for line in ("if(f.value < pf) f.value=pf;",
+				"if(t.value > pt) t.value=pt;",
+				"if(t.value < f.value) t.value=f.value;"):
+			with self.subTest(line=line):
+				self.assertIn(line, fn)
 
 	def test_the_wording_no_longer_offers_to_snap(self):
 		self.assertNotIn("snap the dates to it", self.js)

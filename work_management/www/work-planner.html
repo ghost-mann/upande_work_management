@@ -42,6 +42,9 @@
 #wpp .mp-period button.btn{margin-top:0}
 #wpp .mp-period b{color:var(--ink)}
 #wpp .mp-period.out{border-color:#fed7aa;background:#fff7ed;color:#7c2d12}
+/* which budget this request will draw on, once somebody has said. Sits under
+   the pills rather than beside them, so the row does not reflow as it appears. */
+#wpp .mp-period .mp-chosen{margin-top:8px;font-size:11px}
 /* ── master plan detail ── */
 #wpp .mpd-head{border:1px solid var(--line);border-radius:var(--r);background:#fff;box-shadow:var(--sh);padding:16px 18px;margin-bottom:12px}
 #wpp .mpd-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
@@ -746,7 +749,11 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
         </div>
         <div class="mp-period" id="f-mpperiod" style="display:none">
           <span id="f-mptext"></span>
-          <button type="button" class="btn sm" id="f-usemp">Use these dates</button>
+          <!-- Shown only once a master plan has been CHOSEN from the pills, and only
+               where there was a choice to make -- renderPeriodBar() owns both the
+               label and whether it appears. It sat here unshown and unwired for a
+               long time reading "Use these dates". -->
+          <button type="button" class="btn sm" id="f-usemp" style="display:none">Clear</button>
         </div>
         <label class="fl">What-if &mdash; stretch the period (<span id="f-wdlabel">0</span> days)</label>
         <input type="range" id="f-slider" min="1" max="45" value="7">
