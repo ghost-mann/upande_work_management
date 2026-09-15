@@ -1533,13 +1533,7 @@
     fs.onchange=onFarm;
     el("f-block").onchange=function(){ if(this.value){ ST.picked[this.value]=true; this.value=''; } syncBlockGrid(); recalc(); };
     el("f-task").onchange=onTask;
-    el("f-qty").oninput=function(){
-      // a new quantity means a new suggestion, so the field goes back to
-      // following it until the requester overrules it again
-      ST.ppdTouched=false; recalc();
-    };
-    var pfi=el("f-ppl");
-    if(pfi) pfi.oninput=function(){ ST.ppdTouched=(String(this.value).trim()!==""); recalc(); };
+    el("f-qty").oninput=recalc;
     el("f-from").onchange=function(){ syncSlider(); recalc(); loadPlannableTasks(); };
     el("f-to").onchange=function(){ syncSlider(); recalc(); loadPlannableTasks(); };
     el("f-slider").oninput=onSlider;
@@ -1635,24 +1629,11 @@
     var mandays = (tgt>0) ? (qty/tgt) : 0;
     var ppd = (mandays>0 && wd>0) ? Math.ceil(mandays/wd) : 0;
     var cost=qty*rate;
-    // THE SUGGESTION PREFILLS; THE REQUESTER DECIDES. Only refill while they have
-    // not typed their own number, or every keystroke would be overwritten by the
-    // arithmetic they are trying to overrule.
-    var pf=el("f-ppl");
-    ST.ppdSuggested = ppd;
-    if(pf && !ST.ppdTouched) pf.value = ppd>0 ? ppd : "";
-    var want = pf ? (parseInt(pf.value,10)||0) : 0;
-    var used = want>0 ? want : ppd;
-    // What a different crew actually buys: days, not money. Man-days are the work
-    // and do not move; the finish date does.
-    var daysAt = (used>0 && mandays>0) ? Math.ceil(mandays/used) : 0;
-    el("o-ppl-u").textContent = (!info)
-      ? "crew size"
-      : ((want>0 && want!==ppd)
-          ? ("suggested "+fmt(ppd)+" · you planned "+fmt(want)+
-             (daysAt>0 ? (" · ~"+fmt(daysAt)+" day"+(daysAt>1?"s":"")+" to finish") : ""))
-          : (fmt(tgt)+" "+(info.uom||"")+"/day"+
-             (daysAt>0 ? (" · ~"+fmt(daysAt)+" day"+(daysAt>1?"s":"")+" to finish") : "")));
+    // THE CREW IS TOLD, NOT ASKED. It was an input for four days -- the client
+    // asked for one, then reversed it at the meeting of 15 September 2026 -- so
+    // this reports the arithmetic and nothing overrides it.
+    el("o-ppl").textContent = ppd>0?fmt(ppd):"—";
+    el("o-ppl-u").textContent = (info?fmt(tgt)+" "+(info.uom||"")+"/day":"crew size");
     el("o-pd").textContent = mandays>0?fmt(mandays,2):"—";
     var mdu=el("o-pd-u");
     if(mdu) mdu.textContent = (mandays>0 && wd>0)
@@ -1703,10 +1684,6 @@
     var args={ action:"submit", farm:ST.farm, blocks:pickedList().join(","), task:ST.task,
       quantity:parseFloat(el("f-qty").value)||0,
       from_date:el("f-from").value, to_date:el("f-to").value,
-      // the crew the requester asked for. Blank or unchanged and the server
-      // falls back to its own suggestion, so nothing changes for anybody who
-      // does not touch the field.
-      people_per_day:(parseInt((el("f-ppl")||{}).value,10)||0),
       master_plan:ST.masterPlan||"" };
     if(submitNow) args.submit_now=1;
     if(ST.editingPlan) args.plan=ST.editingPlan;
@@ -1753,9 +1730,6 @@
         for(var i=0;i<ST.tasks.length;i++){ if(ST.tasks[i].name===p.task){ ST.taskInfo=ST.tasks[i]; break; } }
         if(ST.taskInfo){ el("f-kpi").innerHTML="Standard: <b>"+fmt(ST.taskInfo.daily_target)+" "+esc(ST.taskInfo.uom||"")+"/day</b> @ KES "+fmtRate(ST.taskInfo.rate)+" per "+esc(ST.taskInfo.uom||"unit"); }
         el("f-qty").value=p.quantity;
-      // the crew that was saved, not a fresh suggestion -- editing a plan must
-      // not quietly undo the number somebody chose
-      if(el("f-ppl")){ el("f-ppl").value = p.people_per_day || ""; ST.ppdTouched = !!p.people_per_day; }
         el("f-from").value=p.from_date; el("f-to").value=p.to_date;
         recalc();
         var byline=(p.requested_by && ST.roles && p.requested_by!==ST.roles.user) ? " · requested by "+esc(shortUser(p.requested_by)) : "";

@@ -685,24 +685,20 @@ def wm_planner(**kwargs):
                 tgt = frappe.utils.flt(tinfo.custom_daily_target) if tinfo else 0
                 rate = frappe.utils.flt(tinfo.custom_rate) if tinfo else 0
                 uom = tinfo.custom_uom if tinfo else None
-                # HOW MANY PEOPLE. The client: "Allow us indicate the number of
-                # people we want to allocate. (The system currently indicates the
-                # number needed.)" So the computed figure becomes a SUGGESTION and
-                # the requester's own number, when they give one, is what is kept.
+                # HOW MANY PEOPLE, computed: quantity / daily target / working
+                # days, rounded up because people come whole.
                 #
-                # It changes nothing else. Cost is quantity x rate and man-days are
-                # quantity / daily target -- both properties of the WORK, not of how
-                # many people are sent at it. Twelve people finish sooner than six;
-                # they do not finish more, and they do not cost more per unit. The
-                # only thing a bigger crew buys is days, which is what the screen
-                # now shows beside the number.
-                ppd_suggested = 0
+                # This was briefly an input. The client asked for it -- "Allow us
+                # indicate the number of people we want to allocate" -- and then
+                # reversed the decision at the meeting of 15 September 2026, so the
+                # figure is derived again and `people_per_day` on the form_dict is
+                # not read. A request that still carries a number somebody typed
+                # keeps it until its next save, which recomputes.
+                ppd = 0
                 if tgt > 0 and wd > 0:
                     raw = qty / tgt / wd
-                    ppd_suggested = int(raw)
-                    if ppd_suggested < raw: ppd_suggested = ppd_suggested + 1
-                ppd_asked = frappe.utils.cint(frappe.form_dict.get("people_per_day"))
-                ppd = ppd_asked if ppd_asked > 0 else ppd_suggested
+                    ppd = int(raw)
+                    if ppd < raw: ppd = ppd + 1
                 editing = plan_editing
                 if editing:
                     d = frappe.get_doc("Work Management Planner", plan_name)
@@ -758,9 +754,6 @@ def wm_planner(**kwargs):
                     d.workflow_state = STAGE_NEXT["planner_submit"]; d.save(ignore_permissions=True)
                 out["name"] = d.name; out["workflow_state"] = d.workflow_state
                 out["total_cost"] = d.total_cost; out["people_per_day"] = d.people_per_day
-                # both figures, so the screen can say which is which afterwards
-                out["people_per_day_suggested"] = ppd_suggested
-                out["people_per_day_is_custom"] = 1 if (ppd_asked > 0 and ppd_asked != ppd_suggested) else 0
                 out["blocks"] = block_list
                 out["editing"] = editing
 

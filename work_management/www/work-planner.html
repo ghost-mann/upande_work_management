@@ -756,14 +756,12 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
       <div>
         <div class="sech">Live estimate</div>
         <div class="kpis">
-          <!-- The crew is an INPUT now: the computed figure prefills it and the
-               requester may say otherwise. Cost and man-days do not move with it
-               -- more people finish sooner, not more -- so what changes beside it
-               is the days-to-finish line. -->
-          <div class="kpi"><div class="k">People / Day</div>
-            <div class="v"><input type="number" id="f-ppl" min="1" step="1" placeholder="&mdash;"
-              style="width:100%;font:inherit;font-size:inherit;font-weight:inherit;color:inherit;background:transparent;border:none;border-bottom:1px dashed var(--line);padding:0;text-align:inherit"></div>
-            <div class="u" id="o-ppl-u">crew size</div></div>
+          <!-- READ-ONLY, and deliberately so. This was briefly an input -- the
+               requester naming their own crew -- and the client reversed that
+               decision at the meeting of 15 September 2026. The figure is
+               quantity / daily target / working days again, and nobody types
+               over it. See test_the_crew_is_computed.py. -->
+          <div class="kpi"><div class="k">People / Day</div><div class="v" id="o-ppl">&mdash;</div><div class="u" id="o-ppl-u">crew size</div></div>
           <div class="kpi"><div class="k">Mandays</div><div class="v" id="o-pd">&mdash;</div><div class="u" id="o-pd-u">quantity &divide; daily target</div></div>
           <div class="kpi"><div class="k">Total Hours</div><div class="v" id="o-hrs">&mdash;</div><div class="u">Mon–Fri 8h · Sat 6h · Sun 8h</div></div>
           <div class="kpi"><div class="k">{{ (taxonomy or {}).get('unit_singular', 'Block') | e }} Area</div><div class="v" id="o-area">&mdash;</div><div class="u">Ha (selected {{ (taxonomy or {}).get('unit_plural', 'Blocks')|lower|e }})</div></div>
