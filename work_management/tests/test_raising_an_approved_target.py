@@ -367,8 +367,20 @@ class TestTheControlOnTheScreen(unittest.TestCase):
 		self.assertLess(block.index("d.current_qty!=null"), block.index("if(d.error)"))
 
 	def test_the_write_is_a_post(self):
-		self.assertIn('quantity:num(qty.value)}, true)',
-			js_function(self.js, "openRaiseDialog"))
+		"""Because raise_target is in the screen's writes map -- not because the
+		Apply says `true`.
+
+		It did say `true`, and this test asserted that it did. `call(args,
+		method)` takes a dispatcher name second, so the Apply asked for
+		/api/method/true and every click came back "Failed to get method for
+		command true with 'true'". The preview beside it is a read and went to
+		the right place, so the dialog looked alive right up to the button.
+		"""
+		block = js_function(self.js, "openRaiseDialog")
+		self.assertIn("quantity:num(qty.value)})", block)
+		self.assertNotIn(", true)", block)
+		at = self.js.index("var writes")
+		self.assertIn("raise_target:1", self.js[at:self.js.index("}", at)])
 
 	def test_the_copy_does_not_promise_an_uncapped_raise(self):
 		"""It said "it may go up freely". The master plan line caps it, and the

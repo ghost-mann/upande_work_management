@@ -58,6 +58,80 @@ def js_function(src, name):
 	return src[at:nxt if nxt > 0 else len(src)]
 
 
+def js_call_sites(src):
+	"""Every `call(...)` in a screen, as a list of its top-level arguments.
+
+	Paren-balanced rather than regexed, because the first argument is an object
+	literal full of commas and a regex either stops inside it or swallows the
+	rest of the file.
+	"""
+	out = []
+	for hit in re.finditer(r"(?<![\w.])call\(", src):
+		if src[:hit.start()].rstrip().endswith("function"):
+			continue  # the declaration, not a call
+		i = hit.end()
+		depth, start, args = 1, i, []
+		while depth:
+			ch = src[i]
+			if ch in "([{":
+				depth += 1
+			elif ch in ")]}":
+				depth -= 1
+				if not depth:
+					break
+			elif ch == "," and depth == 1:
+				args.append(src[start:i].strip())
+				start = i + 1
+			i += 1
+		args.append(src[start:i].strip())
+		out.append([a for a in args if a])
+	return out
+
+
+def js_call_params(src):
+	"""The parameter names a screen's own `call()` declares, in order.
+
+	There are two conventions in this app, and mixing them is what broke the
+	bulk bar. work-payment.js declares `call(args, isWrite, method)` -- its
+	second argument really is a verb flag, and its own comment says so. The other
+	screens declare `call(args, method)` and take the verb from a writes map.
+	Read the declaration rather than assuming one of them.
+	"""
+	at = src.index("function call(")
+	inner = src[at + len("function call("):src.index(")", at)]
+	return [x.strip() for x in inner.split(",") if x.strip()]
+
+
+def js_writes_map(src):
+	"""The action names a screen declares as writes, from its `var writes` map.
+
+	This map is not decoration. frappe/app.py:sync_database() commits when the
+	request verb is unsafe and ROLLS BACK otherwise, so an action missing from
+	here is answered 200 with a success payload by a server that then discards
+	the work. Measured on kentrout.local: approve_bulk by GET answered
+	`{"summary": "1 approved."}` and left the plan at Pending Approval.
+	"""
+	at = src.index("var writes")
+	end = src.index("}", at)
+	return set(re.findall(r"([a-z_]+)\s*:\s*1", src[at:end]))
+
+
+def js_bulk_actions(src):
+	"""The action names the bulk bar sends, from its own `send("...")` calls."""
+	return sorted(set(re.findall(r'send\("([a-z_]+)"', src)))
+
+
+def py_branch(src, action):
+	"""One dispatcher branch, `elif action == "x":` to the next branch."""
+	for opener in ('elif action == "%s":' % action, 'elif action in ("%s"' % action):
+		at = src.find(opener)
+		if at >= 0:
+			break
+	assert at >= 0, action
+	nxt = src.find("\n    elif action", at + 10)
+	return src[at:nxt if nxt > 0 else len(src)]
+
+
 #: Which function renders each screen's approval queue -- the one place the
 #: bar, the tick-boxes and the wiring all have to agree.
 APPROVALS_RENDER = {
@@ -496,11 +570,184 @@ class TestTheScreensOfferIt(unittest.TestCase):
 				self.assertIn("live[r.name]", src[at:at + 400])
 
 	def test_the_bulk_call_is_a_post(self):
+		"""Not by an argument that says so -- by being in the screen's writes map.
+
+		The version of this test that shipped the bug asserted
+		`call(args, true)`, which is the author's INTENT written in a vocabulary
+		the helper does not speak. `call(args, method)` takes a dispatcher name
+		second, so `true` became the endpoint and every bulk click asked for
+		/api/method/true. The verb is decided by `writes[args.action]`, so that
+		map is where post-ness has to be asserted.
+		"""
 		for screen in self.SCREENS:
 			with self.subTest(screen=screen):
 				src = self.src(screen)
-				at = src.index("var send=function(which, reason){")
-				self.assertIn("call(args, true)", src[at:at + 900])
+				declared = js_writes_map(src)
+				for action in js_bulk_actions(src):
+					self.assertIn(
+						action, declared,
+						"%s sends %s but does not declare it a write, so it goes by GET "
+						"-- and frappe/app.py:sync_database() rolls a GET back after "
+						"answering it 200." % (screen, action))
+
+
+class TestTheCallHelperIsCalledTheWayItIsDeclared(unittest.TestCase):
+	"""`call(args, method)` takes a DISPATCHER NAME second, never a verb flag.
+
+	The bulk feature shipped with `call(args, true)` on all three screens and on
+	the adjust-target Apply. `true` landed in the method position, the endpoint
+	became /api/method/true, and every click came back:
+
+	    Failed to get method for command true with 'true'
+
+	Nothing caught it, because the test asserted the mistaken belief rather than
+	the mechanism -- `assertIn("call(args, true)", src)`, under the name
+	`test_the_bulk_call_is_a_post`. A test written in the same wrong vocabulary as
+	the code agrees with it about everything, including what is wrong.
+	"""
+
+	SCREENS = ("work-planner.js", "work-assigner.js", "work-actuals.js",
+			"work-payment.js", "work-management-dashboard.js")
+
+	#: The short names hooks.py actually maps. A dispatcher not in here is a
+	#: 417 in the browser and reads like the action refusing rather than the
+	#: endpoint not existing -- which is how `wm_payroll` cost an afternoon.
+	def dispatchers(self):
+		src = read(os.path.join(APP, "hooks.py"))
+		at = src.index("override_whitelisted_methods")
+		return set(re.findall(r'"(wm_[a-z_]+)"\s*:', src[at:src.index("}", at)]))
+
+	def test_nothing_is_passed_in_a_position_that_means_something_else(self):
+		"""The one that would have caught it.
+
+		A boolean in a `method` position is the bug verbatim; a dispatcher name
+		in an `isWrite` position would be its mirror image.
+		"""
+		for screen in self.SCREENS:
+			src = read(os.path.join(JS, screen))
+			params = js_call_params(src)
+			for args in js_call_sites(src):
+				for i, given in list(enumerate(args))[1:]:
+					with self.subTest(screen=screen, param=params[i], given=given):
+						if params[i] == "method":
+							self.assertNotIn(
+								given, ("true", "false", "1", "0"),
+								"%s: call() takes %s here, so this asks for "
+								"/api/method/%s. Whether the request POSTs is decided "
+								"by the writes map, not by an argument."
+								% (screen, ", ".join(params), given))
+						elif params[i] == "isWrite":
+							self.assertNotRegex(given, r'^"wm_',
+								"%s: %s is the verb flag here, not the endpoint"
+								% (screen, params[i]))
+
+	def test_every_endpoint_named_is_one_hooks_py_maps(self):
+		known = self.dispatchers()
+		for screen in self.SCREENS:
+			src = read(os.path.join(JS, screen))
+			params = js_call_params(src)
+			for args in js_call_sites(src):
+				for i, given in list(enumerate(args))[1:]:
+					if params[i] != "method":
+						continue
+					named = given.strip('"\'')
+					with self.subTest(screen=screen, endpoint=named):
+						self.assertIn(named, known,
+							"%s asks for /api/method/%s, which hooks.py does not map"
+							% (screen, named))
+
+	def test_an_endpoint_is_knowable_by_reading_the_line(self):
+		"""No expressions in the method position."""
+		for screen in self.SCREENS:
+			src = read(os.path.join(JS, screen))
+			params = js_call_params(src)
+			for args in js_call_sites(src):
+				for i, given in list(enumerate(args))[1:]:
+					if params[i] == "method":
+						with self.subTest(screen=screen, call=given):
+							self.assertRegex(given, r'^"wm_[a-z_]+"$')
+
+	def test_a_screen_never_passes_more_arguments_than_call_takes(self):
+		for screen in self.SCREENS:
+			src = read(os.path.join(JS, screen))
+			params = js_call_params(src)
+			for args in js_call_sites(src):
+				with self.subTest(screen=screen, n=len(args)):
+					self.assertLessEqual(len(args), len(params),
+						"%s declares call(%s)" % (screen, ", ".join(params)))
+
+	def test_the_two_conventions_are_still_the_two_this_expects(self):
+		"""If a third appears, everything above is checking the wrong positions."""
+		self.assertEqual(
+			{screen: js_call_params(read(os.path.join(JS, screen)))
+				for screen in self.SCREENS},
+			{
+				"work-planner.js": ["args", "method"],
+				"work-assigner.js": ["args", "method"],
+				"work-actuals.js": ["args", "method"],
+				# the odd one out, and the one the bug was copied from
+				"work-payment.js": ["args", "isWrite", "method"],
+				"work-management-dashboard.js": ["args"],
+			})
+
+
+class TestAWriteIsNotAnsweredAndThenThrownAway(unittest.TestCase):
+	"""frappe/app.py:sync_database() commits on POST and rolls back otherwise.
+
+	So a write action missing from a screen's `writes` map is not a slow path or
+	a style problem: the server does the work, answers 200 with the success
+	payload, and then discards it. Measured on kentrout.local against the real
+	wsgi app -- GET wm_planner?action=approve_bulk answered
+	`{"ok": [...], "summary": "1 approved."}` and left the plan at Pending
+	Approval; the same request as POST advanced it.
+
+	That is also why in-process verification cannot see this class of bug.
+	Calling `wm_planner()` with form_dict swapped never reaches sync_database(),
+	so a screen that sends the right payload by the wrong verb passes.
+	"""
+
+	BULK_BRANCH = {
+		"work-planner.js": ("planner.py", "approve_bulk"),
+		"work-assigner.js": ("assigner.py", "a_approve_bulk"),
+		"work-actuals.js": ("actuals.py", "act_approve_bulk"),
+	}
+
+	#: Write actions that travel by GET today and survive it only because their
+	#: server branch calls frappe.db.commit() itself. They work, but on a crutch:
+	#: remove the commit and they become silent no-ops with a success toast. The
+	#: test below is the alarm on that. Left as they are rather than switched to
+	#: POST because the master plan tab is the working reference this round.
+	COMMIT_THEIR_OWN = {
+		"masterplan.py": ("plans_bulk", "decide_bulk", "send_to_gm", "gm_approve"),
+		"rates.py": ("new_rate", "correct_apply", "unit_change_apply"),
+	}
+
+	def test_no_bulk_branch_commits_for_itself(self):
+		"""The three bulk branches rely on the verb, so the verb must be right."""
+		for screen, (module, action) in self.BULK_BRANCH.items():
+			with self.subTest(screen=screen):
+				branch = py_branch(read(os.path.join(API, module)), action)
+				self.assertNotIn("frappe.db.commit()", branch)
+
+	def test_so_every_bulk_action_is_declared_a_write(self):
+		for screen, (_module, _action) in self.BULK_BRANCH.items():
+			with self.subTest(screen=screen):
+				src = read(os.path.join(JS, screen))
+				declared = js_writes_map(src)
+				for sent in js_bulk_actions(src):
+					self.assertIn(sent, declared,
+						"%s sends %s by GET, and a GET is rolled back" % (screen, sent))
+
+	def test_the_actions_that_lean_on_their_own_commit_still_have_one(self):
+		"""If this fails, that action needs adding to the screen's writes map."""
+		for module, actions in self.COMMIT_THEIR_OWN.items():
+			src = read(os.path.join(API, module))
+			for action in actions:
+				with self.subTest(module=module, action=action):
+					self.assertIn("frappe.db.commit()", py_branch(src, action),
+						"%s:%s no longer commits for itself, and the screen still "
+						"sends it by GET -- declare it in the writes map"
+						% (module, action))
 
 
 class TestOnlyActionableRowsAreOffered(unittest.TestCase):

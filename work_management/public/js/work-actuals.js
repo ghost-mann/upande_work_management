@@ -44,7 +44,10 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep="/api/method/"+(method||"wm_actuals");
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1};
+    // Which actions POST. This is not decoration: frappe/app.py:sync_database()
+    // commits on POST and ROLLS BACK on GET, so an action missing from here is
+    // answered "1 approved." by a server that then throws the approval away.
+    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_approve_bulk:1,act_reject_bulk:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -1374,7 +1377,7 @@
       var args={ action:which, names:JSON.stringify(names), stage:stageKey };
       if(reason) args.reason=reason;
       if(napp) napp.disabled=true; if(nrej) nrej.disabled=true;
-      call(args, true).then(function(d){
+      call(args).then(function(d){
         if(d.error){ toast("Error: "+d.error); sync(); return; }
         BULK.picked={};
         toast(d.summary||"Done");

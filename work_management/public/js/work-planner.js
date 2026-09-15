@@ -31,8 +31,12 @@
 
   function call(args, method){
     var ep = "/api/method/" + (method || "wm_planner");
+    // Which actions POST. This is not decoration: frappe/app.py:sync_database()
+    // commits on POST and ROLLS BACK on GET, so an action missing from here is
+    // answered "1 approved." by a server that then throws the approval away.
     var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1,
-                  save:1, submit_for_review:1, decide_line:1, gm_approve:1};
+                  save:1, submit_for_review:1, decide_line:1, gm_approve:1,
+                  approve_bulk:1, reject_bulk:1, raise_target:1, adjust_target:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
@@ -402,7 +406,7 @@
     qty.oninput=function(){ if(num(qty.value)>0) look(); else { figs.innerHTML=''; go.disabled=true; } };
     go.onclick=function(){
       go.disabled=true;
-      call({action:"raise_target", name:plan, quantity:num(qty.value)}, true).then(function(d){
+      call({action:"raise_target", name:plan, quantity:num(qty.value)}).then(function(d){
         if(d.error){ toast("Error: "+d.error); go.disabled=false; return; }
         shut();
         toast("Target "+(d.direction==="down"?"lowered":"raised")+": "+fmt(d.was_qty)+" → "+fmt(d.quantity));
@@ -1999,7 +2003,7 @@
       var args={ action:which, names:JSON.stringify(names) };
       if(reason) args.reason=reason;
       if(napp) napp.disabled=true; if(nrej) nrej.disabled=true;
-      call(args, true).then(function(d){
+      call(args).then(function(d){
         if(d.error){ toast("Error: "+d.error); sync(); return; }
         BULK.picked={};
         toast(d.summary||"Done");
