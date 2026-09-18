@@ -47,6 +47,10 @@ add_to_apps_screen = [
 	}
 ]
 
+doctype_list_js = {
+	"Work Management Payment": "public/js/work_management_payment_list.js",
+}
+
 # The five pages call these bare endpoints (/api/method/wm_planner etc.).
 # Mapping them here keeps the frontend identical to the original Web Pages
 # and lets the app transparently replace the old Server Scripts.
@@ -177,8 +181,14 @@ fixtures = [
 				],
 			]
 		],
-	}
-
+	},
+	{
+		# Frappe hides bulk Delete for any doctype with a workflow unless this
+		# is set (list_view.js's is_bulk_edit_allowed()) - without it, deleting
+		# a Cancelled payment means opening each one individually.
+		"dt": "List View Settings",
+		"filters": [["name", "=", "Work Management Payment"]],
+	},
 ]
 
 website_route_rules = []

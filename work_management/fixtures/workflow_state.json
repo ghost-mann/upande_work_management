@@ -1,74 +1,128 @@
 [
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.406652",
   "name": "Approved",
+  "style": null,
   "workflow_state_name": "Approved"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.441696",
   "name": "Assigned",
+  "style": null,
   "workflow_state_name": "Assigned"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.472132",
   "name": "CONFIRMED",
+  "style": null,
   "workflow_state_name": "CONFIRMED"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.502037",
   "name": "Cancelled",
-  "workflow_state_name": "Cancelled",
-  "style": "Danger"
+  "style": "Danger",
+  "workflow_state_name": "Cancelled"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.532442",
   "name": "Draft",
+  "style": null,
   "workflow_state_name": "Draft"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.558482",
   "name": "Paid",
+  "style": null,
   "workflow_state_name": "Paid"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.586500",
   "name": "Pending Accounts",
+  "style": null,
   "workflow_state_name": "Pending Accounts"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.615500",
   "name": "Pending Approval",
+  "style": null,
   "workflow_state_name": "Pending Approval"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.645683",
   "name": "Pending Consultant",
+  "style": null,
   "workflow_state_name": "Pending Consultant"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.675088",
   "name": "Pending Farm Manager",
+  "style": null,
   "workflow_state_name": "Pending Farm Manager"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.709074",
   "name": "Pending GM",
+  "style": null,
   "workflow_state_name": "Pending GM"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.737499",
   "name": "Pending HR Head",
+  "style": null,
   "workflow_state_name": "Pending HR Head"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.767246",
   "name": "Rejected",
+  "style": null,
   "workflow_state_name": "Rejected"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow State",
+  "icon": null,
+  "modified": "2026-09-18 11:21:36.796898",
   "name": "Unpaid",
-  "workflow_state_name": "Unpaid",
-  "style": ""
+  "style": "",
+  "workflow_state_name": "Unpaid"
  }
 ]

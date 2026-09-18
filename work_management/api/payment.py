@@ -1584,10 +1584,14 @@ def wm_payment(**kwargs):
                         # on the next send once the underlying data is fixed. This keeps the
                         # payment count and the Additional Salary count identical.
                         wm_pay_on = dto
-                        wm_guard = 0
-                        while frappe.utils.getdate(wm_pay_on).weekday() != wk_pay_idx and wm_guard < 7:
-                            wm_pay_on = frappe.utils.add_days(wm_pay_on, 1)
-                            wm_guard = wm_guard + 1
+                        if not wk_days:
+                            # only the recurring weekly cycle searches forward for the
+                            # configured pay day - a chosen range was given an end date
+                            # on purpose, and that IS the pay date
+                            wm_guard = 0
+                            while frappe.utils.getdate(wm_pay_on).weekday() != wk_pay_idx and wm_guard < 7:
+                                wm_pay_on = frappe.utils.add_days(wm_pay_on, 1)
+                                wm_guard = wm_guard + 1
                         wm_emp = frappe.db.get_value("Employee", emp,
                             ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
                         wm_block = None
@@ -1633,12 +1637,15 @@ def wm_payment(**kwargs):
                             d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                             d.company = DEFAULT_COMPANY
                             # payroll date = the first pay day on or after the week ends, so
-                            # setting the pay day to the closing day pays on that day
+                            # setting the pay day to the closing day pays on that day.
+                            # A chosen range skips the search - its own end date is the
+                            # pay date, not a day found by walking forward from it.
                             pd_val = dto
-                            pd_guard = 0
-                            while frappe.utils.getdate(pd_val).weekday() != wk_pay_idx and pd_guard < 7:
-                                pd_val = frappe.utils.add_days(pd_val, 1)
-                                pd_guard = pd_guard + 1
+                            if not wk_days:
+                                pd_guard = 0
+                                while frappe.utils.getdate(pd_val).weekday() != wk_pay_idx and pd_guard < 7:
+                                    pd_val = frappe.utils.add_days(pd_val, 1)
+                                    pd_guard = pd_guard + 1
                             d.payroll_date = pd_val
                             d.prepared_by = frappe.session.user
                             try:
@@ -1939,10 +1946,14 @@ def wm_payment(**kwargs):
                     # stamped "sent to accounts" with no payroll record behind it, and the
                     # Issues tab cannot show it, because that tab only lists UNSENT work.
                     bw_pay_on = dto
-                    bw_guard = 0
-                    while frappe.utils.getdate(bw_pay_on).weekday() != bw_pay_idx and bw_guard < 7:
-                        bw_pay_on = frappe.utils.add_days(bw_pay_on, 1)
-                        bw_guard = bw_guard + 1
+                    if not bw_days:
+                        # only the recurring weekly cycle searches forward for the
+                        # configured pay day - a chosen range was given an end date
+                        # on purpose, and that IS the pay date
+                        bw_guard = 0
+                        while frappe.utils.getdate(bw_pay_on).weekday() != bw_pay_idx and bw_guard < 7:
+                            bw_pay_on = frappe.utils.add_days(bw_pay_on, 1)
+                            bw_guard = bw_guard + 1
                     bw_emp = frappe.db.get_value("Employee", emp,
                         ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
                     bw_block = None
@@ -1984,12 +1995,15 @@ def wm_payment(**kwargs):
                         d.company = DEFAULT_COMPANY
                         # payroll date = the day the week closes, which IS the pay day, so a
                         # week's earnings land on one known date for everyone
-                        # payroll date = the first pay day on or after the week ends
+                        # payroll date = the first pay day on or after the week ends.
+                        # A chosen range skips the search - its own end date is the
+                        # pay date, not a day found by walking forward from it.
                         pd_val = dto
-                        pd_guard = 0
-                        while frappe.utils.getdate(pd_val).weekday() != bw_pay_idx and pd_guard < 7:
-                            pd_val = frappe.utils.add_days(pd_val, 1)
-                            pd_guard = pd_guard + 1
+                        if not bw_days:
+                            pd_guard = 0
+                            while frappe.utils.getdate(pd_val).weekday() != bw_pay_idx and pd_guard < 7:
+                                pd_val = frappe.utils.add_days(pd_val, 1)
+                                pd_guard = pd_guard + 1
                         d.payroll_date = pd_val
                         d.prepared_by = frappe.session.user
                         try:

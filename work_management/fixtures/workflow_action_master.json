@@ -1,56 +1,85 @@
 [
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-09 19:33:44.012276",
+  "name": "Cancel",
+  "workflow_action_name": "Cancel"
+ },
+ {
+  "docstatus": 0,
+  "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.038377",
   "name": "Approve",
   "workflow_action_name": "Approve"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.068068",
   "name": "FM Approve",
   "workflow_action_name": "FM Approve"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.095841",
   "name": "GM Approve",
   "workflow_action_name": "GM Approve"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.122779",
   "name": "HR Approve",
   "workflow_action_name": "HR Approve"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.148261",
   "name": "Mark Paid",
   "workflow_action_name": "Mark Paid"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.173121",
   "name": "Re-submit",
   "workflow_action_name": "Re-submit"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.198740",
   "name": "Reject",
   "workflow_action_name": "Reject"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.226090",
   "name": "Send for Consultant Review",
   "workflow_action_name": "Send for Consultant Review"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.251490",
   "name": "Send to Accounts",
   "workflow_action_name": "Send to Accounts"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.276976",
   "name": "Send to GM",
   "workflow_action_name": "Send to GM"
  },
  {
+  "docstatus": 0,
   "doctype": "Workflow Action Master",
+  "modified": "2026-09-18 11:21:36.304041",
   "name": "Submit for Approval",
   "workflow_action_name": "Submit for Approval"
  }
