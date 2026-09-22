@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, stage_pills
+from work_management import bulk, chain, stage_pills
 from work_management.api.config import get_config
 
 
@@ -141,6 +141,29 @@ def wm_actuals(**kwargs):
     MY_ROLES = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user},
                                  pluck="role")
 
+
+    # ---------------------------------------------------------------- the chain
+    #
+    # Every approval below addresses a step of this chain by KEY -- never by the
+    # step's action, state, label or role. See work_management/chain.py.
+    ACT_DT = "Work Management Actuals"
+    ACT_TERMINAL = STAGE_STATES.get(ACT_DT, {}).get("terminal")
+    # Which farms this person decides. The farm dimension, asked once: a
+    # farm-scoped step narrows to these, an unscoped one ignores them entirely.
+    ACT_FARMS = []
+    for _act_farm, _act_role in (FARM_APPROVER_ROLE or {}).items():
+        if _act_role in MY_ROLES and _act_farm not in ACT_FARMS:
+            ACT_FARMS.append(_act_farm)
+
+    # WHERE A SHIPPED STEP STAMPS ITSELF -- columns this doctype already has,
+    # named after the chain as it shipped. A fallback constant keyed by the one
+    # name that is stable; a step this app never shipped stamps nothing extra and
+    # is recorded on the document's own comment history instead.
+    ACT_STAMP = {
+        "actuals_farm_manager": ("fm_approved_by", "fm_approval_date"),
+        "actuals_hr_head": ("hr_approved_by", "hr_approval_date"),
+        "actuals_gm": ("gm_approved_by", "gm_approval_date"),
+    }
 
     # Who may do what, beyond approving. In the app, port_app.py strips this and
     # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
@@ -1229,135 +1252,141 @@ def wm_actuals(**kwargs):
             order_by="creation desc", limit=200)
 
     elif action == "act_pending":
-        stage = frappe.form_dict.get("stage") or "Pending HR Head"
-        fmflt = {"workflow_state": stage}
-        if stage == "Pending Farm Manager":
-            fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-            fmbypass = ("System Manager" in fmrl) or ("General Manager" in fmrl)
-            if not fmbypass:
-                fmallowed = []
-                for _farm_, _role_ in FARM_APPROVER_ROLE.items():
-                    if _role_ in fmrl: fmallowed.append(_farm_)
-                fmflt["farm"] = ["in", fmallowed] if fmallowed else ["in", ["__none__"]]
-        out["pending"] = frappe.db.get_all("Work Management Actuals",
-            filters=fmflt,
-            fields=["name","assignment","farm","task","block_section","planned_people","actual_people","payroll_people",
-                    "planned_cost","total_payment","cost_variance","total_actual_qty","entered_by","entry_date"],
-            order_by="entry_date desc", limit=200)
+        # WHICH QUEUE, by the key the tab carries. `Pending HR Head` was both the
+        # default and the name of a step this site may not have; the first enabled
+        # approval step is the honest default. A state is still accepted, because
+        # that is the other name the server itself publishes for a step.
+        pd_keys = chain.stage_keys(STAGE_ROWS, ACT_DT, enabled_only=True)
+        pd_step, pd_bad = chain.resolve(STAGE_ROWS, ACT_DT,
+            stage=frappe.form_dict.get("stage") or (pd_keys[0] if pd_keys else None))
+        if pd_bad or not pd_step:
+            out["error"] = pd_bad or "This chain has no approval step to list."
+        else:
+            fmflt = {"workflow_state": pd_step["state"]}
+            # A FARM-SCOPED step shows a farm manager their own farms and nobody
+            # else's -- read from the step's own flag, not from a state name.
+            if pd_step.get("scoped"):
+                fmbypass = ("System Manager" in MY_ROLES) or ("General Manager" in MY_ROLES)
+                if not fmbypass:
+                    fmflt["farm"] = ["in", ACT_FARMS] if ACT_FARMS else ["in", ["__none__"]]
+            out["pending"] = frappe.db.get_all("Work Management Actuals",
+                filters=fmflt,
+                fields=["name","assignment","farm","task","block_section","planned_people","actual_people","payroll_people",
+                        "planned_cost","total_payment","cost_variance","total_actual_qty","entered_by","entry_date"],
+                order_by="entry_date desc", limit=200)
+            out["step"] = pd_step["key"]
+            out["step_label"] = chain.label_of(pd_step)
 
-    elif action == "act_fm_approve":
+    elif action in ("act_approve", "act_fm_approve", "act_hr_approve", "act_gm_approve"):
+        # ONE APPROVAL, WHICHEVER STEP IT IS. There were three branches here, one
+        # per step of the chain as it shipped, and between them they knew the whole
+        # of the old vocabulary. The step is resolved from the configured chain
+        # now, by the key the screen was handed with its tab, and everything that
+        # used to be per-branch is read off the step: `on`, `state`, `role`,
+        # `scoped`, `next_state`. What the final approval does -- confirm the
+        # document and settle the plan it belongs to -- hangs off "the step whose
+        # next_state is the terminal", which is what made it the last step at all.
+        #
+        # The three old action names remain, as the keys they always meant.
+        ap_alias = {"act_fm_approve": "actuals_farm_manager",
+                    "act_hr_approve": "actuals_hr_head",
+                    "act_gm_approve": "actuals_gm"}
         nm = frappe.form_dict.get("name")
-        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","farm"], as_dict=True)
-        fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        fmallowed = []
-        for _farm_, _role_ in FARM_APPROVER_ROLE.items():
-            if _role_ in fmrl: fmallowed.append(_farm_)
-        fmbypass = ("System Manager" in fmrl) or ("General Manager" in fmrl)
+        ap_stage = ap_alias.get(action) or frappe.form_dict.get("stage")
+        cur = frappe.db.get_value(ACT_DT, nm,
+            ["workflow_state", "farm", "assignment"], as_dict=True)
+        ap_step, ap_bad = chain.resolve(STAGE_ROWS, ACT_DT, stage=ap_stage,
+                                        state=cur.workflow_state if cur else None)
+        ap_why = None
+        if ap_step:
+            ap_why = chain.may_take(ap_step, MY_ROLES, farm=cur.farm if cur else None,
+                                    farms=ACT_FARMS)
         if not cur:
             out["error"] = "Record not found"
-        elif not STAGE_ON["actuals_farm_manager"]:
-            out["error"] = "The Farm Manager step is switched off for this project."
-        elif not (STAGE_ROLE["actuals_farm_manager"] in MY_ROLES
-                  or "System Manager" in MY_ROLES or fmbypass or fmallowed):
-            out["error"] = ("Only " + str(STAGE_ROLE["actuals_farm_manager"]) + " can take this step."
-                            " You do not hold it.")
-        elif cur.workflow_state != STAGE_STATE["actuals_farm_manager"]:
-            out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
-        elif not fmbypass and cur.farm not in fmallowed:
-            if not fmallowed:
-                out["error"] = "You have no farm assigned for approvals. Ask an admin to grant you a farm-specific Farm Manager role."
-            else:
-                out["error"] = "You can only approve records for your farm(s): " + ", ".join(fmallowed) + ". This record is for " + str(cur.farm) + "."
+        elif ap_bad:
+            out["error"] = ap_bad
+        elif not ap_step:
+            out["error"] = "Not awaiting approval (state: " + str(cur.workflow_state) + ")"
+        elif cur.workflow_state != ap_step["state"]:
+            out["error"] = ("Not at the " + str(chain.label_of(ap_step)) +
+                            " step (state: " + str(cur.workflow_state) + ")")
+        elif ap_why:
+            out["error"] = ap_why
         else:
-            frappe.db.set_value("Work Management Actuals", nm, "workflow_state", STAGE_NEXT["actuals_farm_manager"], update_modified=False)
-            try:
-                frappe.db.set_value("Work Management Actuals", nm, "fm_approved_by", frappe.session.user, update_modified=False)
-                frappe.db.set_value("Work Management Actuals", nm, "fm_approval_date", frappe.utils.today(), update_modified=False)
-            except Exception:
-                pass
-            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["actuals_farm_manager"]
-
-    elif action == "act_hr_approve":
-        nm = frappe.form_dict.get("name")
-        cur_ws = frappe.db.get_value("Work Management Actuals", nm, "workflow_state")
-        if not STAGE_ON["actuals_hr_head"]:
-            out["error"] = "The HR Head step is switched off for this project."
-        elif not (STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
-            out["error"] = ("Only " + str(STAGE_ROLE["actuals_hr_head"]) + " can take this step."
-                            " You do not hold it.")
-        elif cur_ws != STAGE_STATE["actuals_hr_head"]:
-            out["error"] = "Not at HR stage (state: " + str(cur_ws) + ")"
-        else:
-            frappe.db.set_value("Work Management Actuals", nm, "workflow_state", STAGE_NEXT["actuals_hr_head"], update_modified=False)
-            frappe.db.set_value("Work Management Actuals", nm, "hr_approved_by", frappe.session.user, update_modified=False)
-            frappe.db.set_value("Work Management Actuals", nm, "hr_approval_date", frappe.utils.today(), update_modified=False)
-            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["actuals_hr_head"]
-
-    elif action == "act_gm_approve":
-        nm = frappe.form_dict.get("name")
-        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","assignment"], as_dict=True)
-        if not STAGE_ON["actuals_gm"]:
-            out["error"] = "The GM step is switched off for this project."
-        elif not (STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
-            out["error"] = ("Only " + str(STAGE_ROLE["actuals_gm"]) + " can take this step."
-                            " You do not hold it.")
-        elif not cur or cur.workflow_state != STAGE_STATE["actuals_gm"]:
-            out["error"] = "Not at GM stage (state: " + str(cur.workflow_state if cur else "not found") + ")"
-        else:
-            # move to CONFIRMED (a docstatus=1 workflow state) via direct DB writes, bypassing the
-            # get_doc doctype-access gate and the workflow engine. Trusted script; GM stage verified above.
-            frappe.db.set_value("Work Management Actuals", nm, "workflow_state", STAGE_NEXT["actuals_gm"], update_modified=False)
-            frappe.db.set_value("Work Management Actuals", nm, "docstatus", 1, update_modified=False)
-            for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
-                frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 1, update_modified=False)
-            frappe.db.set_value("Work Management Actuals", nm, "gm_approved_by", frappe.session.user, update_modified=False)
-            frappe.db.set_value("Work Management Actuals", nm, "gm_approval_date", frappe.utils.today(), update_modified=False)
-            fulfilled = 0
-            remaining = 0
-            asg = cur.assignment and frappe.db.get_value("Work Management Assigner", cur.assignment, "planner_request")
-            if asg:
-                conf = frappe.db.sql("""
-                    SELECT COALESCE(SUM(ac.total_actual_qty),0) q
-                    FROM `tabWork Management Actuals` ac
-                    INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
-                    WHERE a2.planner_request = %s AND ac.workflow_state = 'CONFIRMED'
-                """, (asg,), as_dict=True)
-                fulfilled = frappe.utils.flt(conf[0].q) if conf else 0
-                target = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
-                remaining = target - fulfilled
-                pct = (fulfilled / target * 100) if target > 0 else 0
-                over = 1 if fulfilled > target else 0
-                frappe.db.set_value("Work Management Planner", asg, "fulfilled_qty", fulfilled, update_modified=False)
-                frappe.db.set_value("Work Management Planner", asg, "remaining_qty", remaining, update_modified=False)
-                frappe.db.set_value("Work Management Planner", asg, "fulfilment_pct", pct, update_modified=False)
-                frappe.db.set_value("Work Management Planner", asg, "over_target", over, update_modified=False)
-            # AUTO-RELEASE ON FULL FULFILMENT: when a plan reaches its target, the work is done,
-            # so free every still-Active worker on the plan (mark Left, left_date=today) so they
-            # can be assigned elsewhere. Confirmed work + pay are untouched. Only runs once: skip
-            # if already released or the plan was closed early.
-            released_auto = 0
-            if asg:
-                target_r = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
-                cstate_r = frappe.db.get_value("Work Management Planner", asg, "custom_close_state") or ""
-                if target_r > 0 and fulfilled >= (target_r - 0.0001) and cstate_r != "Closed":
-                    today_r = frappe.utils.today()
-                    free_r = frappe.db.sql("""
-                        SELECT we.name row_id
-                        FROM `tabWork Assignment Employee` we
-                        INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
-                        WHERE a2.planner_request = %s AND IFNULL(we.status,'Active') = 'Active'
-                    """, (asg,), as_dict=True)
-                    for fr in free_r:
-                        frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
-                        frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", today_r, update_modified=False)
-                        released_auto = released_auto + 1
-                    # mark the plan complete so it drops out of the pickers (target kept)
-                    frappe.db.set_value("Work Management Planner", asg, "custom_close_state", "Completed", update_modified=False)
+            ap_next = ap_step["next_state"]
+            # direct DB writes, bypassing the get_doc doctype-access gate and the
+            # workflow engine. Trusted script; the step and the role were verified
+            # above.
+            frappe.db.set_value(ACT_DT, nm, "workflow_state", ap_next, update_modified=False)
+            ap_by, ap_on = ACT_STAMP.get(ap_step["key"], (None, None))
+            if ap_by:
+                try:
+                    frappe.db.set_value(ACT_DT, nm, ap_by, frappe.session.user, update_modified=False)
+                    frappe.db.set_value(ACT_DT, nm, ap_on, frappe.utils.today(), update_modified=False)
+                except Exception:
+                    pass
             out["name"] = nm
-            out["workflow_state"] = "CONFIRMED"
-            out["fulfilled_qty"] = fulfilled
-            out["remaining_qty"] = remaining
-            out["workers_released"] = released_auto
+            out["workflow_state"] = ap_next
+            out["step"] = ap_step["key"]
+            out["step_label"] = chain.label_of(ap_step)
+            if ap_next != ACT_TERMINAL:
+                if not ap_by:
+                    # an added step has no column of its own, so who took it is
+                    # recorded where the document already keeps its history
+                    frappe.get_doc(ACT_DT, nm).add_comment(
+                        "Comment", str(chain.label_of(ap_step)) + " taken by " +
+                        frappe.session.user + " — now " + str(ap_next))
+            else:
+                # THE FINAL APPROVAL. Confirming the actuals submits the document
+                # and its lines, then settles the plan: how much of the target this
+                # confirms, and -- when the target is met -- freeing the crew.
+                frappe.db.set_value(ACT_DT, nm, "docstatus", 1, update_modified=False)
+                for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
+                    frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 1, update_modified=False)
+                fulfilled = 0
+                remaining = 0
+                asg = cur.assignment and frappe.db.get_value("Work Management Assigner", cur.assignment, "planner_request")
+                if asg:
+                    conf = frappe.db.sql("""
+                        SELECT COALESCE(SUM(ac.total_actual_qty),0) q
+                        FROM `tabWork Management Actuals` ac
+                        INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                        WHERE a2.planner_request = %s AND ac.workflow_state = %s
+                    """, (asg, ACT_TERMINAL), as_dict=True)
+                    fulfilled = frappe.utils.flt(conf[0].q) if conf else 0
+                    target = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
+                    remaining = target - fulfilled
+                    pct = (fulfilled / target * 100) if target > 0 else 0
+                    over = 1 if fulfilled > target else 0
+                    frappe.db.set_value("Work Management Planner", asg, "fulfilled_qty", fulfilled, update_modified=False)
+                    frappe.db.set_value("Work Management Planner", asg, "remaining_qty", remaining, update_modified=False)
+                    frappe.db.set_value("Work Management Planner", asg, "fulfilment_pct", pct, update_modified=False)
+                    frappe.db.set_value("Work Management Planner", asg, "over_target", over, update_modified=False)
+                # AUTO-RELEASE ON FULL FULFILMENT: when a plan reaches its target, the work is done,
+                # so free every still-Active worker on the plan (mark Left, left_date=today) so they
+                # can be assigned elsewhere. Confirmed work + pay are untouched. Only runs once: skip
+                # if already released or the plan was closed early.
+                released_auto = 0
+                if asg:
+                    target_r = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
+                    cstate_r = frappe.db.get_value("Work Management Planner", asg, "custom_close_state") or ""
+                    if target_r > 0 and fulfilled >= (target_r - 0.0001) and cstate_r != "Closed":
+                        today_r = frappe.utils.today()
+                        free_r = frappe.db.sql("""
+                            SELECT we.name row_id
+                            FROM `tabWork Assignment Employee` we
+                            INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
+                            WHERE a2.planner_request = %s AND IFNULL(we.status,'Active') = 'Active'
+                        """, (asg,), as_dict=True)
+                        for fr in free_r:
+                            frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
+                            frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", today_r, update_modified=False)
+                            released_auto = released_auto + 1
+                        # mark the plan complete so it drops out of the pickers (target kept)
+                        frappe.db.set_value("Work Management Planner", asg, "custom_close_state", "Completed", update_modified=False)
+                out["fulfilled_qty"] = fulfilled
+                out["remaining_qty"] = remaining
+                out["workers_released"] = released_auto
 
     elif action in ("act_approve_bulk", "act_reject_bulk"):
         # SEVERAL AT A TIME, one at a time. Every document goes through the very
@@ -1369,7 +1398,9 @@ def wm_actuals(**kwargs):
         # whose queue is on screen: this tab shows one stage at a time, and
         # approving across stages in one press would mean approving work the user
         # is not looking at.
-        bk_stages = {"fm": "act_fm_approve", "hr": "act_hr_approve", "gm": "act_gm_approve"}
+        # It is a stage KEY, validated against the chain this site runs. It used to
+        # be one of `fm`, `gm`, `hr` -- three abbreviations of the shipped chain --
+        # so a configured chain could not name its own queue here at all.
         bk_names = frappe.form_dict.get("names")
         try:
             bk_names = json.loads(bk_names or "[]")
@@ -1379,16 +1410,18 @@ def wm_actuals(**kwargs):
         bk_stage = str(frappe.form_dict.get("stage") or "").strip()
         bk_reason = frappe.form_dict.get("reason")
         bk_bad = bulk.check_selection(bk_names, bk_reason, needs_reason=bk_reject)
-        if not bk_reject and bk_stage not in bk_stages:
-            bk_bad = ("stage must be one of " + ", ".join(sorted(bk_stages))
-                      + " -- the queue on screen decides it")
+        bk_step = None
+        if not bk_bad and not bk_reject:
+            bk_step, bk_bad = chain.resolve(STAGE_ROWS, ACT_DT, stage=bk_stage)
+            if not bk_bad and not bk_step:
+                bk_bad = chain.unknown_stage(bk_stage, STAGE_ROWS, ACT_DT)
         if bk_bad:
             out["error"] = bk_bad
         else:
             bk_ok, bk_failed = bulk.run_bulk(
-                wm_actuals,
-                "act_reject" if bk_reject else bk_stages[bk_stage], bk_names,
-                base={"reason": bk_reason} if bk_reject else None)
+                wm_actuals, "act_reject" if bk_reject else "act_approve", bk_names,
+                base={"reason": bk_reason} if bk_reject
+                     else {"stage": bk_step["key"]})
             out["ok"] = bk_ok
             out["failed"] = bk_failed
             out["summary"] = bulk.summarise(bk_ok, bk_failed,
@@ -1397,7 +1430,13 @@ def wm_actuals(**kwargs):
     elif action == "act_reject":
         nm = frappe.form_dict.get("name")
         cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","docstatus","assignment"], as_dict=True)
-        if not cur or cur.workflow_state not in ("Pending Farm Manager","Pending HR Head","Pending GM","CONFIRMED"):
+        # Rejectable at every approval step this chain holds, switched-off ones
+        # included -- rejecting is not a step and is how a document parked in a
+        # retired step gets out of it -- and from the terminal state, which is
+        # this pipeline's own "un-confirm". Named four states, which on a
+        # reconfigured chain is either too few or entirely wrong.
+        rj_at = chain.at_state(STAGE_ROWS, ACT_DT, cur.workflow_state if cur else None)
+        if not cur or not (rj_at or cur.workflow_state == ACT_TERMINAL):
             out["error"] = "Not rejectable (state: " + str(cur.workflow_state if cur else "not found") + ")"
         else:
             # if submitted, "cancel" it by flipping docstatus to 2 (Cancelled) directly, then mark Rejected.
@@ -1517,6 +1556,14 @@ def wm_actuals(**kwargs):
         if not is_gm:
             out["pending"] = []
             out["not_gm"] = 1
+            # WHY, in the server's words. The screen said "Only the General
+            # Manager sees close requests" -- a shipped role name printed at a
+            # site that may hand the last step to somebody else entirely.
+            cp_keys = chain.stage_keys(STAGE_ROWS, ACT_DT, enabled_only=True)
+            cp_last = chain.by_key(STAGE_ROWS, ACT_DT, cp_keys[-1]) if cp_keys else None
+            out["not_gm_why"] = ("Close requests are decided by "
+                + str(chain.label_of(cp_last, "whoever takes the last approval"))
+                + ", and are not yours to see.")
         else:
             rows = frappe.db.get_all("Work Management Planner",
                 filters={"custom_close_state": "Close Requested"},
@@ -1690,12 +1737,28 @@ def wm_actuals(**kwargs):
         out["is_gm"] = "General Manager" in rl
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
-        out["is_farm_manager"] = ("Farm Manager" in rl) or any(_r_ in rl for _r_ in FARM_APPROVER_ROLE.values())
+        # Whoever decides a farm's work, from the farm-scoped steps' own roles.
+        # `"Farm Manager" in rl` sat in front of that list -- this app's shipped
+        # role name, which a site that maps the step onto its own role does not
+        # have, and which a site that has it for another reason gets for free.
+        out["is_farm_manager"] = 1 if (("System Manager" in rl)
+            or any(_r_ in rl for _r_ in (FARM_APPROVER_ROLE or {}).values())) else 0
         # THE TAB STRIP, from the configured chain rather than from a list
         # written into the screen. NOT filtered by `rl`: which queues exist is
         # not a question about who is looking, and answering it that way hid the
         # farm manager's queue from everybody else. See
         # work_management/stage_pills.py.
+        # WHETHER THIS PERSON APPROVES ANYTHING HERE, and what to call them --
+        # both from the configured chain. The header said "· HR Head" for anyone
+        # the shipped HR question said yes to, so Altura's Production Manager was
+        # greeted as an HR Head. `chain.takeable()` asks the same question the
+        # approve action asks, on the same data, so the tab is offered exactly
+        # when a press would be allowed and the suffix names the step it would
+        # take.
+        out["is_approver"] = 1 if chain.takeable(
+            STAGE_ROWS, 'Work Management Actuals', rl, farms=ACT_FARMS) else 0
+        out["approver_label"] = chain.approver_suffix(
+            STAGE_ROWS, ['Work Management Actuals'], rl, farms=ACT_FARMS)
         out["stages"] = stage_pills.for_document_type(
             "Work Management Actuals", STAGE_ROWS, FARM_APPROVER_ROLE, rl)
 

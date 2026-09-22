@@ -62,6 +62,49 @@
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function el(id){ return document.getElementById(id); }
   function toast(msg){ var t=el("wp-toast"); t.textContent=msg; t.classList.add("show"); setTimeout(function(){t.classList.remove("show");},2200); }
+
+  // ── THE CHAIN THIS SITE RUNS ────────────────────────────────────────────
+  // Delivered with the page (window.WM_CHAIN), so the first render is already
+  // right: a status chip is drawn before any roles call has answered, and a
+  // screen that waits for the chain prints the raw state once and never
+  // corrects itself. See api/config.py:screen_chain().
+  //
+  // This screen serves TWO chains -- the request it raises and the budget that
+  // caps it -- so every helper takes the document type, and the default is the
+  // one this screen is mostly about.
+  var WM_DT = "Work Management Planner";
+  var WM_MP = "Work Management Master Plan";
+  var CHAIN = (window.WM_CHAIN || {});
+  // WHAT A WORKFLOW STATE IS CALLED HERE. `Pending GM` is a state name, not a
+  // word anybody chose: the step waiting in it is called whatever Settings
+  // says, and on Altura a master plan card read "Pending GM" beside a step
+  // labelled "Master Plan: Manager". The state stays the identity underneath --
+  // this is only what gets printed. An unmapped state falls back to itself,
+  // which is already the right word for Approved, Draft and Rejected: they are
+  // not steps, and nothing configures them.
+  function stateLabel(s, dt){
+    var m=((CHAIN.labels||{})[dt||WM_DT])||{};
+    return m[s] || s || "";
+  }
+  // One of the grouped state lists pipeline_states() publishes -- "all",
+  // "waiting", "active", "open". For filters and option lists, which must keep
+  // listing the states of switched-off steps: a list that narrows because
+  // somebody changed a setting looks like data loss.
+  function chainStates(group, dt){
+    return (((CHAIN.states||{})[dt||WM_DT])||{})[group||"all"] || [];
+  }
+  // The three singular ones: "draft", "terminal", "reject". Not steps -- they
+  // are where a chain begins and the two ways it ends -- so they are named
+  // rather than listed, and a screen asks for them by role, never by name.
+  function chainState(which, dt){
+    return (((CHAIN.states||{})[dt||WM_DT])||{})[which] || "";
+  }
+  // The first step of a chain, by name, for the one sentence that has to say
+  // where a resubmitted request goes back to.
+  function firstStepLabel(dt){
+    var w=chainStates("waiting", dt);
+    return w.length ? stateLabel(w[0], dt) : "approval";
+  }
   function today(){ return new Date().toISOString().slice(0,10); }
   function addDays(d,n){ var x=new Date(d); x.setDate(x.getDate()+n); return x.toISOString().slice(0,10); }
   function dayDiff(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
@@ -433,17 +476,30 @@
   // the old name, switch it off and the tab stayed forever empty, add one and it
   // got no tab at all. The chain half now comes from the server -- the same
   // chain the approve actions consult -- and the three terminals are appended.
+  //
+  // `op` and `mine` travel with the pill too. Which action approves a queue, and
+  // whether this person may press it, used to be decided here by comparing the
+  // tab's state against `Pending Consultant` and `Pending GM` -- two names out of
+  // a chain that no longer has to contain either. The chain answers both, on the
+  // server, beside the gate the action itself applies.
   function mpStages(m){
     var counts={}; ((m||{}).counts||[]).forEach(function(c){ counts[c.st]=c.n; });
     var pills=((m||{}).stages||[]).map(function(x){
       return {key:x.key, label:x.short_label||x.label, state:x.state,
-              count:x.count, legacy:x.legacy};
+              count:x.count, legacy:x.legacy, op:x.op, mine:x.mine, step:1};
     });
     MP_TERMINALS.forEach(function(t){
       pills.push({key:t.key, label:t.label, state:t.state,
-                  count:counts[t.state]||0, legacy:0});
+                  count:counts[t.state]||0, legacy:0, step:0});
     });
     return pills;
+  }
+  // The pill on screen. `mp-state` holds the state, because that is what the
+  // list API filters by; everything that decides what can be DONE reads this.
+  function mpCurrent(pills){
+    var want=(el("mp-state")&&el("mp-state").value)||"";
+    for(var i=0;i<pills.length;i++){ if(pills[i].state===want) return pills[i]; }
+    return null;
   }
   function renderMpStages(m){
     var nav=el("mp-stages"); if(!nav) return;
@@ -503,14 +559,25 @@
         return;
       }
       var stage=el("mp-state").value;
-      var mpAct = (stage==="Pending Consultant" && MP.canDecide) ||
-                  (stage==="Pending GM" && MP.canGm);
+      // WHOSE QUEUE THIS IS, from the chain. `mine` is the same gate the action
+      // itself applies, so the bulk bar never offers a press the server refuses.
+      var pill=mpCurrent(mpStages(MP.roles));
+      MP._pill=pill;
+      var mpAct = !!(pill && pill.step && pill.mine && !pill.legacy);
       var h='';
-      var note={"Pending Consultant":"Waiting on the consultants. Approve sends the plan to the general manager.",
-                "Pending GM":"Waiting on the general manager. Approve puts the planned value in force.",
-                "Approved":"In force. These are the planned values the planner caps every request against.",
-                "Draft":"Still with whoever raised them — not yet submitted for review.",
-                "Rejected":"Turned down. The raiser can edit one and submit it again."}[stage];
+      // What this queue means. Keyed by the step, and worded from the step's own
+      // label and the one after it, so a renamed chain reads correctly; the three
+      // that are not steps keep their fixed wording.
+      var note;
+      if(pill && pill.step){
+        note = (pill.op==="approve")
+          ? "Waiting on "+(pill.label||"this step")+". Approving puts the planned value in force."
+          : "Waiting on "+(pill.label||"this step")+". Approving sends the plan to the next step.";
+      } else {
+        note={"Approved":"In force. These are the planned values the planner caps every request against.",
+              "Draft":"Still with whoever raised them — not yet submitted for review.",
+              "Rejected":"Turned down. The raiser can edit one and submit it again."}[stage];
+      }
       if(note) h+='<div class="mpd-stagenote">'+esc(note)+'</div>';
       if(mpAct){
         h+='<div class="mpd-bulk" id="mpl-bulkbar">'+
@@ -586,10 +653,11 @@
         loadMasterPlans();
       }).catch(function(){ toast("Could not apply that"); btn.disabled=false; });
     };
-    // "approve" means whatever approval this stage is: the consultants pass the
-    // plan to the GM, the GM puts it in force
-    var stage=el("mp-state").value;
-    var op = (stage==="Pending Consultant") ? "send_to_gm" : "approve";
+    // "approve" means whatever approval this stage is: a step before the end of
+    // the chain passes the plan on, the last one puts it in force. Which is which
+    // comes from the chain, with the pill, rather than from a state name compiled
+    // in here.
+    var op = (MP._pill && MP._pill.op) || "approve";
     if(el("mpl-appr")) el("mpl-appr").onclick=function(){ run(op,picked(),this); };
     if(el("mpl-rej"))  el("mpl-rej").onclick=function(){ run("reject",picked(),this); };
   }
@@ -697,19 +765,22 @@
           // the explicit step, and it says what is still outstanding rather than
           // simply not being there
           if(res.can_send_to_gm){
-            h+='<button type="button" class="btn solid" id="mp-sendgm">Approve &amp; send to GM</button>';
+            // WHAT THE STEP CALLS THE DECISION, from the chain -- the same
+            // word the desk's own button carries. It read "send to GM", which
+            // is this app's shipped chain naming its own next step.
+            h+='<button type="button" class="btn solid" id="mp-sendgm">'+esc(res.send_action||"Approve")+'</button>';
           } else {
             var why = res.edited_lines ? (res.edited_lines+" line"+(res.edited_lines>1?"s":"")+" marked Edit work — goes back to the raiser")
                     : res.undecided_lines ? (res.undecided_lines+" line"+(res.undecided_lines>1?"s":"")+" still undecided")
                     : !res.ok_lines ? "every line rejected — nothing to approve"
                     : "";
-            h+='<button type="button" class="btn" id="mp-sendgm" disabled title="'+esc(why)+'">Send to GM</button>'+
+            h+='<button type="button" class="btn" id="mp-sendgm" disabled title="'+esc(why)+'">'+esc(res.send_action||"Approve")+'</button>'+
                (why?'<span class="hint">'+esc(why)+'</span>':'');
           }
           h+='<button type="button" class="btn" id="mp-rejectdoc" style="color:#b91c1c;border-color:#fca5a5">Reject entire plan</button>';
         }
         if(res.can_gm_approve){
-          h+='<button type="button" class="btn solid" id="mp-gmapprove">GM Approve</button>'+
+          h+='<button type="button" class="btn solid" id="mp-gmapprove">'+esc(res.gm_action||"Approve")+'</button>'+
              '<button type="button" class="btn" id="mp-rejectdoc" style="color:#b91c1c;border-color:#fca5a5">Reject</button>';
         }
         h+='</div>';
@@ -765,7 +836,7 @@
            'Older requests can straddle two periods:<ul style="margin:6px 0 0 16px">';
         res.spanning.forEach(function(x){
           h+='<li>'+esc(x.name)+' — '+esc(taskName(x.task))+', '+fmt(x.quantity)+' over '+
-             esc(x.from_date)+' → '+esc(x.to_date)+' ('+esc(x.workflow_state||'')+')</li>';
+             esc(x.from_date)+' → '+esc(x.to_date)+' ('+esc(stateLabel(x.workflow_state))+')</li>';
         });
         h+='</ul></div>';
       }
@@ -933,7 +1004,7 @@
         h+='<div class="mpp-link" style="--dc:#7c3aed"><span class="dot"></span>'+
            '<span class="lk">Crewed</span><span class="lb"><span class="ref">'+esc(g.name)+'</span> '+
            '<span class="mt">&middot; '+fmt(g.assigned_count)+' of '+fmt(g.planned_people)+' people &middot; '+
-           esc(g.from_date)+' &rarr; '+esc(g.to_date)+' &middot; '+esc(g.workflow_state||"")+'</span></span></div>';
+           esc(g.from_date)+' &rarr; '+esc(g.to_date)+' &middot; '+esc(stateLabel(g.workflow_state,"Work Management Assigner"))+'</span></span></div>';
       });
       if(!(r.assignments||[]).length)
         h+='<div class="mpp-none">Not crewed yet — nobody can record work against this request until it is.</div>';
@@ -944,7 +1015,7 @@
            '<span class="ref">'+esc(a.name)+'</span> <span class="mt">&middot; '+fmt(a.total_actual_qty)+' '+esc(uom)+
            ' &middot; '+fmt(a.actual_people)+' people &middot; KES '+fmt(a.total_payment,2)+
            ' &middot; '+esc(a.from_date)+' &middot; '+esc(shortUser(a.entered_by))+'</span>'+
-           (done?'':'<br><span class="mt" style="color:var(--amber)">'+esc(a.workflow_state||"Draft")+
+           (done?'':'<br><span class="mt" style="color:var(--amber)">'+esc(stateLabel(a.workflow_state,"Work Management Actuals")||"Draft")+
                  (num(a.custom_balance_qty)>0?(' &middot; '+fmt(a.custom_balance_qty)+' '+esc(uom)+
                   ' short of the request target, so it cannot be sent yet'):' &middot; not yet sent for approval')+
                  '</span>')+
@@ -965,10 +1036,27 @@
   // reporting fields only: nothing below treats them as a ceiling.
   var MPF = { editing:null, rows:[], catalog:[], catalogState:"nofarm", filter:"", clash:null, onSaved:null };
 
+  // The card's status chip. It named the two steps the chain shipped with and
+  // printed the raw state, so on Altura a card read "Pending GM" next to a step
+  // relabelled "Master Plan: Manager". The label is what gets printed; the
+  // state stays the identity, on `data-state` and the tooltip. The colour is
+  // chosen by what the state IS in this chain -- its end, a rejection, its
+  // start, or a step somewhere in between -- rather than by its name.
   function mpStateTag(st){
-    var k={"Draft":"draft","Pending Consultant":"consultant","Pending GM":"gm",
-           "Approved":"approved","Rejected":"rejected"}[st]||"draft";
-    return '<span class="mps '+k+'">'+esc(st||"—")+'</span>';
+    var k="draft";
+    if(st===chainState("terminal", WM_MP)) k="approved";
+    else if(st===chainState("reject", WM_MP)) k="rejected";
+    else if(st===chainState("draft", WM_MP)) k="draft";
+    else if(chainStates("waiting", WM_MP).indexOf(st)>=0){
+      // The last waiting step keeps the emphatic colour the GM's step had. The
+      // CLASS names what the state is in this chain rather than who takes it --
+      // `.mps.consultant` and `.mps.gm` were the shipped chain spelled into a
+      // stylesheet, and a site that renamed both steps still got their colours.
+      var w=chainStates("waiting", WM_MP);
+      k = (st===w[w.length-1]) ? "waitlast" : "waiting";
+    }
+    return '<span class="mps '+k+'" data-state="'+esc(st||"")+'" title="'+esc(st||"")+'">'+
+           esc(stateLabel(st, WM_MP)||"—")+'</span>';
   }
   function mpFilteredCatalog(selected){
     var q=(MPF.filter||"").trim().toLowerCase();
@@ -1596,6 +1684,18 @@
     });
   }
 
+  // WHAT TO CALL THE PERSON READING THIS. The server answers it from the
+  // configured chain -- the step or steps they can actually act on -- so a
+  // Production Manager is not greeted as an HR Head, which is what a hardcoded
+  // shipped role name did on Altura. Empty when they take no step.
+  function whoSuffix(roles){
+    var s=(roles&&roles.approver_label)||"";
+    return s ? (" \u00b7 "+s) : "";
+  }
+  // THE APPROVALS TAB IS FOR APPROVERS, and who they are comes from the chain.
+  // `is_approver` used to be "does a role of theirs begin with `Farm Manager`",
+  // asked on the server, so on Altura -- where the step is taken by a Production
+  // Manager -- this tab was not drawn at all for the person the chain names.
   function buildTabs(){
     var tabs=[["new","New Request"],["mine","My Requests"],["rej","Rejected"]];
     if(ST.roles && ST.roles.is_approver) tabs.push(["appr","Approvals"]);
@@ -1840,7 +1940,7 @@
         recalc();
         var byline=(p.requested_by && ST.roles && p.requested_by!==ST.roles.user) ? " · requested by "+esc(shortUser(p.requested_by)) : "";
         var b=el("f-editbanner");
-        if(b){ b.style.display="block"; b.innerHTML="Editing <b>"+esc(p.name)+"</b> ("+esc(p.workflow_state)+byline+") — changes update this plan; resubmitting sends it back to Pending Approval. <a href='#' id='f-cancel-edit'>Cancel edit</a>";
+        if(b){ b.style.display="block"; b.innerHTML="Editing <b>"+esc(p.name)+"</b> ("+esc(stateLabel(p.workflow_state))+byline+") — changes update this plan; resubmitting sends it back to '"+esc(firstStepLabel())+"'. <a href='#' id='f-cancel-edit'>Cancel edit</a>";
           var c=document.getElementById("f-cancel-edit"); if(c) c.onclick=function(ev){ ev.preventDefault(); clearEdit(); el("f-qty").value=""; ST.task=null; ST.taskInfo=null; ST.picked={}; el("f-task").value=""; el("f-kpi").textContent=""; syncBlockGrid(); recalc(); toast("Edit cancelled"); }; }
         el("b-submit").textContent = "Update & Submit";
         el("b-draft").textContent = "Update Draft";
@@ -1860,12 +1960,23 @@
     }).catch(function(e){ toast("Could not load plan"); });
   }
 
+  // The chip prints the step's configured label and keeps the state as its
+  // identity underneath. It named `Pending Approval`, which is one step out of
+  // a chain that may now run two.
   function stateTag(s){
-    var c="draft", t=s||"Draft";
-    if(s==="Approved") c="appr"; else if(s==="Pending Approval") c="pend"; else if(s==="Rejected") c="rej";
-    return '<span class="tag '+c+'">'+esc(t)+'</span>';
+    var c="draft";
+    if(s===chainState("terminal")) c="appr";
+    else if(s===chainState("reject")) c="rej";
+    else if(chainStates("waiting").indexOf(s)>=0) c="pend";
+    return '<span class="tag '+c+'" data-state="'+esc(s||"")+'" title="'+esc(s||"")+'">'+
+           esc(stateLabel(s)||"Draft")+'</span>';
   }
-  function editableState(s){ return s==="Draft" || s==="Rejected" || s==="Pending Approval"; }
+  // EDITABLE UNTIL THE CHAIN HAS FINISHED WITH IT. Three states were named,
+  // one of which is a step a site need not have and none of which covers a
+  // SECOND approval -- so on Altura a request sitting at the HR step could not
+  // be edited by the person the screen still offered an Edit button to.
+  // `open` is draft, rejected and every waiting step.
+  function editableState(s){ return chainStates("open").indexOf(s)>=0; }
 
   function loadMine(){
     var b=el("mine-body"); b.className="loading"; b.innerHTML="Loading…";
@@ -1876,7 +1987,7 @@
       var fs=ST._farmScope;
       var sts={}; rows.forEach(function(r){ if(r.workflow_state) sts[r.workflow_state]=1; });
       b.className="";
-      b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row to see full details — mandays, hours, and rate breakdown.'+(fs?(' Plans on your '+esc(TX("top_singular","Farm")).toLowerCase()+'(s) raised by others are included — Draft, Rejected and Pending Approval ones can be edited.'):'')+'</div>'
+      b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row to see full details — mandays, hours, and rate breakdown.'+(fs?(' Plans on your '+esc(TX("top_singular","Farm")).toLowerCase()+'(s) raised by others are included — any not yet finally approved can be edited.'):'')+'</div>'
         + fbar(rows,{dates:true,statuses:Object.keys(sts).sort(),ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.from_date),
@@ -2130,7 +2241,7 @@
       return;
     }
     b.className="";
-    b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row for full details. Approve, reject — or <b>Edit</b> to adjust the plan yourself; edits send it back through Pending Approval.'+
+    b.innerHTML='<div class="note" style="margin-bottom:8px">Click a row for full details. Approve, reject — or <b>Edit</b> to adjust the plan yourself; edits send it back through '+esc(firstStepLabel())+'.'+
       (multi ? ' This project runs '+fmt(steps.length)+' approval steps — '+
         esc(steps.map(function(x){ return x.label||x.key; }).join(" → "))+
         ' — and the Step column says which one a request is waiting in.' : '')+'</div>'
@@ -2147,23 +2258,31 @@
            // stopPropagation on the box keeps a tick from also expanding the row
            '<td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td>'+
            '<td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.quantity)+'</td><td class="n">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.person_days)+'</td><td class="n m">'+fmt(r.total_hours)+'</td><td class="n">'+fmt(r.total_cost)+'</td><td style="min-width:150px">'+apprBudget(r)+'</td><td>'+esc(r.from_date)+' → '+esc(r.to_date)+'</td><td>'+esc(shortUser(r.requested_by))+'</td>'+
-           (multi?('<td style="font-size:10.5px">'+esc(r.step_label||r.workflow_state||"")+'</td>'):'')+
+           (multi?('<td style="font-size:10.5px">'+esc(r.step_label||stateLabel(r.workflow_state))+'</td>'):'')+
            // the button says what the step calls the decision -- "HR Approve" is
            // the configured action, and a button labelled "Approve" on a screen
            // running two of them tells the approver nothing about which they take
-           '<td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'">'+esc(r.step_action||"Approve")+'</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+           '<td><div class="ib"><button class="btn solid" data-app="'+esc(r.name)+'" data-step="'+esc(r.step||"")+'">'+esc(r.step_action||"Approve")+'</button><button class="btn" data-editp="'+esc(r.name)+'">Edit</button><button class="btn" data-rej="'+esc(r.name)+'" data-step="'+esc(r.step||"")+'">Reject</button></div></td></tr>';
         h+='<tr class="detailrow" data-d="'+i+'" style="display:none"><td colspan="'+(multi?15:14)+'" style="background:var(--wash);padding:0"><div class="reqdetail" data-panel="'+i+'"></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
       wireReqExpand(body, rows);
-      body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act("approve", btn.getAttribute("data-app")); }; });
+      // THE STEP THIS ROW IS WAITING IN, by its key. This tab lists every step
+      // the person may take at once, so naming the one the button sits under is
+      // the difference between approving what is on screen and approving
+      // whatever the document has since moved to. It is the step's KEY -- the
+      // same vocabulary the assigner and actuals send; `step_action` beside it
+      // is the step's workflow action and is printed on the button, never sent.
+      body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act("approve", btn.getAttribute("data-app"), btn.getAttribute("data-step")); }; });
       body.querySelectorAll("[data-editp]").forEach(function(btn){ btn.onclick=function(){ openPlanForEdit(btn.getAttribute("data-editp")); }; });
-      body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("reject", btn.getAttribute("data-rej")); }; });
+      body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("reject", btn.getAttribute("data-rej"), btn.getAttribute("data-step")); }; });
       wireBulk(body, rows, function(d){ loadAppr(); setTimeout(function(){ bulkResult(d); }, 250); });
     });
   }
-  function act(which,name){
-    call({action:which,name:name}).then(function(d){
+  function act(which,name,stageKey){
+    var args={action:which,name:name};
+    if(stageKey) args.stage=stageKey;
+    call(args).then(function(d){
       if(d.error){ toast("Error: "+d.error); return; }
       toast(name+" → "+d.workflow_state);
       loadAppr();
@@ -2272,7 +2391,7 @@
              '<td class="n m">'+fmt(a.planned_people)+'</td><td class="n m">'+fmt(a.assigned_count)+'</td>'+
              '<td style="font-size:10px">'+trWho(a.assigned_by)+'</td>'+
              '<td style="font-size:10px">'+trWho(a.approved_by)+'</td>'+
-             '<td style="font-size:10px">'+esc(a.workflow_state||"")+'</td></tr>';
+             '<td style="font-size:10px">'+esc(stateLabel(a.workflow_state,"Work Management Assigner"))+'</td></tr>';
         });
         h+='</tbody></table>';
       }
@@ -2291,7 +2410,7 @@
              '<td style="font-size:10px">'+trWho(a.gm_approved_by)+'</td>'+
              '<td class="n m">'+fmt(a.total_actual_qty)+'</td>'+
              '<td class="n m">'+fmt(a.total_payment,2)+'</td>'+
-             '<td style="font-size:10px">'+esc(a.workflow_state||"")+'</td></tr>';
+             '<td style="font-size:10px">'+esc(stateLabel(a.workflow_state,"Work Management Actuals"))+'</td></tr>';
         });
         h+='</tbody></table>';
       }
@@ -2539,7 +2658,7 @@
         }).catch(function(){}) ]).then(function(res){
       var meta=res[0], roles=res[1];
       ST.roles=roles;
-      el("wp-who").textContent=(roles.user||"")+(roles.is_approver?" · Approver":"");
+      el("wp-who").textContent=(roles.user||"")+whoSuffix(roles);
       initNew(meta);
       call({action:"rate_meta"}, "wm_rates").then(function(d){
         ST.canRates = !!(d && d.can_edit);

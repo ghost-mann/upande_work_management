@@ -561,6 +561,38 @@ def seed_stages(settings=None, save=True):
 	return settings
 
 
+#: The Settings checkbox that decides whether a generated workflow carries
+#: Frappe's own email alert.
+NOTIFY_FIELD = "notify_approvers_by_email"
+
+
+def email_alerts_on(settings=None):
+	"""Does this site email approvers when something reaches their step?
+
+	`build_workflows()` set `send_email_alert = 0` on all five workflows, every
+	time, so no approver was ever notified of anything -- and the reason nobody
+	noticed is that it was set before the chain was configurable, when the desk's
+	awaiting-approval inbox was the only route in. On a site whose approvers live
+	on the web screens, "nothing tells me there is work" is the whole experience.
+
+	So it is a setting, and it is OFF unless a site says otherwise: turning it on
+	for everybody on migrate would send mail from sites that have never sent any,
+	about documents that have been sitting there for months.
+
+	On, the workflow carries Frappe's own alert -- the notification with inline
+	Approve and Reject links that `frappe/workflow` already sends, addressed by
+	the transition's role. Not a notification layer of this app's own: a second
+	implementation of "who should hear about this" is a second answer to it.
+
+	`settings.get(...)` rather than an attribute, so a Settings document saved
+	before this field existed reads as off instead of raising.
+	"""
+	settings = _settings_or_none() if settings is None else settings
+	if not settings:
+		return False
+	return bool(settings.get(NOTIFY_FIELD))
+
+
 def stage_rows(settings=_UNSET):
 	"""{stage key: settings row} for every configured step.
 
@@ -753,6 +785,7 @@ def build_workflows(settings=None):
 	"""
 	settings = settings or _settings()
 	rows = stage_rows(settings)
+	notify = email_alerts_on(settings)
 	built = []
 
 	for document_type in CHAIN_ENDS:
@@ -778,7 +811,12 @@ def build_workflows(settings=None):
 		workflow.workflow_state_field = "workflow_state"
 		workflow.is_active = 1
 		workflow.override_status = 0
-		workflow.send_email_alert = 0
+		# WHETHER APPROVERS ARE EMAILED. Hardcoded to 0 here, on every workflow,
+		# every time this ran -- so a site could name its approvers, generate its
+		# chain, and still have nothing tell any of them there was work waiting.
+		# Now a Settings checkbox, off unless a site turns it on, and read once
+		# above so all five workflows agree. See email_alerts_on().
+		workflow.send_email_alert = 1 if notify else 0
 
 		workflow.set("states", [])
 		for state in plan["states"]:

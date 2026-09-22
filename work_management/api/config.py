@@ -11,7 +11,7 @@ Kaitet's own values are applied by work_management.seed.kaitet on that site alon
 
 import frappe
 
-from work_management import approvals, capabilities, split_day, taxonomy
+from work_management import approvals, capabilities, chain, split_day, taxonomy
 
 #: The two payment paths, spelled once. They are the Select's options in
 #: Work Management Settings and the values `payment_mode` takes everywhere; a
@@ -244,6 +244,21 @@ def get_config():
 			doctype: approvals.pipeline_states(settings=None, document_type=doctype)
 			for doctype in approvals.CHAIN_ENDS
 		},
+		# WHAT TO PRINT WHERE A WORKFLOW STATE WOULD BE. `Pending GM` is a state
+		# name, not a word anybody chose: the step it belongs to is called
+		# whatever Settings says, and on Altura the cards read "Pending GM" beside
+		# a step labelled "Master Plan: Manager". Per document type, because one
+		# state name belongs to a different step in each chain -- three of them
+		# wait in `Pending GM` and each has its own label.
+		#
+		# Only the steps are here. Terminal, draft and reject states are not
+		# steps, nothing configures them, and a caller falls back to the raw
+		# string -- which is already the right word for `Approved` or `Rejected`.
+		"stage_labels": {
+			doctype: chain.state_labels(
+				approvals.effective_chain(settings=None), document_type=doctype)
+			for doctype in approvals.CHAIN_ENDS
+		},
 		# Who may do what, beyond approving: raise a budget, change a rate, send a
 		# payment run, enter work. These were four lists and a scatter of inline
 		# checks naming one company's job titles.
@@ -371,11 +386,39 @@ def get_config():
 		doctype: approvals.pipeline_states(settings, document_type=doctype)
 		for doctype in approvals.CHAIN_ENDS
 	}
+	cfg["stage_labels"] = {
+		doctype: chain.state_labels(cfg["stage_rows"], document_type=doctype)
+		for doctype in approvals.CHAIN_ENDS
+	}
 
 	cfg["capabilities"] = capabilities.configured(settings)
 
 	cfg["taxonomy"] = taxonomy.resolve(settings)
 	return cfg
+
+
+def screen_chain(cfg=None):
+	"""What the five page templates put on `window.WM_CHAIN`.
+
+	The chain the screens READ FROM, delivered with the page rather than fetched.
+	It is needed by the first render -- a status chip is drawn before any roles
+	call has answered -- and a screen that has to wait for it prints the raw
+	state once and never corrects itself.
+
+	Two halves, both keyed by document type:
+
+	    labels   {state: the configured step's label}, for printing
+	    states   the grouped state lists `pipeline_states()` publishes, for
+	             filters and option lists that must not narrow when somebody
+	             switches a step off
+
+	Shaped here rather than in five templates so the five cannot disagree.
+	"""
+	cfg = cfg if cfg is not None else get_config()
+	return {
+		"labels": cfg.get("stage_labels") or {},
+		"states": cfg.get("stage_states") or {},
+	}
 
 
 DEFAULT_HEADER_LOGO = "/assets/work_management/images/work-management-wordmark.svg"

@@ -11,6 +11,7 @@ import json
 
 import frappe
 
+from work_management import chain
 from work_management.api.config import get_config
 
 
@@ -1873,7 +1874,22 @@ def wm_dashboard(**kwargs):
         # ---- 4 · PER-STAGE APPROVER BARS: who signs what, at every stage ----
         stages_out = []
 
-        def stage_bars(stage_label, dtype, who_field, val_field, when_fields, start_fields):
+        def stage_bars(stage_key, fallback_label, dtype, who_field, val_field,
+                       when_fields, start_fields):
+            # WHAT THIS BAR IS CALLED, from the chain. The six names were written
+            # in here -- "Plan approval — Farm Manager", "Assignment approval —
+            # GM" -- and the screen carried a second copy of them to abbreviate
+            # for its tab strip. Both named this app's shipped roles, so on a site
+            # that relabelled its chain the panel reported on steps by names
+            # nobody there uses.
+            #
+            # The COLUMN each bar reads is fixed -- `fm_approved_by` is a column,
+            # not a setting -- so the stage key is what ties the two together, and
+            # the shipped wording stands in for a column whose step this chain no
+            # longer has.
+            step = chain.by_key(STAGE_ROWS, dtype, stage_key)
+            stage_label = chain.label_of(step, fallback_label)
+            stage_short = chain.short_label(step) if step else fallback_label
             am = frappe.get_meta(dtype)
             if not am.get_field(who_field):
                 return
@@ -1923,26 +1939,27 @@ def wm_dashboard(**kwargs):
                 aps.append({"who": who, "name": nm, "n": agg[who]["n"], "value": agg[who]["v"],
                             "avg_h": (agg[who]["hsum"] / agg[who]["hn"]) if agg[who]["hn"] else None})
             aps = sorted(aps, key=lambda x: x["n"], reverse=True)
-            stages_out.append({"stage": stage_label, "approvers": aps,
+            stages_out.append({"stage": stage_label, "short": stage_short,
+                               "key": stage_key, "approvers": aps,
                                "total_n": sum(x["n"] for x in aps),
                                "total_v": sum(x["value"] for x in aps)})
 
-        stage_bars("Plan approval — Farm Manager", "Work Management Planner",
+        stage_bars("planner_farm_approval", "Plan approval — Farm Manager", "Work Management Planner",
                    "approved_by", "total_cost", ["custom_approved_at", "approval_date"],
                    ["custom_submitted_at"])
-        stage_bars("Assignment approval — GM", "Work Management Assigner",
+        stage_bars("assigner_gm", "Assignment approval — GM", "Work Management Assigner",
                    "approved_by", "planned_cost", ["custom_gm_approved_at", "approval_date"],
                    ["custom_submitted_at"])
-        stage_bars("Actuals — FM sign-off", "Work Management Actuals",
+        stage_bars("actuals_farm_manager", "Actuals — FM sign-off", "Work Management Actuals",
                    "fm_approved_by", "total_payment", ["custom_fm_approved_at", "fm_approval_date"],
                    ["custom_submitted_at"])
-        stage_bars("Actuals — HR sign-off", "Work Management Actuals",
+        stage_bars("actuals_hr_head", "Actuals — HR sign-off", "Work Management Actuals",
                    "hr_approved_by", "total_payment", ["custom_hr_approved_at", "hr_approval_date"],
                    ["custom_fm_approved_at", "custom_submitted_at"])
-        stage_bars("Actuals — GM confirmation", "Work Management Actuals",
+        stage_bars("actuals_gm", "Actuals — GM confirmation", "Work Management Actuals",
                    "gm_approved_by", "total_payment", ["custom_gm_approved_at", "gm_approval_date"],
                    ["custom_hr_approved_at", "custom_fm_approved_at", "custom_submitted_at"])
-        stage_bars("Payment — accounts release", "Work Management Payment",
+        stage_bars("payment_accounts", "Payment — accounts release", "Work Management Payment",
                    "accounts_approved_by", "amount", ["custom_accounts_approved_at", "accounts_approval_date"],
                    ["custom_submitted_at"])
         out["stages"] = stages_out

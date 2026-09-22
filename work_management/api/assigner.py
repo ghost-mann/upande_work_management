@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, stage_pills
+from work_management import bulk, chain, stage_pills
 from work_management.api.config import get_config
 
 
@@ -140,6 +140,35 @@ def wm_assigner(**kwargs):
     MY_ROLES = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user},
                                  pluck="role")
 
+
+    # ---------------------------------------------------------------- the chain
+    #
+    # This screen advances one document type, and every approval below addresses a
+    # step of its chain by KEY -- never by the step's action, state, label or role.
+    # See work_management/chain.py for why: the screen used to post the workflow
+    # ACTION it had been handed for the tab's wording (`FM Approve`) as this
+    # dispatcher's own `action`, and got `unknown action: FM Approve`.
+    ASG_DT = "Work Management Assigner"
+    ASG_TERMINAL = STAGE_STATES.get(ASG_DT, {}).get("terminal")
+    # Which farms this person decides. The farm dimension, asked once: a
+    # farm-scoped step narrows to these, an unscoped one ignores them entirely.
+    ASG_FARMS = []
+    for _asg_farm, _asg_role in (FARM_APPROVER_ROLE or {}).items():
+        if _asg_role in MY_ROLES and _asg_farm not in ASG_FARMS:
+            ASG_FARMS.append(_asg_farm)
+
+    # WHERE A SHIPPED STEP STAMPS ITSELF. These are columns this doctype already
+    # has, named after the chain as it shipped, and a column cannot be renamed by
+    # a Settings row. So the mapping is from stage KEY -- which is stable -- to the
+    # pair of columns that step has always written, and it is a fallback constant
+    # rather than a rule: a step this app never shipped stamps nothing extra and
+    # is recorded, like every intermediate step already is, on the document's own
+    # comment history.
+    ASG_STAMP = {
+        "assigner_farm_manager": ("fm_approved_by", "fm_approval_date"),
+        "assigner_hr_head": ("hr_approved_by", "hr_approval_date"),
+        "assigner_gm": ("gm_approved_by", "gm_approval_date"),
+    }
 
     # Who may do what, beyond approving. In the app, port_app.py strips this and
     # rebuilds CAPABILITIES from get_config(), so it is whatever Settings holds. Here
@@ -472,22 +501,32 @@ def wm_assigner(**kwargs):
                     "variance","workflow_state","assign_date"], order_by="creation desc", limit=200)
 
     elif action == "a_pending":
-        stage = frappe.form_dict.get("stage") or "Pending HR Head"
-        fmflt = {"workflow_state": stage}
-        # at the FM stage, a farm manager only sees their own farm(s)
-        if stage == "Pending Farm Manager":
-            fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-            fmbypass = ("System Manager" in fmrl) or ("General Manager" in fmrl)
-            if not fmbypass:
-                fmallowed = []
-                for _farm_, _role_ in FARM_APPROVER_ROLE.items():
-                    if _role_ in fmrl: fmallowed.append(_farm_)
-                fmflt["farm"] = ["in", fmallowed] if fmallowed else ["in", ["__none__"]]
-        out["pending"] = frappe.db.get_all("Work Management Assigner",
-            filters=fmflt,
-            fields=["name","planner_request","farm","task","block_section","from_date","to_date","planned_people",
-                    "assigned_count","variance","planned_cost","assigned_by","assign_date"],
-            order_by="assign_date desc", limit=200)
+        # WHICH QUEUE, by the key the tab carries. `Pending HR Head` was both the
+        # default and the name of a step this site may not have; the first enabled
+        # approval step is the honest default, and on a chain of one it is the only
+        # queue there is. A state is still accepted, because that is the other name
+        # the server itself publishes for a step.
+        pd_keys = chain.stage_keys(STAGE_ROWS, ASG_DT, enabled_only=True)
+        pd_step, pd_bad = chain.resolve(STAGE_ROWS, ASG_DT,
+            stage=frappe.form_dict.get("stage") or (pd_keys[0] if pd_keys else None))
+        if pd_bad or not pd_step:
+            out["error"] = pd_bad or "This chain has no approval step to list."
+        else:
+            fmflt = {"workflow_state": pd_step["state"]}
+            # A FARM-SCOPED step shows a farm manager their own farms and nobody
+            # else's. Read from the step's `scoped` flag, which is the thing that
+            # survives a chain being reconfigured -- the state name is not.
+            if pd_step.get("scoped"):
+                fmbypass = ("System Manager" in MY_ROLES) or ("General Manager" in MY_ROLES)
+                if not fmbypass:
+                    fmflt["farm"] = ["in", ASG_FARMS] if ASG_FARMS else ["in", ["__none__"]]
+            out["pending"] = frappe.db.get_all("Work Management Assigner",
+                filters=fmflt,
+                fields=["name","planner_request","farm","task","block_section","from_date","to_date","planned_people",
+                        "assigned_count","variance","planned_cost","assigned_by","assign_date"],
+                order_by="assign_date desc", limit=200)
+            out["step"] = pd_step["key"]
+            out["step_label"] = chain.label_of(pd_step)
 
     elif action == "a_submit":
         planner = frappe.form_dict.get("planner"); emps_raw = frappe.form_dict.get("employees")
@@ -751,82 +790,82 @@ def wm_assigner(**kwargs):
             out["assigned_count"] = d.assigned_count; out["variance"] = d.variance
             out["editing"] = editing; out["editing_pending"] = editing_pending
 
-    elif action == "a_fm_approve":
+    elif action in ("a_approve", "a_fm_approve", "a_hr_approve", "a_gm_approve"):
+        # ONE APPROVAL, WHICHEVER STEP IT IS. There were three branches here, one
+        # per step of the chain as it shipped, and between them they knew the whole
+        # of the old vocabulary: which state each step waits in, which role takes
+        # it, which of them submits the document. A site that renames its steps,
+        # hands them to its own roles and switches two off still runs those three
+        # branches -- and a site that ADDS a step has no branch for it at all.
+        #
+        # So the step is resolved from the configured chain, by the key the screen
+        # was handed with its tab, and everything that used to be per-branch is read
+        # off the step: `on`, `state`, `role`, `scoped`, `next_state`. What the last
+        # step does -- submit the document and stamp the final approver -- is now
+        # "the step whose next_state is the terminal", which is what made it the
+        # last step in the first place.
+        #
+        # The three old action names remain, as the keys they always meant. They are
+        # what bulk re-enters, what the mirror's tests read, and what anything
+        # holding a bookmark still sends.
+        ap_alias = {"a_fm_approve": "assigner_farm_manager",
+                    "a_hr_approve": "assigner_hr_head",
+                    "a_gm_approve": "assigner_gm"}
         nm = frappe.form_dict.get("name")
-        cur = frappe.db.get_value("Work Management Assigner", nm, ["workflow_state","farm"], as_dict=True)
-        fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        fmallowed = []
-        for _farm_, _role_ in FARM_APPROVER_ROLE.items():
-            if _role_ in fmrl: fmallowed.append(_farm_)
-        fmbypass = ("System Manager" in fmrl) or ("General Manager" in fmrl)
+        ap_stage = ap_alias.get(action) or frappe.form_dict.get("stage")
+        cur = frappe.db.get_value(ASG_DT, nm, ["workflow_state", "farm"], as_dict=True)
+        ap_step, ap_bad = chain.resolve(STAGE_ROWS, ASG_DT, stage=ap_stage,
+                                        state=cur.workflow_state if cur else None)
+        ap_why = None
+        if ap_step:
+            # Two dimensions gate a step and only one applies to each; which one is
+            # the step's own `scoped` flag, not something inferred from its name.
+            ap_why = chain.may_take(ap_step, MY_ROLES, farm=cur.farm if cur else None,
+                                    farms=ASG_FARMS)
         if not cur:
             out["error"] = "Record not found"
-        elif not STAGE_ON["assigner_farm_manager"]:
-            # The step is switched off, so no document waits here and approving it
-            # would write a state nothing is watching.
-            out["error"] = "The Farm Manager step is switched off for this project."
-        elif not (STAGE_ROLE["assigner_farm_manager"] in MY_ROLES
-                  or "System Manager" in MY_ROLES or fmbypass or fmallowed):
-            out["error"] = ("Only " + str(STAGE_ROLE["assigner_farm_manager"]) + " can take this step."
-                            " You do not hold it.")
-        elif cur.workflow_state != STAGE_STATE["assigner_farm_manager"]:
-            out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
-        elif not fmbypass and cur.farm not in fmallowed:
-            if not fmallowed:
-                out["error"] = "You have no farm assigned for approvals. Ask an admin to grant you a farm-specific Farm Manager role."
-            else:
-                out["error"] = "You can only approve records for your farm(s): " + ", ".join(fmallowed) + ". This record is for " + str(cur.farm) + "."
+        elif ap_bad:
+            out["error"] = ap_bad
+        elif not ap_step:
+            out["error"] = "Not awaiting approval (state: " + str(cur.workflow_state) + ")"
+        elif cur.workflow_state != ap_step["state"]:
+            out["error"] = ("Not at the " + str(chain.label_of(ap_step)) +
+                            " step (state: " + str(cur.workflow_state) + ")")
+        elif ap_why:
+            out["error"] = ap_why
         else:
-            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_farm_manager"], update_modified=False)
-            try:
-                frappe.db.set_value("Work Management Assigner", nm, "fm_approved_by", frappe.session.user, update_modified=False)
-                frappe.db.set_value("Work Management Assigner", nm, "fm_approval_date", frappe.utils.today(), update_modified=False)
-            except Exception:
-                pass
-            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_farm_manager"]
-
-    elif action == "a_hr_approve":
-        nm = frappe.form_dict.get("name")
-        cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
-        if not STAGE_ON["assigner_hr_head"]:
-            out["error"] = "The HR Head step is switched off for this project."
-        elif not (STAGE_ROLE["assigner_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
-            out["error"] = ("Only " + str(STAGE_ROLE["assigner_hr_head"]) + " can take this step."
-                            " You do not hold it.")
-        elif cur_ws != STAGE_STATE["assigner_hr_head"]:
-            out["error"] = "Not at HR stage (state: " + str(cur_ws) + ")"
-        else:
-            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_hr_head"], update_modified=False)
-            try:
-                frappe.db.set_value("Work Management Assigner", nm, "hr_approved_by", frappe.session.user, update_modified=False)
-                frappe.db.set_value("Work Management Assigner", nm, "hr_approval_date", frappe.utils.today(), update_modified=False)
-            except Exception:
-                pass
-            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_hr_head"]
-
-    elif action == "a_gm_approve":
-        nm = frappe.form_dict.get("name")
-        cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
-        if not STAGE_ON["assigner_gm"]:
-            out["error"] = "The GM step is switched off for this project."
-        elif not (STAGE_ROLE["assigner_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
-            out["error"] = ("Only " + str(STAGE_ROLE["assigner_gm"]) + " can take this step."
-                            " You do not hold it.")
-        elif cur_ws != STAGE_STATE["assigner_gm"]:
-            out["error"] = "Not at GM stage (state: " + str(cur_ws) + ")"
-        else:
-            frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_gm"], update_modified=False)
-            frappe.db.set_value("Work Management Assigner", nm, "docstatus", 1, update_modified=False)
-            for kid in frappe.db.get_all("Work Assignment Employee", filters={"parent": nm}, pluck="name"):
-                frappe.db.set_value("Work Assignment Employee", kid, "docstatus", 1, update_modified=False)
-            frappe.db.set_value("Work Management Assigner", nm, "approved_by", frappe.session.user, update_modified=False)
-            frappe.db.set_value("Work Management Assigner", nm, "approval_date", frappe.utils.today(), update_modified=False)
-            try:
-                frappe.db.set_value("Work Management Assigner", nm, "gm_approved_by", frappe.session.user, update_modified=False)
-                frappe.db.set_value("Work Management Assigner", nm, "gm_approval_date", frappe.utils.today(), update_modified=False)
-            except Exception:
-                pass
-            out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_gm"]
+            ap_next = ap_step["next_state"]
+            frappe.db.set_value(ASG_DT, nm, "workflow_state", ap_next, update_modified=False)
+            ap_by, ap_on = ASG_STAMP.get(ap_step["key"], (None, None))
+            if ap_by:
+                try:
+                    frappe.db.set_value(ASG_DT, nm, ap_by, frappe.session.user, update_modified=False)
+                    frappe.db.set_value(ASG_DT, nm, ap_on, frappe.utils.today(), update_modified=False)
+                except Exception:
+                    pass
+            if ap_next == ASG_TERMINAL:
+                # The last approval, and the only one that submits the document.
+                # Which step that is comes from the chain, so switching the GM step
+                # off hands the job to whichever step is last instead of leaving
+                # every assignment unsubmitted.
+                frappe.db.set_value(ASG_DT, nm, "docstatus", 1, update_modified=False)
+                for kid in frappe.db.get_all("Work Assignment Employee",
+                        filters={"parent": nm}, pluck="name"):
+                    frappe.db.set_value("Work Assignment Employee", kid, "docstatus", 1,
+                                        update_modified=False)
+                frappe.db.set_value(ASG_DT, nm, "approved_by", frappe.session.user, update_modified=False)
+                frappe.db.set_value(ASG_DT, nm, "approval_date", frappe.utils.today(), update_modified=False)
+            elif not ap_by:
+                # An added step has no column of its own, so who took it is recorded
+                # where the document already keeps its history -- the planner does
+                # exactly this, and for the same reason.
+                frappe.get_doc(ASG_DT, nm).add_comment(
+                    "Comment", str(chain.label_of(ap_step)) + " taken by " +
+                    frappe.session.user + " — now " + str(ap_next))
+            out["name"] = nm
+            out["workflow_state"] = ap_next
+            out["step"] = ap_step["key"]
+            out["step_label"] = chain.label_of(ap_step)
 
     elif action in ("a_approve_bulk", "a_reject_bulk"):
         # SEVERAL AT A TIME, one at a time. Every document goes through the very
@@ -838,7 +877,12 @@ def wm_assigner(**kwargs):
         # whose queue is on screen: this tab shows one stage at a time, and
         # approving across stages in one press would mean approving work the user
         # is not looking at.
-        bk_stages = {"fm": "a_fm_approve", "hr": "a_hr_approve", "gm": "a_gm_approve"}
+        #
+        # It is a stage KEY, validated against the chain this site runs. It used to
+        # be one of `fm`, `gm`, `hr` -- three abbreviations of the shipped chain,
+        # which the screen derived by splitting `a_fm_approve` on an underscore.
+        # Handed a configured action instead, that produced `undefined`, and the
+        # refusal it earned named three steps Altura does not have.
         bk_names = frappe.form_dict.get("names")
         try:
             bk_names = json.loads(bk_names or "[]")
@@ -848,16 +892,18 @@ def wm_assigner(**kwargs):
         bk_stage = str(frappe.form_dict.get("stage") or "").strip()
         bk_reason = frappe.form_dict.get("reason")
         bk_bad = bulk.check_selection(bk_names, bk_reason, needs_reason=bk_reject)
-        if not bk_reject and bk_stage not in bk_stages:
-            bk_bad = ("stage must be one of " + ", ".join(sorted(bk_stages))
-                      + " -- the queue on screen decides it")
+        bk_step = None
+        if not bk_bad and not bk_reject:
+            bk_step, bk_bad = chain.resolve(STAGE_ROWS, ASG_DT, stage=bk_stage)
+            if not bk_bad and not bk_step:
+                bk_bad = chain.unknown_stage(bk_stage, STAGE_ROWS, ASG_DT)
         if bk_bad:
             out["error"] = bk_bad
         else:
             bk_ok, bk_failed = bulk.run_bulk(
-                wm_assigner,
-                "a_reject" if bk_reject else bk_stages[bk_stage], bk_names,
-                base={"reason": bk_reason} if bk_reject else None)
+                wm_assigner, "a_reject" if bk_reject else "a_approve", bk_names,
+                base={"reason": bk_reason} if bk_reject
+                     else {"stage": bk_step["key"]})
             out["ok"] = bk_ok
             out["failed"] = bk_failed
             out["summary"] = bulk.summarise(bk_ok, bk_failed,
@@ -866,7 +912,12 @@ def wm_assigner(**kwargs):
     elif action == "a_reject":
         nm = frappe.form_dict.get("name")
         cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
-        if cur_ws not in ("Pending Farm Manager","Pending HR Head","Pending GM"):
+        # Rejectable at every approval step this chain holds, switched-off ones
+        # included: rejecting is not a step and is how a document parked in a
+        # retired step gets out of it. Named three states, which on a reconfigured
+        # chain is either too few or entirely wrong.
+        rj_step = chain.at_state(STAGE_ROWS, ASG_DT, cur_ws)
+        if not rj_step:
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
         else:
             frappe.db.set_value("Work Management Assigner", nm, "workflow_state", "Rejected", update_modified=False)
@@ -896,12 +947,28 @@ def wm_assigner(**kwargs):
         out["is_gm"] = "General Manager" in rl
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
-        out["is_farm_manager"] = ("Farm Manager" in rl) or any(_r_ in rl for _r_ in FARM_APPROVER_ROLE.values())
+        # Whoever decides a farm's work, from the farm-scoped steps' own roles.
+        # `"Farm Manager" in rl` sat in front of that list -- this app's shipped
+        # role name, which a site that maps the step onto its own role does not
+        # have, and which a site that has it for another reason gets for free.
+        out["is_farm_manager"] = 1 if (("System Manager" in rl)
+            or any(_r_ in rl for _r_ in (FARM_APPROVER_ROLE or {}).values())) else 0
         # THE TAB STRIP, from the configured chain rather than from a list
         # written into the screen. NOT filtered by `rl`: which queues exist is
         # not a question about who is looking, and answering it that way hid the
         # farm manager's queue from everybody else. See
         # work_management/stage_pills.py.
+        # WHETHER THIS PERSON APPROVES ANYTHING HERE, and what to call them --
+        # both from the configured chain. The header said "· HR Head" for anyone
+        # the shipped HR question said yes to, so Altura's Production Manager was
+        # greeted as an HR Head. `chain.takeable()` asks the same question the
+        # approve action asks, on the same data, so the tab is offered exactly
+        # when a press would be allowed and the suffix names the step it would
+        # take.
+        out["is_approver"] = 1 if chain.takeable(
+            STAGE_ROWS, 'Work Management Assigner', rl, farms=ASG_FARMS) else 0
+        out["approver_label"] = chain.approver_suffix(
+            STAGE_ROWS, ['Work Management Assigner'], rl, farms=ASG_FARMS)
         out["stages"] = stage_pills.for_document_type(
             "Work Management Assigner", STAGE_ROWS, FARM_APPROVER_ROLE, rl)
 

@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import audit, stage_pills
+from work_management import audit, chain, consultant, stage_pills
 from work_management.api.config import get_config
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
@@ -158,6 +158,7 @@ def wm_masterplan(**kwargs):
     STAGE_ON = {}
     STAGE_ROLE = {}
     STAGE_LABEL = {}
+    STAGE_ACTION = {}
     for sr_row in STAGE_ROWS:
         STAGE_STATE[sr_row["key"]] = sr_row["state"]
         STAGE_NEXT[sr_row["key"]] = sr_row["next_state"]
@@ -168,6 +169,8 @@ def wm_masterplan(**kwargs):
         # where somebody else takes that step the message named the wrong person and
         # sent them to the wrong desk.
         STAGE_LABEL[sr_row["key"]] = sr_row.get("label")
+        # and what the step calls its decision, which is what a button says
+        STAGE_ACTION[sr_row["key"]] = sr_row.get("action")
 
     # The GM of a master plan is whoever the chain's GM step names -- one answer, not
     # a second list that could disagree with it.
@@ -254,9 +257,32 @@ def wm_masterplan(**kwargs):
         # written into the markup and stopped being the chain the moment the
         # chain became configurable; Approved / Draft / Rejected are not steps at
         # all and stay where they are. See work_management/stage_pills.py.
-        out["stages"] = stage_pills.for_document_type(
+        mp_pills = stage_pills.for_document_type(
             "Work Management Master Plan", STAGE_ROWS, FARM_APPROVER_ROLE,
             frappe.get_roles())
+        # WHICH ACTION APPROVES EACH QUEUE, AND WHETHER IT IS THIS PERSON'S.
+        # The screen decided both by comparing the tab's state against
+        # `Pending Consultant` and `Pending GM` -- two state names out of a chain
+        # that no longer has to contain either, so on Altura the bulk bar showed
+        # for the wrong queue and the wrong action was sent for it. The chain
+        # answers both here: the step that leads to the end of the chain is the
+        # one that approves it, and everything before it sends the plan onward.
+        mp_terminal = STAGE_STATES.get("Work Management Master Plan", {}).get("terminal")
+        for mp_pill in mp_pills:
+            mp_step = chain.by_key(STAGE_ROWS, "Work Management Master Plan", mp_pill["key"])
+            mp_final = bool(mp_step and mp_step.get("next_state") == mp_terminal)
+            mp_pill["op"] = "approve" if mp_final else "send_to_gm"
+            # The same gates the single actions apply, so the bar never offers a
+            # press the server will refuse: the final step is the GM's, and a step
+            # before it is open to whoever the chain names AND to a consultant
+            # listed in Settings, who holds no role at all, AND to the GM standing
+            # in for one -- which is exactly what send_to_gm allows.
+            mp_may = bool(mp_step) and chain.may_take(mp_step, mp_roles) is None
+            if mp_final:
+                mp_pill["mine"] = 1 if CAN_GM else 0
+            else:
+                mp_pill["mine"] = 1 if (mp_may or IS_CONSULTANT or CAN_GM) else 0
+        out["stages"] = mp_pills
 
     elif action == "period_free":
         # Does this farm already have a budget over these dates? The form asks the
@@ -383,6 +409,27 @@ def wm_masterplan(**kwargs):
                 out["deciding_as_standin"] = 1 if (CAN_GM and not MP_LISTED_CONSULTANT
                                                    and mp.workflow_state == "Pending Consultant") else 0
                 out["can_gm_approve"] = 1 if (CAN_GM and mp.workflow_state == "Pending GM") else 0
+                # WHAT THE BUTTONS SAY. The steps' configured actions -- the same
+                # words the desk's own buttons carry -- rather than `GM Approve`
+                # and `Send to GM` written into the screen, which on a relabelled
+                # chain named steps the site does not have.
+                #
+                # Which step is which comes from the chain, not from a key: the
+                # one that leads to the end of it is the final approval, and the
+                # step the plan is sitting in is the one being sent on.
+                mp_terminal_state = STAGE_STATES.get(
+                    "Work Management Master Plan", {}).get("terminal")
+                mp_final = None
+                for mp_st in chain.approval_steps(
+                        STAGE_ROWS, "Work Management Master Plan", enabled_only=True):
+                    if mp_st.get("next_state") == mp_terminal_state:
+                        mp_final = mp_st
+                mp_here = chain.at_state(STAGE_ROWS, "Work Management Master Plan",
+                                         mp.workflow_state)
+                out["gm_action"] = (mp_final or {}).get("action") or "Approve"
+                out["gm_label"] = chain.label_of(mp_final, "Approval")
+                out["send_action"] = (mp_here or {}).get("action") or "Send on"
+                out["here_label"] = chain.label_of(mp_here, "")
 
     elif action == "save":
         # Who may edit depends on where the plan has got to:
@@ -739,6 +786,11 @@ def wm_masterplan(**kwargs):
         else:
             frappe.db.set_value("Work Management Master Plan", sr_name,
                                 "workflow_state", STAGE_NEXT["masterplan_submit"])
+            # WITH NO CONSULTANT STEP, the lines settle as the plan enters the
+            # chain. Nothing else ever moves them off Pending, and a plan that
+            # reaches Approved with every line Pending is a budget the planner
+            # can draw nothing against. See work_management/consultant.py.
+            out["settled_without_review"] = consultant.settle_and_note(sr_name)
             frappe.db.commit()
             out["name"] = sr_name
             out["workflow_state"] = STAGE_NEXT["masterplan_submit"]
@@ -922,6 +974,9 @@ def wm_masterplan(**kwargs):
                     elif pb_st != "Pending GM":
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not awaiting the GM"})
                     else:
+                        # same as gm_approve: with no consultant step the lines
+                        # have to be settled before they are counted
+                        consultant.settle_and_note(pb_n)
                         pb_ok = frappe.db.sql("""
                             SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity`
                             WHERE parent = %(p)s AND consultant_state != 'Rejected'
@@ -1055,6 +1110,11 @@ def wm_masterplan(**kwargs):
                 LIMIT 1
             """, {"f": ga_doc.farm, "me": ga_name,
                   "to": ga_doc.period_to, "from": ga_doc.period_from}, as_dict=True)
+            # A plan that never went past a consultant -- because this project
+            # has no consultant step -- has lines nobody rejected and nobody
+            # approved. Settling them here is what stops the count below reading
+            # "every activity was rejected" about a plan on which nothing was.
+            consultant.settle_and_note(ga_name)
             ga_ok = frappe.db.sql("""
                 SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity`
                 WHERE parent = %(p)s AND consultant_state = 'OK'

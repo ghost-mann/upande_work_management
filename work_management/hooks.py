@@ -59,6 +59,15 @@ doc_events = {
 	"Task": {
 		"on_update": "work_management.rates.task_on_update",
 	},
+	# A master plan saved while the consultant step is switched off settles its
+	# own lines. Without this they stay `Pending` forever -- nothing else ever
+	# moves them -- and an approved budget then offers the planner no activities
+	# at all. On validate rather than on_update so it covers the desk form, which
+	# is what a site works around a broken screen with. See
+	# work_management/consultant.py.
+	"Work Management Master Plan": {
+		"validate": "work_management.consultant.settle_doc",
+	},
 }
 
 override_whitelisted_methods = {

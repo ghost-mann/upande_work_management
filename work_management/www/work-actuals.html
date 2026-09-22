@@ -65,8 +65,8 @@
 #acp tbody tr:hover{background:var(--wash)}
 #acp .tag{font-size:9px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--line);padding:2px 9px;border-radius:999px;color:var(--mute);background:var(--wash);white-space:nowrap}
 #acp .tag.confirmed{background:var(--green);color:#fff;border-color:var(--green)}
-#acp .tag.hr{background:#fffbeb;color:var(--amber);border-color:#fde68a}
-#acp .tag.gm{background:#f5f3ff;color:var(--violet);border-color:#ddd6fe}
+#acp .tag.waiting{background:#fffbeb;color:var(--amber);border-color:#fde68a}
+#acp .tag.waitlast{background:#f5f3ff;color:var(--violet);border-color:#ddd6fe}
 #acp .tag.rej{background:var(--red);color:#fff;border-color:var(--red)}
 #acp .tag.var{background:var(--mute);color:#fff;border-color:var(--mute)}
 #acp .ib{display:flex;gap:6px}#acp .ib button{margin-top:0;padding:5px 11px;font-size:9.5px}
@@ -865,6 +865,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 </div>
 </div>
 <script>window.WM_TAXONOMY = {{ (taxonomy or {}) | tojson }};</script>
+<script>window.WM_CHAIN = {{ (chain or {}) | tojson }};</script>
 <script>
 (function () {
   var who = document.getElementById("ac-who");

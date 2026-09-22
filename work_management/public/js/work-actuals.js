@@ -47,7 +47,7 @@
     // Which actions POST. This is not decoration: frappe/app.py:sync_database()
     // commits on POST and ROLLS BACK on GET, so an action missing from here is
     // answered "1 approved." by a server that then throws the approval away.
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_approve_bulk:1,act_reject_bulk:1};
+    var writes={act_submit:1,act_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_approve_bulk:1,act_reject_bulk:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -137,8 +137,21 @@
   function dnum(iso){ return parseInt(iso.slice(8,10),10); }
   function monLabel(iso){ var d=new Date(iso+"T00:00:00"); return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()]; }
 
+  // WHAT TO CALL THE PERSON READING THIS. The server answers it from the
+  // configured chain -- the step or steps they can actually act on -- so a
+  // Production Manager is not greeted as an HR Head, which is what a hardcoded
+  // shipped role name did on Altura. Empty when they take no step.
+  function whoSuffix(roles){
+    var s=(roles&&roles.approver_label)||"";
+    return s ? (" \u00b7 "+s) : "";
+  }
+  // THE APPROVALS TAB IS FOR APPROVERS, and who they are comes from the chain.
+  // `is_approver` is true when the signed-in user may take any ENABLED step of
+  // this document type. The GM keeps it whatever the chain says: Close Requests
+  // is not a step in any chain and lives on this tab.
   function buildTabs(){
-    var tabs=[["enter","Enter Actuals"],["acmine","My Actuals"],["acrej","Rejected"],["acappr","Approvals"]];
+    var tabs=[["enter","Enter Actuals"],["acmine","My Actuals"],["acrej","Rejected"]];
+    if(ST.roles && (ST.roles.is_approver || ST.roles.is_gm)) tabs.push(["acappr","Approvals"]);
     var nav=el("ac-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button"); b.textContent=t[1]; b.setAttribute("data-tab",t[0]);
@@ -162,11 +175,48 @@
   //
   // Close Requests is not a step in any chain, so it stays exactly as it was,
   // and it stays the GM's.
+  //
+  // `key` is what the server is addressed by and `action` is only ever a LABEL --
+  // the step's WORKFLOW action, which is what the desk button says. This screen
+  // used to post it as the dispatcher's own action and be answered "unknown
+  // action: FM Approve". See work_management/chain.py.
+  // ── THE CHAIN THIS SITE RUNS ────────────────────────────────────────────
+  // Delivered with the page (window.WM_CHAIN), so the first render is already
+  // right: a status chip is drawn before any roles call has answered, and a
+  // screen that waits for the chain prints the raw state once and never
+  // corrects itself. See api/config.py:screen_chain().
+  var WM_DT = "Work Management Actuals";
+  var CHAIN = (window.WM_CHAIN || {});
+  // WHAT A WORKFLOW STATE IS CALLED HERE. `Pending GM` is a state name, not a
+  // word anybody chose: the step waiting in it is called whatever Settings
+  // says, and on Altura a chip read "Pending GM" beside a step labelled
+  // something else entirely. The state stays the identity underneath -- this is
+  // only what gets printed. An unmapped state falls back to itself, which is
+  // already the right word for the terminal, draft and reject states: they are
+  // not steps, and nothing configures them.
+  function stateLabel(s, dt){
+    var m=((CHAIN.labels||{})[dt||WM_DT])||{};
+    return m[s] || s || "";
+  }
+  // One of the grouped state lists pipeline_states() publishes -- "all",
+  // "waiting", "active", "open". For filters and option lists, which must keep
+  // listing the states of switched-off steps: a list that narrows because
+  // somebody changed a setting looks like data loss.
+  function chainStates(group, dt){
+    return (((CHAIN.states||{})[dt||WM_DT])||{})[group||"all"] || [];
+  }
+  // The three singular ones: "draft", "terminal", "reject". Not steps -- they
+  // are where a chain begins and the two ways it ends -- so they are named
+  // rather than listed, and a screen asks for them by role, never by name.
+  function chainState(which, dt){
+    return (((CHAIN.states||{})[dt||WM_DT])||{})[which] || "";
+  }
+
   function apprQueues(){
     var r=ST.roles||{};
     var q=(r.stages||[]).map(function(s){
       return {key:s.key, label:s.short_label||s.label, stage:s.state,
-              action:s.action, count:s.count, legacy:s.legacy};
+              verb:s.action, count:s.count, legacy:s.legacy};
     });
     if(r.is_gm) q.push({key:"close",label:"Close Requests"});
     return q;
@@ -195,7 +245,7 @@
     var q=null;
     for(i=0;i<queues.length;i++){ if(queues[i].key===ST._apprKey) q=queues[i]; }
     if(q && q.key==="close") loadCloseRequests();
-    else if(q) loadStage("acappr-body", q.stage, q.action);
+    else if(q) loadStage("acappr-body", q.key, q.verb);
   }
   // ---- shared list filter bar (search / farm / status / date range) ----
   function fbar(rows, opts){
@@ -690,7 +740,12 @@
         ? '<button type="button" class="btn" id="ac-addcrew">+ Add a worker</button>'+
           '<span class="ac-addnote">For somebody who worked and is not listed. Nobody has to leave to make room.</span>'
         : '<button type="button" class="btn" disabled>+ Add a worker</button>'+
-          '<span class="ac-addnote">Only a Farm Manager, the HR head or the GM can change the crew.</span>');
+          // WHO THAT IS comes back with the roles, from the configured chain.
+          // It named three shipped roles -- "a Farm Manager, the HR head or the
+          // GM" -- two of which a site need not have, so the sentence told an
+          // Altura clerk to go and find people who do not exist there.
+          '<span class="ac-addnote">Only an approver on this '+
+          esc(TX("top_singular","farm").toLowerCase())+"'s work can change the crew.</span>");
     box.appendChild(addbar);
     var addCrewBtn = el("ac-addcrew");
     if(addCrewBtn){ addCrewBtn.onclick=function(){ openAddModal(a); }; }
@@ -831,8 +886,11 @@
         // TIME & ATTENDANCE gate: these worker-days clash with attendance/leave/offs
         var lines=(d.att_conflicts||[]).map(function(c){ return "• "+(c.name||c.employee)+": "+(c.reasons||[]).join("; "); });
         if(d.can_override===0){
-          // absent-day entries are a Farm Manager decision — no override for this user
-          window.alert("Attendance check — these entries include workers marked ABSENT:\n\n"+lines.join("\n")+"\n\n"+(d.override_blocked||"Only the Farm Manager (or GM) can approve recording actuals on an absent day."));
+          // absent-day entries are the farm's approver's decision — no
+          // override for this user. The sentence comes from the server, which
+          // words it from the configured chain; the fallback must not name a
+          // role a site may not have.
+          window.alert("Attendance check — these entries include workers marked ABSENT:\n\n"+lines.join("\n")+"\n\n"+(d.override_blocked||"Only an approver for this farm can approve recording actuals on an absent day."));
           refresh(); onAsg(ST.asg);
           return;
         }
@@ -1204,12 +1262,24 @@
   function ckk(n){ n=cnum(n); if(n>=1000) return (n/1000).toLocaleString("en-KE",{maximumFractionDigits:1})+"k"; return fmt(n); }
 
   // ---- My Actuals + approvals ----
+  // The chip prints the step's configured LABEL -- abbreviated to the part
+  // after `Screen: `, which is what fits a chip -- and keeps the state as its
+  // identity underneath. It named two steps and coloured by them, so on a chain
+  // that has neither every waiting record wore the same anonymous grey tag.
   function stateTag(s){
-    if(s==="Confirmed") return '<span class="tag confirmed">Confirmed</span>';
-    if(s==="Pending HR Head") return '<span class="tag hr">HR</span>';
-    if(s==="Pending GM") return '<span class="tag gm">GM</span>';
-    if(s==="Rejected") return '<span class="tag rej">Rejected</span>';
-    return '<span class="tag">'+esc(s||"Draft")+'</span>';
+    var c="";
+    if(s===chainState("terminal")) c="confirmed";
+    else if(s===chainState("reject")) c="rej";
+    else if(chainStates("waiting").indexOf(s)>=0){
+      // the last waiting step keeps the emphatic colour the GM's step had; the
+      // class says what the state IS in this chain, not who takes it
+      var w=chainStates("waiting");
+      c = (s===w[w.length-1]) ? "waitlast" : "waiting";
+    }
+    var t=stateLabel(s)||s||"Draft";
+    var cut=t.indexOf(": ");
+    if(cut>0) t=t.slice(cut+2);
+    return '<span class="tag '+c+'" data-state="'+esc(s||"")+'" title="'+esc(s||"")+'">'+esc(t)+'</span>';
   }
   function loadMine(){
     var b=el("acmine-body"); b.className="loading"; b.innerHTML="Loading…";
@@ -1239,7 +1309,7 @@
         wireExpand(body, 9, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
-            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Status",esc(r.workflow_state)]])+
+            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Status",esc(stateLabel(r.workflow_state))]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
       });
@@ -1270,7 +1340,7 @@
         wireExpand(body, 9, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
-            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Status",esc(r.workflow_state)]])+
+            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Status",esc(stateLabel(r.workflow_state))]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
       });
@@ -1279,7 +1349,10 @@
   function loadCloseRequests(){
     var b=el("acappr-body"); if(!b) return; b.className="loading"; b.innerHTML="Loading…";
     call({action:"act_close_pending"}).then(function(d){
-      if(d.not_gm){ b.className=""; b.innerHTML='<div class="empty">Only the General Manager sees close requests.</div>'; return; }
+      // The server decides who sees these and says so in its own words; the
+      // fallback names nobody, because naming a shipped role here is how a
+      // reconfigured site gets told to ask a person it does not have.
+      if(d.not_gm){ b.className=""; b.innerHTML='<div class="empty">'+esc(d.not_gm_why||"Close requests are not yours to see.")+'</div>'; return; }
       var rows=d.pending||[];
       if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">No close requests awaiting you.</div>'; return; }
       b.className="";
@@ -1425,9 +1498,12 @@
     sync();
   }
 
-  function loadStage(bodyId, stage, approveAction){
+  // `stageKey` is the configured step's key -- the one name a screen may hold,
+  // and only because the server handed it over with the tab. `verb` is what the
+  // step calls the decision and is printed, never sent.
+  function loadStage(bodyId, stageKey, verb){
     var b=el(bodyId); b.className="loading"; b.innerHTML="Loading…";
-    call({action:"act_pending",stage:stage}).then(function(d){
+    call({action:"act_pending",stage:stageKey}).then(function(d){
       var rows=d.pending||[];
       if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">Nothing at this stage.</div>'; return; }
       b.className="";
@@ -1442,7 +1518,7 @@
           h+='<tr data-x="'+i+'">'+
              // stopPropagation on the box keeps a tick from also expanding the row
              '<td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td>'+
-             '<td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+             '<td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">'+esc(verb||"Approve")+'</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         wireExpand(body, 10, function(i){
@@ -1451,21 +1527,27 @@
             rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Planned people",fmt(r.planned_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Planned cost",fmt(r.planned_cost)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Entered by",esc((r.entered_by||"").split("@")[0])]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
-        body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act(approveAction, btn.getAttribute("data-app"), bodyId, stage, approveAction); }; });
-        body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("act_reject", btn.getAttribute("data-rej"), bodyId, stage, approveAction); }; });
-        body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ var asg=btn.getAttribute("data-edit"); if(!asg){ toast("No assignment link on this record"); return; } openActualForEdit(asg, btn.getAttribute("data-doc"), stage); }; });
-        // the stage key the server wants: act_fm_approve -> fm
-        wireBulk(body, list, String(approveAction||"").split("_")[1],
-          function(d){ loadStage(bodyId, stage, approveAction); setTimeout(function(){ bulkResult(d); }, 250); });
+        body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act("act_approve", btn.getAttribute("data-app"), bodyId, stageKey, verb); }; });
+        body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("act_reject", btn.getAttribute("data-rej"), bodyId, stageKey, verb); }; });
+        body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ var asg=btn.getAttribute("data-edit"); if(!asg){ toast("No assignment link on this record"); return; } openActualForEdit(asg, btn.getAttribute("data-doc"), stageKey); }; });
+        // the stage the server wants is the step's KEY, which is the tab's own
+        // key. It used to be derived by splitting the approve action on an
+        // underscore -- "act_fm_approve" -> "fm" -- which on a configured chain
+        // produced undefined and earned a refusal naming three steps this site
+        // may not have.
+        wireBulk(body, list, stageKey,
+          function(d){ loadStage(bodyId, stageKey, verb); setTimeout(function(){ bulkResult(d); }, 250); });
       });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load.</div>'; });
   }
-  function act(which,name,bodyId,stage,approveAction){
-    call({action:which,name:name}).then(function(d){
+  function act(which,name,bodyId,stageKey,verb){
+    var args={action:which,name:name};
+    if(stageKey) args.stage=stageKey;
+    call(args).then(function(d){
       if(d.error){ toast("Error: "+d.error); return; }
       toast(name+" → "+d.workflow_state);
-      loadStage(bodyId, stage, approveAction);
-    }).catch(function(e){ toast("Action failed"); });
+      loadStage(bodyId, stageKey, verb);
+    }).catch(function(e){ toast(e && e.message ? e.message : "Action failed"); });
   }
 
   // WAIT FOR THE MAP BEFORE THE FIRST RENDER.
@@ -1494,7 +1576,7 @@
     var names = taskNamesReady();
     call({action:"a_roles"}).then(function(roles){
       ST.roles=roles;
-      el("ac-who").textContent=(roles.user||"")+(roles.is_hr_head?" · HR Head":"");
+      el("ac-who").textContent=(roles.user||"")+whoSuffix(roles);
       return names.then(function(){ initEnter(); buildTabs(); });
     }).catch(function(e){ el("ac-who").textContent="Could not load."; });
   }

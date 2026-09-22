@@ -236,7 +236,7 @@ class TestTheServerSendsTheStrip(unittest.TestCase):
 		for module in self.PAYLOADS:
 			with self.subTest(module=module):
 				src = read(os.path.join(API, module))
-				at = src.index('out["stages"] = stage_pills.for_document_type(')
+				at = src.index("stage_pills.for_document_type(")
 				statement = src[at:src.index(")\n", at)]
 				self.assertNotIn("if ", statement)
 				# the roles ARE passed -- they narrow a farm-scoped COUNT to the
@@ -344,8 +344,8 @@ class TestTheMasterPlanStrip(unittest.TestCase):
 		"""It has no strip -- one merged queue -- and builds it from the chain.
 		Asserted so a later change does not quietly give it a literal list."""
 		src = read(os.path.join(API, "planner.py"))
-		at = src.index("AP_STEPS = []")
-		self.assertIn("for sr_row in STAGE_ROWS:", src[at:at + 400])
+		at = src.index("AP_STEPS = [")
+		self.assertIn("for sr_row in STAGE_ROWS", src[at:at + 400])
 
 
 if __name__ == "__main__":

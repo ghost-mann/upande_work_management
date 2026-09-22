@@ -302,7 +302,12 @@ class TestTheApproveActionReadsTheChain(unittest.TestCase):
 			"a step is a release again")
 
 	def test_it_finds_the_step_by_the_state_the_request_waits_in(self):
-		self.assertIn("AP_STEP_AT.get(cur_ws)", self.block)
+		"""Or by the stage key the row carries, which is the same resolution --
+		see work_management/chain.py. Both go through one helper, so the planner,
+		the assigner and actuals cannot answer "which step is this" differently."""
+		self.assertIn("chain.resolve(STAGE_ROWS", self.block)
+		self.assertIn("state=cur_ws", self.block)
+		self.assertIn('stage=frappe.form_dict.get("stage")', self.block)
 
 	def test_it_moves_to_that_step_s_own_next_state(self):
 		self.assertIn('ap_step.get("next_state")', self.block)
@@ -351,7 +356,7 @@ class TestRejectingIsAvailableAtEveryStep(unittest.TestCase):
 		self.block = src[at:src.index("# ===== ASSIGNER (a_) =====")]
 
 	def test_it_finds_the_step_the_same_way(self):
-		self.assertIn("AP_STEP_AT.get(cur_ws)", self.block)
+		self.assertIn("chain.at_state(STAGE_ROWS", self.block)
 
 	def test_it_no_longer_names_a_step(self):
 		self.assertNotIn("planner_farm_approval", self.block)

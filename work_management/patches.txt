@@ -29,3 +29,7 @@ work_management.patches.v1_0.switch_on_the_new_discrepancy_checks
 # applied by after_install, so a field added to it later needs this to reach a
 # site that is already up.
 work_management.patches.v1_0.add_the_basic_pay_field
+# After the app's own code is in place: the rule it applies lives in
+# work_management/consultant.py, and the patch only repairs what is already on
+# the site. No-ops where the consultant step is switched on.
+work_management.patches.v1_0.settle_activities_with_no_consultant_step

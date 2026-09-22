@@ -35,7 +35,7 @@
     // Which actions POST. This is not decoration: frappe/app.py:sync_database()
     // commits on POST and ROLLS BACK on GET, so an action missing from here is
     // answered "1 approved." by a server that then throws the approval away.
-    var writes = {a_submit:1, a_fm_approve:1, a_hr_approve:1, a_gm_approve:1, a_reject:1,
+    var writes = {a_submit:1, a_approve:1, a_reject:1,
                   a_substitute:1, a_release:1, a_add_crew:1,
                   a_approve_bulk:1, a_reject_bulk:1};
     var isWrite = writes[args.action] === 1;
@@ -72,6 +72,38 @@
   function isoTodayA(){ var d=new Date(); function p(n){ return (n<10?"0":"")+n; } return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate()); }
   function toast(m){ var t=el("wa-toast"); t.textContent=m; t.classList.add("show"); setTimeout(function(){t.classList.remove("show");},2200); }
   function nPicked(){ var n=0; for(var k in ST.picked){ if(ST.picked[k]) n++; } return n; }
+
+  // ── THE CHAIN THIS SITE RUNS ────────────────────────────────────────────
+  // Delivered with the page (window.WM_CHAIN), so the first render is already
+  // right: a status chip is drawn before any roles call has answered, and a
+  // screen that waits for the chain prints the raw state once and never
+  // corrects itself. See api/config.py:screen_chain().
+  var WM_DT = "Work Management Assigner";
+  var CHAIN = (window.WM_CHAIN || {});
+  // WHAT A WORKFLOW STATE IS CALLED HERE. `Pending GM` is a state name, not a
+  // word anybody chose: the step waiting in it is called whatever Settings
+  // says, and on Altura a chip read "Pending GM" beside a step labelled
+  // "Master Plan: Manager". The state stays the identity underneath -- this is
+  // only what gets printed. An unmapped state falls back to itself, which is
+  // already the right word for Approved, Draft and Rejected: they are not
+  // steps, and nothing configures them.
+  function stateLabel(s, dt){
+    var m=((CHAIN.labels||{})[dt||WM_DT])||{};
+    return m[s] || s || "";
+  }
+  // One of the grouped state lists pipeline_states() publishes -- "all",
+  // "waiting", "active", "open". For filters and option lists, which must keep
+  // listing the states of switched-off steps: a list that narrows because
+  // somebody changed a setting looks like data loss.
+  function chainStates(group, dt){
+    return (((CHAIN.states||{})[dt||WM_DT])||{})[group||"all"] || [];
+  }
+  // The three singular ones: "draft", "terminal", "reject". Not steps -- they
+  // are where a chain begins and the two ways it ends -- so they are named
+  // rather than listed, and a screen asks for them by role, never by name.
+  function chainState(which, dt){
+    return (((CHAIN.states||{})[dt||WM_DT])||{})[which] || "";
+  }
 
   // ── plan close (shared) ─────────────────────────────────
   // The close workflow lives in the wm_actuals script (single source of truth),
@@ -129,8 +161,21 @@
     };
   }
 
+  // WHAT TO CALL THE PERSON READING THIS. The server answers it from the
+  // configured chain -- the step or steps they can actually act on -- so a
+  // Production Manager is not greeted as an HR Head, which is what a hardcoded
+  // shipped role name did on Altura. Empty when they take no step.
+  function whoSuffix(roles){
+    var s=(roles&&roles.approver_label)||"";
+    return s ? (" \u00b7 "+s) : "";
+  }
+  // THE APPROVALS TAB IS FOR APPROVERS, and who they are comes from the chain.
+  // `is_approver` is true when the signed-in user may take any ENABLED step of
+  // this document type -- the same question the approve action asks, so the tab
+  // is there exactly when a press would be allowed.
   function buildTabs(){
-    var tabs=[["assign","Assign"],["amine","My Assignments"],["arej","Rejected"],["aappr","Approvals"]];
+    var tabs=[["assign","Assign"],["amine","My Assignments"],["arej","Rejected"]];
+    if(ST.roles && ST.roles.is_approver) tabs.push(["aappr","Approvals"]);
     var nav=el("wa-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button");
@@ -155,10 +200,17 @@
   // count, and whether it is a switched-off step still holding work -- built
   // from the same chain the approve actions consult. See
   // work_management/stage_pills.py.
+  //
+  // `key` is what the server is addressed by and `action` is only ever a LABEL.
+  // They were confused here: the tab's `action` is the step's WORKFLOW action
+  // ("FM Approve"), which is what the desk button says, and this screen posted it
+  // as the dispatcher's own action and was answered "unknown action: FM Approve".
+  // The dispatcher has one approval action and takes the step's key; see
+  // work_management/chain.py.
   function apprQueues(){
     return ((ST.roles||{}).stages||[]).map(function(s){
       return {key:s.key, label:s.short_label||s.label, stage:s.state,
-              action:s.action, count:s.count, legacy:s.legacy};
+              verb:s.action, count:s.count, legacy:s.legacy};
     });
   }
   function renderApprovals(){
@@ -184,7 +236,7 @@
     }
     var q=null;
     for(i=0;i<queues.length;i++){ if(queues[i].key===ST._apprKey) q=queues[i]; }
-    if(q) loadStage("aappr-body", q.stage, q.action);
+    if(q) loadStage("aappr-body", q.key, q.verb);
   }
   // ---- shared list filter bar (search / farm / status / date range) ----
   function fbar(rows, opts){
@@ -658,17 +710,25 @@
         });
       });
       var b=el("a-editbanner");
-      if(b){ b.style.display="block"; b.innerHTML="Editing <b>"+esc(a.name)+"</b> ("+esc(a.workflow_state)+") — changes update this assignment. <a href='#' id='a-cancel-edit'>Cancel edit</a>";
+      if(b){ b.style.display="block"; b.innerHTML="Editing <b>"+esc(a.name)+"</b> ("+esc(stateLabel(a.workflow_state))+") — changes update this assignment. <a href='#' id='a-cancel-edit'>Cancel edit</a>";
         var c=document.getElementById("a-cancel-edit"); if(c) c.onclick=function(ev){ ev.preventDefault(); clearEdit(); onPlan.call({value:""}); toast("Edit cancelled"); }; }
       el("b-asubmit").textContent="Update & Submit";
       el("b-adraft").textContent="Update Draft";
     }).catch(function(e){ toast("Could not load"); });
   }
 
+  // The chip prints the step's configured LABEL and keeps the state as its
+  // identity underneath -- `title` and `data-state` still carry the raw string,
+  // so anything reading the DOM, or anybody reporting a fault, still has it.
+  // The colour is chosen by what the state IS in this chain rather than by its
+  // name: the end of the chain, a rejection, or somewhere work is waiting.
   function stateTag(s){
-    var c="pend", t=s||"Draft";
-    if(s==="Assigned") c="assigned"; else if(s==="Pending HR Head") c="pend"; else if(s==="Rejected") c="rej"; else c="";
-    return '<span class="tag '+c+'">'+esc(t)+'</span>';
+    var c="pend";
+    if(s===chainState("terminal")) c="assigned";
+    else if(s===chainState("reject")) c="rej";
+    else if(chainStates("waiting").indexOf(s)<0) c="";
+    return '<span class="tag '+c+'" data-state="'+esc(s||"")+'" title="'+esc(s||"")+'">'+
+           esc(stateLabel(s)||"Draft")+'</span>';
   }
   function varTag(v){
     if(v===0||v==null) return '<span class="tag">on plan</span>';
@@ -692,8 +752,14 @@
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
         var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r){
-          var editable = (r.workflow_state==="Draft"||r.workflow_state==="Rejected"||r.workflow_state==="Pending HR Head");
-          var canSub = (r.workflow_state==="Assigned");
+          // EDITABLE WHILE THE CHAIN HAS NOT FINISHED WITH IT. Three states
+          // were named here, two of which are not steps and one of which --
+          // `Pending HR Head` -- is a step a site need not have, so on a
+          // reconfigured chain the Edit button vanished from every row waiting
+          // mid-chain. `open` is draft, rejected and every waiting step, which
+          // is what pipeline_states() publishes it for.
+          var editable = chainStates("open").indexOf(r.workflow_state)>=0;
+          var canSub = (r.workflow_state===chainState("terminal"));
           var actionBtn = editable ? '<button class="btn" data-edit="'+esc(r.name)+'">Edit</button>' : (canSub ? '<button class="btn solid" data-sub="'+esc(r.name)+'">Manage crew</button>' : '');
           h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
         });
@@ -1034,13 +1100,16 @@
     sync();
   }
 
-  function loadStage(bodyId, stage, approveAction){
+  // `stageKey` is the configured step's key -- the one name a screen may hold,
+  // and only because the server handed it over with the tab. `verb` is what the
+  // step calls the decision and is printed, never sent.
+  function loadStage(bodyId, stageKey, verb){
     var b=el(bodyId); b.className="loading"; b.innerHTML="Loading…";
-    call({action:"a_pending", stage:stage}).then(function(d){
+    call({action:"a_pending", stage:stageKey}).then(function(d){
       var rows=d.pending||[];
       // stash for client-side farm filtering, keyed by the body element id
       ST._stageCache=ST._stageCache||{};
-      ST._stageCache[bodyId]={rows:rows, stage:stage, approveAction:approveAction, farm:(ST._stageCache[bodyId]&&ST._stageCache[bodyId].farm)||""};
+      ST._stageCache[bodyId]={rows:rows, stage:stageKey, verb:verb, farm:(ST._stageCache[bodyId]&&ST._stageCache[bodyId].farm)||""};
       renderStage(bodyId);
     });
   }
@@ -1061,24 +1130,28 @@
         h+='<tr data-xa="'+esc(r.name)+'">'+
            // stopPropagation on the box keeps a tick from also expanding the row
            '<td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td>'+
-           '<td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+           '<td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">'+esc(c.verb||"Approve")+'</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
       wireExpandAsg(body, 11);
-      body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act(c.approveAction, btn.getAttribute("data-app"), bodyId, c.stage, c.approveAction); }; });
-      body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("a_reject", btn.getAttribute("data-rej"), bodyId, c.stage, c.approveAction); }; });
+      body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act("a_approve", btn.getAttribute("data-app"), bodyId, c.stage, c.verb); }; });
+      body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("a_reject", btn.getAttribute("data-rej"), bodyId, c.stage, c.verb); }; });
       body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ openAsgForEdit(btn.getAttribute("data-edit")); }; });
-      // the stage key the server wants: a_fm_approve -> fm
-      wireBulk(body, rows, String(c.approveAction||"").split("_")[1],
-        function(d){ loadStage(bodyId, c.stage, c.approveAction); setTimeout(function(){ bulkResult(d); }, 250); });
+      // the stage the server wants is the step's KEY, which is the tab's own key.
+      // It used to be derived by splitting the approve action on an underscore --
+      // "a_fm_approve" -> "fm" -- which on a configured chain produced undefined.
+      wireBulk(body, rows, c.stage,
+        function(d){ loadStage(bodyId, c.stage, c.verb); setTimeout(function(){ bulkResult(d); }, 250); });
     });
   }
-  function act(which,name,bodyId,stage,approveAction){
-    call({action:which,name:name}).then(function(d){
+  function act(which,name,bodyId,stageKey,verb){
+    var args={action:which,name:name};
+    if(stageKey) args.stage=stageKey;
+    call(args).then(function(d){
       if(d.error){ toast("Error: "+d.error); return; }
       toast(name+" → "+d.workflow_state);
-      if(bodyId){ loadStage(bodyId, stage, approveAction); }
-    }).catch(function(e){ toast("Action failed"); });
+      if(bodyId){ loadStage(bodyId, stageKey, verb); }
+    }).catch(function(e){ toast(e && e.message ? e.message : "Action failed"); });
   }
 
   // WAIT FOR THE MAP BEFORE THE FIRST RENDER.
@@ -1107,7 +1180,7 @@
     var names = taskNamesReady();
     call({action:"a_roles"}).then(function(roles){
       ST.roles=roles;
-      el("wa-who").textContent=(roles.user||"")+(roles.is_hr_head?" · HR Head":(roles.is_clerk?" · HR":""));
+      el("wa-who").textContent=(roles.user||"")+whoSuffix(roles);
       return names.then(function(){
         initAssign();
         buildTabs();

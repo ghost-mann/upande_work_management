@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management.api.config import get_config
-from work_management import audit, bulk
+from work_management import audit, bulk, chain
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 
@@ -107,14 +107,10 @@ def wm_planner(**kwargs):
     # moves it correctly, and this screen, which is where the work happens, had no
     # button for it. Keyed off the configured chain now, so a step added in Settings
     # arrives on the screen without a release.
-    AP_STEPS = []
-    AP_STEP_AT = {}
-    for sr_row in STAGE_ROWS:
-        if (sr_row.get("document_type") == "Work Management Planner"
-                and sr_row.get("kind") == "Approval" and sr_row.get("on")
-                and sr_row.get("state")):
-            AP_STEPS.append(sr_row)
-            AP_STEP_AT[sr_row["state"]] = sr_row
+    AP_STEPS = [sr_row for sr_row in STAGE_ROWS
+        if sr_row.get("document_type") == "Work Management Planner"
+        and sr_row.get("kind") == "Approval" and sr_row.get("on")
+        and sr_row.get("state")]
     # Where the chain ends. A step that leads here is the last one, and only the
     # last one submits the document -- approving an intermediate step used to set
     # docstatus = 1 as well, which with two approvals would submit a request that
@@ -503,17 +499,39 @@ def wm_planner(**kwargs):
         out["farms"] = AP_FARMS
 
     elif action == "roles":
-        roles = frappe.db.get_all("Has Role", filters={"parent":frappe.session.user}, fields=["role"])
-        rl = []
-        for r in roles:
-            rl.append(r.role)
-        is_fm = False
-        for r in rl:
-            if r.startswith("Farm Manager"):
-                is_fm = True
+        # WHETHER THIS PERSON APPROVES ANYTHING HERE, from the configured chain.
+        # It used to be "does a role of theirs begin with `Farm Manager`" -- this
+        # app's shipped role name -- so on Altura, where the step is taken by a
+        # Production Manager, the Approvals tab was not merely empty: it was not
+        # drawn at all, and the person the chain names could not reach the queue
+        # from this screen.
+        #
+        # `chain.takeable()` asks the same question the approve action asks, on
+        # the same data, so a tab is offered exactly when a press would be
+        # allowed. Farm scope included: a farm-scoped step is theirs if they
+        # decide any farm, which is what AP_FARMS already holds.
+        rl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user},
+                               pluck="role")
+        ro_mine = chain.takeable(STAGE_ROWS, "Work Management Planner", rl,
+                                 farms=(AP_FARMS or (["*"] if AP_BYPASS else [])))
         out["user"] = frappe.session.user
-        out["is_section_head"] = ("Production Section Head" in rl) or is_fm
-        out["is_approver"] = is_fm
+        out["is_approver"] = 1 if ro_mine else 0
+        # WHAT TO CALL THEM. The header said "· Approver" for a farm manager and
+        # nothing for anybody else; it now names the step or steps they can act
+        # on, and falls back to the neutral word past two.
+        out["approver_label"] = chain.approver_suffix(
+            STAGE_ROWS, ["Work Management Planner"], rl,
+            farms=(AP_FARMS or (["*"] if AP_BYPASS else [])))
+        out["steps"] = [{"key": st["key"], "label": chain.label_of(st)} for st in ro_mine]
+        # Raising a request is the chain's Submit step, not a job title. Nothing
+        # on this screen reads it today; it is answered from the chain so that
+        # whatever does next cannot reintroduce the name.
+        ro_submit = [st for st in STAGE_ROWS
+            if st.get("document_type") == "Work Management Planner"
+            and st.get("kind") == "Submit"]
+        out["is_section_head"] = 1 if (bool(ro_mine) or any(
+            st.get("role") and (st["role"] in rl or "System Manager" in rl)
+            for st in ro_submit)) else 0
 
     elif action == "submit":
         farm = frappe.form_dict.get("farm")
@@ -999,7 +1017,16 @@ def wm_planner(**kwargs):
         # WHICH STEP THIS REQUEST IS WAITING IN, from the configured chain rather
         # than from a step named in the code. One action serves every approval the
         # chain holds, which is what lets a site add one.
-        ap_step = AP_STEP_AT.get(cur_ws)
+        #
+        # A `stage` names it outright, by the key the row was handed -- this tab
+        # lists several steps at once, so "the step this row is waiting in" and
+        # "the step the person pressed the button under" can differ if the document
+        # moved since the list was drawn. Addressed by key, the same vocabulary the
+        # assigner and actuals send; a key this chain does not hold is refused with
+        # the ones it does. Without one, the document's own state decides, which is
+        # how this has always resolved.
+        ap_step, ap_stage_bad = chain.resolve(STAGE_ROWS, "Work Management Planner",
+            stage=frappe.form_dict.get("stage"), state=cur_ws)
         # Two dimensions gate a step and only one applies to each. A FARM-SCOPED
         # step asks which farms this person may decide -- the farm manager's own,
         # the GM's and the HR head's being all of them. An unscoped step asks
@@ -1025,6 +1052,14 @@ def wm_planner(**kwargs):
                           " step. You do not hold it.")
         if not ap_doc:
             out["error"] = "no such plan: " + str(nm)
+        elif ap_stage_bad:
+            out["error"] = ap_stage_bad
+        elif ap_step and ap_step["state"] != cur_ws:
+            out["error"] = ("Not at the " + str(chain.label_of(ap_step)) +
+                            " step (state: " + str(cur_ws) + ")")
+        elif ap_step and not ap_step.get("on"):
+            out["error"] = ("The " + str(chain.label_of(ap_step)) +
+                            " step is switched off for this project.")
         elif not ap_step:
             # Either the request is not awaiting anything, or it waits in a step
             # that has since been switched off. Both are "nothing to approve here",
@@ -1073,12 +1108,27 @@ def wm_planner(**kwargs):
         bk_reject = action == "reject_bulk"
         bk_reason = frappe.form_dict.get("reason")
         bk_bad = bulk.check_selection(bk_names, bk_reason, needs_reason=bk_reject)
+        # `stage` is OPTIONAL here and a stage KEY when it is sent, validated
+        # against the chain this site runs. Optional because this tab lists every
+        # step the person may take at once, so a selection can legitimately span
+        # two of them and each document is judged at its own state. Validated
+        # because a stage that is not a step of this chain is a screen and a
+        # configuration that have parted company, and saying so beats approving
+        # something else.
+        bk_stage = str(frappe.form_dict.get("stage") or "").strip()
+        bk_step = None
+        if not bk_bad and bk_stage:
+            bk_step, bk_bad = chain.resolve(STAGE_ROWS, "Work Management Planner",
+                                            stage=bk_stage)
+        bk_base = {"reason": bk_reason} if bk_reject else {}
+        if bk_step:
+            bk_base["stage"] = bk_step["key"]
         if bk_bad:
             out["error"] = bk_bad
         else:
             bk_ok, bk_failed = bulk.run_bulk(
                 wm_planner, "reject" if bk_reject else "approve", bk_names,
-                base={"reason": bk_reason} if bk_reject else None)
+                base=bk_base or None)
             out["ok"] = bk_ok
             out["failed"] = bk_failed
             out["summary"] = bulk.summarise(bk_ok, bk_failed,
@@ -1091,8 +1141,10 @@ def wm_planner(**kwargs):
         cur_ws = rj_doc.workflow_state if rj_doc else None
         # Rejecting is available at every approval step, not only the first: a
         # request HR refuses is rejected the same way the farm manager's is, and
-        # whoever may approve a step may refuse it.
-        rj_step = AP_STEP_AT.get(cur_ws)
+        # whoever may approve a step may refuse it. A switched-off step included --
+        # rejecting is not a step, and it is how a request parked in a retired one
+        # gets out.
+        rj_step = chain.at_state(STAGE_ROWS, "Work Management Planner", cur_ws)
         rj_ok = True
         rj_why = None
         if rj_step and rj_step.get("scoped"):
@@ -1174,12 +1226,23 @@ def wm_planner(**kwargs):
             pl["blocks"] = blist
             out["plan"] = pl
 
-            # the approval chain, in the order it actually happens
-            chain = []
-            chain.append({"step": "Requested", "who": pl.requested_by, "when": str(pl.request_date or "")})
-            chain.append({"step": "Farm Manager approved" if pl.approved_by else "Farm Manager approval",
+            # THE APPROVAL CHAIN, in the order it actually happens, named by the
+            # steps this site configured. It said `Farm Manager approved`, which
+            # is this app's shipped wording for a step Altura calls something
+            # else and hands to somebody else -- the trace then credited a role
+            # nobody there holds. `approved_by` records the FINAL approval, so
+            # that is the step the stamp belongs to: the last one in the chain.
+            #: shadowing the `chain` module here is what made this rename
+            #: necessary; a local of that name silently disabled every chain
+            #: helper in this file.
+            tr_steps = chain.approval_steps(STAGE_ROWS, "Work Management Planner",
+                                            enabled_only=True)
+            tr_last = chain.label_of(tr_steps[-1]) if tr_steps else "Approval"
+            trace = [{"step": "Requested", "who": pl.requested_by,
+                      "when": str(pl.request_date or "")}]
+            trace.append({"step": tr_last + (" approved" if pl.approved_by else " approval"),
                           "who": pl.approved_by, "when": str(pl.approval_date or "")})
-            out["chain"] = chain
+            out["chain"] = trace
 
             asgs = frappe.db.get_all("Work Management Assigner",
                 filters={"planner_request": tr},

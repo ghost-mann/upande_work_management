@@ -75,6 +75,44 @@
   // so the screen still reads correctly if the template has not loaded.
   var TXN = (window.WM_TAXONOMY || {});
   function TX(key, fallback) { return TXN[key] || fallback; }
+
+  // ── THE CHAINS THIS SITE RUNS ───────────────────────────────────────────
+  // Delivered with the page (window.WM_CHAIN), so the first render is already
+  // right. This screen reports on all four pipelines at once, so every helper
+  // takes the document type and there is no default worth having.
+  // See api/config.py:screen_chain().
+  var CHAIN = (window.WM_CHAIN || {});
+  var DT_PLAN="Work Management Planner", DT_ASG="Work Management Assigner",
+      DT_ACT="Work Management Actuals", DT_PAY="Work Management Payment",
+      DT_MP ="Work Management Master Plan";
+  // WHAT A WORKFLOW STATE IS CALLED HERE. `Pending GM` is a state name, not a
+  // word anybody chose -- and three different steps wait in it, one per chain,
+  // each with its own label. Without the document type there is no answer, so
+  // an unknown one falls back to the raw string, which is what a state that is
+  // not a step (Approved, Draft, Rejected, Paid) should print anyway.
+  function stateLabel(s, dt){
+    var m=((CHAIN.labels||{})[dt])||{};
+    return m[s] || s || "";
+  }
+  // One of the grouped state lists pipeline_states() publishes. Filters use
+  // "all", which deliberately includes the states of switched-off steps: a
+  // filter that narrows because somebody changed a setting hides documents that
+  // went through the old chain, and that looks like data loss.
+  function chainStates(group, dt){
+    return (((CHAIN.states||{})[dt])||{})[group||"all"] || [];
+  }
+  function chainState(which, dt){
+    return (((CHAIN.states||{})[dt])||{})[which] || "";
+  }
+  // Every terminal state across the four chains -- what "finished" looks like
+  // wherever a row's own pipeline is not known to the caller.
+  function terminalStates(){
+    var out=[];
+    [DT_PLAN,DT_ASG,DT_ACT,DT_PAY,DT_MP].forEach(function(dt){
+      var t=chainState("terminal",dt); if(t && out.indexOf(t)<0) out.push(t);
+    });
+    return out;
+  }
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function el(id){ return document.getElementById(id); }
   function svgEl(t,a,x){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); if(x!=null) e.textContent=x; return e; }
@@ -409,7 +447,7 @@
         h+='<tr><td>'+esc(x.name)+'</td><td>'+esc(lbl(x.block_section))+'</td>'+
            '<td>'+esc(x.from_date)+' → '+esc(x.to_date)+'</td>'+
            '<td class="n">'+fmt(x.quantity)+'</td><td class="n">'+money(x.total_cost)+'</td>'+
-           '<td>'+esc(x.workflow_state||"")+'</td></tr>';
+           '<td>'+stateTag(x.workflow_state, DT_PLAN)+'</td></tr>';
       });
       h+='</tbody></table>';
     }
@@ -797,7 +835,11 @@
           '<div class="pex-filters" id="et-filters">'+
             '<input id="et-q" placeholder="Search worker name or ID…" style="min-width:220px" />'+
             '<select id="et-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
-            '<select id="et-state"><option value="">All states</option><option>Draft</option><option>Pending Farm Manager</option><option>Pending HR Head</option><option>Pending GM</option><option>Assigned</option><option>Rejected</option></select>'+
+            // THE STATES THIS SITE'S ASSIGNER CHAIN HAS, not the six that shipped.
+            // `all` deliberately includes the states of switched-off steps: a
+            // filter that narrows because somebody changed a setting hides the
+            // documents that went through the old chain.
+            '<select id="et-state">'+stateOptions(DT_ASG)+'</select>'+
             '<input id="et-task" placeholder="Task" />'+
             '<label>From <input type="date" id="et-from" /></label>'+
             '<label>To <input type="date" id="et-to" /></label>'+
@@ -1167,8 +1209,10 @@
     if(!rows.length) return h+'<div class="empty">Empty.</div></div></div>';
     h+='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Stage</th><th class="n">Pay KES</th></tr></thead><tbody>';
     rows.forEach(function(r){
-      var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
-      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td></tr>';
+      // WHICH STEP IT IS WAITING IN, named by the chain. It asked whether the
+      // state was `Pending GM` and called everything else HR -- two steps out of
+      // a chain that may have neither, and on Altura every row read "HR".
+      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td>'+queueTag(r.workflow_state, DT_ACT)+'</td><td class="n m">'+fmt(r.total_payment)+'</td></tr>';
     });
     return h+'</tbody></table></div></div>';
   }
@@ -1484,13 +1528,34 @@
     };
   }
   function fmtDT(v){ if(!v) return "—"; var s=String(v).replace("T"," "); return s.length>=16?s.substring(0,16):s; }
-  function stateTag(st){
+  // The chip. It listed the five terminal states by name and, for anything
+  // else, guessed "is waiting" from the substring `Pending` -- which a
+  // relabelled state need not contain, and which a state called `Pending
+  // Delivery` would match for the wrong reason. The chains say which is which,
+  // and `dt` says whose label to print; without one the raw state is shown,
+  // which is right for the states that are not steps.
+  // A COMPACT QUEUE TAG: the step's label with the `Screen: ` prefix trimmed,
+  // which is what fits a narrow column. The last waiting step of the chain gets
+  // the emphatic colour the GM's step used to have -- it is the one nothing
+  // follows, which is why it was the urgent one.
+  function queueTag(st, dt){
+    var w=chainStates("waiting", dt);
+    var hot=(w.length && st===w[w.length-1]) ? " hot" : "";
+    var t=stateLabel(st, dt)||st||"";
+    var cut=t.indexOf(": ");
+    if(cut>0) t=t.slice(cut+2);
+    return '<span class="tag'+hot+'" data-state="'+esc(st||"")+'" title="'+esc(st||"")+'">'+esc(t)+'</span>';
+  }
+  function stateTag(st, dt){
     var c="#6b7280";
-    if(st==="Approved"||st==="Assigned"||st==="CONFIRMED"||st==="Confirmed"||st==="Paid") c="#0a7a43";
-    else if(st&&st.indexOf("Pending")>=0) c="#a06000";
-    else if(st==="Rejected") c="#b91c1c";
-    else if(st==="Draft") c="#6b7280";
-    return '<span class="pex-st" style="background:'+c+'">'+esc(st||"Draft")+'</span>';
+    if(terminalStates().indexOf(st)>=0) c="#0a7a43";
+    else if(dt && chainStates("waiting",dt).indexOf(st)>=0) c="#a06000";
+    else if(!dt && chainStates("waiting",DT_PLAN).concat(
+             chainStates("waiting",DT_ASG), chainStates("waiting",DT_ACT),
+             chainStates("waiting",DT_PAY), chainStates("waiting",DT_MP)).indexOf(st)>=0) c="#a06000";
+    else if(st===chainState("reject",dt||DT_PLAN)) c="#b91c1c";
+    return '<span class="pex-st" style="background:'+c+'" data-state="'+esc(st||"")+
+           '" title="'+esc(st||"")+'">'+esc(stateLabel(st,dt)||"Draft")+'</span>';
   }
   function lifePill(r){
     var order=["planned","assigned","done","paid"];
@@ -1566,13 +1631,13 @@
       var dt = stage==="plans"?"Work Management Planner":(stage==="assignments"?"Work Management Assigner":(stage==="actuals"?"Work Management Actuals":"Work Management Payment"));
       var openId=r.name;
       if(stage==="plans"){
-        h+='<tr data-open="'+esc(r.name)+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td>'+lifePill(r)+'</td><td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+money(r.total_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-open="'+esc(r.name)+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td>'+lifePill(r)+'</td><td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+money(r.total_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state, dt)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       } else if(stage==="assignments"){
-        h+='<tr data-open="'+esc(r.planner_request||"")+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+money(r.planned_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-open="'+esc(r.planner_request||"")+'" data-dt="plan"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+money(r.planned_cost)+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.workflow_state, dt)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       } else if(stage==="actuals"){
-        h+='<tr data-actual="'+esc(r.name)+'"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+money(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.entered_by||"—")+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-actual="'+esc(r.name)+'"><td class="n m">'+stdFmt(r)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+money(r.total_payment)+'</td><td>'+stateTag(r.workflow_state, dt)+'</td><td>'+esc(r.entered_by||"—")+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       } else {
-        h+='<tr data-payment="'+esc(r.name)+'"><td><b>'+esc(r.run_title||r.name)+'</b></td><td class="n m">'+money(r.amount)+'</td><td>'+esc(r.period_from||"?")+' → '+esc(r.period_to||"?")+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
+        h+='<tr data-payment="'+esc(r.name)+'"><td><b>'+esc(r.run_title||r.name)+'</b></td><td class="n m">'+money(r.amount)+'</td><td>'+esc(r.period_from||"?")+' → '+esc(r.period_to||"?")+'</td><td>'+stateTag(r.workflow_state, dt)+'</td><td>'+fmtDT(r.creation)+'</td></tr>';
       }
     });
     return h+'</tbody></table>';
@@ -1587,7 +1652,7 @@
     body.innerHTML="Loading lineage…"; m.classList.add("on");
     call({action:"plan_lineage", plan:planName}).then(function(d){
       var p=d.plan||{}; var asgs=d.assignments||[];
-      var h='<div class="pex-h"><h2>'+esc(p.name||planName)+'</h2>'+stateTag(p.workflow_state)+deskLink("Work Management Planner",p.name||planName)+'</div>';
+      var h='<div class="pex-h"><h2>'+esc(p.name||planName)+'</h2>'+stateTag(p.workflow_state, DT_PLAN)+deskLink("Work Management Planner",p.name||planName)+'</div>';
       h+='<div class="pex-sec">PLAN</div><div class="pex-kv">'+
          '<div><span>'+esc(TX("top_singular","Farm"))+'</span><b>'+esc(p.farm||"—")+'</b></div>'+
          '<div><span>'+esc(TX("unit_singular","Block"))+'</span><b>'+esc(lbl(p.block_section)||"—")+'</b></div>'+
@@ -1623,7 +1688,7 @@
       if(!asgs.length){ h+='<div class="empty">No assignments yet.</div>'; }
       asgs.forEach(function(a){
         h+='<div class="pex-block">';
-        h+='<div class="pex-blockh"><b>'+esc(a.name)+'</b> '+stateTag(a.workflow_state)+deskLink("Work Management Assigner",a.name)+'</div>';
+        h+='<div class="pex-blockh"><b>'+esc(a.name)+'</b> '+stateTag(a.workflow_state, DT_ASG)+deskLink("Work Management Assigner",a.name)+'</div>';
         h+='<div class="pex-kv sm">'+
            '<div><span>Planned</span><b>'+fmt(a.planned_people)+'</b></div>'+
            '<div><span>Assigned</span><b>'+fmt(a.assigned_count)+'</b></div>'+
@@ -1641,7 +1706,7 @@
           h+='<div class="pex-mini"><b>Actuals:</b></div>';
           acts.forEach(function(ac){
             h+='<div class="pex-act">'+
-               '<div class="pex-acth">'+esc(ac.name)+' '+stateTag(ac.workflow_state)+' · qty <b>'+fmt(ac.total_actual_qty)+'</b> · pay <b>'+money(ac.total_payment)+'</b> '+deskLink("Work Management Actuals",ac.name)+'</div>'+
+               '<div class="pex-acth">'+esc(ac.name)+' '+stateTag(ac.workflow_state, DT_ACT)+' · qty <b>'+fmt(ac.total_actual_qty)+'</b> · pay <b>'+money(ac.total_payment)+'</b> '+deskLink("Work Management Actuals",ac.name)+'</div>'+
                '<div class="pex-trail sm">'+trail("Entered",ac.entered_by,ac.entry_date)+trail("FM",ac.fm_approved_by,null)+trail("HR",ac.hr_approved_by,null)+trail("GM",ac.gm_approved_by,null)+'</div>';
             var dl=ac.daily||[];
             if(dl.length){
@@ -1659,7 +1724,7 @@
       if(!pays.length){ h+='<div class="empty">No payment runs.</div>'; }
       else {
         h+='<table class="pex"><thead><tr><th>Run</th><th class="n">Amount</th><th>Period</th><th>State</th><th>Created</th><th></th></tr></thead><tbody>';
-        pays.forEach(function(pm){ h+='<tr><td>'+esc(pm.name)+'</td><td class="n m">'+money(pm.amount)+'</td><td>'+esc(pm.period_from||"?")+' → '+esc(pm.period_to||"?")+'</td><td>'+stateTag(pm.workflow_state)+'</td><td>'+fmtDT(pm.creation)+'</td><td>'+deskLink("Work Management Payment",pm.name)+'</td></tr>'; });
+        pays.forEach(function(pm){ h+='<tr><td>'+esc(pm.name)+'</td><td class="n m">'+money(pm.amount)+'</td><td>'+esc(pm.period_from||"?")+' → '+esc(pm.period_to||"?")+'</td><td>'+stateTag(pm.workflow_state, DT_PAY)+'</td><td>'+fmtDT(pm.creation)+'</td><td>'+deskLink("Work Management Payment",pm.name)+'</td></tr>'; });
         h+='</tbody></table>';
       }
       body.innerHTML=h;
@@ -1670,7 +1735,7 @@
     body.innerHTML="Loading actual…"; m.classList.add("on");
     call({action:"actual_detail", actual:actualName}).then(function(d){
       var a=d.actual||{}; var dl=d.daily||[];
-      var h='<div class="pex-h"><h2>'+esc(a.name||actualName)+'</h2>'+stateTag(a.workflow_state)+deskLink("Work Management Actuals",a.name||actualName)+'</div>';
+      var h='<div class="pex-h"><h2>'+esc(a.name||actualName)+'</h2>'+stateTag(a.workflow_state, DT_ACT)+deskLink("Work Management Actuals",a.name||actualName)+'</div>';
       h+='<div class="pex-sec">ACTUAL</div><div class="pex-kv">'+
          '<div><span>'+esc(TX("top_singular","Farm"))+'</span><b>'+esc(a.farm||"—")+'</b></div>'+
          '<div><span>'+esc(TX("unit_singular","Block"))+'</span><b>'+esc(lbl(a.block_section)||"—")+'</b></div>'+
@@ -1752,7 +1817,7 @@
     body.innerHTML="Loading payment…"; m.classList.add("on");
     call({action:"payment_detail", payment:payName}).then(function(d){
       var p=d.payment||{}; var lines=d.lines||[];
-      var h='<div class="pex-h"><h2>'+esc(p.run_title||p.name||payName)+'</h2>'+stateTag(p.workflow_state)+deskLink("Work Management Payment",p.name||payName)+'</div>';
+      var h='<div class="pex-h"><h2>'+esc(p.run_title||p.name||payName)+'</h2>'+stateTag(p.workflow_state, DT_PAY)+deskLink("Work Management Payment",p.name||payName)+'</div>';
       h+='<div class="pex-sec">PAYMENT RUN</div><div class="pex-kv">'+
          '<div><span>Amount</span><b>'+money(p.amount)+' KES</b></div>'+
          '<div><span>Period</span><b>'+esc(p.period_from||"?")+' → '+esc(p.period_to||"?")+'</b></div>'+
@@ -1775,12 +1840,24 @@
     }).catch(function(e){ body.innerHTML='<div class="empty">Could not load payment.</div>'; });
   }
 
+  // THE STATE PICKER FOR ONE PIPELINE. Four lists were written in here, naming
+  // the chain as it shipped -- so a site that relabelled a step got a filter
+  // offering states no document is in, and one that added a step could not
+  // filter to it at all. The option's VALUE is the state (that is what the
+  // query filters on) and its text is the configured label.
+  function stateOptions(dt, selected){
+    var h='<option value="">All states</option>';
+    chainStates("all", dt).forEach(function(st){
+      h+='<option value="'+esc(st)+'"'+(st===selected?' selected':'')+'>'+
+         esc(stateLabel(st, dt))+'</option>';
+    });
+    return h;
+  }
   function setStates(){
     var stSel=el("pex-state");
     if(!stSel) return;
-    var opts={plans:["Draft","Pending Approval","Approved","Rejected"],assignments:["Draft","Pending Farm Manager","Pending HR Head","Pending GM","Assigned","Rejected"],actuals:["Draft","Pending Farm Manager","Pending HR Head","Pending GM","Confirmed","Rejected"],payments:["Draft","Unpaid","Paid","Rejected"]};
-    stSel.innerHTML='<option value="">All states</option>';
-    (opts[PEX.stage]||[]).forEach(function(o){ var e=document.createElement("option"); e.value=o; e.textContent=o; stSel.appendChild(e); });
+    var dt={plans:DT_PLAN, assignments:DT_ASG, actuals:DT_ACT, payments:DT_PAY}[PEX.stage];
+    stSel.innerHTML=stateOptions(dt);
   }
   var CB={group:"task"};
   function cbState(){
@@ -2453,8 +2530,8 @@
     } else if(QT.tab==="act"){
       box.innerHTML=qTable(D.act_pending||[],
         [["Ref"],[esc(TX("top_singular","Farm"))],["Task"],["Stage"],["Pay KES",1]],
-        function(r){ var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
-          return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
+        function(r){
+          return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td>'+queueTag(r.workflow_state, DT_ACT)+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
     } else {
       box.innerHTML=qTable(D.pay_pending_list||[],
         [["Ref"],["Run"],["Workers",1],["Total KES",1]],
@@ -2740,10 +2817,11 @@
     var h='<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:4px">'+
       '<div class="subtabs" id="wm-ops-stages">'+
         stages.map(function(st,i){
-          var TL={"Plan approval — Farm Manager":"Plans · FM","Assignment approval — GM":"Assignments · GM",
-                  "Actuals — FM sign-off":"Actuals · FM","Actuals — HR sign-off":"Actuals · HR",
-                  "Actuals — GM confirmation":"Actuals · GM","Payment — accounts release":"Payment · Accounts"};
-          return '<button type="button" class="subtab'+(OPS.si===i?" on":"")+'" data-os="'+i+'">'+esc(TL[st.stage]||st.stage)+
+          // The short name comes with the bar. This carried a second copy of the
+          // six shipped stage names to abbreviate them, so a relabelled chain
+          // matched none of them and every tab printed the long form -- and both
+          // copies named roles the site may not have.
+          return '<button type="button" class="subtab'+(OPS.si===i?" on":"")+'" data-os="'+i+'" title="'+esc(st.stage||"")+'">'+esc(st.short||st.stage)+
             ' <span style="font-variant-numeric:tabular-nums;opacity:.7">· '+fmt(st.total_n)+'</span></button>';
         }).join("")+
       '</div>'+

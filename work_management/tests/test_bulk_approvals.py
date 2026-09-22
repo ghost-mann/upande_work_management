@@ -17,11 +17,14 @@ busy Friday.
 Measured on kentrout.local, and the reason strings come back identical because
 they are the same strings:
 
-    single  a_hr_approve  GHOST-1  -> "Not at HR stage (state: None)"
-    bulk    a_approve_bulk stage=hr -> "Not at HR stage (state: None)"
+    single  a_approve stage=assigner_hr_head GHOST-1
+              -> "Not at the Assigner: HR Head step (state: None)"
+    bulk    a_approve_bulk stage=assigner_hr_head
+              -> "Not at the Assigner: HR Head step (state: None)"
 
-...for all six stages across the two modules, plus the planner's farm-scope
-refusal.
+...for every step of both chains, plus the planner's farm-scope refusal. The
+stage is the step's KEY -- see work_management/chain.py and
+TestStagesAreNotMixed below for why it is not its action.
 
     PYTHONPATH=. ~/frappe-v16-bench/env/bin/python -m unittest \\
         work_management.tests.test_bulk_approvals -v
@@ -283,9 +286,9 @@ class TestEachModuleWiresItTheSameWay(unittest.TestCase):
 	MODULES = {
 		"planner.py": ("approve_bulk", "reject_bulk", "wm_planner", "approve", "reject"),
 		"assigner.py": ("a_approve_bulk", "a_reject_bulk", "wm_assigner",
-			"a_fm_approve", "a_reject"),
+			"a_approve", "a_reject"),
 		"actuals.py": ("act_approve_bulk", "act_reject_bulk", "wm_actuals",
-			"act_fm_approve", "act_reject"),
+			"act_approve", "act_reject"),
 	}
 
 	def src(self, module):
@@ -324,7 +327,7 @@ class TestEachModuleWiresItTheSameWay(unittest.TestCase):
 	def test_the_reason_reaches_the_single_reject(self):
 		for module in self.MODULES:
 			with self.subTest(module=module):
-				self.assertIn('base={"reason": bk_reason}', self.src(module))
+				self.assertIn('{"reason": bk_reason}', self.src(module))
 
 	def test_the_single_reject_records_it(self):
 		"""A rejection with no reason sends the requester back to a screen that
@@ -346,37 +349,87 @@ class TestEachModuleWiresItTheSameWay(unittest.TestCase):
 
 class TestStagesAreNotMixed(unittest.TestCase):
 	"""The assigner and actuals tabs show one stage at a time. Approving across
-	stages in one press would approve work the user is not looking at."""
+	stages in one press would approve work the user is not looking at.
 
-	def test_both_demand_a_stage(self):
+	WHICH stage is named by the step's KEY, validated against the chain the site
+	runs. It used to be one of `fm`, `gm`, `hr` -- three abbreviations of the
+	shipped chain -- which the screen derived by splitting the approve action on
+	an underscore. Handed a configured action instead of `a_fm_approve`, that
+	produced `undefined`, and the refusal it earned named three steps Altura does
+	not have:
+
+	    stage must be one of fm, gm, hr -- the queue on screen decides it
+	"""
+
+	def test_neither_whitelists_the_shipped_abbreviations(self):
 		for module in ("assigner.py", "actuals.py"):
 			with self.subTest(module=module):
 				src = read(os.path.join(API, module))
-				self.assertIn("bk_stage not in bk_stages", src)
-				self.assertIn("the queue on screen decides it", src)
+				self.assertNotIn("bk_stages", src)
+				self.assertNotIn('"fm": "', src)
+				self.assertNotIn('"gm": "', src)
+				self.assertNotIn('"hr": "', src)
 
-	def test_the_stage_names_map_to_the_single_actions(self):
-		for module, prefix in (("assigner.py", "a_"), ("actuals.py", "act_")):
+	def test_both_validate_the_stage_against_the_configured_chain(self):
+		for module, doctype in (("assigner.py", "ASG_DT"), ("actuals.py", "ACT_DT")):
 			with self.subTest(module=module):
 				src = read(os.path.join(API, module))
-				at = src.index("bk_stages = {")
-				block = src[at:at + 200]
-				for key in ("fm", "hr", "gm"):
-					self.assertIn('"%s": "%s%s_approve"' % (key, prefix, key), block)
+				branch = py_branch(src, "a_approve_bulk" if module == "assigner.py"
+					else "act_approve_bulk")
+				self.assertIn("chain.resolve(STAGE_ROWS, %s, stage=bk_stage)" % doctype,
+					branch)
+				self.assertIn("chain.unknown_stage(bk_stage, STAGE_ROWS, %s)" % doctype,
+					branch)
 
-	def test_the_planner_needs_none(self):
+	def test_the_refusal_lists_the_steps_this_chain_actually_has(self):
+		"""Pure, and the reason the message is built in one place: a refusal that
+		names the shipped chain is worse than useless on a site that renamed it."""
+		from work_management import chain
+
+		steps = [
+			{"key": "assigner_manager", "document_type": "X", "kind": "Approval",
+			 "state": "Awaiting Manager", "on": 1},
+			{"key": "assigner_hr", "document_type": "X", "kind": "Approval",
+			 "state": "Awaiting HR", "on": 1},
+		]
+		why = chain.unknown_stage("fm", steps, "X")
+		self.assertIn("assigner_manager", why)
+		self.assertIn("assigner_hr", why)
+		for shipped in ("fm, gm, hr", "Farm Manager", "HR Head"):
+			self.assertNotIn(shipped, why)
+
+	def test_the_bulk_path_re_enters_the_one_generic_approve(self):
+		"""Not three per-step branches. There is one approval action and it takes
+		the step, so bulk and the row button cannot diverge."""
+		for module, single in (("assigner.py", "a_approve"), ("actuals.py", "act_approve")):
+			with self.subTest(module=module):
+				src = read(os.path.join(API, module))
+				at = src.index("bulk.run_bulk(")
+				self.assertIn('"%s"' % single, src[at:at + 300])
+				self.assertIn('{"stage": bk_step["key"]}', src[at:at + 300])
+
+	def test_the_planner_needs_no_stage(self):
 		"""Its approve action is chain-driven: it finds the step from the state
-		the request is waiting in, so one action already serves every stage."""
+		the request is waiting in, so one action already serves every stage. A
+		stage may still be SENT -- and is then validated the same way -- because
+		its tab lists several steps at once."""
 		src = read(os.path.join(API, "planner.py"))
-		at = src.index('elif action in ("approve_bulk", "reject_bulk"):')
-		self.assertNotIn("bk_stage", src[at:at + 1200])
+		branch = py_branch(src, "approve_bulk")
+		self.assertIn("if not bk_bad and bk_stage:", branch)
+		self.assertIn("chain.resolve(STAGE_ROWS", branch)
 
-	def test_the_screens_send_the_stage_they_are_showing(self):
-		for screen, derive in (("work-assigner.js", "c.approveAction"),
-				("work-actuals.js", "approveAction")):
+	def test_the_screens_send_the_stage_key_they_are_showing(self):
+		"""Never the step's workflow action, and never a substring of one. The
+		key is the only name of a step a screen may hold, and it only ever learns
+		it from the server."""
+		for screen in ("work-assigner.js", "work-actuals.js"):
 			with self.subTest(screen=screen):
 				src = read(os.path.join(JS, screen))
-				self.assertIn('String(%s||"").split("_")[1]' % derive, src)
+				self.assertNotIn('.split("_")[1]', src)
+				self.assertIn("wireBulk(body, ", src)
+				# the tab's own key travels into the bar
+				bar = src[src.index("wireBulk(body, "):]
+				self.assertRegex(bar[:120], r"wireBulk\(body, \w+, (c\.stage|stageKey),")
 
 
 class TestTheControlsAndTheRowsAreOnTheSameTab(unittest.TestCase):

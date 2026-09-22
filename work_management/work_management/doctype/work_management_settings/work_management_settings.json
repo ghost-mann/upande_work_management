@@ -17,6 +17,7 @@
   "capabilities",
   "tab_approvals",
   "sb_approvals",
+  "notify_approvers_by_email",
   "approval_stages",
   "stage_approvers",
   "tab_taxonomy",
@@ -630,6 +631,13 @@
    "description": "Every step of every approval chain, and who takes it. The stages are fixed by the app; the role and the people are yours. Switching a stage off relinks the chain so the step before it approves straight through to the next one. Saving here regenerates the workflows."
   },
   {
+   "default": "0",
+   "description": "Off by default, which is how every site has run: the generated workflows carry no email alert and nobody is emailed. On, Frappe emails whoever holds a step's role when a document reaches it, with Approve and Reject links in the message \u2014 its own notification, not a second one built here. Regenerates the workflows on save.",
+   "fieldname": "notify_approvers_by_email",
+   "fieldtype": "Check",
+   "label": "Email approvers when something reaches their step"
+  },
+  {
    "fieldname": "approval_stages",
    "fieldtype": "Table",
    "label": "Approval Stages",
@@ -774,7 +782,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-23 00:00:00.000000",
+ "modified": "2026-09-22 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",
