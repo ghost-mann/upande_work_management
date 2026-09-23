@@ -203,7 +203,7 @@ def _stage_roles(settings, *keys):
 	rows = approvals.stage_rows(settings)
 	roles = []
 	for key in keys:
-		stage = approvals.by_key(key)
+		stage = approvals.by_key(key, settings)
 		if not stage:
 			continue
 		for role in [approvals.stage_role(stage, rows)] + [

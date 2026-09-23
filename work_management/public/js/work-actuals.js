@@ -611,21 +611,73 @@
     m.style.display="flex";
   }
   // ── a note for one worker's day ────────────────────────────────────────────
-  function openNoteModal(a, btn, locked){
+  // Opened from the worker's ROW (the note control after the total) or from a
+  // day cell that already carries a note. The note is still per worker-DAY, so
+  // when the worker has more than one day in the window the dialog asks which
+  // day, starting on the one clicked, else the first day with a note, else
+  // today, else the first day they could work. Moving between days keeps what
+  // was typed on each, and Save commits every day touched in one go.
+  function noteDays(a, emp){
+    var days=daysBetween(a.from_date,a.to_date), w=null;
+    (a.workers||[]).forEach(function(x){ if(x.employee===emp) w=x; });
+    var act=w?days.filter(function(iso){ return cellActive(w,iso); }):[];
+    // a noted day is always offered, even if it is no longer workable, or a
+    // note already written there could be read by nobody
+    return days.filter(function(iso){ return act.indexOf(iso)>=0 || ST.notes[ck(emp,iso)]; });
+  }
+  function noteSummary(a, emp){
+    var days=noteDays(a, emp), parts=[];
+    days.forEach(function(iso){
+      var n=ST.notes[ck(emp,iso)];
+      if(n) parts.push(days.length>1 ? (dowShort(iso)+" "+dnum(iso)+": "+n) : n);
+    });
+    return parts.join(" \u00b7 ");
+  }
+  function noteControl(a, emp, locked){
+    var txt=noteSummary(a, emp);
+    if(txt){
+      return '<button type="button" class="nrowbtn has" data-nrow="'+esc(emp)+'" title="'+esc(txt)+'">'+
+        '<span class="ntxt">'+esc(txt)+'</span><span class="npen">\u270e</span></button>';
+    }
+    // a locked entry with nothing written has nothing to offer
+    if(locked) return '';
+    return '<button type="button" class="nrowbtn" data-nrow="'+esc(emp)+'" title="Add a note for this worker">+ Add note</button>';
+  }
+  function openNoteModal(a, emp, iso, locked){
     var m=el("ac-notemodal"); if(!m) return;
-    var emp=btn.getAttribute("data-nemp"), iso=btn.getAttribute("data-ndate");
     var who=emp;
     (a.workers||[]).forEach(function(w){ if(w.employee===emp) who=w.employee_name||emp; });
-    ST._noteKey=ck(emp,iso);
-    ST._noteBtn=btn;
-    var cur=ST.notes[ST._noteKey]||"";
-    el("ac-note-title").textContent = locked ? "Note" : "Note for this day";
-    el("ac-note-desc").innerHTML = "<b>"+esc(who)+"</b> &mdash; "+esc(iso)+". "+
+    var days=noteDays(a, emp);
+    if(!days.length) days=daysBetween(a.from_date,a.to_date);
+    if(!iso || days.indexOf(iso)<0){
+      iso=null;
+      days.forEach(function(d){ if(!iso && ST.notes[ck(emp,d)]) iso=d; });
+      if(!iso && a.today && days.indexOf(a.today)>=0) iso=a.today;
+      if(!iso) iso=days[0];
+    }
+    ST._noteEmp=emp; ST._noteA=a;
+    ST._noteDraft={};
+    days.forEach(function(d){ ST._noteDraft[d]=ST.notes[ck(emp,d)]||""; });
+    ST._noteDay=iso;
+    el("ac-note-title").textContent = locked ? "Note" : "Note for this worker";
+    el("ac-note-desc").innerHTML = "<b>"+esc(who)+"</b>. "+
       (locked
         ? "This entry is locked, so the note can be read but not changed."
-        : "Optional. It is read wherever this row is read later &mdash; the worker&rsquo;s review sheet, the Worker Task Day report and the Excel export.");
+        : "Optional, one note per day. It is read wherever this row is read later &mdash; the worker&rsquo;s review sheet, the Worker Task Day report and the Excel export.");
+    var sel=el("ac-note-day");
+    sel.innerHTML=days.map(function(d){
+      return '<option value="'+d+'"'+(d===iso?" selected":"")+'>'+dowShort(d)+" "+dnum(d)+" "+monLabel(d)+
+        (ST._noteDraft[d]?" \u270e":"")+'</option>';
+    }).join("");
+    // one day in the window: nothing to choose, so nothing to show
+    el("ac-note-daywrap").style.display = days.length>1 ? "" : "none";
+    sel.onchange=function(){
+      ST._noteDraft[ST._noteDay]=el("ac-note-text").value;
+      ST._noteDay=sel.value;
+      el("ac-note-text").value=ST._noteDraft[ST._noteDay]||"";
+    };
     var ta=el("ac-note-text");
-    ta.value=cur;
+    ta.value=ST._noteDraft[iso]||"";
     ta.readOnly = !!locked;
     el("ac-note-go").style.display = locked ? "none" : "";
     m.style.display="flex";
@@ -633,18 +685,45 @@
   }
   function closeNoteModal(){ var m=el("ac-notemodal"); if(m) m.style.display="none"; }
   function saveNoteModal(){
-    var key=ST._noteKey, btn=ST._noteBtn;
-    if(!key){ closeNoteModal(); return; }
-    var v=(el("ac-note-text").value||"").trim().slice(0,500);
-    // empty is how a note is removed -- there is no separate delete, because
-    // "clear the box" is what somebody reaches for
-    if(v){ ST.notes[key]=v; } else { delete ST.notes[key]; }
-    if(btn){
-      btn.className="ncell"+(ST.notes[key]?" has":"");
-      btn.textContent=ST.notes[key]?"\u270e":"\u00b7";
-      btn.title=ST.notes[key]||"Add a note for this day";
+    var emp=ST._noteEmp, a=ST._noteA;
+    if(!emp){ closeNoteModal(); return; }
+    ST._noteDraft[ST._noteDay]=el("ac-note-text").value;
+    for(var d in ST._noteDraft){
+      var key=ck(emp,d);
+      var v=(ST._noteDraft[d]||"").trim().slice(0,500);
+      // empty is how a note is removed -- there is no separate delete, because
+      // "clear the box" is what somebody reaches for
+      if(v){ ST.notes[key]=v; } else { delete ST.notes[key]; }
     }
     closeNoteModal();
+    if(a) refreshNotes(a, emp, false);
+  }
+  // The row control and the day markers both show the note. Patched in place
+  // rather than by redrawing the grid, which would throw away the scroll
+  // position and whatever cell the clerk was about to type in.
+  function refreshNotes(a, emp, locked){
+    var box=el("ac-grid"); if(!box) return;
+    var td=box.querySelector('[data-nrowcell="'+cssq(emp)+'"]');
+    if(td){ td.innerHTML=noteControl(a, emp, locked); wireNotes(a, td, locked); }
+    box.querySelectorAll('[data-nemp="'+cssq(emp)+'"]').forEach(function(mk){
+      var n=ST.notes[ck(emp, mk.getAttribute("data-ndate"))]||"";
+      mk.className="ncell"+(n?" has":"");
+      mk.title=n;
+    });
+  }
+  function wireNotes(a, root, locked){
+    root.querySelectorAll("[data-nrow]").forEach(function(btn){
+      btn.onclick=function(ev){
+        ev.preventDefault(); ev.stopPropagation();
+        openNoteModal(a, btn.getAttribute("data-nrow"), null, locked);
+      };
+    });
+    root.querySelectorAll("[data-nemp]").forEach(function(btn){
+      btn.onclick=function(ev){
+        ev.preventDefault(); ev.stopPropagation();
+        openNoteModal(a, btn.getAttribute("data-nemp"), btn.getAttribute("data-ndate"), locked);
+      };
+    });
   }
   function initNoteModal(){
     var x=el("ac-note-x"); if(x) x.onclick=closeNoteModal;
@@ -741,14 +820,14 @@
           '<span><b style="color:#0a7a43">in 06:52</b> time scanned in (P = marked present, no scan time)</span>'+
           '<span><b style="color:#b91c1c">A</b> marked Absent that day</span>'+
           '<span><b style="color:#a06000">?</b> no record either way — presence unknown</span>'+
-          '<span><b>✎</b> note — click a cell\'s corner to say what happened that day</span>'+
+          '<span><b style="color:#64748b">+ Add note</b> after a worker\'s total — say what happened to their day; <b style="color:#64748b">✎</b> marks a day that has one</span>'+
           '</div>'+
           '<div style="overflow-x:auto"><table class="grid"><thead><tr>'+
           '<th class="wname">Worker</th>';
     days.forEach(function(iso){
       h+='<th class="dcol"><div class="dow">'+dowShort(iso)+'</div><div class="dnum">'+dnum(iso)+'</div><div class="dmon">'+monLabel(iso)+'</div></th>';
     });
-    h+='<th class="trow">Total</th></tr></thead><tbody>';
+    h+='<th class="trow">Total</th><th class="nrow">Note</th></tr></thead><tbody>';
     workers.forEach(function(w){
       var perm=!isTaskWorker(w);
       var isLeft=(w.status||"Active")==="Left";
@@ -808,25 +887,25 @@
               '" title="Hours this task took on '+iso+'. Pre-filled with the standard day; '+
               'change it only if the day was shared with another task.">';
           }
-          // A NOTE FOR THIS WORKER ON THIS DAY. Per worker-day, because that is
-          // the thing being explained: "sent home 11am, rain" is about one
-          // person's Tuesday, and a note on the document would attach it to
-          // everybody on the grid. A marker rather than a box, so the grid does
-          // not double in width for something most cells never carry -- filled
-          // in when there is one, faint when there is not, and read-only once
-          // the entry is locked (there is still something to read).
+          // A NOTE FOR THIS WORKER ON THIS DAY is written from the row's note
+          // control (after the total), which asks which day. The cell only
+          // shows a visible grey ✎ where a day already has one, so the grid can
+          // be scanned for explanations; it opens the same dialog on that day.
           var nval=ST.notes[ck(w.employee,iso)]||"";
           var nbtn='<button type="button" class="ncell'+(nval?" has":"")+'" data-nemp="'+esc(w.employee)+
-            '" data-ndate="'+iso+'" title="'+(nval?esc(nval):"Add a note for this day")+
-            '" tabindex="-1">'+(nval?"✎":"·")+'</button>';
+            '" data-ndate="'+iso+'" title="'+esc(nval)+'" tabindex="-1">\u270e</button>';
           h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+hrsBox+nbtn+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+pmark+'</td>';
         }
       });
-      h+='<td class="trow" data-wtot="'+esc(w.employee)+'">0</td></tr>';
+      // THE NOTE CONTROL, one per worker row, after the total: "+ Add note"
+      // when there is none, the note itself with a pencil when there is. It
+      // replaced a hover-only corner marker nobody found.
+      h+='<td class="trow" data-wtot="'+esc(w.employee)+'">0</td>'+
+         '<td class="nrow" data-nrowcell="'+esc(w.employee)+'">'+noteControl(a, w.employee, locked)+'</td></tr>';
     });
     h+='</tbody><tfoot><tr><td class="wname">Day total</td>';
     days.forEach(function(iso){ h+='<td class="dtot" data-dtot="'+iso+'">0</td>'; });
-    h+='<td class="trow" data-grand>0</td></tr></tfoot></table></div>';
+    h+='<td class="trow" data-grand>0</td><td class="nrow"></td></tr></tfoot></table></div>';
     box.innerHTML=h;
 
     // ADD A WORKER. The grid offers only this assignment's roster, so somebody
@@ -864,18 +943,10 @@
         recompute(a);
       };
     });
-    // THE NOTE BUTTON. A corner marker rather than a fifth input on every cell:
-    // the grid is already one box per worker per day and a second visible field
-    // would drown the quantity, which is the thing being entered. It opens the
-    // same modal card the other four dialogs on this screen use. A locked grid
-    // still opens it, read-only, because a note nobody can read later is
-    // decoration -- and after submit this screen is where it is read.
-    box.querySelectorAll("[data-nemp]").forEach(function(btn){
-      btn.onclick=function(ev){
-        ev.preventDefault(); ev.stopPropagation();
-        openNoteModal(a, btn, locked);
-      };
-    });
+    // THE NOTE CONTROLS. A locked grid still opens them, read-only, because a
+    // note nobody can read later is decoration -- and after submit this screen
+    // is where it is read.
+    wireNotes(a, box, locked);
     box.querySelectorAll("[data-rel-emp]").forEach(function(btn){
       btn.onclick=function(ev){
         ev.stopPropagation();

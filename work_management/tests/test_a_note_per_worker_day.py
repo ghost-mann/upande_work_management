@@ -29,6 +29,8 @@ Three things make it work, and all three are load-bearing:
 
 import json
 import os
+import shutil
+import subprocess
 import unittest
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -192,26 +194,99 @@ class TestItComesBackToTheGrid(unittest.TestCase):
 		self.assertEqual(js.count("ST.notes={}"), 3)
 
 
+def js_function(src, name):
+	"""The body of one top-level-in-the-IIFE function, brace-matched. Assertions
+	about the grid are scoped to the function that draws it: the stage-pills
+	bug passed a whole-file assertIn while the render path never used the
+	thing asserted."""
+	at = src.index("function " + name + "(")
+	depth, i = 0, src.index("{", at)
+	while True:
+		if src[i] == "{":
+			depth += 1
+		elif src[i] == "}":
+			depth -= 1
+			if depth == 0:
+				return src[at:i + 1]
+		i += 1
+
+
 class TestTheGridOffersIt(unittest.TestCase):
+	"""A visible control on every worker row, after the total. It replaced a
+	hover-only corner marker that, on the live site, showed nothing at all --
+	so nobody would ever have found the feature."""
+
 	def setUp(self):
 		self.js = screen("work-actuals.js")
 		self.html = page("work-actuals.html")
+		self.grid = js_function(self.js, "renderGrid")
 
-	def test_every_cell_carries_the_marker(self):
-		self.assertIn('data-nemp="', self.js)
-		self.assertIn('data-ndate="', self.js)
+	def test_every_worker_row_carries_the_control(self):
+		"""Rendered inside the per-worker loop of the grid render, straight after
+		the row's total, for every row -- not behind a condition."""
+		loop = self.grid[self.grid.index("workers.forEach(function(w){"):
+			self.grid.index("</tbody>")]
+		total = loop.index('<td class="trow" data-wtot="')
+		ctl = loop.index("noteControl(a, w.employee, locked)")
+		self.assertLess(total, ctl)
+		self.assertIn('data-nrowcell="', loop[total:ctl])
+		self.assertEqual(loop.count("noteControl("), 1)
 
-	def test_the_marker_says_whether_there_is_anything_to_read(self):
-		"""`·` against an empty day and `✎` against one with a note, so the grid
-		can be scanned for explanations without opening thirty dialogs."""
-		self.assertIn('(nval?" has":"")', self.js)
-		self.assertIn("#acp table.grid td.dcell button.ncell.has", self.html)
+	def test_the_header_and_footer_have_the_column(self):
+		"""A body cell with no header or footer cell leaves the table crooked."""
+		self.assertIn('<th class="trow">Total</th><th class="nrow">Note</th>', self.grid)
+		self.assertIn('<td class="trow" data-grand>0</td><td class="nrow"></td>', self.grid)
+
+	def test_the_control_is_wired_in_the_grid_render(self):
+		self.assertIn("wireNotes(a, box, locked);", self.grid)
+
+	def test_no_note_offers_add_note(self):
+		ctl = js_function(self.js, "noteControl")
+		self.assertIn("+ Add note", ctl)
+
+	def test_an_existing_note_shows_its_text_and_a_pencil(self):
+		ctl = js_function(self.js, "noteControl")
+		self.assertIn("'<span class=\"ntxt\">'+esc(txt)+'</span>", ctl)
+		self.assertIn("\\u270e", ctl)
+		self.assertIn("title=\"'+esc(txt)+'\"", ctl)
+
+	def test_a_locked_entry_shows_but_does_not_offer(self):
+		"""The note is still shown -- the text branch does not look at `locked` --
+		but a locked row with nothing written offers nothing to add."""
+		ctl = js_function(self.js, "noteControl")
+		self.assertLess(ctl.index("if(txt){"), ctl.index("if(locked) return '';"))
+		self.assertLess(ctl.index("if(locked) return '';"), ctl.index("+ Add note"))
+
+	def test_a_locked_grid_opens_it_read_only(self):
+		block = js_function(self.js, "openNoteModal")
+		self.assertIn("ta.readOnly = !!locked;", block)
+		self.assertIn('el("ac-note-go").style.display = locked ? "none" : "";', block)
+
+	def test_the_day_is_still_asked_for(self):
+		"""The control is per worker; the note is per worker-DAY. With more than
+		one day in the window the dialog asks which."""
+		block = js_function(self.js, "openNoteModal")
+		self.assertIn('el("ac-note-daywrap").style.display = days.length>1 ? "" : "none";', block)
+		self.assertIn('id="ac-note-day"', self.html)
+
+	def test_a_noted_day_is_marked_in_its_cell_visibly(self):
+		"""Visible grey, not hover-only: the cell marker is shown whenever the
+		day has a note, and hidden (not faint) when it does not."""
+		self.assertIn('(nval?" has":"")', self.grid)
+		self.assertIn("#acp table.grid td.dcell button.ncell.has{display:block}", self.html)
+		self.assertIn("button.ncell{display:none;", self.html)
+
+	def test_the_control_sits_beside_the_sticky_total(self):
+		"""Both stick to the right edge, so a wide window never scrolls the note
+		away and the total never covers it."""
+		self.assertIn("#acp table.grid th.trow,#acp table.grid td.trow{right:150px}", self.html)
+		self.assertIn("position:sticky;right:0;width:150px", self.html)
 
 	def test_it_uses_the_same_dialog_as_the_other_four(self):
 		"""Five dialogs on one screen should not be five shapes -- the rule
 		test_adding_crew established when it replaced two browser prompts."""
 		at = self.html.index('id="ac-notemodal"')
-		window = self.html[at:at + 1800]
+		window = self.html[at:at + 2200]
 		for part in ("submodal-card", "submodal-head", "submodal-body", "submodal-foot"):
 			with self.subTest(part=part):
 				self.assertIn(part, window)
@@ -219,23 +294,55 @@ class TestTheGridOffersIt(unittest.TestCase):
 	def test_it_is_not_a_browser_prompt(self):
 		self.assertNotIn("window.prompt", self.js)
 
-	def test_a_locked_grid_opens_it_read_only(self):
-		at = self.js.index("function openNoteModal(")
-		block = self.js[at:at + 1600]
-		self.assertIn("ta.readOnly = !!locked;", block)
-		self.assertIn('el("ac-note-go").style.display = locked ? "none" : "";', block)
-
 	def test_clearing_the_box_removes_the_note(self):
 		"""There is no separate delete, because "clear the box" is what somebody
 		reaches for."""
-		at = self.js.index("function saveNoteModal(")
-		block = self.js[at:at + 900]
-		self.assertIn("delete ST.notes[key];", block)
+		self.assertIn("delete ST.notes[key];", js_function(self.js, "saveNoteModal"))
 
-	def test_the_legend_mentions_it(self):
+	def test_the_legend_names_the_new_control(self):
 		at = self.js.index("<span><b style=\"color:#bbb\">·</b> rest day / holiday</span>")
 		block = self.js[at:self.js.index("'</div>'+", at)]
-		self.assertIn("note", block)
+		self.assertIn("+ Add note", block)
+		self.assertNotIn("corner", block)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestTheControlRenders(unittest.TestCase):
+	"""The real noteControl, run: what a row actually shows."""
+
+	FUNCS = ("esc", "pad", "daysBetween", "dowShort", "dnum", "offDay", "leaveDay",
+		"cellActive", "ck", "noteDays", "noteSummary", "noteControl")
+
+	def render(self, notes, locked, to_date="2026-09-22"):
+		js = screen("work-actuals.js")
+		src = "\n".join(js_function(js, f) for f in self.FUNCS)
+		a = {"from_date": "2026-09-21", "to_date": to_date,
+			"workers": [{"employee": "E1", "employee_name": "Wanjiku"}]}
+		script = (src + "\nvar ST={notes:%s};\nprocess.stdout.write(noteControl(%s,'E1',%s));"
+			% (json.dumps(notes), json.dumps(a), "true" if locked else "false"))
+		return subprocess.run(["node", "-e", script], capture_output=True, text=True,
+			check=True).stdout
+
+	def test_without_a_note(self):
+		out = self.render({}, False)
+		self.assertIn(">+ Add note</button>", out)
+
+	def test_with_a_note(self):
+		out = self.render({"E1~2026-09-22": "sent home 11am, rain"}, False)
+		self.assertIn('<span class="ntxt">Tue 22: sent home 11am, rain</span>', out)
+		self.assertIn("\u270e", out)
+		self.assertNotIn("Add note", out)
+
+	def test_one_day_window_needs_no_day_prefix(self):
+		out = self.render({"E1~2026-09-21": "machine down"}, False, to_date="2026-09-21")
+		self.assertIn('<span class="ntxt">machine down</span>', out)
+
+	def test_locked_with_a_note_shows_it(self):
+		out = self.render({"E1~2026-09-22": "sent home 11am, rain"}, True)
+		self.assertIn("sent home 11am, rain", out)
+
+	def test_locked_without_a_note_offers_nothing(self):
+		self.assertEqual(self.render({}, True), "")
 
 
 class TestItIsReadOnTheReviewSheet(unittest.TestCase):

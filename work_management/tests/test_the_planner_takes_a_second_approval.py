@@ -131,7 +131,9 @@ class TestTheStepIsInTheCatalogue(unittest.TestCase):
 	def test_the_approver_picker_offers_it(self):
 		"""The Stage Approvers row stores a LABEL, so an option it cannot name is
 		a step nobody can be assigned to."""
-		self.assertIn(shipped(HR_APPROVAL).label, approvals.stage_labels())
+		# the shipped planner chain, passed in: with no argument this read the
+		# site's own labels, so it failed on any site that had renamed a step
+		self.assertIn(shipped(HR_APPROVAL).label, approvals.stage_labels(planner_chain()))
 
 
 class TestWithTheStepOff(unittest.TestCase):

@@ -223,15 +223,26 @@ def configured_stages(settings=None):
 # ---------------------------------------------------------------- catalogue
 
 
+def _given_or_stored(settings):
+	"""The settings a caller handed in, else the stored ones.
+
+	`is None` rather than `or`: a caller validating an in-progress Settings doc,
+	or a test building the shipped configuration on a relabelled site, is asking
+	about THAT configuration. Swapping in the stored one answered a different
+	question -- plan_workflow(settings=<shipped>) came back in the site's labels.
+	"""
+	return _settings_or_none() if settings is None else settings
+
+
 def by_key(key, settings=None):
-	for stage in configured_stages(settings or _settings_or_none()):
+	for stage in configured_stages(_given_or_stored(settings)):
 		if stage.key == key:
 			return stage
 	return None
 
 
 def by_label(label, settings=None):
-	for stage in configured_stages(settings or _settings_or_none()):
+	for stage in configured_stages(_given_or_stored(settings)):
 		if stage.label == label:
 			return stage
 	return None
@@ -239,7 +250,7 @@ def by_label(label, settings=None):
 
 def stage_labels(settings=None):
 	"""Select options for Work Management Stage Approver.stage_label."""
-	return [stage.label for stage in configured_stages(settings or _settings_or_none())]
+	return [stage.label for stage in configured_stages(_given_or_stored(settings))]
 
 
 def duplicate_stage_labels(labels):
@@ -465,10 +476,10 @@ def pipeline_states(settings=_UNSET, rows=None, document_type=None):
 	}
 
 
-def chain_for(document_type):
+def chain_for(document_type, settings=None):
 	"""The workflow steps of one document type, in order."""
 	return [
-		stage for stage in configured_stages(_settings_or_none())
+		stage for stage in configured_stages(_given_or_stored(settings))
 		if stage.document_type == document_type and stage.kind in ("Submit", "Approval")
 	]
 
@@ -622,10 +633,10 @@ def stage_role(stage, rows):
 
 def approvers_for(key, settings=None):
 	"""Approver rows configured for one stage."""
-	stage = by_key(key)
+	settings = settings or _settings()
+	stage = by_key(key, settings)
 	if not stage:
 		return []
-	settings = settings or _settings()
 	return [
 		row for row in (settings.get("stage_approvers") or [])
 		if row.stage_label == stage.label
@@ -707,7 +718,7 @@ def plan_workflow(document_type, rows=None, settings=None):
 	reject_state = ends["reject"]
 	reject_action = ends.get("reject_action", DEFAULT_REJECT_ACTION)
 
-	chain = [stage for stage in chain_for(document_type) if is_enabled(stage, rows)]
+	chain = [stage for stage in chain_for(document_type, settings) if is_enabled(stage, rows)]
 	if not chain:
 		return None
 
@@ -850,7 +861,7 @@ def _desired_grants(settings):
 	rows = stage_rows(settings)
 	grants = {}
 	for approver in settings.get("stage_approvers") or []:
-		stage = by_label(approver.stage_label)
+		stage = by_label(approver.stage_label, settings)
 		if not stage or not approver.user:
 			continue
 		role = approver.role or stage_role(stage, rows)

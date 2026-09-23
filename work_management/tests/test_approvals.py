@@ -17,6 +17,7 @@ a site or a database::
 import json
 import os
 import unittest
+import unittest.mock
 
 import frappe
 
@@ -40,6 +41,13 @@ def settings(overrides=None, approvers=()):
 			"stage_label": stage.label,
 			"document_type": stage.document_type,
 			"kind": stage.kind,
+			"state": stage.state,
+			"action": stage.action,
+			# seed_stages() writes both onto every stored row. The stand-in left
+			# them out and passed anyway, because plan_workflow() used to ignore
+			# the settings it was handed and read the site's own rows instead.
+			"scoped": 1 if stage.scoped else 0,
+			"required": 1 if stage.required else 0,
 			"enabled": 1,
 			"role": stage.role,
 		}
@@ -378,7 +386,70 @@ class TestCatalogue(unittest.TestCase):
 		with open(path) as handle:
 			doc = json.load(handle)
 		field = [f for f in doc["fields"] if f["fieldname"] == "stage_label"][0]
-		self.assertEqual(field["options"].split("\n"), approvals.stage_labels())
+		self.assertEqual(field["options"].split("\n"), approvals.stage_labels(settings()))
+
+
+class TestTheSettingsPassedInGovernTheAnswer(unittest.TestCase):
+	"""Every helper that takes `settings` answers for THOSE settings.
+
+	chain_for() read the stored Settings whatever its caller passed, and
+	approvers_for() and _desired_grants() dropped theirs on the way to by_key()
+	and by_label(). So plan_workflow(settings=<shipped>) came back in the site's
+	own relabelled states, twenty tests here failed on any site that had renamed
+	a step, and a Settings doc being validated was checked against the stored
+	one. The stored Settings are faked here as a relabelled site, so this pins
+	the behaviour on every bench, default or not.
+	"""
+
+	def setUp(self):
+		relabelled = settings({
+			stage.key: {"stage_label": "Site " + stage.label, "state": "Site " + (stage.state or "")}
+			for stage in approvals.CATALOGUE
+		}, approvers=[approver("Site Assigner: Farm Manager", "site@example.com", role="Site Role")])
+		patcher = unittest.mock.patch.object(approvals, "_settings_or_none", return_value=relabelled)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+		patcher = unittest.mock.patch.object(approvals, "_settings", return_value=relabelled)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def test_the_fake_site_is_relabelled(self):
+		"""Without an argument the helpers read the site -- the control."""
+		self.assertEqual(approvals.chain_for("Work Management Assigner")[0].state, "Site Draft")
+
+	def test_plan_workflow_returns_the_shipped_states(self):
+		result = plan("Work Management Assigner", settings())
+		self.assertEqual(
+			states_of(result),
+			["Draft", "Pending Farm Manager", "Pending HR Head", "Pending GM", "Assigned", "Rejected"],
+		)
+
+	def test_chain_for(self):
+		self.assertEqual(
+			[s.state for s in approvals.chain_for("Work Management Assigner", settings())],
+			["Draft", "Pending Farm Manager", "Pending HR Head", "Pending GM"],
+		)
+
+	def test_by_key_and_by_label(self):
+		config = settings()
+		self.assertEqual(approvals.by_key("assigner_gm", config).label, "Assigner: GM")
+		self.assertEqual(approvals.by_label("Assigner: GM", config).key, "assigner_gm")
+		self.assertIsNone(approvals.by_label("Site Assigner: GM", config))
+
+	def test_stage_labels(self):
+		self.assertEqual(approvals.stage_labels(settings()),
+			[s.label for s in approvals.CATALOGUE])
+
+	def test_approvers_for(self):
+		config = settings(approvers=[
+			approver("Assigner: Farm Manager", "sam@example.com", "Saboti", "FM Saboti")])
+		self.assertEqual([r.user for r in approvals.approvers_for("assigner_farm_manager", config)],
+			["sam@example.com"])
+
+	def test_desired_grants(self):
+		config = settings(approvers=[
+			approver("Assigner: Farm Manager", "sam@example.com", "Saboti", "FM Saboti")])
+		self.assertEqual(approvals._desired_grants(config), {"sam@example.com": {"FM Saboti"}})
 
 
 if __name__ == "__main__":
