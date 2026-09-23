@@ -59,8 +59,12 @@ def settings(overrides=None, approvers=()):
 	})
 
 
-def approver(stage_label, user, scope=None, role=None):
-	return {"stage_label": stage_label, "user": user, "scope": scope, "role": role}
+def approver(stage, user, scope=None, role=None):
+	"""An approver row, keyed by step. `stage` may be a key or a shipped name --
+	most tests here read better naming the step the way a person would."""
+	shipped = {st.label: st.key for st in approvals.CATALOGUE}
+	key = shipped.get(stage, stage)
+	return {"stage": key, "stage_label": stage, "user": user, "scope": scope, "role": role}
 
 
 def plan(document_type, config):
@@ -385,8 +389,9 @@ class TestCatalogue(unittest.TestCase):
 		)
 		with open(path) as handle:
 			doc = json.load(handle)
-		field = [f for f in doc["fields"] if f["fieldname"] == "stage_label"][0]
-		self.assertEqual(field["options"].split("\n"), approvals.stage_labels(settings()))
+		# the stored value is the step KEY; see test_approvers_are_keyed_by_stage
+		field = [f for f in doc["fields"] if f["fieldname"] == "stage"][0]
+		self.assertEqual(field["options"].split("\n"), approvals.stage_keys(settings()))
 
 
 class TestTheSettingsPassedInGovernTheAnswer(unittest.TestCase):
@@ -405,7 +410,7 @@ class TestTheSettingsPassedInGovernTheAnswer(unittest.TestCase):
 		relabelled = settings({
 			stage.key: {"stage_label": "Site " + stage.label, "state": "Site " + (stage.state or "")}
 			for stage in approvals.CATALOGUE
-		}, approvers=[approver("Site Assigner: Farm Manager", "site@example.com", role="Site Role")])
+		}, approvers=[approver("assigner_farm_manager", "site@example.com", role="Site Role")])
 		patcher = unittest.mock.patch.object(approvals, "_settings_or_none", return_value=relabelled)
 		patcher.start()
 		self.addCleanup(patcher.stop)

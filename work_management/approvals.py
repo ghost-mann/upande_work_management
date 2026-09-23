@@ -249,8 +249,13 @@ def by_label(label, settings=None):
 
 
 def stage_labels(settings=None):
-	"""Select options for Work Management Stage Approver.stage_label."""
+	"""Every configured step's name, in chain order."""
 	return [stage.label for stage in configured_stages(_given_or_stored(settings))]
+
+
+def stage_keys(settings=None):
+	"""Select options for Work Management Stage Approver.stage -- the step keys."""
+	return [stage.key for stage in configured_stages(_given_or_stored(settings))]
 
 
 def duplicate_stage_labels(labels):
@@ -272,15 +277,24 @@ def duplicate_stage_labels(labels):
 	return ", ".join(twice) if twice else None
 
 
-PICKER = ("Work Management Stage Approver", "stage_label")
+# The approver row names its step by KEY. It stored the step's label, so renaming
+# a step silently detached every approver row pointing at it: approvers_for()
+# stopped matching, transition_groups() fell back to one unconditional
+# transition on the stage role -- any holder of it approved every farm -- and the
+# next Settings save was refused with "Stage cannot be ..." against a picker
+# that no longer offered the old name. A key does not move when a name does.
+PICKER = ("Work Management Stage Approver", "stage")
 
 
 def apply_stage_picker_options(settings=None):
 	"""Offer every configured step in the picker that names who takes it.
 
-	The Select shipped with fifteen labels compiled into its JSON. Once a step can
-	be added, that Select lies: the step exists, drives a real transition, and
-	cannot be chosen in the one table that names its approvers.
+	The Select ships with the fifteen catalogue keys compiled into its JSON. Once
+	a step can be added, that Select lies: the step exists, drives a real
+	transition, and cannot be chosen in the one table that names its approvers.
+	The keys are the stored values; the Settings form shows each as the step's
+	current name (work_management_settings.js), so renaming a step needs no
+	setter at all.
 
 	A Property Setter rather than an edit to the shipped JSON, following what
 	taxonomy.apply_labels() does -- the app's own files stay identical on every
@@ -295,12 +309,12 @@ def apply_stage_picker_options(settings=None):
 	if not frappe.db.exists("DocType", doctype):
 		return None
 
-	labels = stage_labels(settings)
-	if not labels:
+	keys = stage_keys(settings)
+	if not keys:
 		return None
-	wanted = "\n".join(labels)
+	wanted = "\n".join(keys)
 
-	shipped = "\n".join(stage.label for stage in CATALOGUE)
+	shipped = "\n".join(stage.key for stage in CATALOGUE)
 	filters = {"doc_type": doctype, "field_name": fieldname, "property": "options"}
 	existing = frappe.db.get_value("Property Setter", filters, ["name", "value"], as_dict=True)
 
@@ -316,12 +330,12 @@ def apply_stage_picker_options(settings=None):
 		return None
 
 	if existing and existing.value == wanted:
-		return labels
+		return keys
 
 	make_property_setter(doctype, fieldname, "options", wanted, "Text",
 		validate_fields_for_doctype=False)
 	frappe.clear_cache(doctype=doctype)
-	return labels
+	return keys
 
 
 def effective_chain(settings=_UNSET, rows=None, document_type=None):
@@ -632,15 +646,45 @@ def stage_role(stage, rows):
 
 
 def approvers_for(key, settings=None):
-	"""Approver rows configured for one stage."""
+	"""Approver rows configured for one stage, matched by the step's key."""
 	settings = settings or _settings()
 	stage = by_key(key, settings)
 	if not stage:
 		return []
 	return [
 		row for row in (settings.get("stage_approvers") or [])
-		if row.stage_label == stage.label
+		if row.get("stage") == stage.key
 	]
+
+
+def sync_approver_stages(settings):
+	"""Key every approver row, and refresh the name it carries.
+
+	Runs first in Settings.validate, which Frappe calls before its own mandatory
+	and Select checks. A row that arrives with only a name -- written by an older
+	form or an API caller -- is keyed by that name against THIS configuration,
+	then every row's stage_label is rewritten from its key, so the stored name
+	follows a rename instead of pinning the row to the old one.
+
+	Returns the rows whose step is not in the chain, as [(idx, key or name)].
+	"""
+	stages = configured_stages(settings)
+	keyed = {stage.key: stage for stage in stages}
+	named = {stage.label: stage for stage in stages}
+	orphans = []
+	for row in settings.get("stage_approvers") or []:
+		key = (row.get("stage") or "").strip()
+		if not key and row.get("stage_label"):
+			stage = named.get(row.get("stage_label"))
+			if stage:
+				key = stage.key
+				row.stage = key
+		stage = keyed.get(key)
+		if stage:
+			row.stage_label = stage.label
+		else:
+			orphans.append((row.get("idx"), key or row.get("stage_label") or ""))
+	return orphans
 
 
 def approver_users(key, scope=None, settings=None):
@@ -861,7 +905,7 @@ def _desired_grants(settings):
 	rows = stage_rows(settings)
 	grants = {}
 	for approver in settings.get("stage_approvers") or []:
-		stage = by_label(approver.stage_label, settings)
+		stage = by_key(approver.get("stage"), settings)
 		if not stage or not approver.user:
 			continue
 		role = approver.role or stage_role(stage, rows)
@@ -1025,20 +1069,34 @@ def validate_configuration(settings):
 	its documents would sit in that state with no way out. Better to say so on
 	save than to discover it when a plan cannot be approved.
 
-	And two steps may not share a name. The table that names who takes a step
-	stores its *label*, so a duplicate makes it ambiguous -- an approver row would
-	resolve to whichever step sorted first, silently. Cheap to refuse here;
-	impossible to diagnose later.
+	And two steps may not share a name. Approver rows are keyed by step now, but
+	every screen and the approver picker show the name, and a row written with
+	only a name is keyed by it -- two steps sharing one cannot be told apart by
+	the person choosing. Cheap to refuse here; impossible to diagnose later.
+
+	And every approver row must name a step that exists. See
+	sync_approver_stages().
 	"""
 	clash = duplicate_stage_labels(
 		[row.stage_label for row in (settings.get("approval_stages") or [])]
 	)
 	if clash:
 		frappe.throw(
-			_("More than one approval step is called {0}. The table that names who takes a step stores its name, so two steps sharing one cannot be told apart — give each step its own.").format(
+			_("More than one approval step is called {0}. Two steps sharing a name cannot be told apart when choosing who takes each — give each step its own.").format(
 				frappe.bold(clash)
 			),
 			title=_("Two steps with the same name"),
+		)
+
+	# After the names are known to be distinct: a row that arrives with only a
+	# name is keyed by it.
+	orphans = sync_approver_stages(settings)
+	if orphans:
+		frappe.throw(
+			_("Stage Approvers row {0} names a step that is not in the approval chain ({1}). Pick the step again, or remove the row.").format(
+				orphans[0][0], frappe.bold(orphans[0][1] or _("none")),
+			),
+			title=_("Approver for a step that does not exist"),
 		)
 
 	# A step being switched off with documents waiting in it is refused before

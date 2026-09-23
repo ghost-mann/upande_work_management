@@ -169,25 +169,42 @@ def narrow_to_permitted(farms, permitted):
 def _farm_approver_role(settings, farms):
 	"""{farm: role} — the role that approves work for each farm.
 
-	Read from the farm-scoped approval stages: a row naming a farm and a role
-	override is what keeps one farm's approvals out of another's reach. Farms with
-	no row of their own fall back to the stage's role, which covers every farm.
+	Resolved PER FARM, across the farm-scoped steps in chain order: a farm takes
+	the role of the first approver row that names it, on whichever scoped step
+	that row sits. Only a farm no step names falls back -- to a row that names no
+	farm (it acts on every farm), else to the first scoped step's own role.
+
+	It used to fill every farm with the FIRST scoped step's role before the
+	second step was even looked at, so a site that named its per-farm approvers
+	on, say, the Actuals step alone had every farm mapped to the Planner step's
+	role, and the per-farm rows were never read.
+
+	The configured chain, not the shipped catalogue: an added scoped step counts,
+	and a switched-off one does not decide anybody's farm.
 	"""
 	from work_management import approvals
 
-	mapping = {}
-	scoped = [stage for stage in approvals.CATALOGUE if stage.scoped]
-	if not scoped:
-		return mapping
-
 	rows = approvals.stage_rows(settings)
+	scoped = [stage for stage in approvals.configured_stages(settings) if stage.scoped]
+	live = [stage for stage in scoped if approvals.is_enabled(stage, rows)]
+	scoped = live or scoped
+	if not scoped:
+		return {}
+
+	named, anywhere = {}, None
 	for stage in scoped:
 		default_role = approvals.stage_role(stage, rows)
 		for approver in approvals.approvers_for(stage.key, settings=settings):
-			if approver.scope and approver.scope not in mapping:
-				mapping[approver.scope] = approver.role or default_role
-		for farm in farms:
-			mapping.setdefault(farm, default_role)
+			role = approver.role or default_role
+			if approver.scope:
+				named.setdefault(approver.scope, role)
+			elif anywhere is None:
+				anywhere = role
+	fallback = anywhere or approvals.stage_role(scoped[0], rows)
+
+	mapping = dict(named)
+	for farm in farms:
+		mapping.setdefault(farm, fallback)
 	return mapping
 
 
