@@ -370,7 +370,7 @@ def seed_stage_approvers():
 
 	scoped = [stage for stage in approvals.CATALOGUE if stage.scoped]
 	existing = {
-		(row.stage_label, row.scope, row.user)
+		(row.stage, row.scope, row.user)
 		for row in settings.get("stage_approvers") or []
 	}
 	created = 0
@@ -388,10 +388,11 @@ def seed_stage_approvers():
 			if not frappe.db.exists("User", user):
 				continue
 			for stage in scoped:
-				key = (stage.label, farm, user)
+				key = (stage.key, farm, user)
 				if key in existing:
 					continue
 				settings.append("stage_approvers", {
+					"stage": stage.key,
 					"stage_label": stage.label,
 					"scope": farm,
 					"user": user,

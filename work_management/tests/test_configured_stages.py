@@ -180,6 +180,8 @@ class TestTheStagePickerOffersEveryConfiguredStep(unittest.TestCase):
 			 "state": "Pending Finance", "action": "Finance Approve", "enabled": 1},
 		))
 		self.assertIn("Planner: Finance", approvals.stage_labels(s))
+		# the picker's stored values are keys; the form shows the name
+		self.assertIn("planner_finance", approvals.stage_keys(s))
 
 	def test_two_steps_may_not_share_a_label(self):
 		"""The picker stores a label, so a duplicate makes it ambiguous -- an
@@ -199,7 +201,7 @@ class TestTheStagePickerOffersEveryConfiguredStep(unittest.TestCase):
 
 	def test_the_options_are_written_where_frappe_reads_them(self):
 		"""Named once, in PICKER, rather than spelled into the function body."""
-		self.assertEqual(approvals.PICKER, ("Work Management Stage Approver", "stage_label"))
+		self.assertEqual(approvals.PICKER, ("Work Management Stage Approver", "stage"))
 		source = open(os.path.join(HERE, "approvals.py")).read()
 		self.assertIn("def apply_stage_picker_options", source)
 		block = source[source.index("def apply_stage_picker_options"):][:1400]

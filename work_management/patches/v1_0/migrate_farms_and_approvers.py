@@ -73,7 +73,7 @@ def migrate_farm_approvers(settings):
 		return 0
 
 	existing = {
-		(row.stage_label, row.scope, row.user)
+		(row.stage, row.scope, row.user)
 		for row in settings.get("stage_approvers") or []
 	}
 	created = 0
@@ -92,10 +92,11 @@ def migrate_farm_approvers(settings):
 			if not frappe.db.exists("User", user):
 				continue
 			for stage in scoped:
-				key = (stage.label, row.farm, user)
+				key = (stage.key, row.farm, user)
 				if key in existing:
 					continue
 				settings.append("stage_approvers", {
+					"stage": stage.key,
 					"stage_label": stage.label,
 					"scope": row.farm,
 					"user": user,
@@ -118,7 +119,7 @@ def migrate_consultants(settings):
 		approvals.by_key("masterplan_consultant"),
 	]
 	existing = {
-		(row.stage_label, row.scope, row.user)
+		(row.stage, row.scope, row.user)
 		for row in settings.get("stage_approvers") or []
 	}
 	created = 0
@@ -129,10 +130,11 @@ def migrate_consultants(settings):
 		for email in emails:
 			if not frappe.db.exists("User", email):
 				continue
-			key = (stage.label, None, email)
-			if key in existing or (stage.label, "", email) in existing:
+			key = (stage.key, None, email)
+			if key in existing or (stage.key, "", email) in existing:
 				continue
 			settings.append("stage_approvers", {
+				"stage": stage.key,
 				"stage_label": stage.label,
 				"user": email,
 			})

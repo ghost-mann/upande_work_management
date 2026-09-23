@@ -101,22 +101,19 @@ OTHER_FARM = "Kitale"
 
 
 def farm_approver_role():
-	"""{farm: role} as `get_config()["farm_approver_role"]` computes it.
+	"""{farm: role} as `get_config()["farm_approver_role"]` computes it -- by
+	calling it, rather than mirroring it: the mirror is how a fix to the real
+	resolver would go untested here.
 
-	Mirrors api/config._farm_approver_role(): with no per-farm approver rows
-	named, every farm falls back to the first farm-scoped stage's own role. That
-	is the fallback every existing site runs on, and it is what makes `farms`
-	answerable at all -- so the tests derive `farms` from it rather than asserting
-	a person decides a farm the configuration never gave them.
+	With no per-farm approver rows named, every farm falls back to the first
+	farm-scoped step's own role. That is the fallback every existing site runs
+	on, and it is what makes `farms` answerable at all -- so the tests derive
+	`farms` from it rather than asserting a person decides a farm the
+	configuration never gave them.
 	"""
-	config = settings()
-	stage_rows = approvals.stage_rows(config)
-	mapping = {}
-	for stage in approvals.CATALOGUE:
-		if not stage.scoped:
-			continue
-		mapping.setdefault(FARM, approvals.stage_role(stage, stage_rows))
-	return mapping
+	from work_management.api import config
+
+	return config._farm_approver_role(settings(), [FARM])
 
 
 def farms_for(roles):

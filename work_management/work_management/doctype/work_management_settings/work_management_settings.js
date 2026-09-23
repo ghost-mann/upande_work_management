@@ -3,6 +3,7 @@
 
 frappe.ui.form.on("Work Management Settings", {
 	refresh(frm) {
+		wm_stage_picker(frm);
 		frm.add_custom_button(__("Rate coverage"), () => wm_rates_call(frm, { action: "meta" },
 			(r) => {
 				frm.set_value("current_daily_wage", r.current_daily_wage || 0);
@@ -79,6 +80,32 @@ frappe.ui.form.on("Work Management Settings", {
 			});
 		}, __("Rates"));
 	},
+});
+
+// THE APPROVER PICKER. Stage Approver rows store the step's KEY, so renaming a
+// step no longer detaches who takes it. The key is not what anybody should read,
+// though: the picker and the grid show each step's current name, taken from the
+// approval-stage rows in this very form -- so a rename typed a moment ago shows
+// up before it is saved.
+function wm_stage_picker(frm) {
+	const grid = frm.fields_dict.stage_approvers && frm.fields_dict.stage_approvers.grid;
+	if (!grid) return;
+	const names = {};
+	(frm.doc.approval_stages || []).forEach((row) => {
+		if (row.stage) names[row.stage] = row.stage_label || row.stage;
+	});
+	const options = [{ value: "", label: "" }].concat(
+		Object.keys(names).map((key) => ({ value: key, label: names[key] })));
+	grid.update_docfield_property("stage", "options", options);
+	const std = frappe.meta.docfield_map["Work Management Stage Approver"];
+	if (std && std.stage) std.stage.formatter = (value) => names[value] || value;
+	grid.refresh();
+}
+
+frappe.ui.form.on("Work Management Approval Stage", {
+	stage_label: wm_stage_picker,
+	approval_stages_add: wm_stage_picker,
+	approval_stages_remove: wm_stage_picker,
 });
 
 function wm_rates_call(frm, args, onOk) {

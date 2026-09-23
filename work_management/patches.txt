@@ -37,3 +37,7 @@ work_management.patches.v1_0.add_the_basic_pay_field
 # work_management/consultant.py, and the patch only repairs what is already on
 # the site. No-ops where the consultant step is switched on.
 work_management.patches.v1_0.settle_activities_with_no_consultant_step
+# Before anybody renames a step again: it keys approver rows by the name they
+# carry, and every rename made first is a row it may not recover. Nothing above
+# depends on it; after_migrate's apply_stage_picker_options() then offers keys.
+work_management.patches.v1_0.key_stage_approvers_by_stage
