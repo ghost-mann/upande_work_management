@@ -815,10 +815,30 @@ class TestOnlyActionableRowsAreOffered(unittest.TestCase):
 		self.assertIn("continue", block)
 
 	def test_the_assigner_and_actuals_tabs_offer_only_the_viewer_s_stages(self):
-		for screen, flag in (("work-assigner.js", "is_farm_manager"),
-				("work-actuals.js", "is_farm_manager")):
-			with self.subTest(screen=screen):
-				self.assertIn(flag, read(os.path.join(JS, screen)))
+		"""Both screens ask the SERVER whether a press would be allowed.
+
+		This used to assert `is_farm_manager` -- a flag derived from the shipped
+		role name, which answered no to the person Altura's farm-scoped step
+		actually names. The flag is gone; `is_approver` is the same question put
+		to chain.takeable(), which is what the approve action itself asks, and
+		`may_change_crew` is the same for a_add_crew / a_release.
+		"""
+		for screen, flags in (
+				("work-assigner.js", ("is_approver", "may_change_crew")),
+				("work-actuals.js", ("is_approver", "may_change_crew"))):
+			src = read(os.path.join(JS, screen))
+			for flag in flags:
+				with self.subTest(screen=screen, flag=flag):
+					self.assertIn(flag, src)
+
+	def test_neither_screen_decides_it_from_a_role_name(self):
+		"""The other half: the flags they stopped reading must not come back."""
+		for screen in ("work-assigner.js", "work-actuals.js"):
+			src = read(os.path.join(JS, screen))
+			for gone in ("ST.roles.is_farm_manager", "ST.roles.is_hr_head",
+					"ST.roles.is_gm"):
+				with self.subTest(screen=screen, flag=gone):
+					self.assertNotIn(gone, src)
 
 
 if __name__ == "__main__":

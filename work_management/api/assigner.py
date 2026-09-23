@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, stage_pills
+from work_management import bulk, chain, presence, stage_pills
 from work_management.api.config import get_config
 
 
@@ -156,6 +156,31 @@ def wm_assigner(**kwargs):
     for _asg_farm, _asg_role in (FARM_APPROVER_ROLE or {}).items():
         if _asg_role in MY_ROLES and _asg_farm not in ASG_FARMS:
             ASG_FARMS.append(_asg_farm)
+
+    # WHO MAY CHANGE AN APPROVED CREW -- add somebody, or release them.
+    #
+    # Both gates read `rr.startswith("Farm Manager")`, the HR head list and
+    # `"General Manager" in roles`: three job titles out of the chain this app
+    # ships with, and none of them Altura's, where every one of those steps is
+    # taken by a Production Manager. He was refused by his own pipeline.
+    #
+    # The chain answers it. Changing the crew on work that has already been
+    # approved is a decision of the people who approved it, so the test is
+    # "takes any enabled step of this chain" -- the same rule, without naming
+    # anybody, and with farm scope carried by chain.may_take() for the steps
+    # that have it.
+    ASG_MAY_CHANGE_CREW = 1 if chain.takeable(
+        STAGE_ROWS, ASG_DT, MY_ROLES, farms=ASG_FARMS) else 0
+    # ...and who that is, for the refusal. The steps' own configured labels, so
+    # the sentence sends the reader to a desk the site actually has -- it used to
+    # say "a Farm Manager, the HR head or the GM" whatever the chain was.
+    ASG_APPROVER_LABELS = []
+    for _asg_step in chain.approval_steps(STAGE_ROWS, ASG_DT, enabled_only=True):
+        _asg_lbl = chain.short_label(_asg_step)
+        if _asg_lbl and _asg_lbl not in ASG_APPROVER_LABELS:
+            ASG_APPROVER_LABELS.append(_asg_lbl)
+    ASG_APPROVERS = (" or ".join(ASG_APPROVER_LABELS) if ASG_APPROVER_LABELS
+        else "an approver on this work")
 
     # WHERE A SHIPPED STEP STAMPS ITSELF. These are columns this doctype already
     # has, named after the chain as it shipped, and a column cannot be renamed by
@@ -387,9 +412,30 @@ def wm_assigner(**kwargs):
                 for r in arows:
                     absent_map[r.employee] = {"days": frappe.utils.cint(r.n), "from": str(r.d1), "to": str(r.d2)}
         out["att_checks"] = {"absent": att_absent_on, "leave": att_leave_on, "off": att_off_on}
-        # ── MORNING PRESENCE (day-of assignment): when the window includes today,
-        # report who has scanned in / been marked Present today. Night-shift
-        # workers are exempt (their arrival is in the evening). ──
+        # ── PRESENCE OVER THE WINDOW'S OWN DAYS ────────────────────────────────
+        #
+        # This block asked `DATE(time) = today` three times over, whatever window
+        # the plan covered. Altura backfills: master plans and actuals are raised
+        # for PAST weeks, and against a window of 14-18 September the chips
+        # reported who had scanned in THIS morning. Daniel was deciding whether a
+        # day was payable against the wrong day's scan -- and against a scan that
+        # had nothing to do with the work at all.
+        #
+        # The date asked about is the window's, always. `pres_to` is the last day
+        # of the window that has actually happened, because a day in the future
+        # has no scan to find and reporting "no record" for it is a finding that
+        # is not one; `pres_from` is the window's own start. Where the window
+        # contains today, pres_to IS today and nothing about the screen changes.
+        #
+        # THE MORNING-SCAN GATE IS DIFFERENT and stays as it is. "Has this crew
+        # turned up today, and is it past the cutoff" is a question about today
+        # by construction -- it exists to stop somebody assigning work to people
+        # who never arrived this morning -- so it is the one rule here that is
+        # explicitly about today, and `includes_today` already keeps it from
+        # firing on a past window. See `scan_info.checked`.
+        #
+        # Night-shift workers are exempt from the gate (their arrival is in the
+        # evening).
         scan_on = 1
         scan_cutoff = "09:00:00"
         try:
@@ -401,42 +447,67 @@ def wm_assigner(**kwargs):
         cparts = scan_cutoff.split(":")
         scan_cutoff = cparts[0].zfill(2) + ":" + (cparts[1].zfill(2) if len(cparts) > 1 else "00") + ":" + (cparts[2][:2].zfill(2) if len(cparts) > 2 else "00")
         today_str = str(frappe.utils.today())
-        includes_today = bool(pf and pt and pf <= today_str <= pt)
+        includes_today = presence.applies_today(pf, pt, today_str)
+        # The days this window can be asked about: its own, up to today. A window
+        # entirely in the future leaves pres_from empty and no read runs -- there
+        # is nothing to have happened yet.
+        pres_from, pres_to, pres_days = presence.evidence_window(pf, pt, today_str)
         scan_map = {}
         present_att = {}
         night_set = {}
         absent_today = {}
-        # Today's presence, when the project asks for it. Off by default: a site
-        # without biometric hardware, or keeping attendance somewhere else, gets "?"
-        # against every worker, which reads as a finding and is not. Off, none of
-        # these reads run at all -- three queries and a shift-type scan per load.
+        seen_days = {}
+        absent_days = {}
+        # Presence over the window, when the project asks for it. Off by default:
+        # a site without biometric hardware, or keeping attendance somewhere else,
+        # gets "?" against every worker, which reads as a finding and is not. Off,
+        # none of these reads run at all -- three queries and a shift-type scan
+        # per load.
         asg_presence_on = frappe.utils.cint(
             frappe.db.get_single_value("Work Management Settings", "asg_show_today_presence"))
         out["show_today"] = asg_presence_on
-        if emps and asg_presence_on:
+        out["presence_window"] = {"from": pres_from, "to": pres_to, "days": pres_days,
+            "is_today": 1 if (pres_to and pres_to == today_str) else 0,
+            "past": 1 if (pres_to and pres_to < today_str) else 0}
+        if emps and asg_presence_on and pres_from:
             emp_names2 = tuple([e.name for e in emps])
+            # Two reads over the window's own days, and two things taken from
+            # each: what happened on the REFERENCE day -- the last day of the
+            # window that has happened, which is the day the chip names -- and
+            # how many of the window's days there was evidence for at all, which
+            # is the honest answer on a window of more than one day.
+            seen_set = {}
             for r in frappe.db.sql("""
-                SELECT employee, MIN(`time`) t FROM `tabEmployee Checkin`
-                WHERE DATE(`time`) = %s AND employee IN %s GROUP BY employee
-            """, (today_str, emp_names2), as_dict=True):
-                scan_map[r.employee] = str(r.t)[11:16]
+                SELECT employee, DATE(`time`) d, MIN(`time`) t FROM `tabEmployee Checkin`
+                WHERE DATE(`time`) BETWEEN %s AND %s AND employee IN %s
+                GROUP BY employee, DATE(`time`)
+            """, (pres_from, pres_to, emp_names2), as_dict=True):
+                seen_set.setdefault(r.employee, {})[str(r.d)] = 1
+                if str(r.d) == pres_to:
+                    scan_map[r.employee] = str(r.t)[11:16]
             for r in frappe.db.sql("""
-                SELECT employee FROM `tabAttendance`
-                WHERE docstatus = 1 AND attendance_date = %s
+                SELECT employee, attendance_date d FROM `tabAttendance`
+                WHERE docstatus = 1 AND attendance_date BETWEEN %s AND %s
                   AND status IN ('Present','Half Day','Work From Home') AND employee IN %s
-            """, (today_str, emp_names2), as_dict=True):
-                present_att[r.employee] = 1
+            """, (pres_from, pres_to, emp_names2), as_dict=True):
+                seen_set.setdefault(r.employee, {})[str(r.d)] = 1
+                if str(r.d) == pres_to:
+                    present_att[r.employee] = 1
+            for se in seen_set:
+                seen_days[se] = len(seen_set[se])
             for r in frappe.db.sql("""
-                SELECT employee FROM `tabAttendance` att
-                WHERE att.docstatus = 1 AND att.attendance_date = %s AND att.status = 'Absent'
-                  AND att.employee IN %s
+                SELECT employee, attendance_date d FROM `tabAttendance` att
+                WHERE att.docstatus = 1 AND att.attendance_date BETWEEN %s AND %s
+                  AND att.status = 'Absent' AND att.employee IN %s
                   AND NOT EXISTS (
                     SELECT 1 FROM `tabAttendance` pp
                     WHERE pp.employee = att.employee AND pp.attendance_date = att.attendance_date
                       AND pp.docstatus = 1 AND pp.status IN ('Present','Half Day','Work From Home')
                   )
-            """, (today_str, emp_names2), as_dict=True):
-                absent_today[r.employee] = 1
+            """, (pres_from, pres_to, emp_names2), as_dict=True):
+                absent_days[r.employee] = frappe.utils.cint(absent_days.get(r.employee)) + 1
+                if str(r.d) == pres_to:
+                    absent_today[r.employee] = 1
             night_shifts = frappe.db.sql("SELECT name FROM `tabShift Type` WHERE TIME(end_time) < TIME(start_time)", as_dict=True)
             nset = set([r.name for r in night_shifts])
             for r in frappe.db.sql("""
@@ -446,12 +517,23 @@ def wm_assigner(**kwargs):
                 if r.default_shift in nset:
                     night_set[r.name] = 1
         out["scan_info"] = {
+            # `checked` is the MORNING-SCAN GATE, and it is the one rule here that
+            # is explicitly about today: it asks whether this crew turned up this
+            # morning, which is only a question at all when the window contains
+            # this morning. On a past window it stays 0 and the gate does not
+            # fire -- see the block comment above.
             "checked": 1 if includes_today else 0,
             "gate_on": scan_on,
             "cutoff": scan_cutoff,
             "cutoff_passed": 1 if str(frappe.utils.nowtime())[:8].zfill(8) >= scan_cutoff else 0,
             "present_count": 0,
             "total": len(emps),
+            # what the presence figures are ABOUT, so the bar can say so rather
+            # than printing "today" over a fortnight-old window.
+            "from": pres_from,
+            "to": pres_to,
+            "days": pres_days,
+            "is_today": 1 if (pres_to and pres_to == today_str) else 0,
         }
         for e in emps:
             oc = 0
@@ -473,9 +555,19 @@ def wm_assigner(**kwargs):
                     e["att_all_off"] = 1
                     e["att_off_reason"] = ("off/holiday for the entire window (" + str(oc) + " of " + str(window_days) + " days)")
             e["is_night"] = 1 if night_set.get(e.name) else 0
+            # WHAT HAPPENED ON THE DAY BEING ASKED ABOUT. `present_today` and
+            # `absent_today` keep their names -- an older screen may still read
+            # them -- but the day is the window's reference day, not the clock's.
+            # On a window containing today the two are the same day and nothing
+            # moves; on a past window they now answer for the work's own date,
+            # which is the whole of finding #1.
             e["scan_in"] = scan_map.get(e.name)
             e["present_today"] = 1 if (scan_map.get(e.name) or present_att.get(e.name) or night_set.get(e.name)) else 0
             e["absent_today"] = 1 if absent_today.get(e.name) else 0
+            # ...and over the window as a whole, which is the only honest figure
+            # once it is more than a day long: "seen on 3 of the 5 days".
+            e["present_days"] = frappe.utils.cint(seen_days.get(e.name))
+            e["absent_days_window"] = frappe.utils.cint(absent_days.get(e.name))
             if e["present_today"] and not night_set.get(e.name):
                 out["scan_info"]["present_count"] = out["scan_info"]["present_count"] + 1
             al = allocated.get(e.name)
@@ -683,6 +775,12 @@ def wm_assigner(**kwargs):
                 # MORNING PRESENCE gate: window includes today + cutoff passed ->
                 # a day worker with no scan and no Present attendance today is
                 # flagged "not seen on site". Night-shift workers are exempt.
+                #
+                # THE ONE RULE HERE THAT IS ABOUT TODAY, deliberately: it asks
+                # whether this crew turned up this morning, which a window that
+                # finished last week cannot be asked. presence.applies_today()
+                # is that condition, said once -- the three checks above are
+                # about the window's own days and always were.
                 gate_scan = 1
                 scan_cut = "09:00:00"
                 try:
@@ -693,7 +791,8 @@ def wm_assigner(**kwargs):
                 cqarts = scan_cut.split(":")
                 scan_cut = cqarts[0].zfill(2) + ":" + (cqarts[1].zfill(2) if len(cqarts) > 1 else "00") + ":" + (cqarts[2][:2].zfill(2) if len(cqarts) > 2 else "00")
                 g_today = str(frappe.utils.today())
-                if gate_scan and gpf <= g_today <= gpt and str(frappe.utils.nowtime())[:8].zfill(8) >= scan_cut:
+                if gate_scan and presence.applies_today(gpf, gpt, g_today) \
+                        and str(frappe.utils.nowtime())[:8].zfill(8) >= scan_cut:
                     seen_today = {}
                     for r in frappe.db.sql("""
                         SELECT employee, MIN(`time`) t FROM `tabEmployee Checkin`
@@ -944,7 +1043,12 @@ def wm_assigner(**kwargs):
         out["is_clerk"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("enter_work") or []))) else 0
         out["is_hr_head"] = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES)
-        out["is_gm"] = "General Manager" in rl
+        # `is_gm` used to live here -- "General Manager" in rl -- and gated the
+        # Close Requests queue, the close dialog's verb and, on the planner, the
+        # button's own wording. It named a role a site need not have, so on
+        # Altura the person the chain puts at the end of it was offered none of
+        # them. `may_close_plans` below answers the same question from the chain
+        # and nothing reads the role name any more.
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
         # Whoever decides a farm's work, from the farm-scoped steps' own roles.
@@ -969,6 +1073,28 @@ def wm_assigner(**kwargs):
             STAGE_ROWS, 'Work Management Assigner', rl, farms=ASG_FARMS) else 0
         out["approver_label"] = chain.approver_suffix(
             STAGE_ROWS, ['Work Management Assigner'], rl, farms=ASG_FARMS)
+        # MAY THEY CHANGE THE CREW -- the one answer a_add_crew and a_release
+        # actually gate on. The crew screen decided it itself, by OR-ing the
+        # three role flags above, so the release panel was hidden from the very
+        # person the server would have allowed.
+        out["may_change_crew"] = 1 if chain.takeable(
+            STAGE_ROWS, ASG_DT, rl, farms=ASG_FARMS) else 0
+        # Closing a plan is decided by the step that ends the ACTUALS chain --
+        # wm_actuals owns the action, and this screen only needs to know which
+        # of the two close verbs to offer. Same resolution, read from the same
+        # chain rows, so the two screens cannot disagree.
+        ar_act_final = None
+        for ar_step in chain.approval_steps(STAGE_ROWS, "Work Management Actuals", enabled_only=True):
+            if ar_step.get("next_state") == STAGE_STATES.get(
+                    "Work Management Actuals", {}).get("terminal"):
+                ar_act_final = ar_step
+        ar_act_farms = []
+        for _ar_farm, _ar_role in (FARM_APPROVER_ROLE or {}).items():
+            if _ar_role in rl and _ar_farm not in ar_act_farms:
+                ar_act_farms.append(_ar_farm)
+        out["may_close_plans"] = 1 if (ar_act_final and chain.may_take(
+            ar_act_final, rl, farms=ar_act_farms) is None) else 0
+        out["decider_label"] = chain.label_of(ar_act_final, "the approver")
         out["stages"] = stage_pills.for_document_type(
             "Work Management Assigner", STAGE_ROWS, FARM_APPROVER_ROLE, rl)
 
@@ -1110,20 +1236,14 @@ def wm_assigner(**kwargs):
         for aw in str(add_raw).split(","):
             if aw.strip() and aw.strip() not in add_who:
                 add_who.append(aw.strip())
-        rl = frappe.get_roles(frappe.session.user)
-        add_may = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
-            or ("System Manager" in rl)
-        for rr in rl:
-            if rr.startswith("Farm Manager"):
-                add_may = 1
         err = None
         if not nm or not add_who:
             err = "The assignment and at least one worker are required"
-        elif not add_may:
+        elif not ASG_MAY_CHANGE_CREW:
             # the screens disable the control for everybody else; this is the same
             # rule where it counts. Release's gate lived only in the browser until
             # today, which is not a gate.
-            err = "Only a Farm Manager, the HR head or the GM may add a worker to approved work."
+            err = "Only " + str(ASG_APPROVERS) + " may add a worker to approved work."
         d = None
         if not err:
             d = frappe.get_doc("Work Management Assigner", nm)
@@ -1277,19 +1397,13 @@ def wm_assigner(**kwargs):
         for rw in str(rel_raw).split(","):
             if rw.strip():
                 rel_who.append(rw.strip())
-        rl = frappe.get_roles(frappe.session.user)
-        rel_may = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
-            or ("System Manager" in rl)
-        for rr in rl:
-            if rr.startswith("Farm Manager"):
-                rel_may = 1
         err = None
         if not nm or not rel_who:
             err = "The assignment and at least one worker are required"
-        elif not rel_may:
+        elif not ASG_MAY_CHANGE_CREW:
             # the screen hides the controls from everybody else; this is the same rule
             # enforced where it counts
-            err = "Only a Farm Manager, the HR head or the GM may release a worker."
+            err = "Only " + str(ASG_APPROVERS) + " may release a worker."
         d = None
         if not err:
             d = frappe.get_doc("Work Management Assigner", nm)

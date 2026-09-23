@@ -532,6 +532,20 @@ def wm_planner(**kwargs):
         out["is_section_head"] = 1 if (bool(ro_mine) or any(
             st.get("role") and (st["role"] in rl or "System Manager" in rl)
             for st in ro_submit)) else 0
+        # WHICH CLOSE VERB TO OFFER. This screen asked `ST.roles.is_gm`, which
+        # this action has never answered -- so the button has always read
+        # "Request close" for everybody, including whoever decides one. Closing
+        # a plan is decided by the step that ends the ACTUALS chain (wm_actuals
+        # owns act_close_confirm and gates on exactly that), so it is resolved
+        # from those rows rather than from a role name.
+        ro_act_final = None
+        for ro_step in chain.approval_steps(STAGE_ROWS, "Work Management Actuals",
+                                            enabled_only=True):
+            if ro_step.get("next_state") == STAGE_STATES.get(
+                    "Work Management Actuals", {}).get("terminal"):
+                ro_act_final = ro_step
+        out["may_close_plans"] = 1 if (ro_act_final and chain.may_take(
+            ro_act_final, rl, farms=(AP_FARMS or (["*"] if AP_BYPASS else []))) is None) else 0
 
     elif action == "submit":
         farm = frappe.form_dict.get("farm")
@@ -1224,6 +1238,29 @@ def wm_planner(**kwargs):
                 if b.block:
                     blist.append(b.block)
             pl["blocks"] = blist
+            # ── WAS THIS PLAN CLOSED SHORT OF WHAT IT WAS APPROVED FOR? ───────
+            # The trace is where somebody asks what happened to a plan, and a
+            # capped target is the single most consequential thing that can have
+            # happened to one: the remaining work was closed out and the budget
+            # went back to the master plan. `original_qty` holds the approved
+            # figure -- the same snapshot a post-approval target adjustment uses
+            # -- so the shortfall is arithmetic rather than a second record.
+            pl["approved_qty"] = frappe.utils.flt(
+                frappe.db.get_value("Work Management Planner", tr, "original_qty"))
+            tr_short = pl["approved_qty"] - frappe.utils.flt(pl.quantity) if pl["approved_qty"] else 0
+            if tr_short > 0.005 and (pl.custom_close_state or "") == "Closed":
+                pl["closed_short"] = {
+                    "approved_qty": pl["approved_qty"],
+                    "capped_qty": frappe.utils.flt(pl.quantity),
+                    "short_qty": tr_short,
+                    "uom": pl.uom,
+                    "reason": frappe.db.get_value("Work Management Planner", tr,
+                                                  "custom_close_reason"),
+                    "closed_by": frappe.db.get_value("Work Management Planner", tr,
+                                                     "custom_closed_by"),
+                    "closed_on": str(frappe.db.get_value("Work Management Planner", tr,
+                                                         "custom_closed_date") or "") or None,
+                }
             out["plan"] = pl
 
             # THE APPROVAL CHAIN, in the order it actually happens, named by the

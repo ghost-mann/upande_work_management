@@ -147,11 +147,11 @@
   }
   // THE APPROVALS TAB IS FOR APPROVERS, and who they are comes from the chain.
   // `is_approver` is true when the signed-in user may take any ENABLED step of
-  // this document type. The GM keeps it whatever the chain says: Close Requests
-  // is not a step in any chain and lives on this tab.
+  // this document type. Whoever decides a close keeps the tab whatever the
+  // chain says: Close Requests is not a step in any chain and lives here.
   function buildTabs(){
     var tabs=[["enter","Enter Actuals"],["acmine","My Actuals"],["acrej","Rejected"]];
-    if(ST.roles && (ST.roles.is_approver || ST.roles.is_gm)) tabs.push(["acappr","Approvals"]);
+    if(ST.roles && (ST.roles.is_approver || ST.roles.may_close_plans)) tabs.push(["acappr","Approvals"]);
     var nav=el("ac-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button"); b.textContent=t[1]; b.setAttribute("data-tab",t[0]);
@@ -218,7 +218,7 @@
       return {key:s.key, label:s.short_label||s.label, stage:s.state,
               verb:s.action, count:s.count, legacy:s.legacy};
     });
-    if(r.is_gm) q.push({key:"close",label:"Close Requests"});
+    if(r.may_close_plans) q.push({key:"close",label:"Close Requests"});
     return q;
   }
   function renderApprovals(){
@@ -331,11 +331,18 @@
       renderAsgList();
     };
     el("b-acdraft").onclick=function(){ doSubmit(0); };
-    el("b-acsubmit").onclick=function(){ doSubmit(1); };
+    el("b-acsubmit").onclick=function(){
+      // short of target and the site allows it -- ask why before anything is
+      // written, because this submit also closes the plan
+      if(ST._mayShort){ openShortModal(); return; }
+      doSubmit(1);
+    };
     initSubModal();
     wireAddModal();
     wireRelModal();
     initCloseModal();
+    initNoteModal();
+    initShortModal();
     loadAssignments();
   }
   function loadAssignments(){
@@ -473,7 +480,7 @@
     var val = (typeof explicitAsg === "string" && explicitAsg)
       ? explicitAsg
       : ((this && this.value) ? this.value : "");
-    ST.asg=val; ST.cells={}; ST.hours={}; ST.detail=null;
+    ST.asg=val; ST.cells={}; ST.hours={}; ST.notes={}; ST.detail=null;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
     if(!ST.asg){ el("ac-detail").style.display="none"; refresh(); return; }
     call({action:"act_detail",assignment:ST.asg}).then(function(d){
@@ -483,6 +490,7 @@
       // seed cells from any existing draft
       ST.cells = a.cells || {};
       ST.hours = a.cell_hours || {};
+      ST.notes = a.cell_notes || {};
       renderGrid(a);
       refresh();
     });
@@ -493,7 +501,7 @@
     showTab("enter");
     var sel=el("ac-asg");
     if(sel){ sel.value=assignment; }
-    ST.asg=assignment; ST.cells={}; ST.hours={}; ST.detail=null;
+    ST.asg=assignment; ST.cells={}; ST.hours={}; ST.notes={}; ST.detail=null;
     ST._editingDoc=docname; ST._editingStage=stage;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
     call({action:"act_detail",assignment:assignment}).then(function(d){
@@ -501,6 +509,7 @@
       renderDetail(a);
       ST.cells = a.cells || {};
       ST.hours = a.cell_hours || {};
+      ST.notes = a.cell_notes || {};
       renderGrid(a);
       refresh();
       var banner=el("ac-editbanner");
@@ -546,6 +555,12 @@
     if(!ST.asg) return;
     call({action:"act_close_roles", assignment:ST.asg}).then(function(d){
       var state=(d.close_state||"");
+      // WHO DECIDES A CLOSE, in the chain's own words. This screen said "GM"
+      // five times over -- an abbreviation of a role a site need not have, and
+      // on Altura the step is taken by somebody else entirely. The server
+      // resolves the step and hands its configured label over; the screen
+      // prints it and never decides who it means.
+      ST._closeWho = d.decider_label || "the approver";
       var tgt=d.target_qty||0, done=d.fulfilled_qty||0;
       var pctTxt = tgt>0 ? (fmt(done)+" of "+fmt(tgt)+" done") : (fmt(done)+" done");
       if(state==="Closed"){
@@ -557,7 +572,7 @@
       var head='<div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#777;font-weight:700;margin-bottom:6px">Close this plan early</div>';
       if(state==="Close Requested"){
         var pend='<div style="border:1px solid #a06000;background:#fff8ef;padding:10px 12px;font-size:11px;color:#7a4a00">'+
-          '<b>Close requested — awaiting GM.</b> '+esc(pctTxt)+'.'+
+          '<b>Close requested — awaiting '+esc(ST._closeWho)+'.</b> '+esc(pctTxt)+'.'+
           (d.close_reason?('<div style="margin-top:3px">Reason: '+esc(d.close_reason)+'</div>'):'')+
           (d.close_requested_by?('<div style="opacity:.8;margin-top:2px">Requested by '+esc(d.close_requested_by)+'</div>'):'')+'</div>';
         // GM can confirm a pending request straight from here
@@ -571,11 +586,11 @@
       }
       // no close state yet: GM -> instant; FM/section head -> request
       if(d.can_close_now){
-        box.innerHTML=head+'<div style="font-size:11px;color:#555;margin-bottom:8px">'+esc(pctTxt)+'. As GM you can close immediately — any open draft is finalised and the remaining target is capped.</div>'+
+        box.innerHTML=head+'<div style="font-size:11px;color:#555;margin-bottom:8px">'+esc(pctTxt)+'. You can close immediately — any open draft is finalised and the remaining target is capped.</div>'+
           '<button type="button" class="btn solid" id="ac-close-now">Close plan now</button>';
         el("ac-close-now").onclick=function(){ openCloseModal(true, ""); };
       } else if(d.can_request){
-        box.innerHTML=head+'<div style="font-size:11px;color:#555;margin-bottom:8px">'+esc(pctTxt)+'. Send a close request to the GM — entry stays open until they confirm.</div>'+
+        box.innerHTML=head+'<div style="font-size:11px;color:#555;margin-bottom:8px">'+esc(pctTxt)+'. Send a close request to '+esc(ST._closeWho)+' — entry stays open until they confirm.</div>'+
           '<button type="button" class="btn" id="ac-close-req">Request close</button>';
         el("ac-close-req").onclick=function(){ openCloseModal(false, ""); };
       } else {
@@ -589,12 +604,88 @@
     el("ac-close-title").textContent = isGm ? "Close plan now" : "Request close";
     el("ac-close-desc").textContent = isGm
       ? "This finalises any open draft actuals to Confirmed and caps the plan (target kept for reporting). A reason is required."
-      : "This sends a close request to the GM. Entry stays open until they confirm. A reason is required.";
+      : ("This sends a close request to "+(ST._closeWho||"the approver")+". Entry stays open until they confirm. A reason is required.");
     var ta=el("ac-close-reason"); ta.value=presetReason||"";
     el("ac-close-go").textContent = isGm ? "Close now" : "Send request";
     el("ac-close-go").disabled = !ta.value.trim();
     m.style.display="flex";
   }
+  // ── a note for one worker's day ────────────────────────────────────────────
+  function openNoteModal(a, btn, locked){
+    var m=el("ac-notemodal"); if(!m) return;
+    var emp=btn.getAttribute("data-nemp"), iso=btn.getAttribute("data-ndate");
+    var who=emp;
+    (a.workers||[]).forEach(function(w){ if(w.employee===emp) who=w.employee_name||emp; });
+    ST._noteKey=ck(emp,iso);
+    ST._noteBtn=btn;
+    var cur=ST.notes[ST._noteKey]||"";
+    el("ac-note-title").textContent = locked ? "Note" : "Note for this day";
+    el("ac-note-desc").innerHTML = "<b>"+esc(who)+"</b> &mdash; "+esc(iso)+". "+
+      (locked
+        ? "This entry is locked, so the note can be read but not changed."
+        : "Optional. It is read wherever this row is read later &mdash; the worker&rsquo;s review sheet, the Worker Task Day report and the Excel export.");
+    var ta=el("ac-note-text");
+    ta.value=cur;
+    ta.readOnly = !!locked;
+    el("ac-note-go").style.display = locked ? "none" : "";
+    m.style.display="flex";
+    if(!locked) ta.focus();
+  }
+  function closeNoteModal(){ var m=el("ac-notemodal"); if(m) m.style.display="none"; }
+  function saveNoteModal(){
+    var key=ST._noteKey, btn=ST._noteBtn;
+    if(!key){ closeNoteModal(); return; }
+    var v=(el("ac-note-text").value||"").trim().slice(0,500);
+    // empty is how a note is removed -- there is no separate delete, because
+    // "clear the box" is what somebody reaches for
+    if(v){ ST.notes[key]=v; } else { delete ST.notes[key]; }
+    if(btn){
+      btn.className="ncell"+(ST.notes[key]?" has":"");
+      btn.textContent=ST.notes[key]?"\u270e":"\u00b7";
+      btn.title=ST.notes[key]||"Add a note for this day";
+    }
+    closeNoteModal();
+  }
+  function initNoteModal(){
+    var x=el("ac-note-x"); if(x) x.onclick=closeNoteModal;
+    var c=el("ac-note-cancel"); if(c) c.onclick=closeNoteModal;
+    var g=el("ac-note-go"); if(g) g.onclick=saveNoteModal;
+    var m=el("ac-notemodal");
+    if(m) m.onclick=function(ev){ if(ev.target===m) closeNoteModal(); };
+  }
+
+  // ── submitting short of the target ─────────────────────────────────────────
+  function openShortModal(){
+    var m=el("ac-shortmodal"); if(!m){ doSubmit(1); return; }
+    var uom=(ST.detail&&ST.detail.uom)||"";
+    el("ac-short-desc").innerHTML =
+      "<b>"+fmt(ST._shortDone)+"</b> of <b>"+fmt(ST._shortTarget)+"</b> "+esc(uom)+
+      " done &mdash; <b>"+fmt(ST._shortOf)+"</b> short. Submitting now sends this entry "+
+      "for approval AND closes the plan at what was done: nothing further can be "+
+      "recorded or paid against it, and the unspent <b>"+fmt(ST._shortOf)+"</b> goes "+
+      "back to the master plan, so a new plan can be raised for the rest.";
+    var ta=el("ac-short-reason"); ta.value="";
+    el("ac-short-go").disabled=true;
+    m.style.display="flex";
+    ta.focus();
+  }
+  function closeShortModal(){ var m=el("ac-shortmodal"); if(m) m.style.display="none"; }
+  function initShortModal(){
+    var x=el("ac-short-x"); if(x) x.onclick=closeShortModal;
+    var c=el("ac-short-cancel"); if(c) c.onclick=closeShortModal;
+    var ta=el("ac-short-reason");
+    if(ta) ta.oninput=function(){ el("ac-short-go").disabled=!ta.value.trim(); };
+    var g=el("ac-short-go");
+    if(g) g.onclick=function(){
+      var reason=(ta.value||"").trim();
+      if(!reason){ toast("A reason is required"); return; }
+      closeShortModal();
+      doSubmit(1, reason);
+    };
+    var m=el("ac-shortmodal");
+    if(m) m.onclick=function(ev){ if(ev.target===m) closeShortModal(); };
+  }
+
   function closeCloseModal(){ var m=el("ac-closemodal"); if(m) m.style.display="none"; }
   function submitClose(){
     var reason=(el("ac-close-reason").value||"").trim();
@@ -607,7 +698,7 @@
       if(ST._closeIsGm){
         toast("Plan closed — "+fmt(d.finalised_actuals||0)+" actuals finalised · "+fmt(d.fulfilled_qty)+"/"+fmt(d.target_qty)+" done");
       } else {
-        toast("Close request sent to GM");
+        toast("Close request sent to "+(ST._closeWho||"the approver"));
       }
       // reload detail so the close box + grid reflect new state
       onAsg(ST.asg);
@@ -650,6 +741,7 @@
           '<span><b style="color:#0a7a43">in 06:52</b> time scanned in (P = marked present, no scan time)</span>'+
           '<span><b style="color:#b91c1c">A</b> marked Absent that day</span>'+
           '<span><b style="color:#a06000">?</b> no record either way — presence unknown</span>'+
+          '<span><b>✎</b> note — click a cell\'s corner to say what happened that day</span>'+
           '</div>'+
           '<div style="overflow-x:auto"><table class="grid"><thead><tr>'+
           '<th class="wname">Worker</th>';
@@ -716,7 +808,18 @@
               '" title="Hours this task took on '+iso+'. Pre-filled with the standard day; '+
               'change it only if the day was shared with another task.">';
           }
-          h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+hrsBox+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+pmark+'</td>';
+          // A NOTE FOR THIS WORKER ON THIS DAY. Per worker-day, because that is
+          // the thing being explained: "sent home 11am, rain" is about one
+          // person's Tuesday, and a note on the document would attach it to
+          // everybody on the grid. A marker rather than a box, so the grid does
+          // not double in width for something most cells never carry -- filled
+          // in when there is one, faint when there is not, and read-only once
+          // the entry is locked (there is still something to read).
+          var nval=ST.notes[ck(w.employee,iso)]||"";
+          var nbtn='<button type="button" class="ncell'+(nval?" has":"")+'" data-nemp="'+esc(w.employee)+
+            '" data-ndate="'+iso+'" title="'+(nval?esc(nval):"Add a note for this day")+
+            '" tabindex="-1">'+(nval?"✎":"·")+'</button>';
+          h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+hrsBox+nbtn+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+pmark+'</td>';
         }
       });
       h+='<td class="trow" data-wtot="'+esc(w.employee)+'">0</td></tr>';
@@ -731,7 +834,10 @@
     // this closes. Gated to FM / HR head / GM, and the server enforces the same
     // rule; shown-but-disabled for everyone else, because a control that simply
     // is not there teaches nobody who to ask.
-    var mayAdd = ST.roles && (ST.roles.is_farm_manager || ST.roles.is_hr_head || ST.roles.is_gm);
+    // Same question, same answer, same place it is enforced: a_add_crew gates
+    // on the assigner chain, so this asks the server rather than OR-ing three
+    // role flags whose names belong to another company's org chart.
+    var mayAdd = !!(ST.roles && ST.roles.may_change_crew);
     var addbar = document.createElement("div");
     addbar.className = "ac-addbar";
     addbar.innerHTML = locked
@@ -756,6 +862,18 @@
         var v=parseFloat(inp.value);
         if(isNaN(v)||v<=0){ delete ST.cells[key]; } else { ST.cells[key]=v; }
         recompute(a);
+      };
+    });
+    // THE NOTE BUTTON. A corner marker rather than a fifth input on every cell:
+    // the grid is already one box per worker per day and a second visible field
+    // would drown the quantity, which is the thing being entered. It opens the
+    // same modal card the other four dialogs on this screen use. A locked grid
+    // still opens it, read-only, because a note nobody can read later is
+    // decoration -- and after submit this screen is where it is read.
+    box.querySelectorAll("[data-nemp]").forEach(function(btn){
+      btn.onclick=function(ev){
+        ev.preventDefault(); ev.stopPropagation();
+        openNoteModal(a, btn, locked);
       };
     });
     box.querySelectorAll("[data-rel-emp]").forEach(function(btn){
@@ -844,8 +962,15 @@
     var complete = (target>0 && Math.abs(projected-target) < 0.0001) || (salariedOnly && !noTarget);
     // DRAFT: allowed whenever there is qty entered, target exists, not over, not locked
     var draftReady = ST.asg && grand>0 && !locked && !over && !noTarget;
-    // SUBMIT: when plan qty is completed (100%) OR salaried-only (documented balance)
-    var submitReady = draftReady && complete;
+    // SUBMIT: when plan qty is completed (100%) OR salaried-only (documented
+    // balance) -- OR, where the site has switched it on, short of target with a
+    // reason. A short submit CAPS the plan at what was done, so the button asks
+    // for that reason first; it is still refused when there is no target at all
+    // or the entry is over it, which are errors rather than short weeks.
+    var mayShort = !!(a.allow_short_submit) && !complete && projRemain > 0;
+    var submitReady = draftReady && (complete || mayShort);
+    ST._mayShort = mayShort; ST._shortOf = projRemain;
+    ST._shortDone = projected; ST._shortTarget = target;
     el("b-acdraft").disabled=!draftReady;
     el("b-acsubmit").disabled=!submitReady;
     ST._over=over; ST._noTarget=noTarget; ST._projRemain=projRemain; ST._complete=complete;
@@ -854,6 +979,11 @@
     if(hint){
       if(noTarget){ hint.innerHTML=""; }
       else if(over){ hint.innerHTML=""; }
+      else if(!complete && mayShort){
+        // the switch is on: say what submitting now actually does, because it
+        // closes the plan and gives the balance back to the master plan
+        hint.innerHTML = '<span style="color:#a06000">'+fmt(projected)+' of '+fmt(target)+' '+esc(a.uom||"")+' done. You can submit short — it asks why, <b>closes this plan at '+fmt(projected)+'</b>, and releases the unspent '+fmt(target-projected)+' back to the master plan.</span>';
+      }
       else if(!complete){
         var need = target - projected;
         hint.innerHTML = '<span style="color:#a06000">Submit unlocks when the target is completed — '+fmt(projected)+' of '+fmt(target)+' '+esc(a.uom||"")+' done, enter <b>'+fmt(need)+'</b> more (you can Save Draft meanwhile).</span>';
@@ -866,7 +996,7 @@
   }
   function cssq(s){ return (s||"").replace(/"/g,'\\\"'); }
 
-  function doSubmit(submitNow){
+  function doSubmit(submitNow, shortReason){
     var payload=[];
     for(var key in ST.cells){
       if(ST.cells[key]>0){
@@ -878,7 +1008,20 @@
     }
     if(!payload.length){ toast("Enter at least one quantity"); return; }
     var args={ action:"act_submit", assignment:ST.asg, rows:payload.join("|") };
+    // Free text goes beside the delimited cells, never inside them: a comma or a
+    // tilde in "sent home 11am, rain" would otherwise split a row and move a
+    // quantity. Only notes whose cell has a quantity are sent -- a note with no
+    // recorded day has no row to be saved with, and the server says so too.
+    var notes={}, anyNote=false;
+    for(var nkey in ST.notes){
+      if(ST.notes[nkey] && ST.cells[nkey]>0){ notes[nkey]=ST.notes[nkey]; anyNote=true; }
+    }
+    if(anyNote) args.notes=JSON.stringify(notes);
     if(submitNow) args.submit_now=1;
+    // mandatory when the entry is short and the site allows it: the server
+    // refuses a short submit without one rather than defaulting a reason, since
+    // a blank reason makes "closed short" a category with nothing to read
+    if(shortReason) args.short_reason=shortReason;
     if(ST._editingDoc){ args.edit_doc=ST._editingDoc; }  // approver updating a pending doc in place
     el("b-acdraft").disabled=true; el("b-acsubmit").disabled=true;
     function handleResp(d){
@@ -910,11 +1053,19 @@
       if(d.released_warning) notes.push(d.released_warning);
       if(d.joined_warning) notes.push(d.joined_warning);
       if(notes.length) window.alert("Recorded, with a note:\n\n• "+notes.join("\n\n• "));
+      // A note typed against a cell with no quantity has no row to be saved on.
+      // Said plainly, because somebody typed it.
+      if(d.notes_dropped_warning) window.alert(d.notes_dropped_warning);
+      // THE PLAN IS NOW CLOSED. An alert, not a toast: this submit did a second
+      // thing the person may not have expected to be irreversible, and the
+      // sentence includes what to do next if the work is still to be done.
+      if(d.closed_short) window.alert(d.closed_short_message ||
+        ("Submitted short — the plan is closed at "+fmt(d.capped_target)+" of "+fmt(d.approved_target)+"."));
       if(d.submit_blocked){ toast(d.submit_blocked); }
       else if(ST._editingDoc){ toast("Updated "+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")); var bn=el("ac-editbanner"); if(bn){bn.style.display="none";} ST._editingDoc=null; ST._editingStage=null; }
       else toast((submitNow?"Submitted ":"Draft saved ")+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")+" · KES "+fmt(d.total_payment,2));
       if(submitNow && !d.submit_blocked){
-        ST.asg=null; ST.cells={}; ST.hours={}; ST.detail=null;
+        ST.asg=null; ST.cells={}; ST.hours={}; ST.notes={}; ST.detail=null;
         el("ac-asg").value=""; el("ac-detail").style.display="none";
         el("ac-grid").innerHTML='<div class="empty">Pick an assignment to load the grid.</div>';
         el("ac-varnote").textContent="";

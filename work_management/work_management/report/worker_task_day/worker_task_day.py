@@ -306,6 +306,10 @@ def _rows(filters):
 			COALESCE(NULLIF(pr.daily_target, 0), t.custom_daily_target) daily_target,
 			we.actual_quantity, we.amount, we.hours,
 			IFNULL(we.holiday_multiplier, 0) holiday_multiplier,
+			-- WHAT HAPPENED TO THIS WORKER'S DAY, typed per worker-day on the
+			-- actuals grid. A short day with a reason beside it is a fact; the
+			-- same short day on its own is a query somebody has to chase.
+			we.note,
 			COALESCE(NULLIF(pr.uom, ''), t.custom_uom) uom,
 			""" + select_clock + """,
 			""" + select_att + """
@@ -377,6 +381,9 @@ def project_row(r, model=None):
 		"clock_out": r.get("clock_out") or r.get("att_out") or None,
 		"actuals": r.get("actuals"),
 		"workflow_state": r.get("workflow_state"),
+		# `or None` rather than `or ""`, so an empty cell is empty in the Excel
+		# export instead of a column of blank strings.
+		"note": (str(r.get("note") or "").strip() or None),
 	}
 
 
@@ -445,6 +452,11 @@ COLUMNS = [
 	{"fieldname": "actuals", "label": "Actuals", "fieldtype": "Link",
 		"options": "Work Management Actuals", "width": 130},
 	{"fieldname": "workflow_state", "label": "State", "fieldtype": "Data", "width": 130},
+	# LAST, and wide. It is prose, it is usually empty, and it is the column
+	# somebody reads only once a figure above it has made them ask why. Frappe's
+	# Excel and CSV export carry every column of a Script Report, so putting it
+	# here is what puts it in the export too.
+	{"fieldname": "note", "label": "Note", "fieldtype": "Data", "width": 240},
 ]
 
 

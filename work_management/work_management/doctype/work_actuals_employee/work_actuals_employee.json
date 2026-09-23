@@ -12,6 +12,7 @@
   "employment_type",
   "actual_quantity",
   "hours",
+  "note",
   "count_in_payroll",
   "amount",
   "holiday_multiplier",
@@ -70,6 +71,12 @@
    "label": "Hours",
    "precision": "2",
    "description": "How long this worker gave this task on this date. Arrives filled with the standard hours for that date, so an ordinary day needs no typing; type the real time only when the day was shared with another task.\n\nMeasurement only \u2014 pay stays quantity \u00d7 rate, so a mistyped hour spoils a figure and never a wage. Empty reads as a full day, which is what every row recorded before this field existed means."
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "description": "What happened on this worker's day, in their own row: \"sent home 11am, rain\", \"machine down\". Optional, and read later wherever this row is \u2014 the review sheet's daily log, the Worker Task Day report and the Excel export. Editable while the day is unpaid."
   },
   {
    "columns": 1,

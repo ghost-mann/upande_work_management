@@ -8,6 +8,8 @@
   "sb_general",
   "default_company",
   "block_exclude",
+  "sb_actuals",
+  "allow_short_submit",
   "tab_farms",
   "farms_section",
   "farms_restrict",
@@ -58,6 +60,7 @@
   "disc_long_day",
   "disc_short_day",
   "disc_hours_vs_qty",
+  "disc_closed_short",
   "att_auto_release_inactive",
   "sb_consult",
   "consultant_users",
@@ -122,6 +125,18 @@
    "fieldname": "block_exclude",
    "fieldtype": "Small Text",
    "label": "Block Exclude Keywords"
+  },
+  {
+   "fieldname": "sb_actuals",
+   "fieldtype": "Section Break",
+   "label": "Recording work done"
+  },
+  {
+   "fieldname": "allow_short_submit",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Allow submitting actuals before the plan target is reached",
+   "description": "Off \u2014 the default, and what every site does today \u2014 actuals can only be submitted once the plan's target quantity has been recorded; short of it they save as a Draft and the screen says how much more is needed.\n\nOn, a short submit is allowed and A REASON IS REQUIRED. The plan is then CAPPED AT WHAT WAS DONE: its target comes down to the quantity delivered, nothing further can be recorded or paid against it, and the unspent budget goes back to the master plan so a new plan can be raised for the rest. That is the same outcome as closing the plan early, reached without a second trip through the chain.\n\nThe reason and the shortfall are written onto the plan and the actuals document, shown on the plan trace and the review sheet, and counted under \"Closed short\" in Audit \u2192 Discrepancies \u2014 so a run of short weeks stays visible instead of becoming normal."
   },
   {
    "fieldname": "tab_general",
@@ -334,6 +349,13 @@
    "default": "1",
    "label": "Hourly task where the quantity and the hours differ",
    "description": "On a task measured in Hours the quantity and the hours are the same fact typed twice. Flags the rows where they disagree \u2014 one of the two is wrong, and the quantity is the one that pays."
+  },
+  {
+   "fieldname": "disc_closed_short",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Closed short of target",
+   "description": "Plans capped below their approved target \u2014 by a short submit or by closing early \u2014 with the shortfall and the reason given. One is a week that did not go to plan; a column of them is a target nobody believes."
   },
   {
    "fieldname": "att_auto_release_inactive",

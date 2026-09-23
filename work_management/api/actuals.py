@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, stage_pills
+from work_management import bulk, chain, presence, stage_pills
 from work_management.api.config import get_config
 
 
@@ -29,6 +29,7 @@ def wm_actuals(**kwargs):
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
+    ALLOW_SHORT_SUBMIT = _cfg["allow_short_submit"]
     STANDARD_DAY = _cfg["standard_day"]
     HOLIDAY_X = _cfg["public_holiday_pay_multiplier"]
 
@@ -154,6 +155,45 @@ def wm_actuals(**kwargs):
     for _act_farm, _act_role in (FARM_APPROVER_ROLE or {}).items():
         if _act_role in MY_ROLES and _act_farm not in ACT_FARMS:
             ACT_FARMS.append(_act_farm)
+
+    # CLOSING A PLAN, AND OVERRIDING AN ABSENT DAY, ASKED OF THE CHAIN.
+    #
+    # Five gates here used to read `r.startswith("Farm Manager")`, `r ==
+    # "Production Section Head"` and `"General Manager" in roles` -- three job
+    # titles out of the chain this app happens to ship with. On Altura, where
+    # the same steps are taken by a Production Manager, they answered no to the
+    # person who takes every one of them, so a plan could not be closed and a
+    # crew could not be changed except by granting somebody a role whose name
+    # means something else entirely.
+    #
+    # The chain answers both questions, and they are two different questions:
+    #
+    #   DECIDING a close is the last approval step's own decision -- the step
+    #   whose approval reaches the end of the chain. That is already what
+    #   act_close_pending tells whoever may not see the queue, in those words.
+    #
+    #   ASKING for one is open to anybody this chain involves -- whoever takes
+    #   an approval step, and whoever the Submit step names, which is the person
+    #   who records the work and is usually the one who knows the crop finished.
+    #   That is the shipped rule ("the farm's approver, or the section head who
+    #   raised it") said without naming anybody. A request decides nothing, so
+    #   erring wide here costs a queue entry and never a figure; erring narrow
+    #   costs the site the only way to stop a plan.
+    #
+    # Farm scope travels with it, because chain.may_take() asks the farm
+    # question of a farm-scoped step and ignores it everywhere else.
+    ACT_FINAL_STEP = None
+    for _act_step in chain.approval_steps(STAGE_ROWS, ACT_DT, enabled_only=True):
+        if _act_step.get("next_state") == ACT_TERMINAL:
+            ACT_FINAL_STEP = _act_step
+    ACT_MAY_DECIDE = 1 if (ACT_FINAL_STEP and chain.may_take(
+        ACT_FINAL_STEP, MY_ROLES, farms=ACT_FARMS) is None) else 0
+    ACT_MAY_REQUEST = 1 if chain.takeable(
+        STAGE_ROWS, ACT_DT, MY_ROLES, farms=ACT_FARMS) else 0
+    if not ACT_MAY_REQUEST:
+        if (STAGE_ROLE.get("actuals_submit") in MY_ROLES) or ("System Manager" in MY_ROLES):
+            ACT_MAY_REQUEST = 1
+    ACT_DECIDER_LABEL = chain.label_of(ACT_FINAL_STEP, "whoever takes the last approval")
 
     # WHERE A SHIPPED STEP STAMPS ITSELF -- columns this doctype already has,
     # named after the chain as it shipped. A fallback constant keyed by the one
@@ -415,6 +455,11 @@ def wm_actuals(**kwargs):
         # cell offers the hours beside the quantity, pre-filled with the standard for
         # that date so an ordinary day still needs nothing typed.
         a["allow_split_day"] = 1 if ALLOW_SPLIT_DAY else 0
+        # WHETHER THIS SITE LETS A SHORT WEEK BE SUBMITTED. Off -- the default --
+        # the submit button stays locked below target exactly as it always has,
+        # and the screen has nothing extra to draw. On, it unlocks and asks for a
+        # reason, because the plan is about to be capped at what was done.
+        a["allow_short_submit"] = 1 if ALLOW_SHORT_SUBMIT else 0
         a["standard_day"] = {
             "weekday": frappe.utils.flt(STANDARD_DAY.get("weekday")),
             "saturday": frappe.utils.flt(STANDARD_DAY.get("saturday")),
@@ -555,20 +600,37 @@ def wm_actuals(**kwargs):
                         guard = guard + 1
             w["leave_dates"] = leave_appr
             w["leave_pending_dates"] = leave_pend
-        # ── MORNING PRESENCE per worker-day: biometric scan (with first scan time),
+        # ── PRESENCE PER WORKER-DAY: biometric scan (with first scan time),
         # submitted Present attendance, and submitted ABSENT attendance — the grid
         # distinguishes P (evidence of presence), A (known absent) and ? (no record
         # either way / presence unknown). ──
+        #
+        # ASKED OF EACH CELL'S OWN DATE, and always was: the three reads below are
+        # bounded by `fromd`/`tod`, the assignment's window, and keyed by
+        # (employee, date) so a cell for last Tuesday carries Tuesday's evidence.
+        # Audited against finding #1 on 2026-09-23 and correct as it stands --
+        # the fault was on the assigner's picker, which asked `DATE(time) = today`
+        # three times over whatever the window was. `a["today"]` below is not a
+        # date filter: it is the cue the grid uses to leave FUTURE cells blank,
+        # since a day that has not happened has no scan to be missing.
         scan_by = {}
         attp_by = {}
         abs_by = {}
-        if workers and fromd and tod:
+        # The window's own days, up to today -- the same arithmetic the assigner's
+        # picker uses, so the two screens cannot disagree about which days a
+        # presence question covers. A window still running reads to today; one
+        # that finished reads to its own last day; one that has not started reads
+        # nothing, and the grid draws no marks rather than "?" on every cell.
+        ev_from, ev_to, ev_days = presence.evidence_window(
+            fromd, tod, str(frappe.utils.today()))
+        a["presence_window"] = {"from": ev_from, "to": ev_to, "days": ev_days}
+        if workers and ev_from:
             wemps = tuple([w.employee for w in workers])
             for r in frappe.db.sql("""
                 SELECT employee, DATE(`time`) d, MIN(`time`) t FROM `tabEmployee Checkin`
                 WHERE employee IN %s AND DATE(`time`) BETWEEN %s AND %s
                 GROUP BY employee, DATE(`time`)
-            """, (wemps, fromd, tod), as_dict=True):
+            """, (wemps, ev_from, ev_to), as_dict=True):
                 m = scan_by.get(r.employee)
                 if m is None:
                     m = {}
@@ -579,7 +641,7 @@ def wm_actuals(**kwargs):
                 WHERE docstatus = 1
                   AND status IN ('Present','Half Day','Work From Home','Absent')
                   AND employee IN %s AND attendance_date BETWEEN %s AND %s
-            """, (wemps, fromd, tod), as_dict=True):
+            """, (wemps, ev_from, ev_to), as_dict=True):
                 if r.status == "Absent":
                     m = abs_by.get(r.employee)
                     if m is None:
@@ -654,9 +716,10 @@ def wm_actuals(**kwargs):
         a["draft_state"] = draft[0].workflow_state if draft else None
         cells = {}
         cell_hours = {}
+        cell_notes = {}
         if draft:
             for r in frappe.db.sql("""
-                    SELECT employee, work_date, actual_quantity, hours
+                    SELECT employee, work_date, actual_quantity, hours, note
                     FROM `tabWork Actuals Employee` WHERE parent = %s
             """, (draft[0].name,), as_dict=True):
                 cells[str(r.employee) + "~" + str(r.work_date)] = r.actual_quantity
@@ -664,8 +727,14 @@ def wm_actuals(**kwargs):
                 # fill in that date's standard, and sending a 0 would suppress it
                 if frappe.utils.flt(r.hours) > 0:
                     cell_hours[str(r.employee) + "~" + str(r.work_date)] = frappe.utils.flt(r.hours)
+                # WHY THAT DAY WAS WHAT IT WAS. Per worker-day, not per document:
+                # "sent home 11am, rain" is about one person's Tuesday and saying
+                # it once for the whole grid would attach it to everybody.
+                if (r.note or "").strip():
+                    cell_notes[str(r.employee) + "~" + str(r.work_date)] = str(r.note).strip()
         a["cells"] = cells
         a["cell_hours"] = cell_hours
+        a["cell_notes"] = cell_notes
         # also: is there a live (in-review/confirmed) doc blocking new entry?
         live = frappe.db.sql("""
             SELECT name, workflow_state FROM `tabWork Management Actuals`
@@ -673,12 +742,42 @@ def wm_actuals(**kwargs):
         """, (name,), as_dict=True)
         a["live_name"] = live[0].name if live else None
         a["live_state"] = live[0].workflow_state if live else None
+        # A LOCKED GRID STILL SHOWS ITS NOTES. Once the entry is submitted the
+        # cells go read-only and `draft` is empty, so the notes typed on the way
+        # in would vanish from the screen that collected them -- which is the
+        # "a note nobody can read later is decoration" failure, one step earlier
+        # than the report.
+        if live and not draft:
+            for r in frappe.db.sql("""
+                    SELECT employee, work_date, note FROM `tabWork Actuals Employee`
+                    WHERE parent = %s AND IFNULL(note, '') != ''
+            """, (live[0].name,), as_dict=True):
+                cell_notes[str(r.employee) + "~" + str(r.work_date)] = str(r.note).strip()
         out["detail"] = a
 
     elif action == "act_submit":
         # payload = per-worker-per-day cells: "emp~date~qty|emp~date~qty|..."
         assignment = frappe.form_dict.get("assignment")
         payload = frappe.form_dict.get("rows")
+        # A NOTE PER WORKER-DAY, sent alongside rather than as a fifth `~` field.
+        # Free text is exactly what must not be squeezed into a delimited string:
+        # "sent home 11am, rain | machine down" would split into three cells and
+        # a tilde in a note would move a quantity. JSON, keyed the same way the
+        # grid keys a cell, so the two halves cannot get out of step.
+        notes_raw = frappe.form_dict.get("notes")
+        cell_note = {}
+        if notes_raw:
+            try:
+                for nk, nv in (json.loads(notes_raw) or {}).items():
+                    nt = str(nv or "").strip()
+                    if nt:
+                        # a note is a sentence, not an essay; the column is a
+                        # Small Text and the report prints it in a cell
+                        cell_note[str(nk)] = nt[:500]
+            except Exception:
+                # a malformed notes payload must not lose the quantities beside
+                # it -- the grid is a worker-by-day entry somebody typed
+                cell_note = {}
         submit_now = frappe.form_dict.get("submit_now")
         err = None
         if not assignment: err = "Assignment is required"
@@ -822,6 +921,12 @@ def wm_actuals(**kwargs):
                     # positive-presence evidence per (employee, date): a biometric
                     # scan or a submitted Present attendance. Used by the no-scan
                     # check — future dates are skipped (nothing to scan yet).
+                    #
+                    # PER CELL DATE, not per today: `date_t` is the set of dates
+                    # actually typed into the grid, and every lookup below is
+                    # keyed `(employee, pd)`. A row backfilled to last Tuesday is
+                    # judged against Tuesday. `ns_today` appears once, as the
+                    # future cutoff, which is the only thing today decides here.
                     scan_set = {}
                     present_set = {}
                     if gate_noscan:
@@ -837,6 +942,8 @@ def wm_actuals(**kwargs):
                               AND employee IN %s AND attendance_date IN %s
                         """, (emp_t, date_t), as_dict=True):
                             present_set[(r.employee, str(r.attendance_date))] = 1
+                    # the future cutoff, and nothing else: a date that has not
+                    # arrived cannot be missing a scan
                     ns_today = str(frappe.utils.today())
                     reasons_map = {}
                     for (pe, pd) in pairs:
@@ -909,34 +1016,48 @@ def wm_actuals(**kwargs):
                             else:
                                 nm2 = frappe.db.get_value("Employee", pe2, "employee_name") or pe2
                                 att_conflicts.append({"employee": pe2, "name": nm2, "reasons": dup_reasons[pe2]})
-            # ABSENT-day entries are a Farm Manager decision: only the farm's
-            # approver role (or GM / System Manager) may override those. Other
-            # conflicts (leave / off / no-scan) keep the normal logged override.
+            # ABSENT-day entries are an APPROVER's decision, and the approver is
+            # whoever this chain says decides this farm's work -- not
+            # `"Farm Manager" in roles`, a shipped job title that answered no to
+            # Altura's Production Manager while the site's own farm-scoped step
+            # named exactly him.
+            #
+            # Two steps open it: the farm-scoped step of this chain, asked for
+            # THIS assignment's farm, and the step that ends the chain. That is
+            # the same shape the old rule had -- the farm's own approver, or the
+            # person above them -- said in the chain's vocabulary instead of in
+            # one company's.
             has_absent_conflict = 0
             for cchk in att_conflicts:
                 for rchk in cchk.get("reasons", []):
                     if "marked Absent" in rchk:
                         has_absent_conflict = 1
             can_override = 1
+            ov_who = ACT_DECIDER_LABEL
             if has_absent_conflict:
-                ov_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
                 ov_farm = frappe.db.get_value("Work Management Assigner", assignment, "farm") if assignment else None
-                farm_role_map = dict(FARM_APPROVER_ROLE)
-                allowed = ("System Manager" in ov_roles) or ("General Manager" in ov_roles) or ("Farm Manager" in ov_roles)
-                if not allowed and ov_farm and farm_role_map.get(str(ov_farm).strip()) in ov_roles:
-                    allowed = True
+                allowed = ACT_MAY_DECIDE
+                for ov_step in chain.approval_steps(STAGE_ROWS, ACT_DT, enabled_only=True):
+                    if not ov_step.get("scoped"):
+                        continue
+                    ov_who = chain.label_of(ov_step, ov_who)
+                    if chain.may_take(ov_step, MY_ROLES, farm=ov_farm, farms=ACT_FARMS) is None:
+                        allowed = 1
                 if not allowed:
                     can_override = 0
             if att_conflicts and att_override and not can_override:
-                out["error"] = ("These entries include workers marked Absent — only the Farm Manager "
-                                "(or GM) can approve recording actuals on an absent day. Ask them to "
-                                "enter or approve this, or fix the attendance first.")
+                out["error"] = ("These entries include workers marked Absent — only " + str(ov_who) +
+                                " (or " + str(ACT_DECIDER_LABEL) + ") can approve recording actuals on "
+                                "an absent day. Ask them to enter or approve this, or fix the "
+                                "attendance first.")
             elif att_conflicts and not att_override:
                 out["needs_att_override"] = 1
                 out["att_conflicts"] = att_conflicts
                 out["can_override"] = can_override
                 if not can_override:
-                    out["override_blocked"] = "Entries for workers marked Absent need the Farm Manager (or GM) — you can save the other workers by removing the flagged ones, or ask the Farm Manager to approve."
+                    out["override_blocked"] = ("Entries for workers marked Absent need " + str(ov_who) +
+                        " (or " + str(ACT_DECIDER_LABEL) + ") — you can save the other workers by "
+                        "removing the flagged ones, or ask them to approve.")
             elif live and not existing and not editing_pending:
                 out["error"] = "This assignment already has an actuals record in progress (" + live[0] + ")."
             else:
@@ -1066,6 +1187,10 @@ def wm_actuals(**kwargs):
                     row.hours = hrs
                     row.count_in_payroll = in_pay
                     row.amount = amt
+                    # the note for THIS worker on THIS date, keyed as the grid
+                    # keys its cells. Absent is absent: an empty string would
+                    # overwrite a note an approver had already typed.
+                    row.note = cell_note.get(emp + "~" + str(wdate)) or None
                     # STORED, INCLUDING THE 1. What the amount was multiplied by is
                     # the only thing that makes it explainable six weeks later --
                     # and storing it on ordinary rows too is what tells a row this
@@ -1179,6 +1304,37 @@ def wm_actuals(**kwargs):
                     # Below target -> force Draft and tell the user how much more is needed.
                     completed = 0
                     submit_blocked_msg = None
+                    # ── SUBMITTING SHORT ──────────────────────────────────────
+                    # The site switch, and what it does when it is on. OFF is the
+                    # default and is exactly the behaviour above: short of target
+                    # the entry saves as a Draft and the screen says how much more
+                    # is needed. Nothing below runs.
+                    #
+                    # ON, and short, the submit is ALLOWED and a reason is
+                    # required -- and the plan is capped at what was done, which
+                    # is the same outcome close-plan-early reaches: the remaining
+                    # target is closed out, nothing further can be recorded or
+                    # paid against the plan, and the unspent master-plan headroom
+                    # is released so a new plan can be raised for the rest.
+                    # Confirmed as the intended behaviour on 2026-09-23; the
+                    # alternative ("submit short, plan stays open") is not built.
+                    #
+                    # The cap is done by bringing the plan's `quantity` down to
+                    # what was delivered, with the approved figure kept in
+                    # `original_qty`. That is one write with four consequences,
+                    # all of them wanted:
+                    #   * the hard target cap above refuses any further entry,
+                    #     because the target is now the delivered figure;
+                    #   * the master plan's headroom is `work_qty - SUM(planner
+                    #     .quantity)`, so the unspent part returns to the budget
+                    #     and a new plan can be raised against it;
+                    #   * `audit.fallback_change()` already reads original_qty vs
+                    #     quantity, so the plan's own banner says it moved;
+                    #   * nothing is deleted -- the approved target is still on
+                    #     the record, in the field that exists to hold it.
+                    short_reason = (frappe.form_dict.get("short_reason") or "").strip()
+                    short_by = 0
+                    short_of = 0
                     if a_pr:
                         plan_target2 = frappe.utils.flt(frappe.db.get_value("Work Management Planner", a_pr, "quantity"))
                         if plan_target2 > 0:
@@ -1200,15 +1356,40 @@ def wm_actuals(**kwargs):
                             elif salaried_only:
                                 completed = 1
                                 d.custom_closed_early = 0
+                            elif submit_now and ALLOW_SHORT_SUBMIT:
+                                # short, and this site allows it. The reason is the
+                                # price of the permission, so it is refused rather
+                                # than defaulted -- a blank one would make "closed
+                                # short" a category with nothing in it to read.
+                                if not short_reason:
+                                    submit_blocked_msg = (
+                                        "A reason is required to submit short of the target — "
+                                        + str(projected2) + " of " + str(plan_target2)
+                                        + " done. Say why the target was not met, and the plan "
+                                        "will be closed at what was done.")
+                                else:
+                                    completed = 1
+                                    short_by = 1
+                                    short_of = plan_target2 - projected2
                             else:
                                 need2 = plan_target2 - projected2
-                                submit_blocked_msg = ("Target not yet completed \\u2014 " + str(projected2) + " of " +
+                                # an em dash, not the six characters `\u2014`. The
+                                # escape was doubled on the way through the port,
+                                # so this refusal has always reached the screen as
+                                # "Target not yet completed \\u2014 15.0 of 60.0".
+                                submit_blocked_msg = ("Target not yet completed — " + str(projected2) + " of " +
                                                       str(plan_target2) + " done. Enter " + str(need2) +
                                                       " more before submitting. Saved as Draft.")
                             # document the balance vs target on THIS actual (snapshot)
                             d.custom_balance_qty = plan_target2 - projected2
                     if a_pr and not d.get("custom_balance_qty"):
                         d.custom_balance_qty = 0
+                    if short_by:
+                        # stamped on the actuals document before it is written, so
+                        # the reason and the entry are one save
+                        d.custom_short_reason = short_reason
+                        d.custom_closed_early = 1
+                        d.custom_close_reason = short_reason
                     if is_new:
                         d.insert(ignore_permissions=True)
                     elif editing_pending:
@@ -1225,6 +1406,120 @@ def wm_actuals(**kwargs):
                         # STAGE_ROLE["actuals_submit"], before any of this was written.
                         frappe.db.set_value("Work Management Actuals", d.name, "workflow_state", STAGE_NEXT["actuals_submit"], update_modified=False)
                         d.workflow_state = STAGE_NEXT["actuals_submit"]
+                        # ── CAP THE PLAN AT WHAT WAS DONE ────────────────────
+                        # Only once the entry has actually gone into the chain:
+                        # capping a plan whose submit was then refused would
+                        # close a week nobody had finished recording.
+                        if short_by and a_pr:
+                            sc_was = frappe.utils.flt(frappe.db.get_value(
+                                "Work Management Planner", a_pr, "quantity"))
+                            sc_orig = frappe.utils.flt(frappe.db.get_value(
+                                "Work Management Planner", a_pr, "original_qty"))
+                            sc_done = sc_was - frappe.utils.flt(short_of)
+                            # THE MONEY COMES DOWN WITH THE QUANTITY. A master
+                            # plan line budgets both, and its headroom is
+                            # exhausted when EITHER runs out -- so capping the
+                            # quantity and leaving `total_cost` where it was
+                            # would release the work and keep the money, and the
+                            # audit's "budget freed" would always read 0.
+                            # Recomputed at the plan's own rate, which is the
+                            # arithmetic the request was written with and the one
+                            # adjust_target already uses. A plan with no rate
+                            # keeps its cost rather than zeroing it: `sc_done * 0`
+                            # would report the whole budget as released when
+                            # nothing about the money is known.
+                            sc_rate = frappe.utils.flt(frappe.db.get_value(
+                                "Work Management Planner", a_pr, "rate"))
+                            sc_was_cost = frappe.utils.flt(frappe.db.get_value(
+                                "Work Management Planner", a_pr, "total_cost"))
+                            sc_cost = (sc_done * sc_rate) if sc_rate > 0 else sc_was_cost
+                            sc_set = {
+                                # THE CAP. The target becomes what was delivered,
+                                # so the hard cap above refuses further entry and
+                                # the master plan's headroom -- work_qty minus the
+                                # sum of its plans' quantities -- gets the unspent
+                                # part back for a new plan.
+                                "quantity": sc_done,
+                                "total_cost": sc_cost,
+                                "fulfilled_qty": sc_done,
+                                "remaining_qty": 0,
+                                "fulfilment_pct": 100 if sc_done > 0 else 0,
+                                "custom_balance_qty": 0,
+                                # and the plan is closed, which is what stops
+                                # anything further being recorded or paid against
+                                # it whatever the arithmetic says
+                                "custom_close_state": "Closed",
+                                "custom_closed_by": frappe.session.user,
+                                "custom_closed_date": frappe.utils.today(),
+                                "custom_close_reason": short_reason,
+                            }
+                            # THE APPROVED FIGURE IS KEPT. original_qty is the
+                            # snapshot this app already uses for a target moved
+                            # after approval, and audit.fallback_change() reads it
+                            # -- so the plan's own banner says the target came
+                            # down, and by how much, without a second mechanism.
+                            # Only written when empty: a plan whose target had
+                            # already been adjusted keeps the figure it was
+                            # APPROVED at, not the one it was adjusted to.
+                            if not sc_orig:
+                                sc_set["original_qty"] = sc_was
+                                sc_set["original_cost"] = sc_was_cost
+                            frappe.db.set_value("Work Management Planner", a_pr, sc_set,
+                                                update_modified=False)
+                            # RELEASE THE CREW. A closed plan holds nobody: every
+                            # still-active worker is freed for other tasks, which
+                            # is what close-plan-early does and what stops a capped
+                            # plan quietly blocking next week's assignment.
+                            sc_freed = 0
+                            for sc_r in frappe.db.sql("""
+                                SELECT we.name row_id
+                                FROM `tabWork Assignment Employee` we
+                                INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
+                                WHERE a2.planner_request = %s
+                                  AND IFNULL(we.status,'Active') = 'Active'
+                            """, (a_pr,), as_dict=True):
+                                frappe.db.set_value("Work Assignment Employee", sc_r.row_id,
+                                    "status", "Left", update_modified=False)
+                                frappe.db.set_value("Work Assignment Employee", sc_r.row_id,
+                                    "left_date", frappe.utils.today(), update_modified=False)
+                                sc_freed = sc_freed + 1
+                            # ── SAID ON THE RECORD, ON BOTH DOCUMENTS ────────
+                            # The figures and the reason, as a comment on each, so
+                            # the plan trace and the actuals history both carry it.
+                            # A stamped field can be read; a comment is what a
+                            # person scrolling the record actually sees.
+                            sc_line = ("Closed short: " + str(sc_done) + " of " + str(sc_was)
+                                + " done, " + str(frappe.utils.flt(short_of)) + " short. "
+                                + "Reason: " + short_reason.rstrip(". ") + ".")
+                            try:
+                                frappe.get_doc("Work Management Actuals", d.name).add_comment(
+                                    "Comment", sc_line + " — submitted by " + frappe.session.user + ".")
+                                frappe.get_doc("Work Management Planner", a_pr).add_comment(
+                                    "Comment", sc_line + " Plan capped at what was done by "
+                                    + frappe.session.user + "; the unspent "
+                                    + str(frappe.utils.flt(short_of)) + " (KES "
+                                    + str(round(sc_was_cost - sc_cost, 2)) + ")"
+                                    + " is released back to the master plan. "
+                                    + str(sc_freed) + " worker(s) released.")
+                            except Exception:
+                                # a comment is a record, not the record: the cap
+                                # itself is written above and must not be undone by
+                                # a failure to narrate it
+                                pass
+                            frappe.db.commit()
+                            out["closed_short"] = 1
+                            out["short_of"] = frappe.utils.flt(short_of)
+                            out["short_reason"] = short_reason
+                            out["capped_target"] = sc_done
+                            out["approved_target"] = sc_was
+                            out["short_cost"] = frappe.utils.flt(sc_was_cost - sc_cost, 2)
+                            out["workers_released"] = sc_freed
+                            out["closed_short_message"] = (
+                                "Submitted short and the plan is now closed at " + str(sc_done)
+                                + " of " + str(sc_was) + ". The unspent "
+                                + str(frappe.utils.flt(short_of))
+                                + " has gone back to the master plan — raise a new plan for the "
+                                "rest if the work is still to be done.")
                     elif submit_now and not completed and not editing_pending:
                         # keep as Draft; report why submit didn't go through
                         out["submit_blocked"] = submit_blocked_msg or "Target not completed; saved as Draft."
@@ -1244,6 +1539,22 @@ def wm_actuals(**kwargs):
                     out["tw_qty"] = d.custom_tw_qty
                     out["salaried_qty"] = d.custom_salaried_qty
                     out["balance_qty"] = d.custom_balance_qty
+                    # A NOTE WITH NO ROW TO LIVE ON. Only a cell with a quantity
+                    # becomes a child row, so a note typed against an empty cell
+                    # has nothing to be saved with. Reported rather than dropped
+                    # in silence -- somebody typed it, and a note that vanishes is
+                    # worse than one that was never offered.
+                    nd_kept = {}
+                    for nd_r in d.employees:
+                        nd_kept[str(nd_r.employee) + "~" + str(nd_r.work_date)] = 1
+                    nd_lost = [nk for nk in cell_note if nk not in nd_kept]
+                    if nd_lost:
+                        out["notes_dropped"] = len(nd_lost)
+                        out["notes_dropped_warning"] = (
+                            str(len(nd_lost)) + " note" + ("" if len(nd_lost) == 1 else "s") +
+                            " could not be saved: a note belongs to a recorded day, and "
+                            "these cells have no quantity. Enter the quantity, or leave the "
+                            "note off. (" + ", ".join(sorted(nd_lost)[:5]) + ")")
     elif action == "act_my":
         out["actuals"] = frappe.db.get_all("Work Management Actuals",
             filters={"entered_by":frappe.session.user},
@@ -1479,16 +1790,16 @@ def wm_actuals(**kwargs):
         assignment = frappe.form_dict.get("assignment")
         if not plan and assignment:
             plan = frappe.db.get_value("Work Management Assigner", assignment, "planner_request")
-        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
-        is_requester = False
-        for r in crl:
-            if r.startswith("Farm Manager") or r == "Production Section Head":
-                is_requester = True
         out["user"] = frappe.session.user
-        out["is_gm"] = 1 if is_gm else 0
-        out["can_request"] = 1 if is_requester else 0
-        out["can_close_now"] = 1 if is_gm else 0
+        # `is_gm` keeps its NAME -- it has been in this payload since the close
+        # feature shipped and an older screen may still read it -- but not its
+        # meaning. It is no longer "holds the role General Manager"; it is
+        # whoever takes the step that ends this chain, which is the only honest
+        # answer on a site that hands that step to somebody else.
+        out["is_gm"] = ACT_MAY_DECIDE
+        out["can_request"] = ACT_MAY_REQUEST
+        out["can_close_now"] = ACT_MAY_DECIDE
+        out["decider_label"] = ACT_DECIDER_LABEL
         if plan:
             cs = frappe.db.get_value("Work Management Planner", plan,
                 ["custom_close_state", "custom_close_requested_by", "custom_close_request_date",
@@ -1516,19 +1827,16 @@ def wm_actuals(**kwargs):
         reason = (frappe.form_dict.get("reason") or "").strip()
         if not plan and assignment:
             plan = frappe.db.get_value("Work Management Assigner", assignment, "planner_request")
-        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
-        is_requester = False
-        for r in crl:
-            if r.startswith("Farm Manager") or r == "Production Section Head":
-                is_requester = True
         err = None
         if not plan:
             err = "No plan resolved for this close request"
         if not reason:
             err = "A reason is required to request a close"
-        if not err and not (is_requester or is_gm):
-            err = "You are not allowed to request a close (need Farm Manager or Section Head)"
+        if not err and not ACT_MAY_REQUEST:
+            # named from the chain: "need Farm Manager or Section Head" sent an
+            # Altura reader looking for two roles the site has not got.
+            err = ("Only somebody who takes a step of this work's approval chain can "
+                   "ask for a plan to be closed. " + str(ACT_DECIDER_LABEL) + " decides it.")
         if not err:
             cstate = frappe.db.get_value("Work Management Planner", plan, "custom_close_state") or ""
             if cstate == "Closed":
@@ -1551,19 +1859,14 @@ def wm_actuals(**kwargs):
     # ACTION: act_close_pending  (GET) — GM's queue of plans awaiting close approval
     # ---------------------------------------------------------------------
     elif action == "act_close_pending":
-        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
-        if not is_gm:
+        if not ACT_MAY_DECIDE:
             out["pending"] = []
             out["not_gm"] = 1
             # WHY, in the server's words. The screen said "Only the General
             # Manager sees close requests" -- a shipped role name printed at a
             # site that may hand the last step to somebody else entirely.
-            cp_keys = chain.stage_keys(STAGE_ROWS, ACT_DT, enabled_only=True)
-            cp_last = chain.by_key(STAGE_ROWS, ACT_DT, cp_keys[-1]) if cp_keys else None
             out["not_gm_why"] = ("Close requests are decided by "
-                + str(chain.label_of(cp_last, "whoever takes the last approval"))
-                + ", and are not yours to see.")
+                + str(ACT_DECIDER_LABEL) + ", and are not yours to see.")
         else:
             rows = frappe.db.get_all("Work Management Planner",
                 filters={"custom_close_state": "Close Requested"},
@@ -1608,13 +1911,11 @@ def wm_actuals(**kwargs):
         reason = (frappe.form_dict.get("reason") or "").strip()
         if not plan and assignment:
             plan = frappe.db.get_value("Work Management Assigner", assignment, "planner_request")
-        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
-        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
         err = None
         if not plan:
             err = "No plan resolved for this close"
-        if not err and not is_gm:
-            err = "Only the General Manager can confirm a close"
+        if not err and not ACT_MAY_DECIDE:
+            err = "Only " + str(ACT_DECIDER_LABEL) + " can confirm a close."
         stored_reason = None
         if not err:
             cstate = frappe.db.get_value("Work Management Planner", plan, "custom_close_state") or ""
@@ -1734,7 +2035,12 @@ def wm_actuals(**kwargs):
         out["is_clerk"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("enter_work") or []))) else 0
         out["is_hr_head"] = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES)
-        out["is_gm"] = "General Manager" in rl
+        # `is_gm` used to live here -- "General Manager" in rl -- and gated the
+        # Close Requests queue, the close dialog's verb and, on the planner, the
+        # button's own wording. It named a role a site need not have, so on
+        # Altura the person the chain puts at the end of it was offered none of
+        # them. `may_close_plans` below answers the same question from the chain
+        # and nothing reads the role name any more.
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
         # Whoever decides a farm's work, from the farm-scoped steps' own roles.
@@ -1759,6 +2065,23 @@ def wm_actuals(**kwargs):
             STAGE_ROWS, 'Work Management Actuals', rl, farms=ACT_FARMS) else 0
         out["approver_label"] = chain.approver_suffix(
             STAGE_ROWS, ['Work Management Actuals'], rl, farms=ACT_FARMS)
+        # MAY THEY CHANGE THE CREW. The grid decided this itself, by OR-ing the
+        # three role flags above -- two of which name roles a site need not have
+        # -- so the Add-a-worker button was dark for the very person a_add_crew
+        # would have allowed. One answer, from the assigner's chain, which is the
+        # chain a_add_crew and a_release actually gate on.
+        ac_asg_farms = []
+        for _ac_farm, _ac_role in (FARM_APPROVER_ROLE or {}).items():
+            if _ac_role in rl and _ac_farm not in ac_asg_farms:
+                ac_asg_farms.append(_ac_farm)
+        out["may_change_crew"] = 1 if chain.takeable(
+            STAGE_ROWS, 'Work Management Assigner', rl, farms=ac_asg_farms) else 0
+        # ...and whether the Close Requests queue is theirs. The screen asked
+        # `is_gm`, a shipped role name, for a queue that belongs to whoever
+        # takes the step ending this chain -- which act_close_pending and
+        # act_close_confirm now both gate on.
+        out["may_close_plans"] = ACT_MAY_DECIDE
+        out["decider_label"] = ACT_DECIDER_LABEL
         out["stages"] = stage_pills.for_document_type(
             "Work Management Actuals", STAGE_ROWS, FARM_APPROVER_ROLE, rl)
 

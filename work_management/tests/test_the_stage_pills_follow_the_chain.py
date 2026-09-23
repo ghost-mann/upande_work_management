@@ -276,10 +276,20 @@ class TestTheScreensRenderWhatTheyAreSent(unittest.TestCase):
 			with self.subTest(gate=gate):
 				self.assertNotIn(gate, block)
 
-	def test_close_requests_is_not_a_chain_step_and_stays_as_it_was(self):
+	def test_close_requests_is_not_a_chain_step_and_stays_where_it_is(self):
+		"""It is still a tab beside the chain's own, but it is no longer gated on
+		a role name.
+
+		`r.is_gm` -- "General Manager" in roles -- decided who saw this queue,
+		and on Altura the last actuals step is taken by somebody else, so the
+		person act_close_pending would have answered could not reach it.
+		`may_close_plans` is that same step resolved from the chain, which is
+		exactly what act_close_pending and act_close_confirm now gate on.
+		"""
 		block = self.queues("work-actuals.js")
 		self.assertIn('key:"close"', block)
-		self.assertIn("r.is_gm", block)
+		self.assertIn("r.may_close_plans", block)
+		self.assertNotIn("r.is_gm", block)
 
 	def test_the_tab_prints_its_count_and_its_marker(self):
 		for screen in self.SCREENS:

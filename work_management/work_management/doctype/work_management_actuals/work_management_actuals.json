@@ -46,6 +46,7 @@
   "amended_from",
   "custom_balance_qty",
   "custom_close_reason",
+  "custom_short_reason",
   "custom_fm_approved_at",
   "custom_gm_approved_at",
   "custom_hr_approved_at",
@@ -307,6 +308,13 @@
    "fieldtype": "Small Text",
    "label": "Close Reason",
    "read_only": 1
+  },
+  {
+   "fieldname": "custom_short_reason",
+   "fieldtype": "Small Text",
+   "label": "Why the target was not met",
+   "read_only": 1,
+   "description": "Required when this entry was submitted short of the plan's target, and typed in the submit dialog rather than here. It is stamped on the plan as well, written as a comment on both, and shown on the plan trace, in the review sheet and under \u201cClosed short\u201d in Audit \u2192 Discrepancies."
   },
   {
    "fieldname": "custom_fm_approved_at",

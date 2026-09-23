@@ -1655,6 +1655,25 @@
           '<td class="m" style="font-size:10px">'+esc(r.actuals||"")+'</td>'+
           '<td class="m" style="font-size:10px">'+esc(shortUser(r.entered_by||""))+'</td></tr>';
       });
+    } else if(c.key==="closed_short"){
+      // A PLAN, not a worker-day. The other twelve checks are a row of money that
+      // should not have been spent; this one is a target that was quietly brought
+      // down, and the KES figure is the budget that went BACK to the master plan.
+      // So it gets its own shape: the plan, what it was approved for, what it was
+      // capped at, and the reason somebody gave.
+      h+='<th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Period</th><th class="n">Approved</th><th class="n">Done</th><th class="n">Short by</th><th class="n">Budget freed</th><th>Reason</th><th>Closed by</th>';
+      rows.forEach(function(r){
+        body+='<tr><td class="m" style="font-size:10px">'+esc(r.planner||"")+'</td>'+
+          '<td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td>'+
+          '<td class="m" style="font-size:10px">'+esc(r.wdate||"")+'</td>'+
+          '<td class="n m">'+fmt(r.approved_qty)+' '+esc(r.uom||"")+'</td>'+
+          '<td class="n m">'+fmt(r.capped_qty)+' <span style="color:var(--mute);font-size:10px">('+fmt(r.pct,0)+'%)</span></td>'+
+          '<td class="n m" style="color:var(--bad);font-weight:700">'+fmt(r.short_qty)+'</td>'+
+          '<td class="n m">'+fmt(r.amount,2)+'</td>'+
+          '<td style="font-size:11px;max-width:260px">'+esc(r.reason||"—")+'</td>'+
+          '<td class="m" style="font-size:10px">'+esc(shortUser(r.closed_by||""))+
+          (r.closed_on?('<br><span style="color:var(--mute)">'+esc(dshort(r.closed_on))+'</span>'):'')+'</td></tr>';
+      });
     } else if(c.key==="no_pay"){
       h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Should be KES</th><th class="n">Stored</th><th>Doc</th>';
       rows.forEach(function(r){
@@ -1995,8 +2014,18 @@
           ((t.runs&&t.runs.length)?'<span><b style="color:var(--ink)">Run'+(t.runs.length>1?'s':'')+':</b> '+esc(t.runs.join(", "))+'</span>':'')+
         '</div>'+
         (who.length?'<div style="padding:0 16px 8px;font-size:11px;color:var(--mute)">'+esc(who.join("  ·  "))+'</div>':'')+
+        // THE PLAN BEHIND THIS CARD WAS CLOSED SHORT. Without this the card shows
+        // five days where the plan wanted ten and nothing says why -- and the
+        // reason somebody typed sits on a document this reader never opens.
+        ((t.closed_short||[]).map(function(cs){
+          return '<div style="padding:8px 16px;border-top:1px solid var(--faint);background:rgba(160,96,0,.06);font-size:11px;color:#7a4a00">'+
+            '<b>Plan closed short.</b> '+fmt(cs.capped_qty)+' of '+fmt(cs.approved_qty)+' '+esc(cs.uom||"")+
+            ' done &mdash; '+fmt(cs.short_qty)+' short. '+(cs.reason?('Reason: '+esc(cs.reason)):'No reason recorded.')+
+            (cs.closed_by?(' <span style="opacity:.8">Closed by '+esc(shortUser(cs.closed_by))+(cs.closed_on?(' on '+esc(dshort(cs.closed_on))):'')+'.</span>'):'')+
+            '</div>';
+        }).join(""))+
         '<div class="tablescroll" style="max-height:320px"><table style="margin-top:0"><thead><tr>'+
-          '<th>Day worked</th><th class="c">Presence</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th></tr></thead><tbody>';
+          '<th>Day worked</th><th class="c">Presence</th><th class="n">Qty done</th><th class="n">Rate</th><th class="n">Pay KES</th><th class="c">Paid</th><th>Run</th><th>Note</th></tr></thead><tbody>';
       rows.forEach(function(r){
         var rowFlag=((r.att_status||"")==="Absent"||(!r.scan_in&&!r.att_status)||r.day_leave||r.day_off);
         var qtyCell = r.editable
@@ -2012,11 +2041,16 @@
           (r.holiday_multiplier>1?' <span class="wr-holx" title="Public holiday — valued at '+fmt(r.holiday_multiplier,2)+'× the task rate of '+fmt(r.doc_rate,2)+'">×'+fmt(r.holiday_multiplier,2)+'</span>':'')+'</td>'+
           '<td class="n m" data-amt-for="'+esc(r.rowname||"")+'">'+fmt(r.amount,2)+'</td>'+
           '<td class="c">'+(r.in_payroll? payTag(r.paid?"Paid":"Unpaid") : '<span class="tag">Not in payroll</span>')+'</td>'+
-          '<td class="m">'+esc(r.run_ref||"—")+'</td></tr>';
+          '<td class="m">'+esc(r.run_ref||"—")+'</td>'+
+          // WHAT THE CLERK SAID ABOUT THAT DAY, typed per worker-day on the
+          // actuals grid. This is where somebody deciding whether a day is
+          // payable looks, so it is where the note has to arrive -- "sent home
+          // 11am, rain" explains a short day that otherwise reads as a finding.
+          '<td style="font-size:11px;color:var(--mute);max-width:220px" title="'+esc(r.note||"")+'">'+esc(r.note||"")+'</td></tr>';
       });
       h+='</tbody><tfoot><tr><th>'+fmt(t.days)+' days</th><th></th>'+
          '<th class="n">'+fmt(t.qty)+'</th><th class="n">'+fmt(t.rate,2)+' avg</th><th class="n">'+fmt(t.amount,2)+'</th>'+
-         '<th class="c" colspan="2">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
+         '<th class="c" colspan="3">'+(t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+' unpaid':'fully paid')+'</th></tr></tfoot></table></div>'+
       '</div>';
     });
     if(tasks.length){
@@ -2423,14 +2457,16 @@
       if(t.assignments&&t.assignments.length) s2.push(["Assignments", t.assignments.join(", ")]);
       var who=workerPeople(t);
       if(who) s2.push(["Sign-offs", who]);
-      s2.push(["Day worked","Presence","Qty done","Rate","Pay KES","Paid","Run"]);
+      s2.push(["Day worked","Presence","Qty done","Rate","Pay KES","Paid","Run","Note"]);
       rows.forEach(function(r){
         var pres = r.scan_in ? ("P (in "+r.scan_in+")") : ((r.att_status||"")==="Absent" ? "A — marked Absent" : (r.att_status ? "P ("+r.att_status+")" : "? no record"));
+        // the per-worker-day note travels with the day it explains, or the
+        // export is a sheet of unexplained short days
         s2.push([r.wdate||"", pres, r.qty||0, Math.round((r.rate||0)*100)/100, r.amount||0,
-                 r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll", r.run_ref||""]);
+                 r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll", r.run_ref||"", r.note||""]);
       });
       s2.push([(t.days||0)+" days", t.qty||0, Math.round((t.rate||0)*100)/100+" avg", t.amount||0,
-               (t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+" unpaid":"fully paid"), ""]);
+               (t.unpaid_amt>0.001? fmt(t.unpaid_amt,2)+" unpaid":"fully paid"), "", ""]);
       s2.push([]);
     });
     if(!s2.length) s2.push(["No confirmed work in this window"]);
@@ -2438,7 +2474,7 @@
     var ws1=window.XLSX.utils.aoa_to_sheet(s1);
     var ws2=window.XLSX.utils.aoa_to_sheet(s2);
     ws1["!cols"]=[{wch:22},{wch:26},{wch:14},{wch:16},{wch:12},{wch:8},{wch:10},{wch:10},{wch:12},{wch:12},{wch:12}];
-    ws2["!cols"]=[{wch:34},{wch:30},{wch:14},{wch:26},{wch:16},{wch:16}];
+    ws2["!cols"]=[{wch:34},{wch:30},{wch:14},{wch:26},{wch:16},{wch:16},{wch:14},{wch:40}];
     window.XLSX.utils.book_append_sheet(wb, ws1, "Summary");
     window.XLSX.utils.book_append_sheet(wb, ws2, "Tasks & days");
     window.XLSX.writeFile(wb, workerFileBase(d)+".xlsx");
@@ -2448,7 +2484,11 @@
     var daily=(d.daily||[]).map(function(r){ return {
       Date:r.wdate||"", Task:taskName(r.task), "Block":r.block||"", "Farm":r.farm||"",
       Qty:r.qty||0, Rate:Math.round((r.rate||0)*100)/100, "Pay KES":r.amount||0,
-      Status:(r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll"), Run:r.run_ref||""
+      Status:(r.in_payroll?(r.paid?"Paid":"Unpaid"):"Not in payroll"), Run:r.run_ref||"",
+      // the fallback carries the note too: it is the same export by a different
+      // route, and a reader who got the CSV because the library failed to load
+      // has no less need of the explanation
+      Note:r.note||""
     }; });
     if(!daily.length){ toast("No day rows to export","bad"); return; }
     var keys=Object.keys(daily[0]);

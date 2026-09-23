@@ -271,6 +271,14 @@ def get_config():
 		# so, and with it off the double-allocation guard refuses exactly as it
 		# always has -- no figure on any existing site moves.
 		"allow_split_day": False,
+		# May actuals be submitted before the plan's target has been reached?
+		# Off unless a site says otherwise, so the completion gate refuses exactly
+		# as it always has and no existing site's behaviour moves on migrate.
+		#
+		# On, a short submit is allowed with a mandatory reason and the plan is
+		# CAPPED at what was done -- the same outcome as an early close, which is
+		# the decision recorded on 2026-09-23. See act_submit in api/actuals.py.
+		"allow_short_submit": False,
 		# How long a full day is. The denominator every man-day figure divides by;
 		# see work_management/split_day.py, which is unit-tested.
 		"standard_day": dict(split_day.STANDARD_DAY),
@@ -293,6 +301,7 @@ def get_config():
 	# this field existed has no such key, and an attribute would raise.
 	cfg["allow_concurrent_master_plans"] = bool(settings.get("allow_concurrent_master_plans"))
 	cfg["allow_split_day"] = bool(settings.get("allow_split_day"))
+	cfg["allow_short_submit"] = bool(settings.get("allow_short_submit"))
 	# PUBLIC HOLIDAY PAY, read the same defensive way the standard day below is,
 	# and for the same reason: a `default` on a Single's field reaches a FRESH
 	# install only. On a site that already exists the field arrives as 0, and 0

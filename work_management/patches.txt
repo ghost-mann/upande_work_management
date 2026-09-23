@@ -25,6 +25,10 @@ work_management.patches.v1_0.repair_submit_without_write
 work_management.patches.v1_0.show_task_subjects_in_links
 work_management.patches.v1_0.backfill_actuals_hours
 work_management.patches.v1_0.switch_on_the_new_discrepancy_checks
+# Same trap, one field later: a Check added to an existing Single arrives 0
+# whatever its default says. Beside its predecessor because it is the same fix
+# for the same reason, and neither depends on anything.
+work_management.patches.v1_0.switch_on_the_closed_short_check
 # Employee.custom_basic_pay and its week stamp: CORE_CUSTOM_FIELDS is only
 # applied by after_install, so a field added to it later needs this to reach a
 # site that is already up.

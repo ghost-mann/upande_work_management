@@ -41,6 +41,7 @@ from work_management import approvals, chain
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS = os.path.join(APP, "public", "js")
+API = os.path.join(APP, "api")
 
 #: The five web screens. All of them, not the three that approve: the dashboard
 #: reports on every chain and carried four hardcoded state lists of its own.
@@ -89,6 +90,41 @@ def live_code(name):
 	return without_fallbacks(without_comments(read(name)))
 
 
+#: The dispatchers behind those five screens. A screen that stopped naming a job
+#: title is only half the fix: `act_close_confirm` went on asking
+#: `"General Manager" in roles` and `a_add_crew` went on asking
+#: `role.startswith("Farm Manager")`, so on Altura the control was drawn for the
+#: Production Manager the chain names and the server refused him anyway. The
+#: workaround on site was to grant him a role whose name means something else.
+#:
+#: wm_payment is absent for the reason it is absent from test_no_hardcoded_chain:
+#: its single step is `Payment: Accounts`, required and unreachable past, and who
+#: handles payments is a capability rather than a step.
+DISPATCHERS = ("actuals.py", "assigner.py", "planner.py", "masterplan.py")
+
+
+def read_api(name):
+	with open(os.path.join(API, name), encoding="utf-8") as handle:
+		return handle.read()
+
+
+def without_python_comments(src):
+	"""Drop whole-line `#` comments and triple-quoted blocks.
+
+	Same reasoning as without_comments() above: most of the comments in these
+	files quote the literal they replaced -- that is the record of the fix, not a
+	relapse -- and this test is about what the code COMPARES.
+	"""
+	src = re.sub(r'"""".*?"""', "", src, flags=re.S)
+	src = re.sub(r'""".*?"""', "", src, flags=re.S)
+	return "\n".join(
+		line for line in src.splitlines() if not line.lstrip().startswith("#"))
+
+
+def live_api(name):
+	return without_python_comments(read_api(name))
+
+
 #: Every state the shipped chain has, taken from the catalogue rather than typed
 #: out -- so a step added to CATALOGUE is covered here the day it lands, and this
 #: list cannot fall behind the thing it guards.
@@ -133,6 +169,22 @@ SHIPPED_ROLES = (
 	"Farm Manager", "HR Head", "HOD HR", "HR Clerk",
 	"General Manager", "Production Section Head",
 )
+
+#: The two roles a dispatcher MAY still name, because chain.may_take() names them
+#: too and for the reasons written in its docstring:
+#:
+#:   System Manager    the unstick-the-pipeline bypass. Frappe guarantees it, so
+#:                     it is the one role every site has.
+#:   General Manager   the FARM dimension's bypass -- somebody who oversees every
+#:                     farm is not narrowed to one. It is deliberately NOT a
+#:                     bypass for a step, and a dispatcher using it as one would
+#:                     let the GM take the HR step.
+#:
+#: Both are load-bearing and neither is a job title this app invented. Everything
+#: else in SHIPPED_ROLES is.
+BYPASS_ROLES = ("System Manager", "General Manager")
+SERVER_FORBIDDEN_ROLES = tuple(r for r in SHIPPED_ROLES if r not in BYPASS_ROLES)
+
 
 #: The bulk whitelist. `"fm"`, `"gm"`, `"hr"` as quoted tokens -- the three
 #: abbreviations the screens derived by splitting an action name.
@@ -256,6 +308,123 @@ class TestTheScreensReadTheChainInstead(unittest.TestCase):
 		for screen in ("work-planner.js", "work-assigner.js", "work-actuals.js"):
 			with self.subTest(screen=screen):
 				self.assertIn("approver_label", live_code(screen))
+
+
+class TestNoDispatcherGatesOnAShippedRole(unittest.TestCase):
+	"""Finding #2: the SERVER half of the same fault.
+
+	`act_close_roles`, `act_close_request`, `act_close_pending`,
+	`act_close_confirm`, `a_add_crew`, `a_release` and the absent-day override in
+	`act_submit` all gated on `r.startswith("Farm Manager")`, `r ==
+	"Production Section Head"` or `"General Manager" in roles`. On Altura those
+	steps are taken by a Production Manager, so the person the chain names could
+	neither close a plan nor change a crew -- worked around on site by granting
+	him a role whose name means something else.
+
+	Every one of them now asks chain.may_take() / chain.takeable(), which is the
+	same question the approve actions have asked since the chain became
+	configurable.
+	"""
+
+	def test_the_dispatchers_are_all_there(self):
+		for name in DISPATCHERS:
+			with self.subTest(dispatcher=name):
+				self.assertTrue(os.path.exists(os.path.join(API, name)))
+
+	def test_none_of_them_names_a_shipped_job_title(self):
+		offenders = []
+		for name in DISPATCHERS:
+			src = live_api(name)
+			for role in SERVER_FORBIDDEN_ROLES:
+				if '"%s"' % role in src or "'%s'" % role in src:
+					offenders.append("api/%s names the role %r" % (name, role))
+		self.assertEqual(offenders, [], "\n".join(offenders))
+
+	def test_the_two_bypasses_are_the_only_role_names_left(self):
+		"""The other direction, so the exception cannot quietly widen: a
+		dispatcher may name System Manager and General Manager and nothing
+		else."""
+		for name in DISPATCHERS:
+			src = live_api(name)
+			for role in BYPASS_ROLES:
+				del role  # named for the reader; the assertion is the set below
+			quoted = {r for r in SHIPPED_ROLES if ('"%s"' % r) in src}
+			with self.subTest(dispatcher=name):
+				self.assertTrue(quoted <= set(BYPASS_ROLES),
+					"api/%s names %s" % (name, sorted(quoted - set(BYPASS_ROLES))))
+
+	def test_no_dispatcher_prefix_matches_a_role_name(self):
+		"""`role.startswith("Farm Manager")` was how a per-farm role was
+		recognised, and it recognised only one company's. Where a prefix match is
+		still wanted it must be against a CONFIGURED name -- a variable -- never
+		a literal."""
+		offenders = []
+		for name in DISPATCHERS:
+			for line in live_api(name).splitlines():
+				if ".startswith(" not in line:
+					continue
+				if re.search(r'\.startswith\(\s*["\']', line):
+					offenders.append("api/%s: %s" % (name, line.strip()))
+		self.assertEqual(offenders, [], "\n".join(offenders))
+
+	def test_the_close_and_crew_gates_go_through_the_chain(self):
+		"""Not merely that the literals are gone -- a gate deleted outright would
+		pass that too. Each file must resolve the question it used to answer by
+		name."""
+		actuals = live_api("actuals.py")
+		for token in ("ACT_MAY_DECIDE", "ACT_MAY_REQUEST", "chain.may_take",
+				"chain.takeable"):
+			with self.subTest(token=token):
+				self.assertIn(token, actuals)
+		assigner = live_api("assigner.py")
+		for token in ("ASG_MAY_CHANGE_CREW", "chain.takeable"):
+			with self.subTest(token=token):
+				self.assertIn(token, assigner)
+
+	def test_the_crew_verbs_are_the_ones_that_were_broken(self):
+		"""a_add_crew and a_release, by name, so this cannot pass by their
+		disappearing."""
+		assigner = live_api("assigner.py")
+		for act in ('"a_add_crew"', '"a_release"'):
+			with self.subTest(action=act):
+				self.assertIn(act, assigner)
+				at = assigner.index(act)
+				self.assertIn("ASG_MAY_CHANGE_CREW", assigner[at:at + 2500])
+
+
+class TestNoDispatcherDecidesByStateName(unittest.TestCase):
+	"""Finding #3: the master plan compared `workflow_state` against
+	`Pending Consultant` and `Pending GM` in nine places.
+
+	Altura's master-plan states happen to be the shipped ones, so it half-works
+	there -- which is the same fault armed rather than a different one. The
+	states a step waits in are Settings' answer, and `STAGE_STATE[key]` is how
+	every other screen asks.
+	"""
+
+	#: The two the master plan compared against. Derived from the catalogue, so a
+	#: renamed shipped state cannot leave this list behind.
+	MASTER_PLAN_STATES = tuple(sorted(
+		{s.state for s in approvals.CATALOGUE
+			if s.document_type == "Work Management Master Plan"
+			and s.kind == "Approval" and s.state}))
+
+	def test_the_states_are_the_ones_we_think(self):
+		self.assertEqual(self.MASTER_PLAN_STATES,
+			("Pending Consultant", "Pending GM"))
+
+	def test_the_master_plan_dispatcher_names_neither(self):
+		src = live_api("masterplan.py")
+		offenders = [state for state in self.MASTER_PLAN_STATES
+			if ('"%s"' % state) in src or ("'%s'" % state) in src]
+		self.assertEqual(offenders, [],
+			"api/masterplan.py compares against %s" % (offenders,))
+
+	def test_it_asks_the_chain_instead(self):
+		src = live_api("masterplan.py")
+		for token in ("STAGE_STATE[", "MP_CONSULTANT_STATE", "MP_GM_STATE"):
+			with self.subTest(token=token):
+				self.assertIn(token, src)
 
 
 class TestTheFallbackBlockIsRealAndUnused(unittest.TestCase):

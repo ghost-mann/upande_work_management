@@ -1449,6 +1449,43 @@ def wm_payment(**kwargs):
                     "gm_approved_by": sorted(t["gm_approved_by"].keys()),
                 })
             tasks = sorted(tasks, key=lambda x: x["work_to"] or "", reverse=True)
+            # ── WAS THIS TASK'S PLAN CLOSED SHORT? ────────────────────────────
+            # Read once for every plan on the sheet rather than per task card.
+            # Somebody working out whether a worker's short week is a problem
+            # needs to know the PLAN was closed short and why -- otherwise the
+            # card shows five days where the plan wanted ten and nothing explains
+            # it, and the reason sits on a document nobody opens.
+            sh_plans = []
+            for t in tasks:
+                for pn in t.get("planners") or []:
+                    if pn not in sh_plans:
+                        sh_plans.append(pn)
+            sh_by_plan = {}
+            if sh_plans:
+                for sh in frappe.db.sql("""
+                    SELECT name, quantity, IFNULL(original_qty, 0) approved, uom,
+                           custom_close_reason reason, custom_closed_by closed_by,
+                           custom_closed_date closed_on
+                    FROM `tabWork Management Planner`
+                    WHERE name IN %s AND IFNULL(custom_close_state,'') = 'Closed'
+                """, (tuple(sh_plans),), as_dict=True):
+                    sh_approved = frappe.utils.flt(sh.approved) or frappe.utils.flt(sh.quantity)
+                    sh_short = sh_approved - frappe.utils.flt(sh.quantity)
+                    if sh_short <= 0.005:
+                        continue
+                    sh_by_plan[sh.name] = {
+                        "plan": sh.name,
+                        "approved_qty": sh_approved,
+                        "capped_qty": frappe.utils.flt(sh.quantity),
+                        "short_qty": sh_short,
+                        "uom": sh.uom,
+                        "reason": sh.reason,
+                        "closed_by": sh.closed_by,
+                        "closed_on": str(sh.closed_on) if sh.closed_on else None,
+                    }
+            for t in tasks:
+                t["closed_short"] = [sh_by_plan[pn] for pn in (t.get("planners") or [])
+                    if pn in sh_by_plan]
             out["tasks"] = tasks
             # raw daily log
             dl = frappe.db.sql("""
@@ -1456,7 +1493,11 @@ def wm_payment(**kwargs):
                        we.actual_quantity qty, we.amount amount, ac.rate doc_rate,
                        IFNULL(we.holiday_multiplier, 0) hol_x,
                        IFNULL(we.paid,0) paid, IFNULL(we.count_in_payroll,0) in_payroll,
-                       IFNULL(we.custom_reviewed,0) reviewed, we.payment_ref run_ref
+                       IFNULL(we.custom_reviewed,0) reviewed, we.payment_ref run_ref,
+                       -- WHAT THE CLERK SAID ABOUT THAT DAY. Entered per worker-day
+                       -- on the actuals grid and read here, which is where somebody
+                       -- deciding whether a day is payable actually looks.
+                       we.note note
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 WHERE """ + hconds + """
@@ -1524,6 +1565,7 @@ def wm_payment(**kwargs):
                     "qty": qty, "amount": amt, "rate": (amt / qty) if qty else 0,
                     "paid": frappe.utils.cint(r.paid), "in_payroll": frappe.utils.cint(r.in_payroll),
                     "reviewed": frappe.utils.cint(r.reviewed), "run_ref": r.run_ref,
+                    "note": (r.note or "").strip() or None,
                     "scan_in": ev_scan.get(wd) if wd else None,
                     "att_status": ev_att.get(wd) if wd else None,
                     "day_leave": ev_leave.get(wd) if wd else None,
@@ -2544,7 +2586,8 @@ def wm_payment(**kwargs):
         for dk in ("disc_absent_paid", "disc_ghost_days", "disc_leave_paid", "disc_off_paid",
                    "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning",
                    "disc_no_pay", "disc_dup_day", "disc_inactive_assigned",
-                   "disc_long_day", "disc_short_day", "disc_hours_vs_qty"):
+                   "disc_long_day", "disc_short_day", "disc_hours_vs_qty",
+                   "disc_closed_short"):
             val = 1
             try:
                 val = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", dk))
@@ -2922,6 +2965,59 @@ def wm_payment(**kwargs):
                           "total_amt": frappe.utils.flt(r.total_amt),
                           "actuals": r.docs, "entered_by": r.enterers,
                           "paid": frappe.utils.cint(r.min_paid)})
+        # ---- CLOSED SHORT: plans capped below the target they were approved for,
+        # either by a short submit or by an early close. A plan-level check, not a
+        # worker-day one, so the "amount" here is the MONEY NOT SPENT rather than
+        # money wrongly spent -- which is the point. One short week is a week that
+        # did not go to plan; a column of them is a target nobody believes, and
+        # without this category they disappear into normality one plan at a time.
+        #
+        # `original_qty` is the approved figure, snapshotted when the target moved
+        # -- the same field an adjusted target uses, which is why an adjusted plan
+        # that then finished in full does not appear here: the shortfall is
+        # measured against what the plan is capped at now, not against history.
+        b_short = []
+        scconds = "IFNULL(p.custom_close_state,'') = 'Closed'"
+        scparams = []
+        if farm_list_d:
+            scconds = scconds + " AND TRIM(p.farm) IN %s"
+            scparams.append(tuple(farm_list_d))
+        for r in frappe.db.sql("""
+            SELECT p.name plan, p.farm, p.task, p.uom,
+                   p.quantity capped, IFNULL(p.original_qty, 0) approved,
+                   p.total_cost cost, IFNULL(p.original_cost, 0) approved_cost,
+                   p.from_date, p.to_date,
+                   p.custom_closed_by closed_by, p.custom_closed_date closed_on,
+                   p.custom_close_reason reason
+            FROM `tabWork Management Planner` p
+            WHERE """ + scconds + """
+              AND p.to_date BETWEEN %s AND %s
+            ORDER BY p.to_date DESC LIMIT 300
+        """, tuple(scparams) + (dfrom, dto), as_dict=True):
+            sc_approved = frappe.utils.flt(r.approved) or frappe.utils.flt(r.capped)
+            sc_short = sc_approved - frappe.utils.flt(r.capped)
+            if sc_short <= 0.005:
+                # closed at or above what it was approved for: a finished plan
+                # that happens to carry a close state is not a short one
+                continue
+            sc_money = frappe.utils.flt(r.approved_cost) - frappe.utils.flt(r.cost)
+            b_short.append({
+                "employee": None, "employee_name": r.plan,
+                "farm": r.farm, "task": r.task,
+                "wdate": str(r.from_date) + " → " + str(r.to_date),
+                "planner": r.plan,
+                "approved_qty": sc_approved,
+                "capped_qty": frappe.utils.flt(r.capped),
+                "short_qty": sc_short,
+                "uom": r.uom,
+                "pct": (frappe.utils.flt(r.capped) / sc_approved * 100) if sc_approved else 0,
+                # the budget that came back rather than money spent: negative
+                # would read as an overrun, and this is the opposite
+                "amount": sc_money if sc_money > 0 else 0,
+                "reason": r.reason,
+                "closed_by": r.closed_by,
+                "closed_on": str(r.closed_on) if r.closed_on else None,
+            })
         # ---- employees deactivated in HR but still Active on live assignments:
         # current-state check (ignores the date window) — these people can still
         # have quantities entered against them. ----
@@ -2987,6 +3083,9 @@ def wm_payment(**kwargs):
             {"key": "short_day", "title": "Hours and output disagree",
              "about": "The output on this row runs well ahead of the time recorded against it — three hours producing a full day's target, say. NOT a short day: four hours producing about half a target is an ordinary half day and is never flagged. Either the hours are wrong or the quantity is, and only somebody who was there can say which.",
              "rows": b_short},
+            {"key": "closed_short", "title": "Closed short of target",
+             "about": "Plans capped below the target they were approved for — by a short submit or by closing early — with the shortfall and the reason given. The KES figure is the budget released back to the master plan, not money wrongly spent. One is a week that did not go to plan; a column of them is a target nobody believes, which is exactly what this exists to keep visible.",
+             "rows": b_short},
             {"key": "hours_vs_qty", "title": "Hourly task where the two numbers differ",
              "about": "The task is measured in Hours, so the quantity and the hours are the same fact typed twice — and here they disagree. 34 tasks in the catalogue are hourly, covering 497 plans, and hours are typed on every split row whatever the unit, which is what makes this possible. One of the two figures is wrong; the quantity is the one that pays.",
              "rows": b_hqty},
@@ -2998,7 +3097,8 @@ def wm_payment(**kwargs):
                       "rate_mismatch": "disc_rate_mismatch", "multi_farm_day": "disc_multi_farm",
                       "self_approved": "disc_self_approved", "left_but_earning": "disc_left_earning",
                       "long_day": "disc_long_day", "short_day": "disc_short_day",
-                      "hours_vs_qty": "disc_hours_vs_qty"}
+                      "hours_vs_qty": "disc_hours_vs_qty",
+                      "closed_short": "disc_closed_short"}
         for c in checks:
             if not disc_on.get(toggle_map.get(c["key"]), 1):
                 c["rows"] = []

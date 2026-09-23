@@ -302,23 +302,40 @@ class TestTheDownstreamFiguresFollow(unittest.TestCase):
 	def setUp(self):
 		self.src = read(ACTUALS_API)
 
+	def gate(self, anchor, until):
+		"""The CODE of one gate, comments stripped.
+
+		Both gates were sliced by a byte count, which is a measure of how much
+		prose sits between the anchor and the line -- so a comment added to
+		either one moved the line out of the window and failed a test about
+		something else entirely. The boundary is now the next thing in the file,
+		and the comments are dropped because these two assertions are about what
+		the gate READS, not about what it explains.
+		"""
+		at = self.src.index(anchor)
+		block = self.src[at:self.src.index(until, at)]
+		return "\n".join(line for line in block.splitlines()
+			if not line.lstrip().startswith("#"))
+
 	def test_the_hard_target_cap_reads_the_request(self):
-		at = self.src.index("HARD TARGET CAP")
-		block = self.src[at:at + 900]
-		self.assertIn('frappe.db.get_value("Work Management Planner", a_pr, "quantity")', block)
+		self.assertIn('frappe.db.get_value("Work Management Planner", a_pr, "quantity")',
+			self.gate("HARD TARGET CAP", "if cap_error:"))
 
 	def test_the_completion_gate_reads_it_again(self):
-		at = self.src.index("COMPLETION GATE")
-		block = self.src[at:at + 900]
-		self.assertIn('frappe.db.get_value("Work Management Planner", a_pr, "quantity")', block)
+		self.assertIn('frappe.db.get_value("Work Management Planner", a_pr, "quantity")',
+			self.gate("COMPLETION GATE", "if is_new:"))
 
 	def test_neither_is_read_from_a_snapshot(self):
 		"""original_qty is a record of what was approved, never an input to a
-		cap. Using it would cap recording at the pre-raise figure."""
-		for anchor in ("HARD TARGET CAP", "COMPLETION GATE"):
+		cap. Using it would cap recording at the pre-raise figure.
+
+		A short submit WRITES it -- the approved target is snapshotted when the
+		plan is capped at what was done -- but that happens after the gate has
+		decided and reads nothing."""
+		for anchor, until in (("HARD TARGET CAP", "if cap_error:"),
+				("COMPLETION GATE", "if is_new:")):
 			with self.subTest(anchor=anchor):
-				at = self.src.index(anchor)
-				self.assertNotIn("original_qty", self.src[at:at + 900])
+				self.assertNotIn("original_qty", self.gate(anchor, until))
 
 	def test_the_master_plan_drawdown_needs_no_change_of_its_own(self):
 		"""planned_qty is summed from the requests, so a raised request raises the

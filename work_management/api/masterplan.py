@@ -66,9 +66,9 @@ def wm_masterplan(**kwargs):
     mp_roles = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
 
     # Who may raise and edit a budget is a capability now, configured in Settings,
-    # not a list compiled in here. A farm-manager role is per farm on this site
-    # ("Farm Manager Saboti"), so a prefix match stands in for the plain role -- that
-    # is farm scope, which has its own mechanism coming, not a capability.
+    # not a list compiled in here. A farm-manager role is per farm on some sites
+    # ("Farm Manager Saboti"), so a prefix match stands in for the plain role --
+    # that is farm scope, which has its own mechanism coming, not a capability.
     CAN_EDIT = 0
     if "System Manager" in mp_roles:
         CAN_EDIT = 1
@@ -78,13 +78,19 @@ def wm_masterplan(**kwargs):
     # the code, naming this company's job titles, so a farm could say who approves a
     # plan and not who may change a rate.
 
+    # The per-farm widening applies to whatever role the CAPABILITY names, not to
+    # the one this app happens to ship with. It read `if mr == "Farm Manager"`,
+    # so a site whose per-farm roles are `Production Manager Altura` got no
+    # widening at all while a site that merely has a role called `Farm Manager`
+    # for another reason got it free. A configured role is widened to its own
+    # per-farm variants -- `X` also matches `X <something>` -- which is the
+    # convention the roles themselves follow and is what the rule always meant.
     for mr in CAPABILITIES.get("edit_master_plan") or []:
         if mr in mp_roles:
             CAN_EDIT = 1
-        if mr == "Farm Manager":
-            for hr in mp_roles:
-                if hr.startswith("Farm Manager"):
-                    CAN_EDIT = 1
+        for hr in mp_roles:
+            if hr.startswith(str(mr) + " "):
+                CAN_EDIT = 1
 
     # May a farm hold two APPROVED budgets over the same days?
     #
@@ -193,6 +199,47 @@ def wm_masterplan(**kwargs):
     # gives for free -- no role is ever None. Same shape as CAN_GM above, deliberately.
     if STAGE_ROLE.get("masterplan_consultant") in mp_roles:
         IS_CONSULTANT = 1
+
+    # ------------------------------------------------- where the two steps wait
+    #
+    # Nine guards below compared `workflow_state` against `"Pending Consultant"`
+    # and `"Pending GM"` -- two state names out of a chain that no longer has to
+    # contain either. Altura's master-plan states happen to be the shipped ones,
+    # so this half-works there; it is the same fault the pills and the bulk bar
+    # had, armed and waiting for the first site that renames a state or turns
+    # the consultant step off.
+    #
+    # Resolved from the chain, by POSITION rather than by key, because that is
+    # what the guards actually mean:
+    #
+    #   MP_GM_STATE          where a plan waits for the decision that APPROVES
+    #                        it -- the enabled step whose approval reaches the
+    #                        end of the chain.
+    #   MP_CONSULTANT_STATE  where it waits for the line-by-line review BEFORE
+    #                        that. None when the site has switched that step
+    #                        off, which is a real configuration (kentrout runs
+    #                        it) and means "no plan ever waits there" -- so
+    #                        every comparison against it is guarded, and an
+    #                        unset state can never match an unset step.
+    #
+    # `MP_STATES_WAITING` is the pair as a filter, in chain order, for the two
+    # guards that ask "is it anywhere in the chain at all".
+    MP_DT = "Work Management Master Plan"
+    MP_TERMINAL = STAGE_STATES.get(MP_DT, {}).get("terminal")
+    MP_GM_STEP = None
+    MP_CONSULTANT_STEP = None
+    for mp_st_row in chain.approval_steps(STAGE_ROWS, MP_DT, enabled_only=True):
+        if mp_st_row.get("next_state") == MP_TERMINAL:
+            MP_GM_STEP = mp_st_row
+        elif MP_CONSULTANT_STEP is None:
+            MP_CONSULTANT_STEP = mp_st_row
+    MP_GM_STATE = (MP_GM_STEP or {}).get("state")
+    MP_CONSULTANT_STATE = (MP_CONSULTANT_STEP or {}).get("state")
+    MP_STATES_WAITING = [s for s in (MP_CONSULTANT_STATE, MP_GM_STATE) if s]
+    # What to call them in a sentence, so a refusal names the step this site has
+    # rather than "the consultants" and "the general manager".
+    MP_GM_LABEL = chain.label_of(MP_GM_STEP, "the final approval")
+    MP_CONSULTANT_LABEL = chain.label_of(MP_CONSULTANT_STEP, "review")
 
     # The caller's roles, read once. Each step's configured Role gates that step --
     # see may_take_step() in approvals.py, whose rule this mirrors: the step's own
@@ -388,14 +435,20 @@ def wm_masterplan(**kwargs):
                 # and the correction runs down the same in-place path a reviewer uses
                 out["edit_after_approval"] = 1 if (
                     CAN_EDIT_APPROVED and mp.workflow_state == "Approved") else 0
+                # WHERE IT IS, asked of the chain. `MP_CONSULTANT_STATE` is None
+                # on a site that has switched that step off, and `and` keeps an
+                # unset state from matching an unset step -- which would make a
+                # blank workflow_state read as "under review".
+                mp_at_review = bool(MP_CONSULTANT_STATE) and mp.workflow_state == MP_CONSULTANT_STATE
+                mp_at_gm = bool(MP_GM_STATE) and mp.workflow_state == MP_GM_STATE
                 out["can_edit"] = 1 if (
                     (CAN_EDIT and mp.workflow_state in ("Draft", "Rejected"))
-                    or (IS_CONSULTANT and mp.workflow_state == "Pending Consultant")
-                    or (CAN_GM and mp.workflow_state == "Pending GM")
+                    or (IS_CONSULTANT and mp_at_review)
+                    or (CAN_GM and mp_at_gm)
                     or out["edit_after_approval"]) else 0
-                out["edit_is_review"] = 1 if (mp.workflow_state in (
-                    "Pending Consultant", "Pending GM", "Approved")) else 0
-                out["can_decide"] = 1 if ((IS_CONSULTANT or CAN_GM) and mp.workflow_state == "Pending Consultant") else 0
+                out["edit_is_review"] = 1 if (
+                    mp_at_review or mp_at_gm or mp.workflow_state == "Approved") else 0
+                out["can_decide"] = 1 if ((IS_CONSULTANT or CAN_GM) and mp_at_review) else 0
                 gs_pending = len([a for a in out["activities"] if a.consultant_state == "Pending"])
                 gs_edit = len([a for a in out["activities"] if a.consultant_state == "Edit work"])
                 gs_ok = len([a for a in out["activities"] if a.consultant_state == "OK"])
@@ -403,12 +456,12 @@ def wm_masterplan(**kwargs):
                 out["edited_lines"] = gs_edit
                 out["ok_lines"] = gs_ok
                 out["can_send_to_gm"] = 1 if ((IS_CONSULTANT or CAN_GM)
-                                              and mp.workflow_state == "Pending Consultant"
+                                              and mp_at_review
                                               and not gs_edit
                                               and (gs_ok or gs_pending)) else 0
                 out["deciding_as_standin"] = 1 if (CAN_GM and not MP_LISTED_CONSULTANT
-                                                   and mp.workflow_state == "Pending Consultant") else 0
-                out["can_gm_approve"] = 1 if (CAN_GM and mp.workflow_state == "Pending GM") else 0
+                                                   and mp_at_review) else 0
+                out["can_gm_approve"] = 1 if (CAN_GM and mp_at_gm) else 0
                 # WHAT THE BUTTONS SAY. The steps' configured actions -- the same
                 # words the desk's own buttons carry -- rather than `GM Approve`
                 # and `Send to GM` written into the screen, which on a relabelled
@@ -433,9 +486,12 @@ def wm_masterplan(**kwargs):
 
     elif action == "save":
         # Who may edit depends on where the plan has got to:
-        #   Draft / Rejected   -- the raiser's roles (farm manager, HR head, GM)
-        #   Pending Consultant -- the consultants, correcting it in place
-        #   Pending GM         -- the GM, correcting it in place
+        #   Draft / Rejected      -- the raiser's roles
+        #   the review step       -- the consultants, correcting it in place
+        #   the final step        -- whoever decides it, correcting it in place
+        # The two middle rows used to be written here as `Pending Consultant` and
+        # `Pending GM`; they are MP_CONSULTANT_STATE and MP_GM_STATE now, so a
+        # site that renamed either still finds its own editors.
         # A reviewer's edit does NOT send the plan back to Draft: the raiser is not
         # asked to re-submit, and the previous figures are kept on every line that
         # changed so the correction stays visible.
@@ -469,18 +525,19 @@ def wm_masterplan(**kwargs):
                     if not CAN_EDIT:
                         sv_err = ("Only a farm manager, the HR head or the general manager can "
                                   "edit a plan that is back with its raiser (state: " + str(sv_state) + ")")
-                elif sv_state == "Pending Consultant":
+                elif MP_CONSULTANT_STATE and sv_state == MP_CONSULTANT_STATE:
                     if IS_CONSULTANT:
                         sv_review = 1
                     else:
-                        sv_err = ("This plan is with the consultants. Only a consultant can "
-                                  "edit it while it is under review.")
-                elif sv_state == "Pending GM":
+                        sv_err = ("This plan is at " + str(MP_CONSULTANT_LABEL) + ". Only "
+                                  "whoever takes that step can edit it while it is under "
+                                  "review.")
+                elif MP_GM_STATE and sv_state == MP_GM_STATE:
                     if CAN_GM:
                         sv_review = 1
                     else:
-                        sv_err = ("This plan is with the general manager. Only the GM can "
-                                  "edit it at this stage.")
+                        sv_err = ("This plan is at " + str(MP_GM_LABEL) + ". Only whoever "
+                                  "takes that step can edit it at this stage.")
                 elif sv_state == "Approved":
                     if CAN_EDIT_APPROVED:
                         # the GM correcting a plan he has already approved. Reuse the
@@ -901,9 +958,10 @@ def wm_masterplan(**kwargs):
                 db_done = db_done + 1
             if not db_parent:
                 out["error"] = "none of those lines exist"
-            elif frappe.db.get_value("Work Management Master Plan", db_parent, "workflow_state") != "Pending Consultant":
+            elif not (MP_CONSULTANT_STATE and frappe.db.get_value(
+                    "Work Management Master Plan", db_parent, "workflow_state") == MP_CONSULTANT_STATE):
                 frappe.db.rollback()
-                out["error"] = "This master plan is not awaiting consultant review."
+                out["error"] = ("This master plan is not at " + str(MP_CONSULTANT_LABEL) + ".")
             else:
                 db_all = frappe.db.sql("""
                     SELECT consultant_state FROM `tabWork Management Master Plan Activity`
@@ -947,7 +1005,7 @@ def wm_masterplan(**kwargs):
                 "Comment", "Sent back to the consultants by " + str(frappe.session.user) + ".")
             frappe.db.commit()
             out["name"] = rc_name
-            out["workflow_state"] = "Pending Consultant"
+            out["workflow_state"] = STAGE_STATE["masterplan_consultant"]
 
     elif action == "plans_bulk":
         # Whole plans, several at a time, from the master plan list. Each plan is
@@ -971,8 +1029,9 @@ def wm_masterplan(**kwargs):
                         pb_failed.append({"name": pb_n, "why": "only " +
                             str(STAGE_ROLE.get("masterplan_gm")
                                 or "a role nobody has configured") + " can approve"})
-                    elif pb_st != "Pending GM":
-                        pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not awaiting the GM"})
+                    elif not (MP_GM_STATE and pb_st == MP_GM_STATE):
+                        pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) +
+                            ", not at " + str(MP_GM_LABEL)})
                     else:
                         # same as gm_approve: with no consultant step the lines
                         # have to be settled before they are counted
@@ -1007,7 +1066,7 @@ def wm_masterplan(**kwargs):
                 elif pb_op == "reject":
                     if not (CAN_GM or IS_CONSULTANT):
                         pb_failed.append({"name": pb_n, "why": "not yours to reject"})
-                    elif pb_st not in ("Pending Consultant", "Pending GM"):
+                    elif pb_st not in MP_STATES_WAITING:
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not under review"})
                     else:
                         frappe.db.set_value("Work Management Master Plan", pb_n, "workflow_state", "Rejected")
@@ -1015,8 +1074,9 @@ def wm_masterplan(**kwargs):
                 else:
                     if not (IS_CONSULTANT or CAN_GM):
                         pb_failed.append({"name": pb_n, "why": "not yours to send on"})
-                    elif pb_st != "Pending Consultant":
-                        pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not with the consultants"})
+                    elif not (MP_CONSULTANT_STATE and pb_st == MP_CONSULTANT_STATE):
+                        pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) +
+                            ", not at " + str(MP_CONSULTANT_LABEL)})
                     else:
                         for pb_p in frappe.db.get_all("Work Management Master Plan Activity",
                                 filters={"parent": pb_n, "consultant_state": "Pending"}, pluck="name"):
@@ -1043,8 +1103,9 @@ def wm_masterplan(**kwargs):
                             "general manager standing in for one, can send this plan to the GM.")
         elif not sg_state:
             out["error"] = "no such master plan: " + str(sg_name)
-        elif sg_state != "Pending Consultant":
-            out["error"] = "Only a plan awaiting consultant review can be sent to the GM (state: " + str(sg_state) + ")"
+        elif not (MP_CONSULTANT_STATE and sg_state == MP_CONSULTANT_STATE):
+            out["error"] = ("Only a plan at " + str(MP_CONSULTANT_LABEL) + " can be sent on to "
+                            + str(MP_GM_LABEL) + " (state: " + str(sg_state) + ")")
         else:
             sg_rows = frappe.db.sql("""
                 SELECT consultant_state, task FROM `tabWork Management Master Plan Activity`
@@ -1154,7 +1215,7 @@ def wm_masterplan(**kwargs):
         rj_state = frappe.db.get_value("Work Management Master Plan", rj_name, "workflow_state")
         if not (CAN_GM or IS_CONSULTANT):
             out["error"] = "Only a consultant or the general manager can reject a master plan."
-        elif rj_state not in ("Pending Consultant", "Pending GM"):
+        elif rj_state not in MP_STATES_WAITING:
             out["error"] = "Only a master plan under review can be rejected (state: " + str(rj_state) + ")"
         else:
             frappe.db.set_value("Work Management Master Plan", rj_name, "workflow_state", "Rejected")

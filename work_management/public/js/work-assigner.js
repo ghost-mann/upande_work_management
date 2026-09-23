@@ -120,12 +120,16 @@
     }).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(function(j){ return j.message||{}; });
   }
   function openCloseDialog(assignment, planName, onDone){
-    var isGm = ST.roles && ST.roles.is_gm;
+    // WHO DECIDES A CLOSE comes from the chain, not from `is_gm` -- a shipped
+    // role name that answered no to the person Altura's last actuals step
+    // actually names.
+    var isGm = !!(ST.roles && ST.roles.may_close_plans);
+    var who = (ST.roles && ST.roles.decider_label) || "the approver";
     var dlg=el("wa-subdialog");
     var title = isGm ? "Close plan now" : "Request close";
     var desc = isGm
       ? "This finalises any open draft actuals to Confirmed and caps the plan (target kept for reporting). A reason is required."
-      : "This sends a close request to the GM. Entry stays open until they confirm. A reason is required.";
+      : ("This sends a close request to "+who+". Entry stays open until they confirm. A reason is required.");
     dlg.innerHTML =
       '<div style="background:#fff;max-width:440px;width:92%;border:2px solid var(--ink)">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--faint)">'+
@@ -155,7 +159,7 @@
       closeCall(isGm?"act_close_confirm":"act_close_request", assignment, reason).then(function(d){
         if(d.error){ toast("Error: "+d.error); go.disabled=false; return; }
         shut();
-        toast(isGm ? "Plan closed" : "Close request sent to GM");
+        toast(isGm ? "Plan closed" : ("Close request sent to "+who));
         if(typeof onDone==="function") onDone();
       }).catch(function(e){ toast("Close failed"); go.disabled=false; });
     };
@@ -469,20 +473,26 @@
       return ((e.employee_name||"")+" "+(e.designation||"")+" "+(e.name||"")).toLowerCase().indexOf(q)>=0;
     });
     var h="";
-    // ── PRESENCE BAR: today's live scans, shown whatever the work window ──
+    // ── PRESENCE BAR: the scans for the WINDOW'S OWN DAYS ──
     // ...but only when the endpoint actually read them. With the setting off it
     // runs none of the three presence queries, so present_count is 0 because
     // nothing was counted, not because nobody came in. Printing "P 0 of 79
     // scanned in" then states as measured a thing never measured, and the
     // "Only workers who are in" filter beside it hides everybody.
+    //
+    // WHICH DAY, said out loud. This read "scanned in / marked present today"
+    // whatever window the plan covered, and Altura plans past weeks -- so a
+    // fortnight-old window was captioned with this morning's scans. The server
+    // now answers for the window's last day that has happened, and says which
+    // day that was; the caption repeats it rather than assuming.
     if(ST.showToday) h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:8px;border:1px solid var(--line,#e5e5e5);border-radius:10px;background:rgba(10,122,67,.05);font-size:11.5px">'+
-      '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' '+esc(ST.curFarm||"")+' workers scanned in / marked present today'+
+      '<b style="color:#0a7a43">P '+(si.present_count||0)+'</b> of '+(si.total||0)+' '+esc(ST.curFarm||"")+' workers scanned in / marked present '+esc(presDayWord(si))+
       (si.checked && si.gate_on && !si.cutoff_passed ? ' <span style="color:#a06000">· scan check starts at '+esc((si.cutoff||"09:00").slice(0,5))+'</span>' : '')+
       ' <span style="color:#8a8780">· key: <b style="color:#0a7a43">P · time</b> in &nbsp;<b style="color:#b91c1c">A</b> absent &nbsp;<b>?</b> no record yet</span>'+
       '<span style="flex:1"></span>'+
       '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-weight:600"><input type="checkbox" id="a-onlyin"'+(ST.onlyIn?" checked":"")+'> Only workers who are in</label>'+
       '<a href="#" id="a-rescan" style="font-weight:600">Refresh scans</a></div>';
-    if(!list.length){ box.innerHTML=h+'<div class="empty">No matching workers'+(ST.onlyIn?' — nobody in this filter has scanned in yet':'')+'.</div>'; wireScanBar(box); return; }
+    if(!list.length){ box.innerHTML=h+'<div class="empty">No matching workers'+(ST.onlyIn?' — nobody in this filter was seen on site '+esc(presDayWord(si)):'')+'.</div>'; wireScanBar(box); return; }
     list.forEach(function(e){
       var on=ST.picked[e.name]?" on":"";
       var offbadge = (e.off_days>0) ? ' <span class="offb">'+e.off_days+' off</span>' : '';
@@ -493,16 +503,18 @@
       // nothing to draw; "?" against every worker on a site without biometric
       // hardware reads as a finding and is not. Everything else on the row, and
       // the warning badge from the att_block_* checks above, is unaffected.
+      var pday=presDayWord(si);
+      var pspan=presSpanWord(si, e);
       if(!ST.showToday){
         /* no presence chip */
       } else if(e.is_night){
         attbadge += ' <span class="offb" style="background:rgba(37,99,235,.1);color:#2563eb">night shift</span>';
       } else if(e.present_today){
-        attbadge += ' <span class="offb" style="background:rgba(10,122,67,.14);color:#0a7a43;font-weight:700" title="On site today'+(e.scan_in?(' — scanned in '+esc(e.scan_in)):'')+'">P'+(e.scan_in?(' · '+esc(e.scan_in)):'')+'</span>';
+        attbadge += ' <span class="offb" style="background:rgba(10,122,67,.14);color:#0a7a43;font-weight:700" title="On site '+esc(pday)+(e.scan_in?(' — scanned in '+esc(e.scan_in)):'')+pspan+'">P'+(e.scan_in?(' · '+esc(e.scan_in)):'')+'</span>';
       } else if(e.absent_today){
-        attbadge += ' <span class="offb" style="background:rgba(185,28,28,.14);color:#b91c1c;font-weight:700" title="Marked Absent today (submitted attendance)">A today</span>';
+        attbadge += ' <span class="offb" style="background:rgba(185,28,28,.14);color:#b91c1c;font-weight:700" title="Marked Absent '+esc(pday)+' (submitted attendance)'+pspan+'">A '+esc(pday)+'</span>';
       } else {
-        attbadge += ' <span class="offb" style="background:rgba(10,10,10,.06);color:#8a8780" title="No scan or attendance record for today yet">? today</span>';
+        attbadge += ' <span class="offb" style="background:rgba(10,10,10,.06);color:#8a8780" title="No scan or attendance record for '+esc(pday)+pspan+'">? '+esc(pday)+'</span>';
       }
       var busy = e.allocated_elsewhere?true:false;
       if(busy){
@@ -563,6 +575,24 @@
         refreshCounts();
       };
     });
+  }
+
+  // WHICH DAY THE PRESENCE CHIPS ANSWER FOR. "today" only when the window
+  // actually contains today; otherwise the date itself, because "today" printed
+  // against a plan for last Tuesday is the bug this replaces. Empty when no day
+  // of the window has happened yet -- a future window has no presence, and none
+  // is not a finding.
+  function presDayWord(si){
+    if(!si || !si.to) return "—";
+    return si.is_today ? "today" : ("on "+si.to);
+  }
+  // ...and, on a window of more than one day, how much of it they were there
+  // for. A single-day window says nothing extra; the day itself is the answer.
+  function presSpanWord(si, e){
+    if(!si || !si.days || si.days < 2) return "";
+    var seen = e.present_days||0, abs = e.absent_days_window||0;
+    return ". Seen on "+seen+" of the "+si.days+" days asked about ("+si.from+" → "+si.to+")"+
+           (abs? ", marked Absent on "+abs : "");
   }
 
   // TIME & ATTENDANCE reasons for one worker in the plan window (from a_employees)
@@ -782,7 +812,7 @@
     var b=el("arej-body"); if(!b) return;
     var all=ST._arejRows||[];
     if(!all.length){ b.className=""; b.innerHTML='<div class="empty">Nothing rejected — you’re all clear.</div>'; return; }
-    var isGm=ST.roles&&ST.roles.is_gm;
+    var isGm=!!(ST.roles&&ST.roles.may_close_plans);
     var closeLabel=isGm?"Close plan":"Request close";
     b.className="";
     b.innerHTML='<div class="note" style="margin-bottom:8px">These assignments were rejected. Click <b>Edit</b> to adjust the roster and resubmit — or <b>'+closeLabel+'</b> if the underlying plan should be stopped.</div>'
@@ -847,7 +877,11 @@
         '<div style="height:10px;background:#eee;border:1px solid #cfcfcf;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+barPct+'%;background:#0a0a0a"></div></div>'+
         '<div style="font-size:10px;color:#777;margin-top:4px;text-align:right">'+fmt(pct,0)+'% fulfilled</div>'+
       '</div>';
-    var canRelease = ST.roles && (ST.roles.is_farm_manager || ST.roles.is_hr_head || ST.roles.is_gm);
+    // WHO MAY CHANGE THE CREW. Three role flags OR-ed together, two of them
+    // named after roles a site need not have -- so on Altura the release panel
+    // was hidden from the Production Manager the server would have allowed.
+    // One answer, resolved from the configured chain by a_roles.
+    var canRelease = !!(ST.roles && ST.roles.may_change_crew);
     var relDefault = a.to_date; // clamp today into [from_date, to_date] for the "last day" field
     (function(){ var t=isoTodayA(); if(t < a.from_date) relDefault=a.from_date; else if(t > a.to_date) relDefault=a.to_date; else relDefault=t; })();
     var rosterRows=(a.workers||[]).map(function(w){

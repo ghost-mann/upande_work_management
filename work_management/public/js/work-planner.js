@@ -324,7 +324,10 @@
     }).then(readOr).then(function(j){ return j.message||{}; });
   }
   function openCloseDialog(plan, onDone){
-    var isGm = ST.roles && ST.roles.is_gm;
+    // `is_gm` was never answered by this screen's roles endpoint, so this
+    // read undefined for everybody and the button always said "Request close".
+    // Who decides a close comes from the chain now -- see api/planner.py.
+    var isGm = !!(ST.roles && ST.roles.may_close_plans);
     var dlg=el("wp-closedialog");
     var title = isGm ? "Close plan now" : "Request close";
     var desc = isGm
@@ -359,7 +362,11 @@
       closeCall(isGm?"act_close_confirm":"act_close_request", plan, reason).then(function(d){
         if(d.error){ toast("Error: "+d.error); go.disabled=false; return; }
         shut();
-        toast(isGm ? "Plan closed" : "Close request sent to GM");
+        // "sent to GM" named a role a site need not have. Who decides a close
+        // is the last step of the actuals chain, and act_close_pending already
+        // says so in that step's own words -- this is a toast, so it says the
+        // neutral thing rather than fetching the label to print once.
+        toast(isGm ? "Plan closed" : "Close request sent for approval");
         if(typeof onDone==="function") onDone();
       }).catch(function(e){ toast("Close failed"); go.disabled=false; });
     };
@@ -2025,7 +2032,7 @@
     var b=el("rej-body"); if(!b) return;
     var all=ST._rejRows||[];
     if(!all.length){ b.className=""; b.innerHTML='<div class="empty">Nothing rejected — you’re all clear.</div>'; return; }
-    var isGm=ST.roles&&ST.roles.is_gm;
+    var isGm=!!(ST.roles&&ST.roles.may_close_plans);
     var fs=ST._farmScope;
     var closeLabel=isGm?"Close plan":"Request close";
     b.className="";
@@ -2358,8 +2365,23 @@
       el("wp-tr-title").textContent=taskName(p.task)||name;
       el("wp-tr-sub").textContent=name+" · "+(p.farm||"")+" · "+p.from_date+" → "+p.to_date+" · "+(p.workflow_state||"");
       var h=amendedRibbon((ST._trace_trail||{}).amended);
+      // CLOSED SHORT, said before the figures rather than after them. A capped
+      // target makes every tile below read differently: "Delivered 100% of
+      // target" is true and misleading when the target came down to meet the
+      // delivery, and this ribbon is what stops that sentence being a lie.
+      if(p.closed_short){
+        var cs=p.closed_short;
+        h+='<div style="padding:10px 12px;margin-bottom:10px;border:1px solid #a06000;background:rgba(160,96,0,.08);color:#7a4a00;font-size:12px;border-radius:8px">'+
+          '<b>Closed short of the approved target.</b> Approved for '+fmt(cs.approved_qty)+' '+esc(cs.uom||"")+
+          ', capped at '+fmt(cs.capped_qty)+' &mdash; <b>'+fmt(cs.short_qty)+'</b> short, released back to the master plan.'+
+          (cs.reason?('<div style="margin-top:3px">Reason: '+esc(cs.reason)+'</div>'):'')+
+          (cs.closed_by?('<div style="opacity:.8;margin-top:2px">Closed by '+esc(shortUser(cs.closed_by))+(cs.closed_on?(' on '+esc(cs.closed_on)):'')+'</div>'):'')+
+          '</div>';
+      }
       h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
-      h+=trTile("Target", fmt(dv.target)+" "+esc(p.uom||""), "planned quantity");
+      h+=trTile("Target", fmt(dv.target)+" "+esc(p.uom||"")+(p.closed_short?" (capped)":""),
+                p.closed_short?("capped from "+fmt(p.closed_short.approved_qty)):"planned quantity",
+                p.closed_short?"#a06000":undefined);
       h+=trTile("Delivered", fmt(dv.actual)+" "+esc(p.uom||""),
                 fmt(dv.achieved_pct,0)+"% of target",
                 dv.achieved_pct>=90?"#0a7a43":(dv.achieved_pct>=60?"#a06000":"#b91c1c"));

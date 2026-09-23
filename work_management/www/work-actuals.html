@@ -119,6 +119,12 @@
    retype it. It exists only where a day may be split. */
 #acp table.grid td.dcell input.hcell{width:40px;margin-top:2px;padding:2px 4px;font-size:10px;color:var(--mute);background:var(--wash)}
 #acp table.grid td.dcell input.hcell:focus{color:var(--ink);background:#fff}
+/* the per-worker-day note marker: a corner affordance, faint until there is
+   something to read, so the grid does not grow a column for a thing most cells
+   never carry. `·` = no note yet, `✎` = one to read. */
+#acp table.grid td.dcell button.ncell{position:absolute;top:1px;left:2px;border:none;background:none;padding:0;line-height:1;font-size:9px;color:#cbd5e1;cursor:pointer;font-family:inherit}
+#acp table.grid td.dcell button.ncell:hover{color:var(--blue)}
+#acp table.grid td.dcell button.ncell.has{color:#0a7a43;font-size:10px;font-weight:700}
 /* The add-a-worker bar sits under the grid rather than in it: it changes who the
    grid is about, which is a different kind of action from typing in a cell. */
 #acp .ac-addbar{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);flex-wrap:wrap}
@@ -152,6 +158,8 @@
 #acp #ac-closemodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
 #acp #ac-addmodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
 #acp #ac-relmodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
+#acp #ac-notemodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
+#acp #ac-shortmodal{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,.5);align-items:center;justify-content:center}
 /* The candidate list. A search box and a scrollable list of names, because the
    pool is the farm's whole eligible workforce -- 229 on the assignment this was
    built against -- and a <select> that long is no better than typing an id. */
@@ -837,6 +845,52 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
       <div class="submodal-foot">
         <button type="button" class="btn" id="ac-rel-cancel">Cancel</button>
         <button type="button" class="btn solid" id="ac-rel-go" disabled>Release</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- A NOTE FOR ONE WORKER'S DAY. The fifth dialog on this screen and the same
+       card as the other four: per worker-day, because "sent home 11am, rain" is
+       about one person's Tuesday and a note on the document would attach it to
+       everybody on the grid. Read-only once the entry is locked, because after
+       submit this is where the note is read. -->
+  <div id="ac-notemodal">
+    <div class="submodal-card">
+      <div class="submodal-head">
+        <div class="h" id="ac-note-title">Note for this day</div>
+        <button type="button" class="x" id="ac-note-x">&times;</button>
+      </div>
+      <div class="submodal-body">
+        <div class="outline" id="ac-note-desc"></div>
+        <label class="fl">What happened to this worker&rsquo;s day</label>
+        <textarea id="ac-note-text" rows="3" maxlength="500" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 11px;width:100%;background:#fff;color:var(--ink);resize:vertical;border-radius:8px" placeholder="e.g. sent home 11am, rain &mdash; machine down &mdash; started late, transport"></textarea>
+      </div>
+      <div class="submodal-foot">
+        <button type="button" class="btn" id="ac-note-cancel">Cancel</button>
+        <button type="button" class="btn solid" id="ac-note-go">Save note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUBMITTING SHORT OF THE TARGET. Offered only where the site has switched
+       it on; the reason is mandatory because the plan is about to be CAPPED at
+       what was done -- the remaining target closed out, nothing further
+       recordable or payable against it, and the unspent budget released back to
+       the master plan. Same card as the other five dialogs on this screen. -->
+  <div id="ac-shortmodal">
+    <div class="submodal-card">
+      <div class="submodal-head">
+        <div class="h">Submit short of the target</div>
+        <button type="button" class="x" id="ac-short-x">&times;</button>
+      </div>
+      <div class="submodal-body">
+        <div class="outline" id="ac-short-desc"></div>
+        <label class="fl">Why the target was not met (required)</label>
+        <textarea id="ac-short-reason" rows="3" maxlength="500" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 11px;width:100%;background:#fff;color:var(--ink);resize:vertical;border-radius:8px" placeholder="e.g. crop finished early &mdash; rain stopped work Thursday and Friday &mdash; block cleared ahead of target"></textarea>
+      </div>
+      <div class="submodal-foot">
+        <button type="button" class="btn" id="ac-short-cancel">Cancel</button>
+        <button type="button" class="btn solid" id="ac-short-go" disabled>Submit and close the plan</button>
       </div>
     </div>
   </div>
