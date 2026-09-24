@@ -1414,6 +1414,16 @@
   }
 
   function auFarmsCSV(){ var k=Object.keys(AU.farms); return k.length?k.join(","):""; }
+  // THE WORKER TASK DAY REPORT, on the audit's own window. The report takes one
+  // farm, so a farm is carried only when exactly one chip is on; with none or
+  // several it is left out rather than guessed.
+  function auWtdUrl(){
+    var q=[], from=el("au-from").value||"", to=el("au-to").value||"", k=Object.keys(AU.farms);
+    if(from) q.push("from_date="+encodeURIComponent(from));
+    if(to) q.push("to_date="+encodeURIComponent(to));
+    if(k.length===1) q.push("farm="+encodeURIComponent(k[0]));
+    return encodeURI("/app/query-report/Worker Task Day")+(q.length?"?"+q.join("&"):"");
+  }
 
   function loadAudit(){
     var box=el("audit-body");
@@ -1421,6 +1431,9 @@
     var r={from:el("au-from").value||"", to:el("au-to").value||""};
     call({action:"pay_audit", from_date:r.from, to_date:r.to, farms:auFarmsCSV()}).then(function(d){
       AU.summary=d.summary||[]; AU.detail=d.detail||[]; AU.totals=d.totals||null; AU.loaded=true;
+      // offered only to somebody the report will not refuse (report_access.can_open)
+      var wtd=el("au-wtd");
+      if(wtd){ wtd.style.display=d.worker_task_day?"":"none"; wtd.href=auWtdUrl(); wtd.onclick=function(){ wtd.href=auWtdUrl(); }; }
       AU.disc=null;   // discrepancies reload with the new filters when that view opens
       // farm chip set from summary rows
       var fs={}; AU.summary.forEach(function(s){ if(s.farm) fs[s.farm]=1; });

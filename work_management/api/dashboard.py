@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import chain
+from work_management import chain, report_access
 from work_management.api.config import get_config
 
 
@@ -1031,6 +1031,9 @@ def wm_dashboard(**kwargs):
         eff_step("Payments", "Accounts", "Work Management Payment", "accounts_approved_by", "accounts_approval_date", "Paid", ["Unpaid"])
         out["approval_eff"] = appr_eff
         out["approver_names"] = appr_names
+        # Whether to offer the Worker Task Day report, answered by the same two
+        # checks Frappe makes when the report opens -- see report_access.can_open.
+        out["worker_task_day"] = report_access.can_open()
 
     elif action == "burndown":
         rows = frappe.db.sql("""

@@ -11,6 +11,7 @@ import json
 
 import frappe
 
+from work_management import report_access
 from work_management.api.config import FEED_KIND, PAYROLL_FEED, get_config
 
 
@@ -1082,6 +1083,9 @@ def wm_payment(**kwargs):
                 "reviewed": frappe.utils.cint(d.reviewed)
             })
         out["detail"] = detrows
+        # the audit's own way into the Worker Task Day report, offered only to
+        # somebody the report will not refuse (report_access.can_open)
+        out["worker_task_day"] = report_access.can_open()
         out["totals"] = {"tasks": t_tasks, "qty": t_qty, "total_pay": t_total,
                          "paid": t_paid, "unpaid": t_unpaid, "worker_days": t_wdays}
 

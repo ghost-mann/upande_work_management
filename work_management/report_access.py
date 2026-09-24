@@ -97,6 +97,29 @@ def grant_report_roles(report=REPORT, settings=_SITE):
 	return added
 
 
+def can_open(report=REPORT):
+	"""May the current user open the report? Frappe's own two questions.
+
+	The screens offer a way into the report only to somebody it will not refuse,
+	so they ask exactly what `frappe.desk.query_report` asks when it runs one:
+	does the report's role list (the three it ships with plus whatever
+	grant_report_roles() added from this site's chain) include one of this user's
+	roles, and may they report on its ref_doctype. Asking anything else -- a list
+	of roles written into a screen -- is a second answer that drifts from the
+	first, and a button that opens onto "Not permitted" is worse than no button.
+	"""
+	try:
+		if not frappe.db.exists("Report", report):
+			return False
+		doc = frappe.get_cached_doc("Report", report)
+		if doc.disabled or not doc.is_permitted():
+			return False
+		return bool(frappe.has_permission(doc.ref_doctype, "report"))
+	except Exception:
+		# a screen asking a courtesy question must not fail to load over it
+		return False
+
+
 def after_migrate():
 	added = grant_report_roles()
 	if added:

@@ -437,13 +437,21 @@ def screen_chain(cfg=None):
 	    states   the grouped state lists `pipeline_states()` publishes, for
 	             filters and option lists that must not narrow when somebody
 	             switches a step off
+	    signoff  the labels of the approval steps that are ON, in order -- for
+	             sentences that say who signs work off. `states` cannot answer
+	             that: it deliberately keeps switched-off steps.
 
 	Shaped here rather than in five templates so the five cannot disagree.
 	"""
 	cfg = cfg if cfg is not None else get_config()
+	signoff = {}
+	for step in cfg.get("stage_rows") or []:
+		if step.get("kind") == "Approval" and step.get("on") and step.get("label"):
+			signoff.setdefault(step.get("document_type"), []).append(step["label"])
 	return {
 		"labels": cfg.get("stage_labels") or {},
 		"states": cfg.get("stage_states") or {},
+		"signoff": signoff,
 	}
 
 

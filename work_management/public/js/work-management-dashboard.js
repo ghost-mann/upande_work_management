@@ -113,6 +113,74 @@
     });
     return out;
   }
+  // WHO SIGNS WORK OFF, in this site's words: the labels of the approval steps
+  // that are on, in order, with the shared "Work done: " prefix dropped. It used
+  // to say "FM → HR → GM" -- the shipped chain, on a site whose chain is not it.
+  function signoffPath(dt){
+    return (((CHAIN.signoff||{})[dt])||[]).map(function(l){
+      var at=String(l).indexOf(": "); return at>=0 ? String(l).slice(at+2) : String(l);
+    }).join(" → ");
+  }
+
+  // ── THE WORKER TASK DAY REPORT ──────────────────────────────────────────
+  // A Script Report in the desk, and the answer to "what did each person do,
+  // against what target, and when did they clock in" -- which is asked daily by
+  // people who live on these screens and never search the desk. Opened on the
+  // window being looked at: only filters the report actually has are carried
+  // (from_date, to_date, farm), and one the page has not set is left out rather
+  // than guessed, so the report falls back to its own default for it.
+  var WTD_ROUTE="/app/query-report/Worker Task Day";
+  function wtdUrl(win){
+    win=win||{}; var q=[];
+    if(win.from) q.push("from_date="+encodeURIComponent(win.from));
+    if(win.to) q.push("to_date="+encodeURIComponent(win.to));
+    if(win.farm) q.push("farm="+encodeURIComponent(win.farm));
+    return encodeURI(WTD_ROUTE)+(q.length?"?"+q.join("&"):"");
+  }
+  function isoDay(d){ return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2); }
+  // The activity window's range, from its preset or its two dates. "All time"
+  // has no range, so it carries none. There is no page-level farm on this
+  // screen -- each card below filters its own -- so the window never has one.
+  function activityWindow(){
+    return { from:(el("wm-dr-from")||{}).value||"", to:(el("wm-dr-to")||{}).value||"" };
+  }
+  function wtdCard(){
+    return '<div class="card wtd-card"><div class="bd wtd-bd">'+
+        '<div class="wtd-txt"><div class="wtd-h">Worker Task Day report</div>'+
+        '<div class="cap">Worker × task × day — what each person did, their target, and their clock times</div>'+
+        '<div class="cap" id="wm-wtd-win"></div></div>'+
+        '<a class="wtd-open" id="wm-wtd-open" target="_blank" rel="noopener" href="'+esc(wtdUrl(activityWindow()))+'">Open the report ↗</a>'+
+      '</div></div>';
+  }
+  function syncWtd(){
+    var a=el("wm-wtd-open"), w=activityWindow();
+    if(a) a.href=wtdUrl(w);
+    var c=el("wm-wtd-win");
+    if(c) c.textContent = (w.from||w.to)
+      ? "Opens on the activity window: "+(w.from||"…")+" → "+(w.to||"today")+"."
+      : "Opens on today. Pick a window above to open it on that instead.";
+  }
+  // The window's presets and dates were drawn but never wired, so a preset did
+  // nothing at all. They fill the two dates now, which is what the report link
+  // reads. They do not refilter the cards on this page: `dash` takes no range.
+  function wireActivityWindow(){
+    var box=el("wm-dr-presets"); if(!box) return;
+    function mark(p){ box.querySelectorAll("[data-preset]").forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-preset")===p); }); }
+    box.querySelectorAll("[data-preset]").forEach(function(b){
+      b.onclick=function(){
+        var p=b.getAttribute("data-preset"), now=new Date(), from="";
+        if(p==="30"){ var d=new Date(now); d.setDate(d.getDate()-30); from=isoDay(d); }
+        else if(p==="mtd"){ from=isoDay(new Date(now.getFullYear(), now.getMonth(), 1)); }
+        else if(p==="ytd"){ from=isoDay(new Date(now.getFullYear(), 0, 1)); }
+        el("wm-dr-from").value=from; el("wm-dr-to").value=from?isoDay(now):"";
+        mark(p); syncWtd();
+      };
+    });
+    var ap=el("wm-dr-apply");
+    if(ap) ap.onclick=function(){ mark(null); syncWtd(); };
+    ["wm-dr-from","wm-dr-to"].forEach(function(id){ var i=el(id); if(i) i.onchange=function(){ mark(null); syncWtd(); }; });
+  }
+
   function lbl(w){ return (w||"").replace(" - KL",""); }
   function el(id){ return document.getElementById(id); }
   function svgEl(t,a,x){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); if(x!=null) e.textContent=x; return e; }
@@ -726,8 +794,12 @@
         '<span><b>Assigned workers</b> — distinct people actually put on jobs (each counted once).</span>'+
         '<span><b>Active employees</b> — everyone active on the four '+esc(TX("top_plural","Farms")).toLowerCase()+' right now, split into task workers (paid per output) and permanent/salaried staff.</span>'+
         '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
-        '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
+        '<span><b>Confirmed</b> — people whose work has been signed off'+(signoffPath(DT_ACT)?' ('+esc(signoffPath(DT_ACT))+')':'')+'.</span>'+
       '</div>'+
+      // ===== the Worker Task Day report: first thing under the activity window =====
+      // Offered only to somebody the report will not refuse -- D.worker_task_day
+      // is Frappe's own permission answer, see report_access.can_open().
+      (D.worker_task_day ? wtdCard() : '')+
       // ===== every budget line, one table =====
       '<div class="sech">Planned value &amp; delivery</div>'+
       '<div class="card"><div class="hd"><h3>Every activity, planned against delivered</h3>'+
@@ -3197,6 +3269,7 @@
     call({action:"dash"}).then(function(D){
       if(D.error){ el("wm-body").innerHTML='<div class="err">Error: '+esc(D.error)+'</div>'; return; }
       render(D);
+      syncWtd();
       wirePex();
       wireCostCentre();
       wireTracker();
@@ -3207,6 +3280,7 @@
   }
   function boot(){
     var rb=el("wm-refresh"); if(rb) rb.onclick=function(){ load(); toast("Refreshed"); };
+    wireActivityWindow();
     // Fetched before the first render so tables draw subjects rather than
     // docnames, but never blocking: a failure here costs readable task names on
     // one screen, and a dashboard that will not load at all costs everything.
