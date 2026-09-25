@@ -423,6 +423,31 @@ def get_config():
 	return cfg
 
 
+def sql_in(states):
+	"""The body of a SQL `IN (...)` for a list of workflow states, escaped.
+
+	The dispatchers spelled their state lists out by hand --
+	`IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')` -- and
+	every one of them stopped matching the day a step's state was anything else.
+	They read the lists from the chain now (`stage_states`, see
+	approvals.pipeline_states) and splice them in through this. Never empty:
+	`IN ()` is a syntax error, and `IN (NULL)` matches nothing, which is what an
+	empty list means.
+	"""
+	values = [state for state in (states or []) if state]
+	if not values:
+		return "NULL"
+	return ", ".join(frappe.db.escape(state) for state in values)
+
+
+def chain_states(cfg, document_type, group):
+	"""One of pipeline_states()' groups for a document type, from get_config()."""
+	value = ((cfg.get("stage_states") or {}).get(document_type) or {}).get(group)
+	if isinstance(value, (list, tuple)):
+		return list(value)
+	return [value] if value else []
+
+
 def screen_chain(cfg=None):
 	"""What the five page templates put on `window.WM_CHAIN`.
 

@@ -82,18 +82,21 @@ def recorded_quantity(planner):
 
 	The same sum the actuals HARD TARGET CAP counts against the target, so the
 	floor here and the ceiling there are one number. States in flight count:
-	work sitting at Pending HR Head is recorded work whose document is simply not
+	work sitting at a later approval step is recorded work whose document is simply not
 	finished, and a target cut underneath it would strand it.
 	"""
+	# Past the first actuals approval, read from the chain rather than named:
+	# the list was ('Pending HR Head', 'Pending GM', 'CONFIRMED').
+	states = approvals.pipeline_states(document_type="Work Management Actuals")["past_first"]
 	rows = frappe.db.sql(
 		"""
 		SELECT COALESCE(SUM(ac.total_actual_qty), 0) q
 		FROM `tabWork Management Actuals` ac
 		INNER JOIN `tabWork Management Assigner` a ON ac.assignment = a.name
 		WHERE a.planner_request = %(p)s
-		  AND ac.workflow_state IN ('Pending HR Head', 'Pending GM', 'CONFIRMED')
+		  AND ac.workflow_state IN %(states)s
 		""",
-		{"p": planner},
+		{"p": planner, "states": tuple(states) or ("",)},
 		as_dict=True,
 	)
 	return frappe.utils.flt(rows[0].q) if rows else 0.0

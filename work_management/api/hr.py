@@ -14,13 +14,17 @@ def release_inactive(doc, method=None):
 		enabled = 0
 	if not enabled:
 		return
+	# live assignments: in approval or assigned, read from the chain
+	from work_management import approvals
+
+	live = approvals.pipeline_states(document_type="Work Management Assigner")["active"]
 	rows = frappe.db.sql("""
 		SELECT we.name rowname, a.name asg
 		FROM `tabWork Assignment Employee` we
 		INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
 		WHERE we.employee = %s AND IFNULL(we.status,'Active') = 'Active'
-		  AND a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
-	""", (doc.name,), as_dict=True)
+		  AND a.workflow_state IN %s
+	""", (doc.name, tuple(live) or ("",)), as_dict=True)
 	touched = {}
 	for r in rows:
 		frappe.db.set_value("Work Assignment Employee", r.rowname, "status", "Left", update_modified=False)

@@ -167,8 +167,8 @@ class TestOneWorkerOnTwoAssignmentsIsAllowedAndSaid(unittest.TestCase):
 		self.assertIn("IFNULL(we.status,'Active') = 'Active'", self.guard)
 
 	def test_only_live_assignments_count(self):
-		self.assertIn("'Pending Farm Manager','Pending HR Head','Pending GM','Assigned'",
-			self.guard)
+		"""In approval or assigned -- read from the chain, not spelled out."""
+		self.assertIn('IN (""" + sql_in(ST_ASG_ACTIVE) + """)', self.guard)
 
 	def test_a_rejected_or_cancelled_one_does_not(self):
 		for dead in ("'Rejected'", "'Cancelled'", "'Draft'"):

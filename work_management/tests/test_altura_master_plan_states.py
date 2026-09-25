@@ -79,27 +79,30 @@ class TestTheShippedChainStillResolvesToItsOwnNames(unittest.TestCase):
 
 	def test_the_final_step_is_the_gm_step(self):
 		self.assertEqual(self.r["gm_step"]["key"], "masterplan_gm")
-		self.assertEqual(self.r["gm_state"], "Pending GM")
+		# Altura's catalogue name on this branch; upstream it is `Pending GM`
+		self.assertEqual(self.r["gm_state"], "Pending Manager")
 
 	def test_the_step_before_it_is_the_consultant(self):
 		self.assertEqual(self.r["review_step"]["key"], "masterplan_consultant")
 		self.assertEqual(self.r["review_state"], "Pending Consultant")
 
 	def test_both_are_what_the_guards_used_to_compare_against(self):
-		self.assertEqual(self.r["waiting"], ["Pending Consultant", "Pending GM"])
+		self.assertEqual(self.r["waiting"], ["Pending Consultant", "Pending Manager"])
 
 
 class TestAlturaRenamesBothAndSwitchesReviewOff(unittest.TestCase):
 	def setUp(self):
 		self.r = resolve(altura.chain_rows(), altura.states(MP))
 
-	def test_neither_shipped_state_survives(self):
+	def test_neither_upstream_state_is_waited_in(self):
+		"""The catalogue renamed the GM step's state to `Pending Manager`, and the
+		review step is off."""
 		self.assertNotIn("Pending GM", self.r["waiting"])
 		self.assertNotIn("Pending Consultant", self.r["waiting"])
 
 	def test_the_final_step_is_found_by_position_not_by_name(self):
 		self.assertEqual(self.r["gm_step"]["key"], "masterplan_gm")
-		self.assertEqual(self.r["gm_state"], "With the manager")
+		self.assertEqual(self.r["gm_state"], "Pending Manager")
 
 	def test_there_is_no_review_step_because_it_is_switched_off(self):
 		"""`Budget: Review` is off, so no plan ever waits there -- and every
@@ -110,13 +113,13 @@ class TestAlturaRenamesBothAndSwitchesReviewOff(unittest.TestCase):
 		self.assertIsNone(self.r["review_state"])
 
 	def test_only_one_state_is_a_waiting_state(self):
-		self.assertEqual(self.r["waiting"], ["With the manager"])
+		self.assertEqual(self.r["waiting"], ["Pending Manager"])
 
 	def test_submitting_goes_straight_to_the_manager(self):
 		"""With the review step off the chain relinks through it, which is what
 		makes `decide_line`'s guard unreachable rather than merely wrong."""
 		submit = [s for s in altura.chain_rows(MP) if s["kind"] == "Submit"][0]
-		self.assertEqual(submit["next_state"], "With the manager")
+		self.assertEqual(submit["next_state"], "Pending Manager")
 
 	def test_an_unset_state_never_matches_the_absent_review_step(self):
 		"""The trap in resolving to None: `state == MP_CONSULTANT_STATE` is TRUE
@@ -144,7 +147,7 @@ class TestTheLabelsAreWhatARefusalShouldName(unittest.TestCase):
 
 	def test_the_final_step_has_altura_s_own_label(self):
 		r = resolve(altura.chain_rows(), altura.states(MP))
-		self.assertEqual(chain.label_of(r["gm_step"]), "Budget: Manager")
+		self.assertEqual(chain.label_of(r["gm_step"]), "Master Plan: Manager")
 
 	def test_an_absent_review_step_still_has_a_word(self):
 		r = resolve(altura.chain_rows(), altura.states(MP))

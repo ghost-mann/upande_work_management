@@ -232,8 +232,8 @@ class TestTheNonNegotiables(unittest.TestCase):
 		for act in ("a_employees", "a_sub_candidates"):
 			with self.subTest(action=act):
 				block = action_block(act, self.api)
-				self.assertIn("'Pending Farm Manager','Pending HR Head','Pending GM','Assigned'",
-					block)
+				# in approval or assigned, read from the chain
+				self.assertIn('IN (""" + sql_in(ST_ASG_ACTIVE) + """)', block)
 
 	def test_a_released_worker_does_not_make_somebody_busy(self):
 		for act in ("a_employees", "a_sub_candidates"):

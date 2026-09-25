@@ -103,10 +103,10 @@ class TestChainShape(unittest.TestCase):
 		result = plan("Work Management Assigner", settings())
 		self.assertEqual(
 			states_of(result),
-			["Draft", "Pending Farm Manager", "Pending HR Head", "Pending GM", "Assigned", "Rejected"],
+			["Draft", "Pending Manager", "Pending HR Head", "Pending GM", "Assigned", "Rejected"],
 		)
 		self.assertIn(
-			("Draft", "Submit for Approval", "Pending Farm Manager", role_of("assigner_submit"), ""),
+			("Draft", "Submit for Approval", "Pending Manager", role_of("assigner_submit"), ""),
 			moves(result),
 		)
 		self.assertIn(
@@ -126,7 +126,7 @@ class TestChainShape(unittest.TestCase):
 		result = plan("Work Management Assigner", settings({"assigner_hr_head": {"enabled": 0}}))
 		self.assertNotIn("Pending HR Head", states_of(result))
 		self.assertIn(
-			("Pending Farm Manager", "FM Approve", "Pending GM", role_of("assigner_farm_manager"), ""),
+			("Pending Manager", "Approve", "Pending GM", role_of("assigner_farm_manager"), ""),
 			moves(result),
 		)
 
@@ -201,7 +201,7 @@ class TestTerminalStates(unittest.TestCase):
 		resubmits = [t for t in result["transitions"] if t["action"] == "Re-submit"]
 		self.assertEqual(len(resubmits), 1)
 		self.assertEqual(resubmits[0]["state"], "Rejected")
-		self.assertEqual(resubmits[0]["next_state"], "Pending Farm Manager")
+		self.assertEqual(resubmits[0]["next_state"], "Pending Manager")
 		self.assertEqual(resubmits[0]["allowed"], role_of("assigner_submit"))
 
 
@@ -209,7 +209,7 @@ class TestRejection(unittest.TestCase):
 	def test_approval_stages_can_reject_and_submit_stages_cannot(self):
 		result = plan("Work Management Assigner", settings())
 		rejects = {t["state"] for t in result["transitions"] if t["action"] == "Reject"}
-		self.assertEqual(rejects, {"Pending Farm Manager", "Pending HR Head", "Pending GM"})
+		self.assertEqual(rejects, {"Pending Manager", "Pending HR Head", "Pending GM"})
 		self.assertNotIn("Draft", rejects)
 
 	def test_payment_calls_it_cancelling_not_rejecting(self):
@@ -223,8 +223,8 @@ class TestRejection(unittest.TestCase):
 class TestFarmScoping(unittest.TestCase):
 	def test_no_approvers_means_the_stage_role_covers_every_farm(self):
 		result = plan("Work Management Assigner", settings())
-		fm = [t for t in moves(result) if t[0] == "Pending Farm Manager" and t[1] == "FM Approve"]
-		self.assertEqual(fm, [("Pending Farm Manager", "FM Approve", "Pending HR Head", role_of("assigner_farm_manager"), "")])
+		fm = [t for t in moves(result) if t[0] == "Pending Manager" and t[1] == "Approve"]
+		self.assertEqual(fm, [("Pending Manager", "Approve", "Pending HR Head", role_of("assigner_farm_manager"), "")])
 
 	def test_per_farm_approvers_generate_one_conditional_transition_each(self):
 		config = settings(approvers=[
@@ -232,11 +232,11 @@ class TestFarmScoping(unittest.TestCase):
 			approver("Assigner: Farm Manager", "lena@example.com", "Lokitela", "Farm Manager Lokitela"),
 		])
 		fm = [t for t in moves(plan("Work Management Assigner", config))
-			if t[0] == "Pending Farm Manager" and t[1] == "FM Approve"]
+			if t[0] == "Pending Manager" and t[1] == "Approve"]
 		self.assertEqual(sorted(fm), sorted([
-			("Pending Farm Manager", "FM Approve", "Pending HR Head", "Farm Manager Saboti",
+			("Pending Manager", "Approve", "Pending HR Head", "Farm Manager Saboti",
 				'doc.farm == "Saboti"'),
-			("Pending Farm Manager", "FM Approve", "Pending HR Head", "Farm Manager Lokitela",
+			("Pending Manager", "Approve", "Pending HR Head", "Farm Manager Lokitela",
 				'doc.farm == "Lokitela"'),
 		]))
 
@@ -246,7 +246,7 @@ class TestFarmScoping(unittest.TestCase):
 			approver("Assigner: Farm Manager", "sam@example.com", "Saboti", "Farm Manager Saboti"),
 		])
 		fm = [t for t in moves(plan("Work Management Assigner", config))
-			if t[0] == "Pending Farm Manager" and t[1] == "FM Approve"]
+			if t[0] == "Pending Manager" and t[1] == "Approve"]
 		self.assertEqual([t[4] for t in fm], ['doc.farm == "Saboti"'])
 
 	def test_an_approver_with_no_farm_covers_every_farm(self):
@@ -255,7 +255,7 @@ class TestFarmScoping(unittest.TestCase):
 			approver("Assigner: Farm Manager", "gm@example.com"),
 		])
 		fm = [t for t in moves(plan("Work Management Assigner", config))
-			if t[0] == "Pending Farm Manager" and t[1] == "FM Approve"]
+			if t[0] == "Pending Manager" and t[1] == "Approve"]
 		self.assertIn("", [t[4] for t in fm])
 
 	def test_scoping_is_ignored_on_stages_that_are_not_farm_scoped(self):
@@ -272,7 +272,7 @@ class TestFarmScoping(unittest.TestCase):
 			approver("Assigner: Farm Manager", "sue@example.com", "Saboti", "Farm Manager Saboti"),
 		])
 		fm = [t for t in moves(plan("Work Management Assigner", config))
-			if t[0] == "Pending Farm Manager" and t[1] == "FM Approve"]
+			if t[0] == "Pending Manager" and t[1] == "Approve"]
 		self.assertEqual(len(fm), 1)
 
 
@@ -426,13 +426,13 @@ class TestTheSettingsPassedInGovernTheAnswer(unittest.TestCase):
 		result = plan("Work Management Assigner", settings())
 		self.assertEqual(
 			states_of(result),
-			["Draft", "Pending Farm Manager", "Pending HR Head", "Pending GM", "Assigned", "Rejected"],
+			["Draft", "Pending Manager", "Pending HR Head", "Pending GM", "Assigned", "Rejected"],
 		)
 
 	def test_chain_for(self):
 		self.assertEqual(
 			[s.state for s in approvals.chain_for("Work Management Assigner", settings())],
-			["Draft", "Pending Farm Manager", "Pending HR Head", "Pending GM"],
+			["Draft", "Pending Manager", "Pending HR Head", "Pending GM"],
 		)
 
 	def test_by_key_and_by_label(self):

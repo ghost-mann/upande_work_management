@@ -64,10 +64,11 @@ class TestWhichStepsAreBeingSwitchedOff(unittest.TestCase):
 		"""It has no history, so nothing can be waiting in it."""
 		self.assertEqual(SWITCHED_OFF({}, {"assigner_hr_head": 0}), [])
 
-	def test_a_step_removed_in_this_save_is_not_caught(self):
-		"""Deleting a row is a different act from switching it off, and it does
-		not reach this guard -- the row is simply gone."""
-		self.assertEqual(SWITCHED_OFF({"assigner_hr_head": 1}, {}), [])
+	def test_a_step_removed_in_this_save_is_caught(self):
+		"""Deleting a row takes its state out of the workflow exactly as switching
+		it off does, so documents waiting in it are stranded the same way. It
+		used to slip past this guard because the row was simply gone."""
+		self.assertEqual(SWITCHED_OFF({"assigner_hr_head": 1}, {}), ["assigner_hr_head"])
 
 	def test_the_order_is_stable(self):
 		self.assertEqual(
@@ -146,7 +147,8 @@ class TestTheGuardIsWiredIn(unittest.TestCase):
 		import inspect
 
 		source = inspect.getsource(approvals.validate_switching_off)
-		self.assertIn("get_doc_before_save", source)
+		self.assertIn("_before_save(settings)", source)
+		self.assertIn("get_doc_before_save", inspect.getsource(approvals._before_save))
 
 	def test_it_runs_before_the_farm_coverage_check(self):
 		"""Stranding work is worse than misconfiguring it, so it is reported

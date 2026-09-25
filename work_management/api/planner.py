@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management.api.config import get_config
+from work_management.api.config import chain_states, get_config, sql_in
 from work_management import audit, bulk, chain
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
@@ -27,6 +27,18 @@ def wm_planner(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    # WORKFLOW STATE LISTS, read from the chain (approvals.pipeline_states via
+    # get_config) and spliced into SQL with sql_in(). They were spelled out by
+    # hand -- ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned') --
+    # and stopped matching the day a step's state was anything else.
+    ST_ACT_PAST_FIRST = chain_states(_cfg, "Work Management Actuals", "past_first")
+    # the furthest-along master plan first: approved, then the approval steps
+    # latest first, then draft and rejected -- was 'Approved','Pending GM',
+    # 'Pending Consultant','Draft','Rejected'
+    ST_MP_ORDER = (chain_states(_cfg, "Work Management Master Plan", "terminal")
+        + list(reversed(chain_states(_cfg, "Work Management Master Plan", "waiting")))
+        + chain_states(_cfg, "Work Management Master Plan", "draft")
+        + chain_states(_cfg, "Work Management Master Plan", "reject"))
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
@@ -220,7 +232,7 @@ def wm_planner(**kwargs):
                 SELECT name, workflow_state, period_from, period_to
                 FROM `tabWork Management Master Plan`
                 WHERE farm = %(f)s AND period_from <= %(to)s AND period_to >= %(from)s
-                ORDER BY FIELD(workflow_state,'Approved','Pending GM','Pending Consultant','Draft','Rejected'),
+                ORDER BY FIELD(workflow_state, """ + sql_in(ST_MP_ORDER) + """),
                          period_from DESC
                 LIMIT 1
             """, {"f": farm, "from": tk_from, "to": tk_to}, as_dict=True)
@@ -846,7 +858,7 @@ def wm_planner(**kwargs):
                 FROM `tabWork Management Actuals` ac
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                 WHERE a2.planner_request = %(p)s
-                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                  AND ac.workflow_state IN (""" + sql_in(ST_ACT_PAST_FIRST) + """)
             """, {"p": rt_name}, as_dict=True)
             rt_recorded = frappe.utils.flt(rt_done[0].q) if rt_done else 0
         # WHAT THE MASTER PLAN LINE HAS LEFT, by the same attribution rule as

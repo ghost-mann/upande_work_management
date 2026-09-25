@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management import bulk, chain, presence, stage_pills
-from work_management.api.config import get_config
+from work_management.api.config import chain_states, get_config, sql_in
 
 
 @frappe.whitelist()
@@ -26,6 +26,13 @@ def wm_assigner(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    # WORKFLOW STATE LISTS, read from the chain (approvals.pipeline_states via
+    # get_config) and spliced into SQL with sql_in(). They were spelled out by
+    # hand -- ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned') --
+    # and stopped matching the day a step's state was anything else.
+    ST_ASG_ACTIVE = chain_states(_cfg, "Work Management Assigner", "active")
+    ST_ASG_WAITING = chain_states(_cfg, "Work Management Assigner", "waiting")
+    ST_ASG_OPEN = chain_states(_cfg, "Work Management Assigner", "open")
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
@@ -268,7 +275,7 @@ def wm_assigner(**kwargs):
             fields=["name","farm","block_section","task","task_kpi","from_date","to_date","people_per_day","total_cost","quantity","custom_close_state"],
             order_by="approval_date desc")
         assigned = frappe.db.get_all("Work Management Assigner",
-            filters={"workflow_state":["in",["Pending Farm Manager","Pending HR Head","Pending GM","Assigned"]]}, fields=["planner_request"])
+            filters={"workflow_state":["in", ST_ASG_ACTIVE]}, fields=["planner_request"])
         taken = {}
         for a in assigned:
             taken[a.planner_request] = 1
@@ -357,7 +364,7 @@ def wm_assigner(**kwargs):
                 SELECT we.employee emp, a.name asg, a.farm farm, a.task task, a.from_date fd, a.to_date td
                 FROM `tabWork Assignment Employee` we
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-                WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                   AND a.name != %s
                   AND IFNULL(we.status,'Active') = 'Active'
                   AND a.from_date <= %s AND a.to_date >= %s
@@ -686,7 +693,7 @@ def wm_assigner(**kwargs):
                     SELECT DISTINCT we.employee emp
                     FROM `tabWork Assignment Employee` we
                     INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-                    WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                    WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                       AND a.name != %s
                       AND IFNULL(we.status,'Active') = 'Active'
                       AND a.from_date <= %s AND a.to_date >= %s
@@ -835,7 +842,7 @@ def wm_assigner(**kwargs):
                     d = frappe.get_doc("Work Management Assigner", asg_name)
                     d.set("employees", [])
                     editing = 1
-                elif state in ("Pending Farm Manager", "Pending HR Head", "Pending GM"):
+                elif state in ST_ASG_WAITING:
                     d = frappe.get_doc("Work Management Assigner", asg_name)
                     d.set("employees", [])
                     editing = 1
@@ -1105,7 +1112,7 @@ def wm_assigner(**kwargs):
             ["name","planner_request","farm","block_section","task","task_kpi","from_date","to_date",
              "planned_people","planned_cost","assigned_count","variance","workflow_state"], as_dict=True)
         if a:
-            a["editable"] = 1 if a.workflow_state in ("Draft","Rejected","Pending Farm Manager","Pending HR Head","Pending GM") else 0
+            a["editable"] = 1 if a.workflow_state in ST_ASG_OPEN else 0
             a["can_substitute"] = 1 if a.workflow_state == "Assigned" else 0
             rows = frappe.db.get_all("Work Assignment Employee",
                 filters={"parent": nm},
@@ -1171,7 +1178,7 @@ def wm_assigner(**kwargs):
                 SELECT we.employee emp, a.name asg, a.task task, a.farm farm
                 FROM `tabWork Assignment Employee` we
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-                WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                   AND a.name != %s
                   AND IFNULL(we.status,'Active') = 'Active'
                   AND a.from_date <= %s AND a.to_date >= %s
@@ -1293,7 +1300,7 @@ def wm_assigner(**kwargs):
                 SELECT DISTINCT we.employee emp, a.name asg
                 FROM `tabWork Assignment Employee` we
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-                WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                   AND a.name != %s
                   AND IFNULL(we.status,'Active') = 'Active'
                   AND a.from_date <= %s AND a.to_date >= %s
@@ -1504,7 +1511,7 @@ def wm_assigner(**kwargs):
                     SELECT a.name asg
                     FROM `tabWork Assignment Employee` we
                     INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-                    WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                    WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                       AND a.name != %s
                       AND IFNULL(we.status,'Active') = 'Active'
                       AND we.employee = %s

@@ -61,13 +61,24 @@ def _stage(key, label, document_type, kind, state, action, role, scoped=False, r
 # checkbox that promised the same rule. Both are gone. The consultant control that
 # works is `consultant_state` on each Master Plan Activity: a consultant settles
 # individual activities and the planner only offers ones marked OK.
+# ON THE `altura` BRANCH THESE ARE ALTURA'S NAMES. The state a document waits in
+# and the action that leaves it are the workflow's INTERNAL vocabulary: every
+# document carries the state by name, so renaming one strands whatever sits in
+# it. They are fixed here, by key, and locked in the Settings grid -- a step is
+# relabelled through its label, never through these. seed_stages() writes them
+# onto the rows on every migrate, which is what keeps them fixed. The fork exists
+# for this client, so its defaults are this client's words; master keeps the
+# upstream names. Changed from upstream: masterplan_submit's action, masterplan_gm,
+# assigner_farm_manager, actuals_farm_manager and actuals_hr_head (state and
+# action). The patch rescue_documents_in_renamed_states moves documents that
+# were waiting under the old names.
 CATALOGUE = [
 	_stage("masterplan_submit", "Master Plan: Submit", "Work Management Master Plan",
-		"Submit", "Draft", "Send for Consultant Review", "System Manager", required=True),
+		"Submit", "Draft", "Send for Review", "System Manager", required=True),
 	_stage("masterplan_consultant", "Master Plan: Consultant", "Work Management Master Plan",
 		"Approval", "Pending Consultant", "Send to GM", "System Manager"),
 	_stage("masterplan_gm", "Master Plan: GM", "Work Management Master Plan",
-		"Approval", "Pending GM", "GM Approve", "System Manager"),
+		"Approval", "Pending Manager", "Manager Approve", "System Manager"),
 
 	_stage("planner_submit", "Planner: Submit", "Work Management Planner",
 		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
@@ -100,7 +111,7 @@ CATALOGUE = [
 	_stage("assigner_submit", "Assigner: Submit", "Work Management Assigner",
 		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
 	_stage("assigner_farm_manager", "Assigner: Farm Manager", "Work Management Assigner",
-		"Approval", "Pending Farm Manager", "FM Approve", "System Manager", scoped=True),
+		"Approval", "Pending Manager", "Approve", "System Manager", scoped=True),
 	_stage("assigner_hr_head", "Assigner: HR Head", "Work Management Assigner",
 		"Approval", "Pending HR Head", "HR Approve", "System Manager"),
 	_stage("assigner_gm", "Assigner: GM", "Work Management Assigner",
@@ -108,10 +119,12 @@ CATALOGUE = [
 
 	_stage("actuals_submit", "Actuals: Submit", "Work Management Actuals",
 		"Submit", "Draft", "Submit for Approval", "System Manager", required=True),
+	# Two steps, one action name: Frappe tells transitions apart by (state,
+	# action), and nothing in this app resolves a step by its action.
 	_stage("actuals_farm_manager", "Actuals: Farm Manager", "Work Management Actuals",
-		"Approval", "Pending Farm Manager", "FM Approve", "System Manager", scoped=True),
+		"Approval", "Pending Approval", "Approve", "System Manager", scoped=True),
 	_stage("actuals_hr_head", "Actuals: HR Head", "Work Management Actuals",
-		"Approval", "Pending HR Head", "HR Approve", "System Manager"),
+		"Approval", "Pending Manager", "Approve", "System Manager"),
 	_stage("actuals_gm", "Actuals: GM", "Work Management Actuals",
 		"Approval", "Pending GM", "GM Approve", "System Manager"),
 
@@ -455,7 +468,16 @@ def pipeline_states(settings=_UNSET, rows=None, document_type=None):
 	              which is what the screens' `IN (...)` lists have always meant
 	    open      draft and rejected as well -- everything still editable
 	    all       every state, for a filter that must not exclude anything
+	    entered   draft, the approval steps and the terminal state -- recorded
+	              and not rejected
+	    past_first    every approval step after the first, plus the terminal
+	                  state: the first approver has signed it off
+	    waiting_past_first   the same without the terminal state
 	    draft / terminal / reject   the individual ones, by name
+
+	The three derived groups replace state lists the dispatchers spelled out by
+	hand -- `IN ('Pending HR Head','Pending GM','CONFIRMED')` and friends -- which
+	stopped matching the moment a step's state was anything else.
 
 	`draft` is the Submit step's own state, since that is where a document sits
 	before it enters the chain.
@@ -487,6 +509,9 @@ def pipeline_states(settings=_UNSET, rows=None, document_type=None):
 		"active": uniq(waiting, terminal),
 		"open": uniq(draft, reject, waiting),
 		"all": uniq(draft, waiting, terminal, reject),
+		"entered": uniq(draft, waiting, terminal),
+		"past_first": uniq(waiting[1:], terminal),
+		"waiting_past_first": uniq(waiting[1:]),
 	}
 
 
@@ -575,6 +600,12 @@ def seed_stages(settings=None, save=True):
 			"role": row.role,
 		})
 
+	# Nothing to change is nothing to save. It saved on every migrate, so
+	# Settings' `modified` moved on every deploy and "did the deploy touch my
+	# configuration?" could not be answered by looking.
+	if _stage_rows_as(existing) == _stage_rows_as(rows):
+		return settings
+
 	settings.set("approval_stages", [])
 	for row in rows:
 		settings.append("approval_stages", row)
@@ -584,6 +615,23 @@ def seed_stages(settings=None, save=True):
 		settings.flags.skip_approval_sync = True
 		settings.save()
 	return settings
+
+
+#: The columns of an approval-stage row this app writes.
+STAGE_ROW_FIELDS = ("stage", "stage_label", "document_type", "kind", "state", "action",
+	"scoped", "required", "enabled", "role")
+
+
+def _stage_rows_as(rows):
+	"""Rows reduced to what seed_stages() writes, comparable across dict and doc."""
+	def norm(value):
+		if value is None:
+			return ""
+		if isinstance(value, bool):
+			return int(value)
+		return value
+	return [tuple(norm((r.get(f) if hasattr(r, "get") else getattr(r, f, None)))
+		for f in STAGE_ROW_FIELDS) for r in rows]
 
 
 #: The Settings checkbox that decides whether a generated workflow carries
@@ -858,6 +906,12 @@ def build_workflows(settings=None):
 		name = plan["workflow_name"]
 		if frappe.db.exists("Workflow", name):
 			workflow = frappe.get_doc("Workflow", name)
+			# Same plan, same flags: leave it alone. Saved unconditionally, every
+			# migrate bumped `modified` on all five and wrote a Version row, so
+			# nobody could tell a deploy that changed the chain from one that
+			# did not.
+			if _workflow_as(workflow) == _plan_as(plan, document_type, notify):
+				continue
 		else:
 			workflow = frappe.new_doc("Workflow")
 			workflow.workflow_name = name
@@ -885,6 +939,29 @@ def build_workflows(settings=None):
 		built.append(name)
 
 	return built
+
+
+def _plan_as(plan, document_type, notify):
+	"""A plan reduced to what build_workflows() writes onto a Workflow."""
+	return (
+		(document_type, "workflow_state", 1, 0, 1 if notify else 0),
+		[(str(st["state"]), str(st["doc_status"]), st["allow_edit"] or "")
+			for st in plan["states"]],
+		[(t["state"], t["action"], t["next_state"], t["allowed"], t["condition"] or "",
+			int(t["allow_self_approval"] or 0)) for t in plan["transitions"]],
+	)
+
+
+def _workflow_as(workflow):
+	"""The same shape, read off a saved Workflow document."""
+	return (
+		(workflow.document_type, workflow.workflow_state_field, int(workflow.is_active or 0),
+			int(workflow.override_status or 0), int(workflow.send_email_alert or 0)),
+		[(str(st.state), str(st.doc_status), st.allow_edit or "")
+			for st in workflow.get("states") or []],
+		[(t.state, t.action, t.next_state, t.allowed, t.condition or "",
+			int(t.allow_self_approval or 0)) for t in workflow.get("transitions") or []],
+	)
 
 
 # ------------------------------------------------------------- role syncing
@@ -982,11 +1059,12 @@ def steps_switched_off(before, after):
 
 	A first save has no `before` at all, which arrives here as None.
 	"""
+	# A row DELETED from the table is switched off too -- its state leaves the
+	# workflow exactly as a switched-off one does -- so a key that was on and is
+	# now absent counts, not only one present and unticked.
 	was = before or {}
-	return sorted(
-		key for key, on in (after or {}).items()
-		if not on and was.get(key)
-	)
+	now = after or {}
+	return sorted(key for key, on in was.items() if on and not now.get(key))
 
 
 def busy_step_message(blocked):
@@ -1039,7 +1117,7 @@ def validate_switching_off(settings):
 	the alternative and was rejected: it passes an approval nobody gave, and the
 	audit trail then shows a step cleared with no approver.
 	"""
-	previous = settings.get_doc_before_save() if hasattr(settings, "get_doc_before_save") else None
+	previous = _before_save(settings)
 	going_off = steps_switched_off(
 		_enabled_map(previous) if previous else None,
 		_enabled_map(settings),
@@ -1047,7 +1125,9 @@ def validate_switching_off(settings):
 	if not going_off:
 		return
 
-	steps = {step["key"]: step for step in effective_chain(settings)}
+	# a deleted step is only in the stored configuration
+	steps = {step["key"]: step for step in effective_chain(previous)} if previous else {}
+	steps.update({step["key"]: step for step in effective_chain(settings)})
 	blocked = []
 	for key in going_off:
 		step = steps.get(key)
@@ -1059,6 +1139,101 @@ def validate_switching_off(settings):
 
 	if blocked:
 		frappe.throw(busy_step_message(blocked), title=_("Documents are waiting for this step"))
+
+
+def _before_save(settings):
+	"""The stored Settings a save is replacing, or None.
+
+	`callable()` rather than `hasattr()`: a frappe._dict answers every attribute
+	with None, so hasattr() is always true on one and the call then fails.
+	"""
+	getter = getattr(settings, "get_doc_before_save", None)
+	return getter() if callable(getter) else None
+
+
+def fix_stage_names(settings):
+	"""Hold every step's internal names still, whatever the save asked for.
+
+	A document carries its workflow state BY NAME, so a step whose state is
+	renamed strands every document waiting in it -- which is what happened on
+	Altura, where relabelling the Actuals "FM" step in the grid meant typing new
+	words into its "Waits In" and "Action" columns too, and the regenerated
+	workflow no longer held the state twenty actuals were sitting in. A step is
+	renamed through its label, which the screens show; these two are not names
+	anybody reads on a screen.
+
+	    catalogue rows   take the catalogue's state, action, kind, document and
+	                     flags, by key. seed_stages() does the same on migrate;
+	                     doing it here too means an API write cannot slip a
+	                     rename in between deploys.
+	    added rows       keep the state and action they were given the first
+	                     time they were saved. A new one is given a key, a state
+	                     and an action now, derived once from its label and never
+	                     re-derived: renaming it later changes only the label.
+
+	The grid shows both columns read-only; this is what makes that true.
+	"""
+	shipped = {stage.key: stage for stage in CATALOGUE}
+	previous = _before_save(settings)
+	stored = {}
+	for row in ((previous.get("approval_stages") if previous else None) or []):
+		if (row.get("stage") or "").strip():
+			stored[row.get("stage").strip()] = row
+	rows = settings.get("approval_stages") or []
+	keys = {(r.get("stage") or "").strip() for r in rows} | set(shipped)
+
+	for row in rows:
+		key = (row.get("stage") or "").strip()
+		stage = shipped.get(key)
+		if stage:
+			row.document_type = stage.document_type
+			row.kind = stage.kind
+			row.state = stage.state
+			row.action = stage.action
+			row.scoped = 1 if stage.scoped else 0
+			row.required = 1 if stage.required else 0
+			continue
+		if key and key in stored:
+			old = stored[key]
+			row.state = old.get("state") or row.get("state")
+			row.action = old.get("action") or row.get("action")
+			continue
+		# a step being added in this save
+		if not key:
+			key = _new_stage_key(row.get("stage_label") or row.get("document_type"), keys)
+			row.stage = key
+			keys.add(key)
+		row.kind = row.get("kind") or "Approval"
+		if not row.get("state"):
+			row.state = _new_stage_state(row, rows)
+		if not row.get("action"):
+			row.action = "Approve" if row.kind == "Approval" else "Submit for Approval"
+
+
+def _new_stage_key(label, taken):
+	"""`custom_<label>`, made unique. Only ever called once per row."""
+	import re
+
+	base = "custom_" + (re.sub(r"[^a-z0-9]+", "_", (label or "").lower()).strip("_") or "step")
+	key, n = base, 2
+	while key in taken:
+		key, n = "%s_%d" % (base, n), n + 1
+	return key
+
+
+def _new_stage_state(row, rows):
+	"""`Pending <the label's last part>`, unique within the row's document type."""
+	label = row.get("stage_label") or ""
+	tail = label.split(": ", 1)[1] if ": " in label else label
+	base = "Pending " + (tail.strip() or "Step")
+	ends = CHAIN_ENDS.get(row.get("document_type")) or {}
+	taken = {r.get("state") for r in rows
+		if r is not row and r.get("document_type") == row.get("document_type")}
+	taken |= {"Draft", ends.get("reject"), (ends.get("terminal") or (None,))[0]}
+	state, n = base, 2
+	while state in taken:
+		state, n = "%s %d" % (base, n), n + 1
+	return state
 
 
 def validate_configuration(settings):
@@ -1088,10 +1263,18 @@ def validate_configuration(settings):
 			title=_("Two steps with the same name"),
 		)
 
+	# Before anything reads a state: the internal names are not the save's to
+	# change. See fix_stage_names().
+	fix_stage_names(settings)
+
 	# After the names are known to be distinct: a row that arrives with only a
 	# name is keyed by it.
 	orphans = sync_approver_stages(settings)
-	if orphans:
+	# Refused on a person's save, never on the app's own. seed_stages() and
+	# capabilities.seed() save Settings on migrate; refusing there would take the
+	# deploy down over a row key_stage_approvers_by_stage deliberately left for a
+	# person to pick again.
+	if orphans and not (getattr(settings, "flags", None) or {}).get("skip_approval_sync"):
 		frappe.throw(
 			_("Stage Approvers row {0} names a step that is not in the approval chain ({1}). Pick the step again, or remove the row.").format(
 				orphans[0][0], frappe.bold(orphans[0][1] or _("none")),

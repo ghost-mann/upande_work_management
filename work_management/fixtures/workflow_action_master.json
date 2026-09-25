@@ -53,5 +53,15 @@
   "doctype": "Workflow Action Master",
   "name": "Submit for Approval",
   "workflow_action_name": "Submit for Approval"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Send for Review",
+  "workflow_action_name": "Send for Review"
+ },
+ {
+  "doctype": "Workflow Action Master",
+  "name": "Manager Approve",
+  "workflow_action_name": "Manager Approve"
  }
 ]

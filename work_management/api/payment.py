@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management import report_access
-from work_management.api.config import FEED_KIND, PAYROLL_FEED, get_config
+from work_management.api.config import FEED_KIND, PAYROLL_FEED, chain_states, get_config, sql_in
 
 
 def task_worker_sql(alias="we"):
@@ -385,6 +385,11 @@ def wm_payment(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    # WORKFLOW STATE LISTS, read from the chain (approvals.pipeline_states via
+    # get_config) and spliced into SQL with sql_in(). They were spelled out by
+    # hand -- ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned') --
+    # and stopped matching the day a step's state was anything else.
+    ST_ASG_ACTIVE = chain_states(_cfg, "Work Management Assigner", "active")
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
@@ -1128,7 +1133,7 @@ def wm_payment(**kwargs):
             "unpaid_workers": frappe.utils.cint(k.unpaid_workers) if kp else 0
         }
         # assigned workers (live assignments in window/farm)
-        aconds = "a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')"
+        aconds = "a.workflow_state IN (" + sql_in(ST_ASG_ACTIVE) + ")"
         aparams = []
         if farm:
             aconds = aconds + " AND a.farm = %s"
@@ -3037,7 +3042,7 @@ def wm_payment(**kwargs):
             FROM `tabWork Assignment Employee` we
             INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
             INNER JOIN `tabEmployee` emp ON emp.name = we.employee
-            WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+            WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
               AND IFNULL(we.status,'Active') = 'Active'
               AND emp.status != 'Active'
               """ + iconds + """
@@ -3793,7 +3798,7 @@ def wm_payment(**kwargs):
             FROM `tabWork Assignment Employee` we
             INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
             INNER JOIN `tabEmployee` emp ON emp.name = we.employee
-            WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+            WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
               AND IFNULL(we.status,'Active') = 'Active'
               AND emp.status != 'Active'
               """ + riconds + """

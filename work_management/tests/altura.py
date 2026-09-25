@@ -13,16 +13,22 @@ reads `chain.may_take(step, roles)` until somebody configures the chain.
 So this is the other site. Nothing here is invented to be awkward: it is the
 shape Altura actually runs.
 
-    every step RELABELLED     `Assigner: Manager`, not `Assigner: Farm Manager`
-    every state RENAMED       so no comparison against `Pending GM` can pass by
-                              accident
-    every action RENAMED      so none of the shipped `FM Approve` family appears
+    steps RELABELLED          `Actuals: Supervisor`, `Assigner: Manager` -- the
+                              labels live Altura carries (25 Sep)
+    the CATALOGUE's names     on this branch approvals.CATALOGUE holds Altura's
+                              states and actions (`Pending Approval` / `Approve`
+                              for the Supervisor), which Settings can no longer
+                              rename -- so these are exactly what a site holds
+    `Approve` TWICE           the Actuals Supervisor and Manager steps share an
+                              action name, which is only safe while nothing
+                              resolves a step by its action
     three roles, none shipped  Production Manager, Production Section Head,
                               HR Officer -- the app ships none of them and
                               deliberately creates none
     five steps OFF            the consultant review, the planner's second
                               approval, the assigner's HR and GM steps and the
-                              actuals GM step
+                              actuals GM step -- and the actuals HR step is ON,
+                              as the Manager
 
 The important consequence, and the reason these figures are worth stating: ONE
 role, Production Manager, takes the last enabled step of all four chains. Philip
@@ -64,26 +70,27 @@ HR_OFFICER = "HR Officer"
 #: (key, label, state, action, role, enabled). Order is the chain's order, which
 #: is the order Settings holds the rows in.
 STEPS = [
-	("masterplan_submit", "Budget: Raise", "Drafting", "Send for review", SECTION_HEAD, 1),
-	("masterplan_consultant", "Budget: Review", "With the reviewer", "Send on", MANAGER, 0),
-	("masterplan_gm", "Budget: Manager", "With the manager", "Sign off", MANAGER, 1),
+	("masterplan_submit", "Master Plan: Submit", "Draft", "Send for Review", SECTION_HEAD, 1),
+	("masterplan_consultant", "Master Plan: Consultant", "Pending Consultant", "Send to GM",
+		MANAGER, 0),
+	("masterplan_gm", "Master Plan: Manager", "Pending Manager", "Manager Approve", MANAGER, 1),
 
-	("planner_submit", "Plan: Raise", "Drafting", "Send for approval", SECTION_HEAD, 1),
-	("planner_farm_approval", "Plan: Manager", "With the manager", "Sign off", MANAGER, 1),
-	("planner_hr_approval", "Plan: People", "With people", "People sign off", HR_OFFICER, 0),
+	("planner_submit", "Planner: Submit", "Draft", "Submit for Approval", SECTION_HEAD, 1),
+	("planner_farm_approval", "Planner: Manager", "Pending Approval", "Approve", MANAGER, 1),
+	("planner_hr_approval", "Planner: HR Approval", "Pending HR Approval", "HR Approve",
+		HR_OFFICER, 0),
 
-	("assigner_submit", "Crew: Raise", "Drafting", "Send for approval", SECTION_HEAD, 1),
-	("assigner_farm_manager", "Assigner: Manager", "With the manager", "Sign off", MANAGER, 1),
-	("assigner_hr_head", "Crew: People", "With people", "People sign off", HR_OFFICER, 0),
-	("assigner_gm", "Crew: Director", "With the director", "Director sign off", MANAGER, 0),
+	("assigner_submit", "Assigner: Submit", "Draft", "Submit for Approval", SECTION_HEAD, 1),
+	("assigner_farm_manager", "Assigner: Manager", "Pending Manager", "Approve", MANAGER, 1),
+	("assigner_hr_head", "Assigner: HR Head", "Pending HR Head", "HR Approve", HR_OFFICER, 0),
+	("assigner_gm", "Assigner: GM", "Pending GM", "GM Approve", MANAGER, 0),
 
-	("actuals_submit", "Work done: Record", "Drafting", "Send for approval", HR_OFFICER, 1),
-	("actuals_farm_manager", "Work done: Section", "With the section", "Section sign off",
-		MANAGER, 1),
-	("actuals_hr_head", "Work done: People", "With people", "People sign off", HR_OFFICER, 0),
-	("actuals_gm", "Work done: Manager", "With the manager", "Sign off", MANAGER, 1),
+	("actuals_submit", "Actuals: Submit", "Draft", "Submit for Approval", HR_OFFICER, 1),
+	("actuals_farm_manager", "Actuals: Supervisor", "Pending Approval", "Approve", MANAGER, 1),
+	("actuals_hr_head", "Actuals: Manager", "Pending Manager", "Approve", MANAGER, 1),
+	("actuals_gm", "Actuals: GM", "Pending GM", "GM Approve", MANAGER, 0),
 
-	("payment_accounts", "Pay: Release", "Not yet paid", "Release", HR_OFFICER, 1),
+	("payment_accounts", "Payment: HR Officer", "Unpaid", "Mark Paid", HR_OFFICER, 1),
 ]
 
 #: Which steps are switched off, spelled out so the count in the docstring is

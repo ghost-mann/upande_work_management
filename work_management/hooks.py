@@ -150,6 +150,8 @@ fixtures = [
 					"Pending Farm Manager",
 					"Pending GM",
 					"Pending HR Head",
+					# Altura's catalogue (approvals.CATALOGUE on this branch)
+					"Pending Manager",
 					"Rejected",
 					"Unpaid",
 					"Cancelled",
@@ -185,6 +187,9 @@ fixtures = [
 					"Send for Consultant Review",
 					"Send to Accounts",
 					"Send to GM",
+					# Altura's catalogue (approvals.CATALOGUE on this branch)
+					"Send for Review",
+					"Manager Approve",
 					"Submit for Approval",
 				],
 			]

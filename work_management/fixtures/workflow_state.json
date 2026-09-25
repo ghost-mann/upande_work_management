@@ -70,5 +70,10 @@
   "name": "Unpaid",
   "workflow_state_name": "Unpaid",
   "style": ""
+ },
+ {
+  "doctype": "Workflow State",
+  "name": "Pending Manager",
+  "workflow_state_name": "Pending Manager"
  }
 ]

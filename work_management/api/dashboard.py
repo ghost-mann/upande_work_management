@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management import chain, report_access
-from work_management.api.config import get_config
+from work_management.api.config import chain_states, get_config, sql_in
 
 
 @frappe.whitelist()
@@ -26,6 +26,16 @@ def wm_dashboard(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    # WORKFLOW STATE LISTS, read from the chain (approvals.pipeline_states via
+    # get_config) and spliced into SQL with sql_in(). They were spelled out by
+    # hand -- ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned') --
+    # and stopped matching the day a step's state was anything else.
+    ST_ASG_ACTIVE = chain_states(_cfg, "Work Management Assigner", "active")
+    ST_ASG_WAITING = chain_states(_cfg, "Work Management Assigner", "waiting")
+    ST_ASG_PAST_FIRST = chain_states(_cfg, "Work Management Assigner", "past_first")
+    ST_ACT_ACTIVE = chain_states(_cfg, "Work Management Actuals", "active")
+    ST_ACT_WAITING = chain_states(_cfg, "Work Management Actuals", "waiting")
+    ST_ACT_ENTERED = chain_states(_cfg, "Work Management Actuals", "entered")
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
@@ -333,7 +343,7 @@ def wm_dashboard(**kwargs):
                 for row in frappe.db.sql("""
                     SELECT DISTINCT planner_request pr
                     FROM `tabWork Management Assigner`
-                    WHERE workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                    WHERE workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                       AND planner_request IN %(pl)s
                 """, {"pl": tuple(pnames)}, as_dict=True):
                     has_asg[row.pr] = 1
@@ -414,7 +424,7 @@ def wm_dashboard(**kwargs):
                 SELECT COALESCE(SUM(ac.total_actual_qty),0) q
                 FROM `tabWork Management Actuals` ac
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
-                WHERE a2.planner_request = %s AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM')
+                WHERE a2.planner_request = %s AND ac.workflow_state IN (""" + sql_in(ST_ACT_WAITING) + """)
             """, (pname,), as_dict=True)
             out["plan"]["pending_qty"] = frappe.utils.flt(pq[0].q) if pq else 0
         tgt = frappe.utils.flt(p.get("quantity")) if p else 0
@@ -859,7 +869,7 @@ def wm_dashboard(**kwargs):
             SELECT a.farm farm, COUNT(DISTINCT we.employee) w
             FROM `tabWork Assignment Employee` we
             INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-            WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+            WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
               AND IFNULL(we.status,'Active') = 'Active'
             GROUP BY a.farm""", as_dict=True):
             if r.farm in farm_map:
@@ -943,7 +953,7 @@ def wm_dashboard(**kwargs):
         out["totals"] = {
             "approved_cost": tot_cost, "planned_people": tot_ppl, "workers_deployed": tot_deployed,
             "approved_plans": plan_states.get("Approved", 0), "assignments": asg_states.get("Assigned", 0),
-            "plan_pending": plan_states.get("Pending Approval", 0), "asg_pending": asg_states.get("Pending Farm Manager", 0) + asg_states.get("Pending HR Head", 0) + asg_states.get("Pending GM", 0),
+            "plan_pending": plan_states.get("Pending Approval", 0), "asg_pending": sum(asg_states.get(s, 0) for s in ST_ASG_WAITING),
             "act_confirmed": act_states.get("CONFIRMED", 0), "actual_payment": tot_actpay,
             "planned_qty": tot_planqty, "actual_qty": tot_actqty, "planned_value": tot_cost,
             "paid_amount": tot_paid, "workers_paid": tot_wkrs_paid,
@@ -951,7 +961,7 @@ def wm_dashboard(**kwargs):
             "active_employees": wf_active, "active_task_workers": wf_task, "active_permanent": wf_perm,
             "crew_days": tot_crewdays,
             "unpaid": unpaid, "paid_total": paid_total,
-            "act_pending": act_states.get("Pending Farm Manager", 0) + act_states.get("Pending HR Head", 0) + act_states.get("Pending GM", 0),
+            "act_pending": sum(act_states.get(s, 0) for s in ST_ACT_WAITING),
             "pay_pending": pay_states.get("Unpaid", 0)}
         out["funnel"] = {"planned": plan_states.get("Approved", 0), "assigned": asg_states.get("Assigned", 0),
             "confirmed": act_states.get("CONFIRMED", 0), "paid": pay_states.get("Paid", 0)}
@@ -959,12 +969,14 @@ def wm_dashboard(**kwargs):
             filters={"workflow_state": "Pending Approval"},
             fields=["name","farm","block_section","task","people_per_day","total_cost","requested_by"],
             order_by="request_date desc", limit=50)
+        # the Assigner's HR step, found by key -- it was the literal "Pending HR Head"
+        asg_hr = chain.by_key(STAGE_ROWS, "Work Management Assigner", "assigner_hr_head") or {}
         out["asg_pending"] = frappe.db.get_all("Work Management Assigner",
-            filters={"workflow_state": "Pending HR Head"},
+            filters={"workflow_state": asg_hr.get("state") or "__none__"},
             fields=["name","farm","task","planned_people","assigned_count","variance","assigned_by"],
             order_by="assign_date desc", limit=50)
         out["act_pending"] = frappe.db.get_all("Work Management Actuals",
-            filters={"workflow_state": ["in", ["Pending Farm Manager","Pending HR Head","Pending GM"]]},
+            filters={"workflow_state": ["in", ST_ACT_WAITING]},
             fields=["name","farm","task","workflow_state","actual_people","payroll_people","total_payment"],
             order_by="entry_date desc", limit=50)
         out["pay_pending_list"] = frappe.db.get_all("Work Management Payment",
@@ -1026,8 +1038,8 @@ def wm_dashboard(**kwargs):
                 "pending_avg_wait": (wait_sum / pend_n) if pend_n else None
             })
         eff_step("Work plans", "Approve", "Work Management Planner", "approved_by", "approval_date", "Approved", ["Pending Approval"])
-        eff_step("Assignments", "GM", "Work Management Assigner", "approved_by", "approval_date", "Assigned", ["Pending Farm Manager","Pending HR Head","Pending GM"])
-        eff_step("Work records", "GM", "Work Management Actuals", "gm_approved_by", "gm_approval_date", "CONFIRMED", ["Pending Farm Manager","Pending HR Head","Pending GM"])
+        eff_step("Assignments", "GM", "Work Management Assigner", "approved_by", "approval_date", "Assigned", ST_ASG_WAITING)
+        eff_step("Work records", "GM", "Work Management Actuals", "gm_approved_by", "gm_approval_date", "CONFIRMED", ST_ACT_WAITING)
         eff_step("Payments", "Accounts", "Work Management Payment", "accounts_approved_by", "accounts_approval_date", "Paid", ["Unpaid"])
         out["approval_eff"] = appr_eff
         out["approver_names"] = appr_names
@@ -1241,7 +1253,7 @@ def wm_dashboard(**kwargs):
             srws = frappe.db.sql("""
                 SELECT DISTINCT planner_request FROM `tabWork Management Assigner`
                 WHERE planner_request IN (""" + ph + """)
-                  AND workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                  AND workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
             """, tuple(pnames), as_dict=True)
             for r in srws:
                 staffed[r.planner_request] = 1
@@ -1705,7 +1717,7 @@ def wm_dashboard(**kwargs):
         ledge("plans_unstaffed", "Approved plans not yet staffed", "/work-assigner",
             unstaffed, "total_cost", ["custom_approved_at", "approval_date"])
         asg_rows = frappe.db.get_all("Work Management Assigner",
-            filters={"workflow_state": ["in", ["Pending Farm Manager", "Pending HR Head", "Pending GM"]]},
+            filters={"workflow_state": ["in", ST_ASG_WAITING]},
             fields=["planned_cost", "custom_submitted_at", "creation"], limit=2000)
         ledge("asg_pending", "Assignments in approval", "/work-assigner",
             asg_rows, "planned_cost", ["custom_submitted_at", "creation"])
@@ -1722,7 +1734,7 @@ def wm_dashboard(**kwargs):
         ledge("asg_noactuals", "Staffed, no actuals recorded yet", "/work-actuals",
             no_act, "planned_cost", ["custom_gm_approved_at", "approval_date"])
         act_rows = frappe.db.get_all("Work Management Actuals",
-            filters={"workflow_state": ["in", ["Pending Farm Manager", "Pending HR Head", "Pending GM"]]},
+            filters={"workflow_state": ["in", ST_ACT_WAITING]},
             fields=["total_payment", "workflow_state", "custom_submitted_at", "creation"], limit=2000)
         ledge("act_pending", "Actuals in approval (FM/HR/GM)", "/work-actuals",
             act_rows, "total_payment", ["custom_submitted_at", "creation"])
@@ -2360,12 +2372,20 @@ def wm_dashboard(**kwargs):
                            "fresh": fresh, "mid": mid, "old": old})
 
         qcount("Work Management Planner", "Pending Approval", "Plans → Farm Manager", ["custom_submitted_at"])
-        qcount("Work Management Assigner", "Pending Farm Manager", "Assignments → FM", ["custom_submitted_at"])
-        qcount("Work Management Assigner", "Pending HR Head", "Assignments → HR", ["custom_fm_approved_at", "custom_submitted_at"])
-        qcount("Work Management Assigner", "Pending GM", "Assignments → GM", ["custom_hr_approved_at", "custom_submitted_at"])
-        qcount("Work Management Actuals", "Pending Farm Manager", "Actuals → FM", ["custom_submitted_at"])
-        qcount("Work Management Actuals", "Pending HR Head", "Actuals → HR", ["custom_fm_approved_at", "custom_submitted_at"])
-        qcount("Work Management Actuals", "Pending GM", "Actuals → GM", ["custom_hr_approved_at", "custom_submitted_at"])
+        # Each approval step by KEY, so its state and its name come from the chain.
+        # These six named the shipped states and called them FM / HR / GM.
+        def qstep(dtype, key, prefix, start_fields):
+            step = chain.by_key(STAGE_ROWS, dtype, key)
+            if step and step.get("state"):
+                name = chain.label_of(step, key)
+                name = name.split(": ", 1)[1] if ": " in name else name
+                qcount(dtype, step["state"], prefix + " → " + name, start_fields)
+        qstep("Work Management Assigner", "assigner_farm_manager", "Assignments", ["custom_submitted_at"])
+        qstep("Work Management Assigner", "assigner_hr_head", "Assignments", ["custom_fm_approved_at", "custom_submitted_at"])
+        qstep("Work Management Assigner", "assigner_gm", "Assignments", ["custom_hr_approved_at", "custom_submitted_at"])
+        qstep("Work Management Actuals", "actuals_farm_manager", "Actuals", ["custom_submitted_at"])
+        qstep("Work Management Actuals", "actuals_hr_head", "Actuals", ["custom_fm_approved_at", "custom_submitted_at"])
+        qstep("Work Management Actuals", "actuals_gm", "Actuals", ["custom_hr_approved_at", "custom_submitted_at"])
         qcount("Work Management Payment", "Unpaid", "Payments → Accounts", ["custom_submitted_at", "creation"])
         out["queues"] = queues
         out["window"] = {"from": str(kfrom), "to": str(kto)}
@@ -2748,7 +2768,7 @@ def wm_dashboard(**kwargs):
             SELECT ac.farm farm, we.work_date d, COUNT(DISTINCT we.employee) n
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-            WHERE ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+            WHERE ac.workflow_state IN (""" + sql_in(ST_ACT_ENTERED) + """)
               AND we.work_date BETWEEN %s AND %s
             GROUP BY ac.farm, we.work_date
         """, (lfrom, lto), as_dict=True):
@@ -2762,7 +2782,7 @@ def wm_dashboard(**kwargs):
                    we.employee emp, we.status wstatus, we.start_date wstart, we.left_date wleft
             FROM `tabWork Assignment Employee` we
             INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-            WHERE a.workflow_state IN ('Pending HR Head','Pending GM','Assigned')
+            WHERE a.workflow_state IN (""" + sql_in(ST_ASG_PAST_FIRST) + """)
               AND a.from_date <= %s AND a.to_date >= %s
             LIMIT 60000
         """, (lto, lfrom), as_dict=True):
@@ -3010,7 +3030,7 @@ def wm_dashboard(**kwargs):
             SELECT DISTINCT we.employee emp
             FROM `tabWork Assignment Employee` we
             INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-            WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+            WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
               AND a.from_date <= %s AND a.to_date >= %s
               AND IFNULL(we.status,'Active') = 'Active'
               AND (we.start_date IS NULL OR we.start_date <= %s)
@@ -3151,7 +3171,7 @@ def wm_dashboard(**kwargs):
                    AVG(DATEDIFF(ac.entry_date, we.work_date)) lag_days
             FROM `tabWork Management Actuals` ac
             INNER JOIN `tabWork Actuals Employee` we ON we.parent = ac.name
-            WHERE ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+            WHERE ac.workflow_state IN (""" + sql_in(ST_ACT_ACTIVE) + """)
               AND DATE(ac.creation) BETWEEN %s AND %s
               AND IFNULL(ac.entered_by, '') != ''
             GROUP BY ac.entered_by

@@ -24,14 +24,15 @@
    "label": "Stage Key",
    "read_only": 1,
    "hidden": 1,
-   "description": "Identifies the step. Set by the app for shipped steps and typed once for a step you add; changing it later would orphan documents already sitting in this step."
+   "description": "Identifies the step. Set by the app: fixed for shipped steps, and generated for a step you add when it is first saved. Never changes afterwards."
   },
   {
    "columns": 3,
    "fieldname": "stage_label",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Stage"
+   "label": "Stage",
+   "description": "What the screens call this step. Rename freely -- documents follow the step, not its name."
   },
   {
    "columns": 2,
@@ -51,13 +52,15 @@
    "fieldname": "state",
    "fieldtype": "Data",
    "label": "Waits In",
-   "description": "The workflow state a document sits in at this step. New steps need a state of their own; two steps sharing one would be indistinguishable to the workflow."
+   "description": "The workflow state a document waits in at this step. Fixed: documents carry it by name, so changing it would strand them. Rename the step through its label instead. A step you add is given one when it is first saved.",
+   "read_only": 1
   },
   {
    "fieldname": "action",
    "fieldtype": "Data",
    "label": "Action",
-   "description": "The button that leaves this step, as an approver sees it."
+   "description": "The workflow action that leaves this step. Fixed for the same reason as Waits In; a step you add is given one when it is first saved.",
+   "read_only": 1
   },
   {
    "fieldname": "scoped",
@@ -95,7 +98,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-08-24 00:00:00.000000",
+ "modified": "2026-09-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Approval Stage",

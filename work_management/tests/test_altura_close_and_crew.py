@@ -27,7 +27,7 @@ three people who exist there and for the three shipped job titles who do not.
 
 import unittest
 
-from work_management import chain
+from work_management import approvals, chain
 from work_management.tests import altura
 
 ACT = "Work Management Actuals"
@@ -67,12 +67,18 @@ class TestTheChainIsShapedLikeAltura(unittest.TestCase):
 	def test_five_steps_are_off(self):
 		self.assertEqual(len(altura.OFF), 5, altura.OFF)
 
-	def test_no_step_carries_a_shipped_state(self):
-		shipped_states = {"Pending Farm Manager", "Pending HR Head", "Pending GM",
-			"Pending Approval", "Pending Consultant"}
+	def test_every_step_carries_the_catalogue_s_names(self):
+		"""It used to assert the opposite -- every state renamed, so no literal
+		comparison could pass by accident. On this branch a site cannot rename a
+		state any more (approvals.fix_stage_names), and the catalogue IS Altura's,
+		so what Altura holds is exactly the catalogue. Literal comparisons are
+		caught by the grep guards in test_the_screens_speak_the_configured_chain
+		instead, which ban the upstream names as well."""
+		shipped = {s.key: s for s in approvals.CATALOGUE}
 		for row in altura.chain_rows():
 			with self.subTest(step=row["key"]):
-				self.assertNotIn(row["state"], shipped_states)
+				self.assertEqual((row["state"], row["action"]),
+					(shipped[row["key"]].state, shipped[row["key"]].action))
 
 	def test_no_step_is_taken_by_a_role_the_app_ships(self):
 		for row in altura.chain_rows():
@@ -96,8 +102,10 @@ class TestWhoDecidesAClose(unittest.TestCase):
 		self.step = final_step(ACT)
 
 	def test_it_is_the_actuals_manager_step(self):
-		self.assertEqual(self.step["key"], "actuals_gm")
-		self.assertEqual(self.step["label"], "Work done: Manager")
+		"""Live Altura ends Actuals at the Manager, which is the catalogue's HR
+		step relabelled -- the GM step is off."""
+		self.assertEqual(self.step["key"], "actuals_hr_head")
+		self.assertEqual(self.step["label"], "Actuals: Manager")
 
 	def test_philip_may_close(self):
 		self.assertIsNone(chain.may_take(self.step, [altura.MANAGER]))
@@ -111,7 +119,7 @@ class TestWhoDecidesAClose(unittest.TestCase):
 	def test_the_refusal_names_the_configured_step(self):
 		why = chain.may_take(self.step, [altura.HR_OFFICER])
 		self.assertIn(altura.MANAGER, why)
-		self.assertIn("Work done: Manager", why)
+		self.assertIn("Actuals: Manager", why)
 		self.assertNotIn("General Manager", why)
 
 	def test_the_hr_officer_may_not_close(self):

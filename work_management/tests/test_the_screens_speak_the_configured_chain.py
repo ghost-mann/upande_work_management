@@ -138,8 +138,14 @@ def live_api(name):
 #: would be risk without capability.
 PAYMENT_STATES = {s.state for s in approvals.CATALOGUE
 	if s.document_type == "Work Management Payment" and s.state}
+#: The names the altura catalogue replaced (rescue_documents_in_renamed_states
+#: .UPSTREAM). Still banned: a screen that regressed to one would be matching a
+#: state no document is in any more.
+from work_management.patches.v1_0.rescue_documents_in_renamed_states import UPSTREAM
+
 SHIPPED_STATES = sorted(
-	{s.state for s in approvals.CATALOGUE if s.state} - {"Draft"} - PAYMENT_STATES)
+	({s.state for s in approvals.CATALOGUE if s.state} | {st for st, _a in UPSTREAM.values()})
+	- {"Draft"} - PAYMENT_STATES)
 
 #: The shipped actions that name WHO takes the step -- `FM Approve`, `GM
 #: Approve`, `HR Approve`, `Send to GM`. Those are the ones that go wrong on a
@@ -158,7 +164,8 @@ def _names_a_role(action):
 
 
 SHIPPED_ACTIONS = sorted(
-	{s.action for s in approvals.CATALOGUE if s.action and _names_a_role(s.action)})
+	{a for a in ({s.action for s in approvals.CATALOGUE if s.action}
+		| {a for _st, a in UPSTREAM.values()}) if a and _names_a_role(a)})
 
 #: The role names this app was deliberately stopped from shipping (see
 #: test_no_shipped_roles) plus the two generic ones the screens used to name.
@@ -407,11 +414,13 @@ class TestNoDispatcherDecidesByStateName(unittest.TestCase):
 	MASTER_PLAN_STATES = tuple(sorted(
 		{s.state for s in approvals.CATALOGUE
 			if s.document_type == "Work Management Master Plan"
-			and s.kind == "Approval" and s.state}))
+			and s.kind == "Approval" and s.state}
+		| {UPSTREAM["masterplan_gm"][0]}))
 
 	def test_the_states_are_the_ones_we_think(self):
+		"""The catalogue's (Altura's `Pending Manager`) and the upstream name."""
 		self.assertEqual(self.MASTER_PLAN_STATES,
-			("Pending Consultant", "Pending GM"))
+			("Pending Consultant", "Pending GM", "Pending Manager"))
 
 	def test_the_master_plan_dispatcher_names_neither(self):
 		src = live_api("masterplan.py")

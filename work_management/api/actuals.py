@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management import bulk, chain, presence, stage_pills
-from work_management.api.config import get_config
+from work_management.api.config import chain_states, get_config, sql_in
 
 
 @frappe.whitelist()
@@ -26,6 +26,18 @@ def wm_actuals(**kwargs):
     HR_HEAD_ROLES = _cfg["hr_head_roles"]
     STAGE_ROWS = _cfg["stage_rows"]
     STAGE_STATES = _cfg["stage_states"]
+    # WORKFLOW STATE LISTS, read from the chain (approvals.pipeline_states via
+    # get_config) and spliced into SQL with sql_in(). They were spelled out by
+    # hand -- ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned') --
+    # and stopped matching the day a step's state was anything else.
+    ST_ASG_ACTIVE = chain_states(_cfg, "Work Management Assigner", "active")
+    ST_ACT_ACTIVE = chain_states(_cfg, "Work Management Actuals", "active")
+    ST_ACT_WAITING = chain_states(_cfg, "Work Management Actuals", "waiting")
+    ST_ACT_OPEN = chain_states(_cfg, "Work Management Actuals", "open")
+    ST_ACT_ENTERED = chain_states(_cfg, "Work Management Actuals", "entered")
+    ST_ACT_PAST_FIRST = chain_states(_cfg, "Work Management Actuals", "past_first")
+    ST_ACT_WAITING_PAST_FIRST = chain_states(_cfg, "Work Management Actuals", "waiting_past_first")
+    ST_ACT_DRAFT_WAITING = (chain_states(_cfg, "Work Management Actuals", "draft") + chain_states(_cfg, "Work Management Actuals", "waiting"))
     CAPABILITIES = _cfg["capabilities"]
     ALLOW_CONCURRENT_PLANS = _cfg["allow_concurrent_master_plans"]
     ALLOW_SPLIT_DAY = _cfg["allow_split_day"]
@@ -310,7 +322,7 @@ def wm_actuals(**kwargs):
             SELECT a2.planner_request pr, COALESCE(SUM(ac.total_actual_qty),0) q
             FROM `tabWork Management Actuals` ac
             INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
-            WHERE ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM')
+            WHERE ac.workflow_state IN (""" + sql_in(ST_ACT_DRAFT_WAITING) + """)
             GROUP BY a2.planner_request
         """, as_dict=True):
             plan_pending[r.pr] = frappe.utils.flt(r.q)
@@ -319,7 +331,7 @@ def wm_actuals(**kwargs):
         for r in frappe.db.sql("""
             SELECT assignment, COUNT(name) n
             FROM `tabWork Management Actuals`
-            WHERE workflow_state IN ('Pending HR Head','Pending GM')
+            WHERE workflow_state IN (""" + sql_in(ST_ACT_WAITING_PAST_FIRST) + """)
             GROUP BY assignment
         """, as_dict=True):
             inreview[r.assignment] = r.n
@@ -510,7 +522,7 @@ def wm_actuals(**kwargs):
                 FROM `tabWork Management Actuals` ac
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                 WHERE a2.planner_request = %s
-                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                  AND ac.workflow_state IN (""" + sql_in(ST_ACT_PAST_FIRST) + """)
                   AND ac.assignment != %s
             """, (pr, name), as_dict=True)
             done_elsewhere = frappe.utils.flt(de[0].q) if de else 0
@@ -738,7 +750,7 @@ def wm_actuals(**kwargs):
         # also: is there a live (in-review/confirmed) doc blocking new entry?
         live = frappe.db.sql("""
             SELECT name, workflow_state FROM `tabWork Management Actuals`
-            WHERE assignment = %s AND workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED') LIMIT 1
+            WHERE assignment = %s AND workflow_state IN (""" + sql_in(ST_ACT_PAST_FIRST) + """) LIMIT 1
         """, (name,), as_dict=True)
         a["live_name"] = live[0].name if live else None
         a["live_state"] = live[0].workflow_state if live else None
@@ -845,12 +857,12 @@ def wm_actuals(**kwargs):
                 filters={"assignment": assignment, "workflow_state": ["in", ["Draft", "Rejected"]]},
                 pluck="name", limit=1)
             live = frappe.db.get_all("Work Management Actuals",
-                filters={"assignment": assignment, "workflow_state": ["in", ["Pending Farm Manager","Pending HR Head","Pending GM","CONFIRMED"]]},
+                filters={"assignment": assignment, "workflow_state": ["in", ST_ACT_ACTIVE]},
                 pluck="name", limit=1)
             editing_pending = 0
             if edit_doc and frappe.db.exists("Work Management Actuals", edit_doc):
                 estate = frappe.db.get_value("Work Management Actuals", edit_doc, "workflow_state")
-                if estate in ("Pending Farm Manager","Pending HR Head","Pending GM"):
+                if estate in ST_ACT_WAITING:
                     editing_pending = 1
             # ── TIME & ATTENDANCE GATE (toggles in Work Management Settings): a
             # quantity recorded for a worker who is marked Absent, on approved
@@ -992,7 +1004,7 @@ def wm_actuals(**kwargs):
                         SELECT we.employee, we.work_date d, ac.name doc
                         FROM `tabWork Actuals Employee` we
                         INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-                        WHERE ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+                        WHERE ac.workflow_state IN (""" + sql_in(ST_ACT_ENTERED) + """)
                           AND ac.task = %s AND ac.assignment != %s
                           AND we.actual_quantity > 0
                           AND we.employee IN %s AND we.work_date IN %s
@@ -1284,7 +1296,7 @@ def wm_actuals(**kwargs):
                             FROM `tabWork Management Actuals` ac
                             INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                             WHERE a2.planner_request = %s
-                              AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                              AND ac.workflow_state IN (""" + sql_in(ST_ACT_PAST_FIRST) + """)
                               AND ac.name != %s
                         """, (a_pr, this_doc), as_dict=True)
                         other_done = frappe.utils.flt(other_done_rows[0].q) if other_done_rows else 0
@@ -1343,7 +1355,7 @@ def wm_actuals(**kwargs):
                                 FROM `tabWork Management Actuals` ac
                                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                                 WHERE a2.planner_request = %s
-                                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                                  AND ac.workflow_state IN (""" + sql_in(ST_ACT_PAST_FIRST) + """)
                                   AND ac.assignment != %s
                             """, (a_pr, assignment), as_dict=True)
                             other_done2 = frappe.utils.flt(odr[0].q) if odr else 0
@@ -1885,7 +1897,7 @@ def wm_actuals(**kwargs):
                     FROM `tabWork Management Actuals` ac
                     INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                     WHERE a2.planner_request IN %s
-                      AND ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+                      AND ac.workflow_state IN (""" + sql_in(ST_ACT_ENTERED) + """)
                     GROUP BY a2.planner_request
                 """, (tuple([r.name for r in rows]),), as_dict=True):
                     done_map[r2.pr] = (frappe.utils.flt(r2.q), frappe.utils.flt(r2.qc))
@@ -1937,7 +1949,7 @@ def wm_actuals(**kwargs):
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                 WHERE a2.planner_request = %s
                   AND (
-                        ac.workflow_state IN ('Draft','Rejected','Pending Farm Manager','Pending HR Head','Pending GM')
+                        ac.workflow_state IN (""" + sql_in(ST_ACT_OPEN) + """)
                         OR (ac.workflow_state = 'CONFIRMED' AND ac.docstatus = 0)
                       )
             """, (plan,), as_dict=True)
@@ -2103,7 +2115,7 @@ def wm_actuals(**kwargs):
                 SELECT DISTINCT we.employee emp
                 FROM `tabWork Assignment Employee` we
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-                WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                   AND a.name != %s
                   AND IFNULL(we.status,'Active') = 'Active'
                   AND a.from_date <= %s AND a.to_date >= %s
@@ -2157,7 +2169,7 @@ def wm_actuals(**kwargs):
                     SELECT a.name asg
                     FROM `tabWork Assignment Employee` we
                     INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
-                    WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                    WHERE a.workflow_state IN (""" + sql_in(ST_ASG_ACTIVE) + """)
                       AND a.name != %s
                       AND IFNULL(we.status,'Active') = 'Active'
                       AND we.employee = %s

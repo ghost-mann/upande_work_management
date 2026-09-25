@@ -120,7 +120,7 @@ class TestARenameKeepsTheApprovers(unittest.TestCase):
 		config_ = settings(RENAMED, PER_FARM)
 		plan = approvals.plan_workflow(ASSIGNER, settings=config_)
 		fm = [t for t in plan["transitions"]
-			if t["state"] == "Pending Farm Manager" and t["action"] == "FM Approve"]
+			if t["state"] == "Pending Manager" and t["action"] == "Approve"]
 		self.assertEqual(sorted((t["allowed"], t["condition"]) for t in fm), [
 			("FM Lokitela", 'doc.farm == "Lokitela"'),
 			("FM Saboti", 'doc.farm == "Saboti"'),
@@ -130,7 +130,7 @@ class TestARenameKeepsTheApprovers(unittest.TestCase):
 		config_ = settings(RENAMED, PER_FARM)
 		plan = approvals.plan_workflow(ASSIGNER, settings=config_)
 		self.assertNotIn("", [t["condition"] for t in plan["transitions"]
-			if t["state"] == "Pending Farm Manager"])
+			if t["state"] == "Pending Manager"])
 
 	def test_roles_are_still_granted_after_a_rename(self):
 		grants = approvals._desired_grants(settings(RENAMED, PER_FARM))

@@ -41,3 +41,9 @@ work_management.patches.v1_0.settle_activities_with_no_consultant_step
 # carry, and every rename made first is a row it may not recover. Nothing above
 # depends on it; after_migrate's apply_stage_picker_options() then offers keys.
 work_management.patches.v1_0.key_stage_approvers_by_stage
+# After key_stage_approvers_by_stage, and last: it writes the catalogue's state
+# and action onto the stage rows, moves documents waiting under the old names
+# and rebuilds the workflows, all in one transaction, before after_migrate. A
+# patch above that rebuilds the workflows only ever runs on a site that has not
+# had it yet -- live Altura has had every one of them.
+work_management.patches.v1_0.rescue_documents_in_renamed_states
