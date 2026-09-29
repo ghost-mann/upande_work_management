@@ -44,7 +44,7 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep="/api/method/"+(method||"wm_actuals");
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1};
+    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_close_reject:1,act_reopen:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -156,6 +156,7 @@
     if(r.is_hr_head) q.push({key:"hr",label:"HR Head",stage:"Pending HR Head",action:"act_hr_approve"});
     q.push({key:"gm",label:"GM",stage:"Pending GM",action:"act_gm_approve"});
     if(r.is_gm) q.push({key:"close",label:"Close Requests"});
+    if(r.is_gm) q.push({key:"closed",label:"Closed Plans"});
     return q;
   }
   function renderApprovals(){
@@ -173,6 +174,7 @@
     var q=null;
     for(i=0;i<queues.length;i++){ if(queues[i].key===ST._apprKey) q=queues[i]; }
     if(q && q.key==="close") loadCloseRequests();
+    else if(q && q.key==="closed") loadClosedPlans();
     else if(q) loadStage("acappr-body", q.stage, q.action);
   }
   // ---- shared list filter bar (search / farm / status / date range) ----
@@ -498,6 +500,11 @@
         return;
       }
       // no close state yet: GM -> instant; FM/section head -> request
+      var lr=d.last_close_rejection;
+      if(lr){
+        head+='<div style="border:1px solid #b91c1c;background:#fef2f2;color:#7f1d1d;padding:8px 12px;font-size:11px;margin-bottom:8px">'+
+          '<b>Last close request was rejected</b> on '+esc(lr.on)+'.<div style="margin-top:3px">'+esc(lr.text)+'</div></div>';
+      }
       if(d.can_close_now){
         box.innerHTML=head+'<div style="font-size:11px;color:#555;margin-bottom:8px">'+esc(pctTxt)+'. As GM you can close immediately — any open draft is finalised and the remaining target is capped.</div>'+
           '<button type="button" class="btn solid" id="ac-close-now">Close plan now</button>';
@@ -514,6 +521,7 @@
   function openCloseModal(isGm, presetReason){
     var m=el("ac-closemodal"); if(!m) return;
     ST._closeIsGm=isGm;
+    ST._planAct=null;
     el("ac-close-title").textContent = isGm ? "Close plan now" : "Request close";
     el("ac-close-desc").textContent = isGm
       ? "This finalises any open draft actuals to Confirmed and caps the plan (target kept for reporting). A reason is required."
@@ -523,10 +531,43 @@
     el("ac-close-go").disabled = !ta.value.trim();
     m.style.display="flex";
   }
+  // The same reason box, for the GM's two answers from the Approvals queues:
+  // turning a close request down, and reopening a plan closed early. Each posts
+  // the plan and the reason, then reloads the queue it was opened from.
+  var PLAN_ACTS = {
+    reject: {action:"act_close_reject", title:"Reject close request", go:"Reject request",
+      desc:"The plan stays open and entry carries on. Whoever asked sees that it was rejected, and your reason.",
+      done:"Close request rejected", reload:function(){ loadCloseRequests(); }},
+    reopen: {action:"act_reopen", title:"Reopen plan", go:"Reopen plan",
+      desc:"The plan opens for entry again. Actuals the close confirmed stay confirmed, and released workers stay released — re-add anyone still needed with Add crew.",
+      done:"Plan reopened", reload:function(){ loadClosedPlans(); }}
+  };
+  function openPlanModal(kind, plan){
+    var m=el("ac-closemodal"); if(!m) return;
+    var pa=PLAN_ACTS[kind];
+    ST._planAct={kind:kind, plan:plan};
+    el("ac-close-title").textContent = pa.title+" · "+plan;
+    el("ac-close-desc").textContent = pa.desc;
+    var ta=el("ac-close-reason"); ta.value="";
+    el("ac-close-go").textContent = pa.go;
+    el("ac-close-go").disabled = true;
+    m.style.display="flex";
+  }
+  function submitPlanAct(reason){
+    var pa=PLAN_ACTS[ST._planAct.kind], plan=ST._planAct.plan;
+    el("ac-close-go").disabled=true;
+    call({action:pa.action, plan:plan, reason:reason}).then(function(d){
+      if(d.error){ toast("Error: "+d.error); el("ac-close-go").disabled=false; return; }
+      closeCloseModal();
+      toast(pa.done+" · "+plan);
+      pa.reload();
+    }).catch(function(e){ toast("Failed"); el("ac-close-go").disabled=false; });
+  }
   function closeCloseModal(){ var m=el("ac-closemodal"); if(m) m.style.display="none"; }
   function submitClose(){
     var reason=(el("ac-close-reason").value||"").trim();
     if(!reason){ toast("A reason is required"); return; }
+    if(ST._planAct){ submitPlanAct(reason); return; }
     var act = ST._closeIsGm ? "act_close_confirm" : "act_close_request";
     el("ac-close-go").disabled=true;
     call({action:act, assignment:ST.asg, reason:reason}).then(function(d){
@@ -1225,30 +1266,38 @@
   }
   function loadRejected(){
     var b=el("acrej-body"); if(!b) return; b.className="loading"; b.innerHTML="Loading…";
-    call({action:"act_my"}).then(function(d){
-      var rows=(d.actuals||[]).filter(function(r){ return r.workflow_state==="Rejected"; });
-      if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">Nothing rejected — you’re all clear.</div>'; return; }
+    call({action:"act_rejected"}).then(function(d){
+      var rows=d.actuals||[];
+      var me=(ST.roles&&ST.roles.user)||"";
+      var gm=!!d.is_gm;
+      if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">'+(gm?'No rejected actuals.':'Nothing rejected — you’re all clear.')+'</div>'; return; }
       b.className="";
-      b.innerHTML='<div class="note" style="margin-bottom:8px">These actuals were rejected. Click <b>Edit</b> to adjust the daily quantities and resubmit for approval.</div>'
-        + fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task…"});
+      b.innerHTML='<div class="note" style="margin-bottom:8px">'+(gm
+          ? 'Every rejected actual, from every clerk. Whoever entered one fixes and resubmits it; you can open the document or assignment to see it.'
+          : 'These actuals were rejected. Click <b>Edit</b> to adjust the daily quantities and resubmit for approval.')+'</div>'
+        + fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task"+(gm?", entered by":"")+"…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
-                hay:((r.name||"")+" "+(r.farm||"")+" "+taskName(r.task)).toLowerCase()};
+                hay:((r.name||"")+" "+(r.farm||"")+" "+taskName(r.task)+" "+(r.entered_by||"")+" "+(r.rejected_by||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th>'+(gm?'<th>Entered by</th>':'')+'<th>Rejected by</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td><span class="editlink" data-asg="'+esc(r.assignment)+'">Edit &amp; resubmit →</span></td></tr>';
+          var mine=(r.entered_by===me);
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'+
+             (gm?'<td>'+esc((r.entered_by||"—").split("@")[0])+'</td>':'')+
+             '<td>'+esc(r.rejected_by?r.rejected_by.split("@")[0]:"—")+(r.rejected_on?'<div style="font-size:9px;color:#94a3b8">'+esc(r.rejected_on)+'</div>':'')+'</td>'+
+             '<td>'+(mine?'<span class="editlink" data-asg="'+esc(r.assignment)+'">Edit &amp; resubmit →</span>':'')+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
           elk.style.cursor="pointer";
           elk.onclick=function(ev){ ev.stopPropagation(); resumeActual(elk.getAttribute("data-asg")); };
         });
-        wireExpand(body, 9, function(i){
+        wireExpand(body, gm?10:9, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
-            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Status",esc(r.workflow_state)]])+
+            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Entered by",esc(r.entered_by||"—")],["Rejected by",esc(r.rejected_by||"—")],["Rejected on",esc(r.rejected_on||"—")]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
       });
@@ -1276,7 +1325,7 @@
            '<td class="n m">'+fmt(r.remaining_qty)+'</td>'+
            '<td>'+esc(r.custom_close_requested_by||"—")+'<div style="font-size:9px;color:#94a3b8">'+esc(r.custom_close_request_date||"")+'</div></td>'+
            '<td style="max-width:220px;white-space:normal">'+esc(r.custom_close_reason||"—")+'</td>'+
-           '<td><div class="ib"><button class="btn solid" data-cl="'+esc(r.name)+'">Approve &amp; close</button></div></td></tr>';
+           '<td><div class="ib"><button class="btn solid" data-cl="'+esc(r.name)+'">Approve &amp; close</button><button class="btn" data-clrej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
       wireExpand(body, 10, function(i){
@@ -1285,6 +1334,9 @@
           rowFigs([["Target",fmt(r.quantity)+' '+esc(r.uom||"")],["Done",fmt(r.fulfilled_qty)+((r.confirmed_qty!=null&&r.confirmed_qty<r.fulfilled_qty)?' ('+fmt(r.confirmed_qty)+' confirmed)':'')],["Remaining",fmt(r.remaining_qty)],["Requested by",esc(r.custom_close_requested_by||"—")],["Requested on",esc(r.custom_close_request_date||"—")]])+
           (r.custom_close_reason?('<div class="dv-note">Reason: '+esc(r.custom_close_reason)+'</div>'):'')+
           '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">'+deskA("Open plan","work-management-planner",r.name)+'</div>';
+      });
+      body.querySelectorAll("[data-clrej]").forEach(function(btn){
+        btn.onclick=function(ev){ ev.stopPropagation(); openPlanModal("reject", btn.getAttribute("data-clrej")); };
       });
       body.querySelectorAll("[data-cl]").forEach(function(btn){
         btn.onclick=function(){
@@ -1299,6 +1351,43 @@
       });
       });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load close requests.</div>'; });
+  }
+  function loadClosedPlans(){
+    var b=el("acappr-body"); if(!b) return; b.className="loading"; b.innerHTML="Loading…";
+    call({action:"act_closed_list"}).then(function(d){
+      if(d.not_gm){ b.className=""; b.innerHTML='<div class="empty">Only the General Manager sees closed plans.</div>'; return; }
+      var rows=d.closed||[];
+      if(!rows.length){ b.className=""; b.innerHTML='<div class="empty">No plans have been closed early.</div>'; return; }
+      b.className="";
+      b.innerHTML='<div class="note" style="margin-bottom:8px">Plans closed before reaching target. Reopening lets entry continue; actuals the close confirmed stay confirmed and released workers stay released.</div>'
+        + fbar(rows,{dates:true,ph:"Search plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
+      fwire(b, rows, function(r){
+        return {farm:r.farm||"", status:"", date:isodate(r.custom_closed_date),
+                hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)+" "+(r.custom_closed_by||"")).toLowerCase()};
+      }, function(body, list){
+        if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
+        var h='<table><thead><tr><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Target</th><th class="n">Done</th><th>Closed by</th><th>Reason</th><th>Action</th></tr></thead><tbody>';
+        list.forEach(function(r, i){
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td>'+
+             '<td class="n m">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td>'+
+             '<td class="n m">'+fmt(r.fulfilled_qty)+'</td>'+
+             '<td>'+esc(r.custom_closed_by||"—")+'<div style="font-size:9px;color:#94a3b8">'+esc(r.custom_closed_date||"")+'</div></td>'+
+             '<td style="max-width:220px;white-space:normal">'+esc(r.custom_close_reason||"—")+'</td>'+
+             '<td><div class="ib"><button class="btn" data-reopen="'+esc(r.name)+'">Reopen</button></div></td></tr>';
+        });
+        body.innerHTML=h+'</tbody></table>';
+        wireExpand(body, 9, function(i){
+          var r=list[i];
+          return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+' · '+esc(lbl(r.block_section))+'</span></div>'+
+            rowFigs([["Target",fmt(r.quantity)+' '+esc(r.uom||"")],["Done",fmt(r.fulfilled_qty)],["Remaining",fmt(r.remaining_qty)],["Closed by",esc(r.custom_closed_by||"—")],["Closed on",esc(r.custom_closed_date||"—")]])+
+            (r.custom_close_reason?('<div class="dv-note">Reason: '+esc(r.custom_close_reason)+'</div>'):'')+
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">'+deskA("Open plan","work-management-planner",r.name)+'</div>';
+        });
+        body.querySelectorAll("[data-reopen]").forEach(function(btn){
+          btn.onclick=function(ev){ ev.stopPropagation(); openPlanModal("reopen", btn.getAttribute("data-reopen")); };
+        });
+      });
+    }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load closed plans.</div>'; });
   }
   function loadStage(bodyId, stage, approveAction){
     var b=el(bodyId); b.className="loading"; b.innerHTML="Loading…";

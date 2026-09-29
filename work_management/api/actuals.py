@@ -1293,6 +1293,9 @@ def wm_actuals(**kwargs):
                 for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
                     frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 2, update_modified=False)
             frappe.db.set_value("Work Management Actuals", nm, "workflow_state", "Rejected", update_modified=False)
+            # who rejected, and when: the same timeline row Frappe's workflow writes for a
+            # desk rejection, so act_rejected answers "rejected by" for both routes
+            frappe.get_doc("Work Management Actuals", nm).add_comment("Workflow", "Rejected")
             asg = cur.assignment and frappe.db.get_value("Work Management Assigner", cur.assignment, "planner_request")
             if asg:
                 conf = frappe.db.sql("""
@@ -1341,6 +1344,18 @@ def wm_actuals(**kwargs):
             out["close_reason"] = cs.custom_close_reason if cs else None
             out["fulfilled_qty"] = frappe.utils.flt(cs.fulfilled_qty) if cs else 0
             out["target_qty"] = frappe.utils.flt(cs.quantity) if cs else 0
+            # the GM's refusal, so whoever asked can see it was turned down and why --
+            # only while it is the latest word on closing: a later reopen supersedes it
+            rej = frappe.db.sql("""
+                SELECT content, owner, creation FROM `tabComment`
+                WHERE reference_doctype = 'Work Management Planner' AND reference_name = %s
+                  AND comment_type = 'Info'
+                  AND (content LIKE 'Close request%%' OR content LIKE 'Reopened%%')
+                ORDER BY creation DESC LIMIT 1
+            """, (plan,), as_dict=True)
+            out["last_close_rejection"] = ({"text": rej[0].content, "by": rej[0].owner,
+                "on": str(rej[0].creation)[:10]}
+                if (rej and rej[0].content.startswith("Close request") and not out["close_state"]) else None)
         else:
             out["plan"] = None
             out["close_state"] = ""
@@ -1554,6 +1569,144 @@ def wm_actuals(**kwargs):
             out["fulfilled_qty"] = fulfilled
             out["remaining_qty"] = remaining
             out["target_qty"] = target
+
+
+    # ---------------------------------------------------------------------
+    # ACTION: act_close_reject  (POST) — GM turns down a pending close request
+    # params: plan, reason
+    # The plan goes back to open and the request fields are cleared, so it can be
+    # asked for again. The refusal is kept on the plan's timeline, not in a field,
+    # because a plan can be requested and refused more than once.
+    # ---------------------------------------------------------------------
+    elif action == "act_close_reject":
+        plan = frappe.form_dict.get("plan")
+        reason = (frappe.form_dict.get("reason") or "").strip()
+        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
+        err = None
+        if not plan:
+            err = "No plan given"
+        if not reason:
+            err = "A reason is required to reject a close request"
+        if not err and not is_gm:
+            err = "Only the General Manager can reject a close request"
+        cs = None
+        if not err:
+            cs = frappe.db.get_value("Work Management Planner", plan,
+                ["custom_close_state", "custom_close_requested_by", "custom_close_reason"], as_dict=True)
+            if not cs:
+                err = "Plan not found"
+            elif (cs.custom_close_state or "") != "Close Requested":
+                err = "There is no close request pending on this plan"
+        if err:
+            out["error"] = err
+        else:
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_state", "", update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_requested_by", None, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_request_date", None, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_reason", None, update_modified=False)
+            frappe.get_doc("Work Management Planner", plan).add_comment("Info",
+                "Close request by " + (cs.custom_close_requested_by or "—") + " rejected by " +
+                frappe.session.user + ": " + reason +
+                (" (they asked: " + cs.custom_close_reason + ")" if cs.custom_close_reason else ""))
+            frappe.db.commit()
+            out["plan"] = plan
+            out["close_state"] = ""
+
+
+    # ---------------------------------------------------------------------
+    # ACTION: act_closed_list  (GET) — GM's list of plans closed early
+    # "Completed" plans met their target and are not listed: nothing to reopen.
+    # ---------------------------------------------------------------------
+    elif action == "act_closed_list":
+        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
+        if not is_gm:
+            out["closed"] = []
+            out["not_gm"] = 1
+        else:
+            out["closed"] = frappe.db.get_all("Work Management Planner",
+                filters={"custom_close_state": "Closed"},
+                fields=["name", "farm", "block_section", "task", "quantity", "fulfilled_qty",
+                        "remaining_qty", "uom", "custom_closed_by", "custom_closed_date",
+                        "custom_close_reason"],
+                order_by="custom_closed_date desc, modified desc", limit=500)
+
+
+    # ---------------------------------------------------------------------
+    # ACTION: act_reopen  (POST) — GM reopens a plan that was closed early
+    # params: plan, reason
+    # Reopens the PLAN only. The actuals the close confirmed stay confirmed -- they
+    # may already be in a payment run -- and the released crew stays released, since
+    # they may be on other work by now; the clerk re-adds whoever is still needed.
+    # ---------------------------------------------------------------------
+    elif action == "act_reopen":
+        plan = frappe.form_dict.get("plan")
+        reason = (frappe.form_dict.get("reason") or "").strip()
+        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
+        err = None
+        if not plan:
+            err = "No plan given"
+        if not reason:
+            err = "A reason is required to reopen a plan"
+        if not err and not is_gm:
+            err = "Only the General Manager can reopen a plan"
+        cs = None
+        if not err:
+            cs = frappe.db.get_value("Work Management Planner", plan,
+                ["custom_close_state", "custom_closed_by", "custom_closed_date", "custom_close_reason"], as_dict=True)
+            if not cs:
+                err = "Plan not found"
+            elif (cs.custom_close_state or "") != "Closed":
+                err = "Only a plan closed early can be reopened"
+        if err:
+            out["error"] = err
+        else:
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_state", "", update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_closed_by", None, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_closed_date", None, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_reason", None, update_modified=False)
+            frappe.get_doc("Work Management Planner", plan).add_comment("Info",
+                "Reopened by " + frappe.session.user + ": " + reason +
+                " (closed by " + (cs.custom_closed_by or "—") + " on " + str(cs.custom_closed_date or "—") +
+                (": " + cs.custom_close_reason if cs.custom_close_reason else "") + ")")
+            frappe.db.commit()
+            out["plan"] = plan
+            out["close_state"] = ""
+
+
+    # ---------------------------------------------------------------------
+    # ACTION: act_rejected  (GET) — the Rejected tab
+    # The GM sees every rejected actual; everybody else only the ones they entered.
+    # ---------------------------------------------------------------------
+    elif action == "act_rejected":
+        crl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        is_gm = ("General Manager" in crl) or ("System Manager" in crl)
+        flt = {"workflow_state": "Rejected"}
+        if not is_gm:
+            flt["entered_by"] = frappe.session.user
+        rows = frappe.db.get_all("Work Management Actuals", filters=flt,
+            fields=["name","assignment","farm","task","total_actual_qty","actual_people","payroll_people",
+                    "total_payment","cost_variance","workflow_state","entry_date","entered_by"],
+            order_by="creation desc", limit=500)
+        # who rejected: the latest "Rejected" workflow comment on each. Rejections made
+        # before this was recorded have none, and show no name rather than a guess.
+        rej_by = {}
+        if rows:
+            for c in frappe.db.sql("""
+                SELECT reference_name nm, owner, creation FROM `tabComment`
+                WHERE reference_doctype = 'Work Management Actuals' AND reference_name IN %s
+                  AND comment_type = 'Workflow' AND content = 'Rejected'
+                ORDER BY creation
+            """, (tuple([r.name for r in rows]),), as_dict=True):
+                rej_by[c.nm] = c
+        for r in rows:
+            c = rej_by.get(r.name)
+            r["rejected_by"] = c.owner if c else None
+            r["rejected_on"] = str(c.creation)[:10] if c else None
+        out["actuals"] = rows
+        out["is_gm"] = 1 if is_gm else 0
 
     elif action == "a_roles":
         roles = frappe.db.get_all("Has Role", filters={"parent":frappe.session.user}, fields=["role"])
