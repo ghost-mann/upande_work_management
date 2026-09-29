@@ -1283,9 +1283,34 @@ def wm_actuals(**kwargs):
 
     elif action == "act_reject":
         nm = frappe.form_dict.get("name")
-        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","docstatus","assignment"], as_dict=True)
+        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","docstatus","assignment","farm"], as_dict=True)
+        rej_err = None
         if not cur or cur.workflow_state not in ("Pending Farm Manager","Pending HR Head","Pending GM","CONFIRMED"):
-            out["error"] = "Not rejectable (state: " + str(cur.workflow_state if cur else "not found") + ")"
+            rej_err = "Not rejectable (state: " + str(cur.workflow_state if cur else "not found") + ")"
+        elif cur.workflow_state == "Pending Farm Manager":
+            # whoever act_fm_approve lets approve this record may reject it: the step's
+            # role, a farm approver for THIS farm, or the GM / System Manager bypass
+            rej_role = STAGE_ROLE["actuals_farm_manager"]
+            rej_farms = []
+            for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+                if _role_ in MY_ROLES: rej_farms.append(_farm_)
+            rej_bypass = ("System Manager" in MY_ROLES) or ("General Manager" in MY_ROLES)
+            if not (rej_role in MY_ROLES or rej_bypass or rej_farms):
+                rej_err = "Only " + str(rej_role) + " can reject at this stage. You do not hold it."
+            elif not rej_bypass and cur.farm not in rej_farms:
+                rej_err = ("You can only reject records for your farm(s): " + (", ".join(rej_farms) or "none") +
+                           ". This record is for " + str(cur.farm) + ".")
+        else:
+            # HR Head and GM: that step's role or System Manager. A CONFIRMED actual is
+            # submitted; reversing a confirmation is the GM step's call.
+            if cur.workflow_state == "Pending HR Head":
+                rej_role = STAGE_ROLE["actuals_hr_head"]
+            elif cur.workflow_state in ("Pending GM", "CONFIRMED"):
+                rej_role = STAGE_ROLE["actuals_gm"]
+            if not (rej_role in MY_ROLES or "System Manager" in MY_ROLES):
+                rej_err = "Only " + str(rej_role) + " can reject at this stage. You do not hold it."
+        if rej_err:
+            out["error"] = rej_err
         else:
             # if submitted, "cancel" it by flipping docstatus to 2 (Cancelled) directly, then mark Rejected.
             if cur.docstatus == 1:
