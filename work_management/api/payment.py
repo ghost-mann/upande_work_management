@@ -1713,13 +1713,13 @@ def wm_payment(**kwargs):
                             d.insert(ignore_permissions=True)
                             frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Unpaid", update_modified=False)
                             # Sending to payroll raises the Additional Salary right away -- see
-                            # _raise_additional_salary_for_payment(). The payment stays Unpaid
+                            # raise_additional_salary_for_payment(). The payment stays Unpaid
                             # (docstatus stays 0 for this whole chain, by design -- see the
                             # comment on CHAIN_ENDS["Work Management Payment"]) until payroll
                             # submits the Salary Slip that carries it; only then does
                             # workflow_state move to Paid -- see on_salary_slip_submit().
                             wm_component = frappe.db.get_single_value("Work Management Settings", "salary_component")
-                            wm_as_name = _raise_additional_salary_for_payment(
+                            wm_as_name = raise_additional_salary_for_payment(
                                 d.name, emp, ename, wm_component, total_owed, pd_val, DEFAULT_COMPANY)
                             frappe.db.set_value("Work Management Payment", d.name, "custom_submitted_at", frappe.utils.now(), update_modified=False)
                             # stamp the reference on the included rows (NOT paid yet -- that
@@ -2067,13 +2067,13 @@ def wm_payment(**kwargs):
                         d.insert(ignore_permissions=True)
                         frappe.db.set_value("Work Management Payment", d.name, "workflow_state", "Unpaid", update_modified=False)
                         # Sending to payroll raises the Additional Salary right away -- see
-                        # _raise_additional_salary_for_payment(). The payment itself stays a
+                        # raise_additional_salary_for_payment(). The payment itself stays a
                         # draft, exactly as before (so "Return to unpaid" can still delete
                         # it) until payroll submits the Salary Slip that carries it -- only
                         # then does it become Paid and a real, submitted record; see
                         # on_salary_slip_submit().
                         bw_component = frappe.db.get_single_value("Work Management Settings", "salary_component")
-                        bw_as_name = _raise_additional_salary_for_payment(
+                        bw_as_name = raise_additional_salary_for_payment(
                             d.name, emp, ename, bw_component, total_owed, pd_val, DEFAULT_COMPANY)
                         frappe.db.set_value("Work Management Payment", d.name, "custom_submitted_at", frappe.utils.now(), update_modified=False)
                         # stamp the reference on the included rows (NOT paid yet -- that
@@ -3446,7 +3446,7 @@ def wm_payment(**kwargs):
 # actions, since doc_events call them directly rather than through wm_payment().
 # ==================================================================
 
-def _raise_additional_salary_for_payment(payment_name, employee, employee_name, salary_component, amount, payroll_date, company):
+def raise_additional_salary_for_payment(payment_name, employee, employee_name, salary_component, amount, payroll_date, company):
     """Create + submit the Additional Salary a payment run is sent to payroll for.
     Raises on failure (mirrors Additional Salary.validate(), which the preconditions
     checked in pay_worker_submit/pay_bulk_submit are meant to already satisfy) so the
