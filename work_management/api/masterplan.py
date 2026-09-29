@@ -311,16 +311,18 @@ def wm_masterplan(**kwargs):
                 # while the planner costs work at the new rate, so fewer units fit
                 dr = []
                 for da in out["activities"]:
+                    # today's rate and today's unit, off the one row that holds both
                     dr_live = frappe.db.sql("""
-                        SELECT rate FROM `tabWork Task Rate`
+                        SELECT rate, uom FROM `tabWork Task Rate`
                         WHERE task = %(t)s AND valid_from <= %(d)s
                           AND (valid_to IS NULL OR valid_to >= %(d)s)
+                          AND uom IS NOT NULL AND uom != ''
                         ORDER BY valid_from DESC LIMIT 1
                     """, {"t": da.get("task"), "d": frappe.utils.today()}, as_dict=True)
                     if not dr_live:
                         continue
                     dr_r = frappe.utils.flt(dr_live[0].rate, 6)
-                    dr_uom = frappe.db.get_value("Task", da.get("task"), "custom_uom")
+                    dr_uom = dr_live[0].uom
                     if (dr_uom or "") != (da.get("uom") or ""):
                         # a rate per Hour cannot be compared with a rate per Day: the
                         # quantity has to change too, and only a person can say by how
@@ -525,23 +527,38 @@ def wm_masterplan(**kwargs):
                 sv_cost = 0
                 sv_changed = []
                 for sr in sv_rows:
-                    ti = frappe.db.get_value("Task", sr.get("task"), ["custom_uom"], as_dict=True)
-                    # the rate in force when the budget starts, then frozen on the line
+                    # The rate in force when the budget starts, frozen on the line --
+                    # and WITH the unit it was priced in. A price and its unit are one
+                    # fact. Reading the price as-of the period while reading the unit
+                    # as-of now is what let a plan backdated across a unit change store
+                    # 2.67/Crate against a quantity typed in hours: 456 hours priced at
+                    # a per-crate rate came to 1,217.52 for work worth 22,059.00.
+                    # A row that recorded a price without its unit cannot answer the
+                    # pair, so it is passed over rather than half-believed.
                     rp = frappe.db.sql("""
-                        SELECT rate FROM `tabWork Task Rate`
+                        SELECT rate, uom FROM `tabWork Task Rate`
                         WHERE task = %(t)s AND valid_from <= %(d)s
                           AND (valid_to IS NULL OR valid_to >= %(d)s)
+                          AND uom IS NOT NULL AND uom != ''
                         ORDER BY valid_from DESC LIMIT 1
                     """, {"t": sr.get("task"), "d": sv_from}, as_dict=True)
-                    sv_rate = frappe.utils.flt(rp[0].rate, 6) if rp else frappe.utils.flt(
-                        frappe.db.get_value("Task", sr.get("task"), "custom_rate"), 6)
+                    if rp:
+                        sv_rate = frappe.utils.flt(rp[0].rate, 6)
+                        sv_uom = rp[0].uom
+                    else:
+                        # nothing dated covers the period, so the live task is all there
+                        # is -- and its rate and its unit are taken together or not at all
+                        ti = frappe.db.get_value("Task", sr.get("task"),
+                            ["custom_uom", "custom_rate"], as_dict=True)
+                        sv_rate = frappe.utils.flt(ti.custom_rate, 6) if ti else 0
+                        sv_uom = ti.custom_uom if ti else None
                     sv_qty = frappe.utils.flt(sr.get("work_qty"))
                     row = d.append("activities", {})
                     row.task = sr.get("task")
                     row.man_days = frappe.utils.flt(sr.get("man_days"))
                     row.days = frappe.utils.cint(sr.get("days"))
                     row.work_qty = sv_qty
-                    row.uom = ti.custom_uom if ti else None
+                    row.uom = sv_uom
                     row.rate = sv_rate
                     row.cost = frappe.utils.flt(sv_qty * sv_rate, 2)
                     sv_prev = sv_snap.get(sr.get("task"))
@@ -1293,17 +1310,25 @@ def wm_masterplan(**kwargs):
                     filters={"project": pt_proj, "is_group": 0},
                     fields=["name", "subject", "custom_uom", "custom_rate"],
                     order_by="subject"):
+                # rate and unit off one row, exactly as "save" freezes them: showing
+                # the dated rate beside the live unit put 48.375/Hour against kgs
                 pt_rp = frappe.db.sql("""
-                    SELECT rate FROM `tabWork Task Rate`
+                    SELECT rate, uom FROM `tabWork Task Rate`
                     WHERE task = %(t)s AND valid_from <= %(d)s
                       AND (valid_to IS NULL OR valid_to >= %(d)s)
+                      AND uom IS NOT NULL AND uom != ''
                     ORDER BY valid_from DESC LIMIT 1
                 """, {"t": pt.name, "d": pt_from}, as_dict=True)
-                pt_rate = frappe.utils.flt(pt_rp[0].rate, 6) if pt_rp else frappe.utils.flt(pt.custom_rate, 6)
+                if pt_rp:
+                    pt_rate = frappe.utils.flt(pt_rp[0].rate, 6)
+                    pt_uom = pt_rp[0].uom
+                else:
+                    pt_rate = frappe.utils.flt(pt.custom_rate, 6)
+                    pt_uom = pt.custom_uom
                 pt_ti = frappe.db.get_value("Task", pt.name,
                     ["subject", "custom_uom", "custom_rate", "custom_daily_target"], as_dict=True)
                 pt_out.append({"name": pt.name, "subject": pt.subject,
-                               "uom": pt.custom_uom, "rate": pt_rate,
+                               "uom": pt_uom, "rate": pt_rate,
                                "daily_target": frappe.utils.flt(pt_ti.custom_daily_target, 6) if pt_ti else 0})
             out["tasks"] = pt_out
 
