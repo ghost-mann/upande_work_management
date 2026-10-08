@@ -4772,11 +4772,26 @@ def wm_dashboard(**kwargs):
         # to the docname anyway. On a site named by subject that leaves an empty map,
         # which is the correct answer there and costs nothing to send.
         tn_out = {}
+        tn_std = {}
+        tn_meta = frappe.get_meta("Task")
+        tn_fields = ["name", "subject"]
+        for tn_f in ("custom_daily_target", "custom_uom", "custom_rate"):
+            if tn_meta.get_field(tn_f):
+                tn_fields.append(tn_f)
         for tn in frappe.db.get_all("Task", filters={"is_group": 0},
-                fields=["name", "subject"], limit_page_length=0):
+                fields=tn_fields, limit_page_length=0):
             if tn.subject and tn.subject != tn.name:
                 tn_out[tn.name] = tn.subject
+            # THE STANDARD: what one person is expected to do in a day, in what unit,
+            # and what each unit pays -- the task's current rate period, mirrored onto
+            # the Task. Sent with the names so every place a task is printed can say
+            # what it is measured against without a lookup of its own.
+            tn_t = frappe.utils.flt(tn.get("custom_daily_target"))
+            tn_r = frappe.utils.flt(tn.get("custom_rate"))
+            if tn_t > 0 or tn_r > 0:
+                tn_std[tn.name] = [tn_t, tn.get("custom_uom") or "", tn_r]
         out["task_names"] = tn_out
+        out["task_standards"] = tn_std
 
     else:
         out["error"] = "unknown action: " + str(action)

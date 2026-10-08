@@ -104,6 +104,7 @@
     var st=document.createElement("style");
     st.id="wm-an-css";
     st.textContent=
+      "#wmp .std-sub{display:block;font-size:10px;font-weight:500;color:#8a8780;margin-top:1px;white-space:normal;letter-spacing:0;text-transform:none}"+
       "#wmp .ss-sub{margin-top:3px;font-size:10.5px;color:var(--ink);font-weight:600;text-align:center;max-width:120px;line-height:1.3}"+
       "#wmp .ss-rail{flex-direction:column}"+
       "#wmp .ss-cap{display:block;margin-top:4px;font-size:9.5px;color:var(--mute);text-align:center;line-height:1.25;white-space:nowrap}"+
@@ -463,6 +464,17 @@
       };
     });
   }
+  // a plan line's standard as the plan budgeted it: its own frozen rate and unit,
+  // and the output per man-day its quantity and man-days imply. Falls back to the
+  // task's current standard where the line carries no man-days.
+  function pcStdSub(a){
+    var parts=[];
+    var perDay=a.man_days>0?a.target_qty/a.man_days:0;
+    if(perDay>0) parts.push(fmt(perDay, perDay%1?1:0)+" "+(a.uom||"units")+"/day");
+    if(a.rate>0) parts.push("KES "+fmt(a.rate, a.rate%1===0?0:(a.rate<1?3:2))+(a.uom?"/"+a.uom:""));
+    if(!parts.length) return taskStdSub(a.task);
+    return '<span class="std-sub" title="Standard in this plan: output per man-day and rate per unit">Std '+esc(parts.join(" · "))+'</span>';
+  }
   function pcPane(d, tab){
     var T=function(head, body, note){
       return '<table class="pc-tbl"><thead><tr>'+head.map(function(c){
@@ -475,7 +487,7 @@
     if(tab==="activities"){
       (d.activities||[]).forEach(function(a){
         var sal=a.salaried_qty?'<br><span class="pc-time">'+fmt(a.salaried_qty)+' by salaried staff</span>':'';
-        b+='<tr><td><b>'+esc(a.subject||taskName(a.task))+'</b>'+(a.in_plan?'':' <span class="pc-st st-warn">'+esc(a.consultant_state||"not approved")+'</span>')+'</td>'+
+        b+='<tr><td><b>'+esc(a.subject||taskName(a.task))+'</b>'+pcStdSub(a)+(a.in_plan?'':' <span class="pc-st st-warn">'+esc(a.consultant_state||"not approved")+'</span>')+'</td>'+
           '<td>'+esc(a.uom||"")+'</td>'+n(a.target_qty)+n(a.req_qty)+
           '<td class="n">'+fmt(a.done_qty)+sal+(a.pending_qty?'<br><span class="pc-time">+'+fmt(a.pending_qty)+' awaiting</span>':'')+'</td>'+
           '<td>'+meter(a.done_pct,"var(--green)")+'</td>'+k(a.planned_value)+k(a.req_value)+k(a.earned)+'</tr>';
@@ -485,7 +497,7 @@
     }
     if(tab==="requests"){
       (d.requests||[]).forEach(function(r){
-        b+='<tr data-open="req" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.task_subject||taskName(r.task))+'</td>'+
+        b+='<tr data-open="req" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.task_subject||taskName(r.task))+taskStdSub(r.task)+'</td>'+
           '<td>'+esc(lbl(r.block_section))+'</td><td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+
           '<td class="n">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td><td class="n">'+fmt(r.people_per_day)+'</td>'+k(r.total_cost)+
           '<td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.requested_by||"")+'</td></tr>';
@@ -495,7 +507,7 @@
     if(tab==="assignments"){
       (d.assignments||[]).forEach(function(a){
         b+='<tr><td><b>'+esc(a.name)+'</b> '+deskLink("Work Management Assigner", a.name)+'</td><td>'+esc(a.planner_request||"")+'</td>'+
-          '<td>'+esc(taskName(a.task))+'</td><td>'+esc(lbl(a.block_section))+'</td>'+
+          '<td>'+esc(taskName(a.task))+taskStdSub(a.task)+'</td><td>'+esc(lbl(a.block_section))+'</td>'+
           '<td>'+esc(shortDate(a.from_date))+' &ndash; '+esc(shortDate(a.to_date))+'</td>'+n(a.workers)+
           '<td>'+stateTag(a.workflow_state)+'</td><td>'+esc(a.assigned_by||"")+'</td></tr>';
       });
@@ -503,7 +515,7 @@
     }
     if(tab==="actuals"){
       (d.actuals||[]).forEach(function(a){
-        b+='<tr data-open="act" data-v="'+esc(a.name)+'"><td><b>'+esc(a.name)+'</b></td><td>'+esc(taskName(a.task))+'</td>'+
+        b+='<tr data-open="act" data-v="'+esc(a.name)+'"><td><b>'+esc(a.name)+'</b></td><td>'+esc(taskName(a.task))+taskStdSub(a.task)+'</td>'+
           '<td>'+esc(shortDate(a.from_date))+' &ndash; '+esc(shortDate(a.to_date))+'</td>'+n(a.people)+
           '<td class="n">'+fmt(a.qty)+(a.salaried_qty?'<br><span class="pc-time">'+fmt(a.salaried_qty)+' salaried</span>':'')+'</td>'+k(a.pay)+
           '<td>'+stateTag(a.workflow_state)+'</td><td>'+esc(a.entered_by||"")+'</td></tr>';
@@ -567,6 +579,21 @@
 
   var TASK_NAMES = {};
   function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
+  // Each activity's STANDARD: what one person is expected to do in a day, in what
+  // unit, and what each unit pays (the task's current rate period). Loaded with
+  // the names; shown wherever an activity is, so a figure is read against it.
+  var TASK_STD = {};
+  function taskStdText(t){
+    var s=t && TASK_STD[t]; if(!s) return "";
+    var parts=[];
+    if(s[0]>0) parts.push(fmt(s[0], s[0]%1?1:0)+" "+(s[1]||"units")+"/day");
+    if(s[2]>0) parts.push("KES "+fmt(s[2], s[2]%1===0?0:(s[2]<1?3:2))+(s[1]?"/"+s[1]:""));
+    return parts.join(" · ");
+  }
+  function taskStdSub(t){
+    var x=taskStdText(t);
+    return x?'<span class="std-sub" title="Standard: daily target per person and rate per unit">Std '+esc(x)+'</span>':'';
+  }
 
 
   // ── activities, people & blocks: the explorer ────────────────────────────
@@ -880,7 +907,7 @@
   var EX_COLS = {
     activities:[
       {k:"subject", label:"Activity", get:function(r){ return (r.subject||taskName(r.task)||"").toLowerCase(); },
-        cell:function(r){ return '<b>'+esc(r.subject||taskName(r.task))+'</b><br><span class="ex-sub">'+esc(r.uom||"")+' &middot; '+fmt(r.people)+' people</span>'; }},
+        cell:function(r){ return '<b>'+esc(r.subject||taskName(r.task))+'</b><br><span class="ex-sub">'+(taskStdText(r.task)?'Std '+esc(taskStdText(r.task)):esc(r.uom||""))+' &middot; '+fmt(r.people)+' people</span>'; }},
       {k:"done_pct", label:"Done", num:1, tip:"recorded output ÷ requested quantity",
         cell:function(r){ return '<span class="'+exTintDone(r.done_pct)+'">'+exPct(r.done_pct)+'</span>'; }},
       {k:"out_pct", label:"Output vs target", num:1, tip:"output per person-day ÷ the daily target",
@@ -1045,7 +1072,7 @@
       wks.map(function(w){ return '<th class="n" style="text-align:center">'+esc(shortDate(w))+'</th>'; }).join("")+'</tr></thead><tbody>';
     rows.forEach(function(r){
       var key=exRowKey(lens,r), g=grid[key]||{};
-      h+='<tr><td><b>'+esc(exRowName(lens,r))+'</b></td>'+wks.map(function(w){
+      h+='<tr><td><b>'+esc(exRowName(lens,r))+'</b>'+(lens==="activities"?taskStdSub(r.task):'')+'</td>'+wks.map(function(w){
         var v=g[w];
         var txt=v==null?'':(cfg.diverge||cfg.pct?fmt(v,0):'');
         var dark=v!=null && !cfg.diverge && v/(max||1)>0.55;
@@ -1105,6 +1132,7 @@
         cell("Cost/unit vs rate", exPct(o.cost_pct), "100% = exactly the rate", o.cost_pct!=null&&o.cost_pct>115?'bad':'')+
         cell("By salaried staff", sal==null?"—":fmt(sal,0)+"%", "of output, at no piece-rate pay")+
         cell("People", fmt(o.people), fmt(o.days)+' days worked')+
+        (lens==="activities"&&taskStdText(key)?cell("Standard", esc(taskStdText(key).split(" · ")[0]), esc(taskStdText(key).split(" · ").slice(1).join(" · ")||"daily target per person")):'')+
         (lens==="blocks"?cell("Area", d.area_ha?fmt(d.area_ha,2)+" ha":"not recorded", d.area_ha?money(o.recorded/d.area_ha)+' KES/ha':''):'')+
       '</div>';
       if(lens!=="activities") tabs.push(["acts","Activities",d.by_activity]);
@@ -1160,7 +1188,7 @@
       return b;
     };
     var head=["#Person-days","#People","#Output","#Output vs target","#Recorded KES","#Confirmed KES"];
-    if(tab==="acts") return T(["Activity"].concat(head), grp(d.by_activity, function(r){ return '<td><b>'+esc(r.label||taskName(r.k))+'</b></td>'; }));
+    if(tab==="acts") return T(["Activity"].concat(head), grp(d.by_activity, function(r){ return '<td><b>'+esc(r.label||taskName(r.k))+'</b>'+taskStdSub(r.k)+'</td>'; }));
     if(tab==="workers") return T(["Worker"].concat(head), grp(d.by_worker, function(r){ return '<td><b>'+esc(r.label||r.k)+'</b><br><span class="ex-sub">'+esc(r.k)+'</span></td>'; }, "emp"),
       "Click a worker for their full record.");
     if(tab==="blocks") return T([esc(TX("unit_singular","Block"))].concat(head), grp(d.by_block, function(r){ return '<td><b>'+esc(lbl(r.k)||"—")+'</b> <span class="ex-sub">'+esc(r.label||"")+'</span></td>'; }));
@@ -1173,7 +1201,7 @@
     if(tab==="days" && lens==="workers"){
       (d.days||[]).forEach(function(r){
         var sc=r.scanned==null?'<span class="ex-sub" title="before this site had scans">—</span>':(r.scanned?'<span class="ex-good" title="checked in that day">✓</span>':'<span class="ex-bad" title="no check-in scan that day">✗</span>');
-        b+='<tr data-open="act" data-v="'+esc(r.actual)+'"><td><b>'+esc(shortDate(r.work_date))+'</b></td><td>'+esc(r.subject||taskName(r.task))+'</td>'+
+        b+='<tr data-open="act" data-v="'+esc(r.actual)+'"><td><b>'+esc(shortDate(r.work_date))+'</b></td><td>'+esc(r.subject||taskName(r.task))+taskStdSub(r.task)+'</td>'+
           '<td>'+esc(lbl(r.block))+'</td>'+'<td class="n">'+fmt(r.qty)+' <span class="ex-sub">'+esc(r.uom||"")+'</span></td>'+n(r.hours,1)+k(r.amount)+
           '<td>'+stateTag(r.workflow_state)+'</td><td style="text-align:center">'+sc+'</td></tr>';
       });
@@ -1181,7 +1209,7 @@
     }
     if(tab==="days"){
       (d.days||[]).forEach(function(r){
-        b+='<tr data-open="act" data-v="'+esc(r.actual)+'"><td><b>'+esc(r.actual)+'</b></td><td>'+esc(r.subject||taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+        b+='<tr data-open="act" data-v="'+esc(r.actual)+'"><td><b>'+esc(r.actual)+'</b></td><td>'+esc(r.subject||taskName(r.task))+taskStdSub(r.task)+'</td><td>'+esc(lbl(r.block))+'</td>'+
           '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+n(r.people)+
           '<td class="n">'+fmt(r.qty)+' <span class="ex-sub">'+esc(r.uom||"")+'</span></td>'+k(r.amount)+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
       });
@@ -1189,7 +1217,7 @@
     }
     if(tab==="reqs"){
       (d.requests||[]).forEach(function(r){
-        b+='<tr data-open="req" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.subject||taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+        b+='<tr data-open="req" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.subject||taskName(r.task))+taskStdSub(r.task)+'</td><td>'+esc(lbl(r.block))+'</td>'+
           '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+k(r.total_cost)+k(r.delivered)+
           '<td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.approved_by||"")+'</td></tr>';
       });
@@ -1197,14 +1225,14 @@
     }
     if(tab==="crews"){
       (d.crews||[]).forEach(function(r){
-        b+='<tr data-open="req" data-v="'+esc(r.planner_request||"")+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+        b+='<tr data-open="req" data-v="'+esc(r.planner_request||"")+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(taskName(r.task))+taskStdSub(r.task)+'</td><td>'+esc(lbl(r.block))+'</td>'+
           '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+n(r.workers)+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
       });
       return T(["Crew","Activity",esc(TX("unit_singular","Block")),"Dates","#Workers","State"], b, "Click a crew for the request behind it.");
     }
     if(tab==="acts_in"){
       (d.actuals||[]).forEach(function(r){
-        b+='<tr data-open="act" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+        b+='<tr data-open="act" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(taskName(r.task))+taskStdSub(r.task)+'</td><td>'+esc(lbl(r.block))+'</td>'+
           '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+n(r.qty)+k(r.pay)+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
       });
       return T(["Actual","Activity",esc(TX("unit_singular","Block")),"Dates","#Output","#Pay KES","State"], b);
@@ -1254,7 +1282,7 @@
         '<select id="ex-cplan" title="Master plan"><option value="">All master plans</option>'+plans.map(function(p){
           return '<option value="'+esc(p.plan)+'"'+(c.plan===p.plan?' selected':'')+'>'+esc(p.plan)+' · '+esc(p.farm)+' · '+esc(shortDate(p.period_from))+'</option>'; }).join("")+'</select>'+
         '<select id="ex-cact" title="Activity"><option value="">All activities</option>'+acts.map(function(a){
-          return '<option value="'+esc(exRowKey("activities",a))+'"'+(c.activity===a.task?' selected':'')+'>'+esc(a.subject||taskName(a.task))+'</option>'; }).join("")+'</select>'+
+          return '<option value="'+esc(exRowKey("activities",a))+'"'+(c.activity===a.task?' selected':'')+'>'+esc(a.subject||taskName(a.task))+(taskStdText(a.task)?' — '+esc(taskStdText(a.task)):'')+'</option>'; }).join("")+'</select>'+
         ((c.kind==="worker"||c.kind==="block")?'<span class="ex-chip">'+(c.kind==="worker"?"Worker: ":esc(TX("unit_singular","Block"))+": ")+esc(c.keyLabel||c.key)+
           '<button type="button" data-exclear="1" title="Back to all work">×</button></span>':'')+
         '</div>';
@@ -1269,7 +1297,7 @@
         (c.cmpKind==="activity"||c.cmpKind==="plan"
           ? '<select id="ex-cadd"><option value="">+ Add '+(c.cmpKind==="plan"?"a master plan":"an activity")+'…</option>'+
               (c.cmpKind==="plan"?plans.map(function(p){ return '<option value="'+esc(p.plan)+'">'+esc(p.plan)+' · '+esc(p.farm)+'</option>'; })
-                                 :acts.map(function(a){ return '<option value="'+esc(exRowKey("activities",a))+'">'+esc(a.subject||taskName(a.task))+'</option>'; })).join("")+'</select>'
+                                 :acts.map(function(a){ return '<option value="'+esc(exRowKey("activities",a))+'">'+esc(a.subject||taskName(a.task))+(taskStdText(a.task)?' — '+esc(taskStdText(a.task)):'')+'</option>'; })).join("")+'</select>'
           : '<span>pick '+(c.cmpKind==="worker"?"workers":esc(TX("unit_plural","Blocks")).toLowerCase())+' from the list below</span>')+
         c.cmpKeys.map(function(k,i){ return '<span class="ex-chip" style="background:#fff;border:1px solid var(--line);color:var(--ink)"><i style="display:inline-block;width:12px;height:2px;background:'+EX_SUBJECT_COLORS[i]+'"></i>'+
           esc(exSubjectLabel(c.cmpKind,k))+'<button type="button" data-exdrop="'+esc(k)+'" style="color:var(--mute)">×</button></span>'; }).join("")+
@@ -1889,7 +1917,8 @@
       var y0=12+i*rowH;
       var w=Math.max(2,XV(v)-L);
       var nm=String(r[labelKey]||"—"); if(nm.length>30) nm=nm.slice(0,29)+"…";
-      g+='<text x="'+(L-10)+'" y="'+(y0+17)+'" text-anchor="end" font-size="12" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(nm)+'</text>';
+      g+='<text x="'+(L-10)+'" y="'+(y0+(r.std?13:17))+'" text-anchor="end" font-size="12" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(nm)+'</text>';
+      if(r.std) g+='<text x="'+(L-10)+'" y="'+(y0+27)+'" text-anchor="end" font-size="9.5" fill="#8a8780" font-family="Poppins,sans-serif">Std '+esc(r.std)+'</text>';
       g+='<rect x="'+L+'" y="'+(y0+4)+'" width="'+w.toFixed(1)+'" height="18" rx="9" fill="'+color+'"><title>'+esc(String(r[labelKey]||""))+' · '+esc(valFn(v,pct,r))+' · '+esc(subFn(r))+'</title></rect>';
       g+='<text x="'+(L+w+8).toFixed(1)+'" y="'+(y0+17)+'" font-size="11" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(valFn(v,pct,r))+'</text>';
     });
@@ -1989,7 +2018,7 @@
       var pwPartial=pw && AN.data.data_from && pw.from < AN.data.data_from;
       if(pwPartial) pw=null;
       var anTT=(AN.data.top_tasks||[]).map(function(r){
-        var o={}; for(var k in r){ o[k]=r[k]; } o.label=taskName(r.task); return o; });
+        var o={}; for(var k in r){ o[k]=r[k]; } o.label=taskName(r.task); o.std=taskStdText(r.task); return o; });
       bd.innerHTML=anBarsH(anTT,"label","#0a7a43",
         function(v,pct,r){
           var t="KES "+money(v)+" · "+pct+"%";
@@ -2065,7 +2094,7 @@
     h+='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Stage</th><th class="n">Pay KES</th></tr></thead><tbody>';
     rows.forEach(function(r){
       var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
-      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td></tr>';
+      h+='<tr><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+taskStdSub(r.task)+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td></tr>';
     });
     return h+'</tbody></table></div></div>';
   }
@@ -2188,7 +2217,7 @@
       var leak = x.planned_v>0 && x.confirmed_v<x.planned_v*0.5;
       h+='<tr>'+
         '<td class="m" style="font-size:10.5px">'+esc(x.plan)+'<div style="font-size:9px;color:var(--mute)">'+esc(x.state||"")+'</div></td>'+
-        '<td style="white-space:normal;max-width:190px"><b>'+esc(x.farm||"—")+'</b> · '+esc(taskName(x.task)||"—")+'<div style="font-size:9.5px;color:var(--mute)">'+esc(lbl(x.block)||"")+' · '+fmt(x.qty)+' '+esc(x.uom||"")+' @ '+fmt(x.rate,2)+'</div></td>'+
+        '<td style="white-space:normal;max-width:190px"><b>'+esc(x.farm||"—")+'</b> · '+esc(taskName(x.task)||"—")+taskStdSub(x.task)+'<div style="font-size:9.5px;color:var(--mute)">'+esc(lbl(x.block)||"")+' · '+fmt(x.qty)+' '+esc(x.uom||"")+' @ '+fmt(x.rate,2)+'</div></td>'+
         '<td class="m" style="font-size:10px;white-space:nowrap">'+esc(x.from_date||"")+'<br>'+esc(x.to_date||"")+'</td>'+
         '<td>'+hbar(x.planned_v,"#a06000","planned")+hbar(x.assigned_v,"#2563eb","assigned")+hbar(x.confirmed_v,"#0a7a43","confirmed")+'</td>'+
         '<td style="font-size:10.5px">'+esc(vfShort(x.created_by))+'</td>'+
@@ -2488,7 +2517,7 @@
       h+='<div class="pex-sec">PLAN</div><div class="pex-kv">'+
          '<div><span>'+esc(TX("top_singular","Farm"))+'</span><b>'+esc(p.farm||"—")+'</b></div>'+
          '<div><span>'+esc(TX("unit_singular","Block"))+'</span><b>'+esc(lbl(p.block_section)||"—")+'</b></div>'+
-         '<div><span>Task</span><b>'+esc(taskName(p.task)||"—")+'</b></div>'+
+         '<div><span>Task</span><b>'+esc(taskName(p.task)||"—")+taskStdSub(p.task)+'</b></div>'+
          '<div><span>Target</span><b>'+fmt(p.quantity)+' '+esc(p.uom||"")+'</b></div>'+
          '<div><span>Qty done</span><b>'+fmt(p.done_qty)+' '+esc(p.uom||"")+(p.is_complete?' <span class="pex-cmp">complete</span>':'')+'</b></div>'+
          '<div><span>Qty remaining</span><b>'+(p.over_qty>0?('<span class="pex-over">over by '+fmt(p.over_qty)+'</span>'):(fmt(p.remaining_qty)+' '+esc(p.uom||"")))+(p.pending_qty>0?(' <span class="pex-pend">+'+fmt(p.pending_qty)+' pending</span>'):'')+'</b></div>'+
@@ -2571,7 +2600,7 @@
       h+='<div class="pex-sec">ACTUAL</div><div class="pex-kv">'+
          '<div><span>'+esc(TX("top_singular","Farm"))+'</span><b>'+esc(a.farm||"—")+'</b></div>'+
          '<div><span>'+esc(TX("unit_singular","Block"))+'</span><b>'+esc(lbl(a.block_section)||"—")+'</b></div>'+
-         '<div><span>Task</span><b>'+esc(taskName(a.task)||"—")+'</b></div>'+
+         '<div><span>Task</span><b>'+esc(taskName(a.task)||"—")+taskStdSub(a.task)+'</b></div>'+
          '<div><span>Qty done</span><b>'+fmt(a.total_actual_qty)+'</b></div>'+
          '<div><span>Workers (payroll)</span><b>'+fmt(a.payroll_people)+'</b></div>'+
          '<div><span>Payment</span><b>'+money(a.total_payment)+' KES</b></div>'+
@@ -2624,7 +2653,7 @@
         h+='<table class="pex"><thead><tr><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Period</th><th>State</th><th>Worker</th><th></th></tr></thead><tbody>';
         asg.forEach(function(r){
           var wtag=(r.wstatus==="Left")?'<span class="pex-st" style="background:#b91c1c">left</span>':'<span class="pex-st" style="background:#0a7a43">active</span>';
-          h+='<tr><td>'+esc(taskName(r.task))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(lbl(r.block_section)||"")+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.state)+'</td><td>'+wtag+'</td><td>'+(r.plan?('<a href="#" class="et-planlink" data-plan="'+esc(r.plan)+'">plan ↗</a>'):'')+'</td></tr>';
+          h+='<tr><td>'+esc(taskName(r.task))+taskStdSub(r.task)+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(lbl(r.block_section)||"")+'</td><td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td><td>'+stateTag(r.state)+'</td><td>'+wtag+'</td><td>'+(r.plan?('<a href="#" class="et-planlink" data-plan="'+esc(r.plan)+'">plan ↗</a>'):'')+'</td></tr>';
         });
         h+='</tbody></table>';
       }
@@ -2633,7 +2662,7 @@
       else {
         h+='<table class="pex-daily"><thead><tr><th>Date</th><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Qty</th><th class="n">Amount</th><th>Payroll</th><th>Paid</th><th>State</th></tr></thead><tbody>';
         acts.slice(0,500).forEach(function(r){
-          h+='<tr><td>'+esc(r.work_date||"")+'</td><td>'+esc(taskName(r.task))+'</td><td>'+esc(r.farm||"")+'</td><td class="n">'+fmt(r.qty)+'</td><td class="n">'+money(r.amount)+'</td><td>'+(r.in_payroll?"✓":"")+'</td><td>'+(r.paid?("✓"+(r.payment_ref?(" "+esc(r.payment_ref)):"")):"")+'</td><td>'+stateTag(r.state)+'</td></tr>';
+          h+='<tr><td>'+esc(r.work_date||"")+'</td><td>'+esc(taskName(r.task))+taskStdSub(r.task)+'</td><td>'+esc(r.farm||"")+'</td><td class="n">'+fmt(r.qty)+'</td><td class="n">'+money(r.amount)+'</td><td>'+(r.in_payroll?"✓":"")+'</td><td>'+(r.paid?("✓"+(r.payment_ref?(" "+esc(r.payment_ref)):"")):"")+'</td><td>'+stateTag(r.state)+'</td></tr>';
         });
         h+='</tbody></table>';
       }
@@ -2665,7 +2694,7 @@
       else {
         var tot=0;
         h+='<table class="pex-daily"><thead><tr><th>Worker</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Days</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead><tbody>';
-        lines.slice(0,2000).forEach(function(x){ tot+=(x.amount||0); h+='<tr><td>'+esc(x.employee_name||x.employee||"")+'</td><td>'+esc(x.farm||"")+'</td><td>'+esc(taskName(x.task))+'</td><td class="n m">'+fmt(x.days)+'</td><td class="n m">'+fmt(x.qty)+'</td><td class="n m">'+money(x.amount)+'</td></tr>'; });
+        lines.slice(0,2000).forEach(function(x){ tot+=(x.amount||0); h+='<tr><td>'+esc(x.employee_name||x.employee||"")+'</td><td>'+esc(x.farm||"")+'</td><td>'+esc(taskName(x.task))+taskStdSub(x.task)+'</td><td class="n m">'+fmt(x.days)+'</td><td class="n m">'+fmt(x.qty)+'</td><td class="n m">'+money(x.amount)+'</td></tr>'; });
         h+='</tbody><tfoot><tr><td><b>Total</b></td><td></td><td></td><td></td><td></td><td class="n m"><b>'+money(tot)+'</b></td></tr></tfoot></table>';
       }
       body.innerHTML=h;
@@ -3093,7 +3122,7 @@
          '<td>'+kindTag+'</td>'+
          '<td>'+esc(r.plan)+'</td>'+
          '<td>'+esc(r.farm)+'</td>'+
-         '<td>'+esc(taskName(r.task))+'</td>'+
+         '<td>'+esc(taskName(r.task))+taskStdSub(r.task)+'</td>'+
          '<td>'+leftCell+'</td>'+
          '<td class="n">'+esc(r.left_date||"—")+'</td>'+
          '<td>'+repCell+'</td>'+
@@ -3215,16 +3244,16 @@
     if(QT.tab==="plans"){
       box.innerHTML=qTable(D.plan_pending||[],
         [["Ref"],[esc(TX("top_singular","Farm"))],[esc(TX("unit_singular","Block"))],["Task"],["People/day",1],["Cost KES",1]],
-        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(lbl(r.block_section)||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.total_cost)+'</td>'; });
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(lbl(r.block_section)||"—")+'</td><td>'+esc(taskName(r.task)||"—")+taskStdSub(r.task)+'</td><td class="n m">'+fmt(r.people_per_day)+'</td><td class="n m">'+fmt(r.total_cost)+'</td>'; });
     } else if(QT.tab==="asg"){
       box.innerHTML=qTable(D.asg_pending||[],
         [["Ref"],[esc(TX("top_singular","Farm"))],["Task"],["Planned",1],["Assigned",1],["Variance",1]],
-        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+fmt(r.variance)+'</td>'; });
+        function(r){ return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+taskStdSub(r.task)+'</td><td class="n m">'+fmt(r.planned_people)+'</td><td class="n m">'+fmt(r.assigned_count)+'</td><td class="n m">'+fmt(r.variance)+'</td>'; });
     } else if(QT.tab==="act"){
       box.innerHTML=qTable(D.act_pending||[],
         [["Ref"],[esc(TX("top_singular","Farm"))],["Task"],["Stage"],["Pay KES",1]],
         function(r){ var st=r.workflow_state==="Pending GM"?'<span class="tag hot">GM</span>':'<span class="tag">HR</span>';
-          return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
+          return '<td>'+esc(r.name)+'</td><td>'+esc(r.farm||"—")+'</td><td>'+esc(taskName(r.task)||"—")+taskStdSub(r.task)+'</td><td>'+st+'</td><td class="n m">'+fmt(r.total_payment)+'</td>'; });
     } else {
       box.innerHTML=qTable(D.pay_pending_list||[],
         [["Ref"],["Run"],["Workers",1],["Total KES",1]],
@@ -3439,7 +3468,7 @@
       h+='<div class="sech" style="margin-top:12px;font-size:10px">By task &middot; top by man-days</div>'+
         '<div class="tablewrap" style="max-height:220px;overflow-y:auto"><table><thead><tr><th>Task</th><th class="n">Man-days</th><th class="n">Ha/md</th><th class="n">Cost/Ha</th></tr></thead><tbody>';
       tasks.forEach(function(x){
-        h+='<tr><td>'+esc(taskName(x.task))+'</td><td class="n m">'+fmt(x.mandays)+'</td><td class="n m">'+hpm(x.ha_per_manday)+'</td><td class="n m">'+cph(x.cost_per_ha)+'</td></tr>';
+        h+='<tr><td>'+esc(taskName(x.task))+taskStdSub(x.task)+'</td><td class="n m">'+fmt(x.mandays)+'</td><td class="n m">'+hpm(x.ha_per_manday)+'</td><td class="n m">'+cph(x.cost_per_ha)+'</td></tr>';
       });
       h+='</tbody></table></div>';
     }
@@ -3646,6 +3675,7 @@
     // taskName() falls back to the docname, which is exactly the old behaviour.
     call({action:"task_names"}).then(function(d){
       TASK_NAMES=(d && d.task_names) || {};
+      TASK_STD=(d && d.task_standards) || {};
     }).catch(function(){}).then(load, load);
   }
   // No window.frappe check here. This page reads only -- every call is a

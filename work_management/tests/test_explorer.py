@@ -83,3 +83,28 @@ class TestDetailTilesFit(unittest.TestCase):
 		# the page's table cells keep text on one line, and the detail panel sits
 		# in one: the tiles' notes ran out past their borders
 		self.assertIn('"#wmp .pcd{white-space:normal}"', dashboard_js())
+
+
+class TestEveryActivityShowsItsStandard(unittest.TestCase):
+	"""An activity is read against its standard -- what one person is expected to
+	do in a day, and what each unit pays -- so wherever one is printed, so is it."""
+
+	def test_the_names_call_carries_the_standards(self):
+		block = ported("dashboard")
+		start = block.index('action == "task_names"')
+		self.assertIn('out["task_standards"] = tn_std', block[start:start + 3000])
+
+	def test_no_table_cell_prints_a_task_without_it(self):
+		import re
+		js = dashboard_js()
+		bare = []
+		for line in js.split("\n"):
+			if "<td" not in line or "stdFmt(r)" in line:
+				continue  # the pipeline explorer carries its own Std column
+			for m in re.finditer(r"""esc\(taskName\((\w+)\.task\)(?:\|\|"—")?\)(\+'</b>')?""", line):
+				if not line[m.end():].startswith("+taskStdSub("):
+					bare.append(line.strip()[:90])
+		self.assertEqual(bare, [])
+
+	def test_a_plan_line_shows_the_standard_it_was_budgeted_at(self):
+		self.assertIn("function pcStdSub(a)", dashboard_js())
