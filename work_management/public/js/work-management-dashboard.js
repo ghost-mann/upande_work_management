@@ -12,13 +12,6 @@
       "#pex-list table, #wm-subs table, #cb-list table{border-collapse:collapse}"+
       "#pex-list::-webkit-scrollbar, #wm-subs::-webkit-scrollbar, #cb-list::-webkit-scrollbar{width:9px;height:9px}"+
       "#pex-list::-webkit-scrollbar-thumb, #wm-subs::-webkit-scrollbar-thumb, #cb-list::-webkit-scrollbar-thumb{background:#cfcfcf;border-radius:5px}"+
-      // KPI cards (Worker assignments tracker) — render as a wrapping row of cards, not stacked text
-      ".etkpis{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 14px}"+
-      ".etk{flex:1 1 120px;min-width:110px;border:1px solid #e4e4e4;border-radius:6px;padding:10px 12px;background:#fafafa}"+
-      ".etk-k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#777;font-weight:600;margin-bottom:4px}"+
-      ".etk-v{font-size:20px;font-weight:700;color:#0a0a0a;line-height:1.1}"+
-      ".etk.warn{border-color:#e0b44a;background:#fff9ec}.etk.warn .etk-v{color:#a06000}"+
-      ".etk.bad{border-color:#e0b4b4;background:#fff6f6}.etk.bad .etk-v{color:#b91c1c}"+
       // top KPI strip + cost totals cards
       ".kpis{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 14px}"+
       ".kpi{flex:1 1 120px;min-width:110px;border:1px solid #e4e4e4;border-radius:6px;padding:10px 12px;background:#fafafa}"+
@@ -29,11 +22,6 @@
       ".cb-tot-card span{display:block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#777;font-weight:600;margin-bottom:4px}"+
       ".cb-tot-card b{font-size:18px;font-weight:700;color:#0a0a0a}"+
       ".cb-tot-card.paid b{color:#0a7a43}.cb-tot-card.out b{color:#b91c1c}"+
-      // worker-timeline summary header + expandable rows
-      ".et-summary{margin:10px 0 4px;font-size:12px;color:#555}"+
-      ".etw-head{display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 4px;border-bottom:1px solid #eee}"+
-      ".etw-name{font-weight:700}.etw-mini{font-size:11px;color:#777}"+
-      ".etw-caret{margin-left:auto;color:#999}"+
       // BETA corner ribbon (fixed, diagonal, top-right)
       "#wm-beta-ribbon{position:fixed;top:0;right:0;width:150px;height:150px;overflow:hidden;z-index:9999;pointer-events:none}"+
       "#wm-beta-ribbon span{position:absolute;display:block;width:210px;padding:6px 0;background:#0a0a0a;box-shadow:0 2px 6px rgba(0,0,0,.25);color:#fff;font:600 10px/1.3 system-ui,-apple-system,'Segoe UI',sans-serif;letter-spacing:.1em;text-transform:uppercase;text-align:center;right:-52px;top:30px;transform:rotate(45deg)}";
@@ -80,427 +68,148 @@
   function svgEl(t,a,x){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); if(x!=null) e.textContent=x; return e; }
   function toast(m){ var t=el("wm-toast"); if(!t) return; t.textContent=m; t.classList.add("show"); setTimeout(function(){t.classList.remove("show");},2000); }
   function kpi(k,v,u){ return '<div class="kpi"><div class="k">'+k+'</div><div class="v">'+v+'</div><div class="u">'+(u||"")+'</div></div>'; }
-  function dpct(a,b){ a=a||0; b=b||0; if(b<=0) return "—"; return Math.round(a/b*100)+"%"; }
   function num(v){ v=Number(v); return isNaN(v)?0:v; }
 
-  // ── activity table ───────────────────────────────────────────────────────
-  // Every budget line in the range, one row each, across all farms. This replaces
-  // per-farm cards that could only be read a farm at a time, so "which activities
-  // are behind" meant scanning four of them and holding the result in your head.
+  // ── master plans: progress and money, plan by plan ───────────────────────
+  // The old card drew one long track per plan and put a "Complete" figure beside
+  // it that measured something else: the track was money, the figure quantity, so
+  // 47% of the money sat next to "71%" and nobody could say which was true. Both
+  // are true, so both are shown and both are named -- WORK DONE (each activity's
+  // output against its target, capped so one over-delivered line cannot hide one
+  // never started) and BUDGET USED (confirmed pay against the plan's value).
   //
-  // TWO SERIES, and only two: requested and delivered. The planned value is not a
-  // third -- it is the reference the other two are measured against, so it is a
-  // recessive grey tick rather than a competing colour. #2563eb and #0a7a43 clear
-  // every colour check including CVD separation (worst adjacent dE 26.3 deutan).
-  // State is always written as a word beside its colour: the amber and red tokens
-  // this module uses sit ~13 dE apart in NORMAL vision, far too close to be
-  // trusted to carry meaning by themselves.
-  var AT = { rows:[], from:null, to:null, farm:"", state:"", q:"", sort:"completion", dir:1, open:null, loading:false };
-  var AT_REQ = "#2563eb", AT_DONE = "#0a7a43", AT_REF = "#6b7280", AT_OVER = "#b91c1c";
-
-  // ===== Planned value & delivery, by master plan =====
-  // A master plan IS a farm and a period, so that is the grain: planned budget
-  // from its own activity lines, against what was confirmed inside its window.
-  var MV={loaded:false, tab:"plan"};
-  function mvState(){
-    return {farm:(el("mv-farm")||{}).value||"",
-      from_date:(el("mv-from")||{}).value||"", to_date:(el("mv-to")||{}).value||""};
-  }
-  function pvTabs(){
-    var bar=el("wm-pv-tabs"); if(!bar) return;
-    bar.querySelectorAll("[data-pv]").forEach(function(b){
-      b.onclick=function(){
-        bar.querySelectorAll("[data-pv]").forEach(function(x){ x.classList.toggle("on", x===b); });
-        MV.tab=b.getAttribute("data-pv");
-        var mp=el("wm-mpv"), ac=el("wm-acts"), fl=el("mv-filters");
-        if(MV.tab==="plan"){
-          if(mp) mp.style.display=""; if(ac) ac.style.display="none"; if(fl) fl.style.display="";
-          loadMasterPlanValue();
-        } else {
-          if(mp) mp.style.display="none"; if(ac) ac.style.display=""; if(fl) fl.style.display="none";
-          if(!MV.loaded){ MV.loaded=true; activityTable(); }
-        }
-      };
-    });
-    ["mv-farm","mv-from","mv-to"].forEach(function(id){
-      var e=el(id); if(e) e.onchange=function(){ loadMasterPlanValue(); };
-    });
-    var c=el("mv-clear");
-    if(c) c.onclick=function(){ ["mv-from","mv-to"].forEach(function(id){ var e=el(id); if(e) e.value=""; });
-      var f=el("mv-farm"); if(f) f.value=""; loadMasterPlanValue(); };
-    loadMasterPlanValue();
-  }
-  function mvPlanRow(r){
-    return '<tr><td><b>'+esc(r.plan)+'</b></td><td>'+esc(r.farm||"")+'</td>'+
-      '<td class="m" style="font-size:10px">'+esc(r.period_from)+' &rarr; '+esc(r.period_to)+'</td>'+
-      '<td class="n m">'+fmt(r.lines)+'</td>'+
-      '<td class="n m">'+fmt(r.planned,0)+'</td>'+
-      '<td class="n m" title="Planned minus what is still unclaimed on the plan\u2019s lines">'+fmt(r.committed,0)+'</td>'+
-      '<td class="n m" style="font-weight:700">'+fmt(r.delivered,0)+'</td>'+
-      '<td class="n">'+mvPct(r.achieved_pct)+'</td>'+
-      '<td class="n m" style="color:'+(r.variance<0?"#b45309":"#0a7a43")+'">'+fmt(r.variance,0)+'</td>'+
-      '<td style="font-size:10px">'+esc(r.state||"")+'</td></tr>';
-  }
-  function mvPct(v){
-    if(v===null||v===undefined) return '<span style="color:var(--mute)">&mdash;</span>';
-    var c = v>=90?"#0a7a43":(v>=60?"#b45309":"#be123c");
-    return '<span style="color:'+c+';font-weight:700">'+Math.round(v)+'%</span>';
-  }
-  function loadMasterPlanValue(){
-    var box=el("wm-mpv"); if(!box) return;
-    box.innerHTML='<div class="loading">Reading master plans&hellip;</div>';
-    var a=mvState(); a.action="mp_value";
-    call(a).then(function(d){
-      var fs=el("mv-farm");
-      if(fs && fs.options.length<=1 && d.farms){
-        d.farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
-      }
-      var rows=d.plans||[];
-      if(!rows.length){ box.innerHTML='<div class="empty">No master plan covers this window.</div>'; return; }
-      // A farm runs several plans across a window, and the question "how is
-      // Endebess doing" was only answerable by adding its rows up by eye. Grouped
-      // by farm, with the farm's own totals stated once above its plans -- the
-      // same shape the Plan completion card uses for its weeks. Plans keep the
-      // order the server sent, newest period first, within their farm.
-      var byFarm={}, farmOrder=[];
-      rows.forEach(function(r){
-        var f=r.farm||"";
-        if(!byFarm[f]){ byFarm[f]=[]; farmOrder.push(f); }
-        byFarm[f].push(r);
-      });
-      farmOrder.sort();
-      var tp=0,tc=0,td=0;
-      var h='<div class="tablewrap" style="max-height:460px;overflow-y:auto"><table><thead><tr>'+
-        '<th>Master plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period</th>'+
-        '<th class="n">Lines</th><th class="n">Planned KES</th><th class="n">Committed</th>'+
-        '<th class="n">Delivered KES</th><th class="n">Achieved</th><th class="n">Variance</th>'+
-        '<th>State</th></tr></thead><tbody>';
-      farmOrder.forEach(function(f){
-        var list=byFarm[f];
-        var fp=0,fc=0,fd=0,fl=0;
-        list.forEach(function(r){ fp+=r.planned; fc+=r.committed; fd+=r.delivered; fl+=r.lines; });
-        h+='<tr class="mv-farmrow" style="background:var(--wash);font-weight:700">'+
-           '<td colspan="3">'+esc(f||"\u2014")+' <span class="hint" style="font-weight:400">'+
-             fmt(list.length)+' plan'+(list.length===1?'':'s')+'</span></td>'+
-           '<td class="n m">'+fmt(fl)+'</td><td class="n m">'+fmt(fp,0)+'</td>'+
-           '<td class="n m">'+fmt(fc,0)+'</td><td class="n m">'+fmt(fd,0)+'</td>'+
-           '<td class="n">'+mvPct(fp>0?(fd/fp*100):null)+'</td>'+
-           '<td class="n m" style="color:'+((fd-fp)<0?"#b45309":"#0a7a43")+'">'+fmt(fd-fp,0)+'</td>'+
-           '<td></td></tr>';
-        list.forEach(function(r){ h+=mvPlanRow(r); tp+=r.planned; tc+=r.committed; td+=r.delivered; });
-      });
-      h+='</tbody><tfoot><tr><th colspan="4">TOTAL</th><th class="n">'+fmt(tp,0)+'</th>'+
-         '<th class="n">'+fmt(tc,0)+'</th><th class="n">'+fmt(td,0)+'</th>'+
-         '<th class="n">'+(tp>0?Math.round(td/tp*100)+'%':'&mdash;')+'</th>'+
-         '<th class="n">'+fmt(td-tp,0)+'</th><th></th></tr></tfoot></table></div>';
-      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
-        '<span><b>Planned KES</b> \u2014 the budget on the plan\u2019s own activity lines.</span>'+
-        '<span><b>Committed</b> \u2014 how much of that budget planners have already drawn down.</span>'+
-        '<span><b>Delivered KES</b> \u2014 confirmed pay for work done inside the plan\u2019s farm and period.</span>'+
-        '<span><b>Achieved</b> \u2014 Delivered \u00f7 Planned (green \u226590%, amber \u226560%, red below).</span>'+
-        '</div>';
-      box.innerHTML=h;
-    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load master plans.</div>'; });
-  }
-
-  function activityTable(){
-    var box=el("wm-acts"); if(!box) return;
-    var args={action:"activity_table"};
-    if(AT.from) args.from_date=AT.from;
-    if(AT.to) args.to_date=AT.to;
-    if(AT.farm) args.farm=AT.farm;
-    // hold the previous render rather than flashing a skeleton on refetch
-    var prev=box.querySelector(".at-wrap");
-    if(prev) prev.style.opacity=".45";
-    AT.loading=true;
-    call(args).then(function(d){
-      AT.loading=false;
-      AT.rows=d.rows||[];
-      if(!AT.from) AT.from=d.from_date;
-      if(!AT.to) AT.to=d.to_date;
-      atRender();
-    }).catch(function(){
-      AT.loading=false;
-      box.innerHTML='<div class="at-empty">Could not load activities.</div>';
-    });
-  }
-
-  function atFiltered(){
-    var q=(AT.q||"").toLowerCase();
-    return AT.rows.filter(function(r){
-      if(AT.state && r.state!==AT.state) return false;
-      if(q && (r.task+" "+r.farm+" "+r.plan).toLowerCase().indexOf(q)<0) return false;
-      return true;
-    }).sort(function(a,b){
-      var k=AT.sort, x=a[k], y=b[k];
-      if(typeof x==="string") return AT.dir*String(x).localeCompare(String(y));
-      return AT.dir*((x||0)-(y||0));
-    });
-  }
-
-  function atRender(){
-    var box=el("wm-acts"); if(!box) return;
-    var rows=atFiltered();
-    var h=atControls();
-    h+='<div class="at-legend">'+
-       '<span><i style="background:'+AT_DONE+'"></i>Delivered</span>'+
-       '<span><i style="background:'+AT_REQ+';opacity:.28"></i>Requested</span>'+
-       '<span><i class="ref"></i>Planned value (the ceiling both are measured against)</span>'+
-       '<span><i style="background:'+AT_OVER+';opacity:.75"></i>Requested past the plan</span>'+
-       '</div>';
-    if(!rows.length){
-      box.innerHTML=h+'<div class="at-empty">No activity matches these filters. '+
-        'Widen the dates, clear the search, or pick another '+esc(TX("top_singular","Farm")).toLowerCase()+'.</div>';
-      atWire(box); return;
-    }
-    var col=function(k,lbl,n){
-      return '<th class="'+(n?'n':'')+'" data-sk="'+k+'">'+lbl+
-             (AT.sort===k?('<span class="ar">'+(AT.dir>0?'▲':'▼')+'</span>'):'')+'</th>';
-    };
-    h+='<div class="at-wrap" style="max-height:520px;overflow:auto">'+
-       '<table class="at"><thead><tr>'+
-       col("farm",esc(TX("top_singular","Farm")))+col("task","Activity")+col("plan","Plan")+
-       col("planned_qty","Planned",1)+col("requested_qty","Requested",1)+col("done_qty","Delivered",1)+
-       '<th>Unit</th>'+col("left_qty","Qty left",1)+
-       col("planned_cost","Planned value",1)+col("left_cost","Value left",1)+
-       '<th style="min-width:110px">Progress</th>'+col("completion","Done",1)+col("state","State")+
-       '</tr></thead><tbody>';
-    var tp=0,tr=0,td=0,tpc=0,tlc=0;
-    rows.forEach(function(r,i){
-      tp+=r.planned_qty; tr+=r.requested_qty; td+=r.done_qty;
-      tpc+=r.planned_cost; tlc+=r.left_cost;
-      var open=AT.open===r.row;
-      h+='<tr class="at-row'+(open?' on':'')+'" data-r="'+esc(r.row)+'">'+
-         '<td>'+esc(r.farm)+'</td>'+
-         '<td><b>'+esc(taskName(r.task))+'</b></td>'+
-         '<td style="font-size:10.5px;color:var(--mute)">'+esc(r.plan)+'<br>'+esc(r.period_from)+' → '+esc(r.period_to)+'</td>'+
-         '<td class="n">'+fmt(r.planned_qty)+'</td>'+
-         '<td class="n">'+fmt(r.requested_qty)+'</td>'+
-         '<td class="n">'+fmt(r.done_qty)+'</td>'+
-         '<td style="font-size:10.5px;color:var(--mute)">'+esc(r.uom||"")+'</td>'+
-         '<td class="n"'+(r.left_qty<0?' style="color:'+AT_OVER+'"':'')+'>'+fmt(r.left_qty)+'</td>'+
-         '<td class="n">'+money(r.planned_cost)+'</td>'+
-         '<td class="n"'+(r.left_cost<0?' style="color:'+AT_OVER+'"':'')+'>'+money(r.left_cost)+'</td>'+
-         '<td>'+atMeter(r)+'</td>'+
-         '<td class="n">'+fmt(r.completion,0)+'%</td>'+
-         '<td><span class="at-state '+r.state.replace(" ","")+'">'+esc(r.state)+'</span></td></tr>';
-      h+='<tr class="at-panel" data-p="'+esc(r.row)+'" style="display:'+(open?'':'none')+'">'+
-         '<td colspan="13" style="padding:0"><div class="atp" data-body="'+esc(r.row)+'"></div></td></tr>';
-    });
-    h+='</tbody><tfoot><tr><td colspan="3">'+fmt(rows.length)+' activities</td>'+
-       '<td class="n">'+fmt(tp)+'</td><td class="n">'+fmt(tr)+'</td><td class="n">'+fmt(td)+'</td>'+
-       '<td style="font-size:10px;color:var(--mute)">mixed</td><td class="n">'+fmt(tp-tr)+'</td>'+
-       '<td class="n">'+money(tpc)+'</td><td class="n">'+money(tlc)+'</td>'+
-       '<td colspan="3"></td></tr></tfoot></table></div>';
-    box.innerHTML=h;
-    atWire(box);
-    if(AT.open) atOpen(AT.open);
-  }
-
-  function atControls(){
-    var st=function(k,lbl){ return '<button type="button" data-ats="'+k+'"'+(AT.state===k?' class="on"':'')+'>'+lbl+'</button>'; };
-    return '<div class="at-bar">'+
-      '<div><label>From</label><input type="date" id="at-from" value="'+esc(AT.from||"")+'"></div>'+
-      '<div><label>To</label><input type="date" id="at-to" value="'+esc(AT.to||"")+'"></div>'+
-      '<div><label>'+esc(TX("top_singular","Farm"))+'</label><select id="at-farm">'+
-        farmOptions(AT.farm)+'</select></div>'+
-      '<div><label>Find</label><input class="at-find" id="at-q" placeholder="Activity, '+esc(TX("top_singular","Farm")).toLowerCase()+' or plan…" value="'+esc(AT.q||"")+'"></div>'+
-      '<div class="at-right"><div>'+st("","All")+st("over","Over")+st("under way","Under way")+
-        st("planned","Planned")+st("delivered","Delivered")+st("untouched","Untouched")+'</div></div>'+
-    '</div>';
-  }
-
-  // requested behind, delivered in front, planned as the tick. Both fills are
-  // scaled to the larger of planned and requested, so an over-request runs past
-  // the tick instead of being silently clipped to it.
-  function atMeter(r){
-    var base=Math.max(r.planned_qty, r.requested_qty, 1);
-    var req=Math.min(100, r.requested_qty/base*100);
-    var done=Math.min(100, r.done_qty/base*100);
-    var ref=Math.min(100, r.planned_qty/base*100);
-    var over=r.requested_qty>r.planned_qty+0.005;
-    return '<div class="atm" title="'+esc(
-        "Planned "+fmt(r.planned_qty)+" "+(r.uom||"")+
-        " · requested "+fmt(r.requested_qty)+
-        " · delivered "+fmt(r.done_qty)+" ("+fmt(r.completion,0)+"%)")+'">'+
-      '<span class="req" style="width:'+req+'%"></span>'+
-      (over?'<span class="over" style="left:'+ref+'%;width:'+(req-ref)+'%"></span>':'')+
-      '<span class="done" style="width:'+done+'%"></span>'+
-      '<span class="ref" style="left:'+ref+'%"></span></div>';
-  }
-
-  function atWire(box){
-    var go=function(){ AT.open=null; activityTable(); };
-    var f=el("at-from"), t=el("at-to"), fm=el("at-farm"), q=el("at-q");
-    if(f) f.onchange=function(){ AT.from=f.value; go(); };
-    if(t) t.onchange=function(){ AT.to=t.value; go(); };
-    if(fm) fm.onchange=function(){ AT.farm=fm.value; go(); };
-    if(q) q.oninput=function(){ AT.q=q.value; atRender(); };
-    box.querySelectorAll("[data-ats]").forEach(function(b){
-      b.onclick=function(){ AT.state=b.getAttribute("data-ats"); atRender(); };
-    });
-    box.querySelectorAll("th[data-sk]").forEach(function(th){
-      th.onclick=function(){
-        var k=th.getAttribute("data-sk");
-        if(AT.sort===k) AT.dir=-AT.dir; else { AT.sort=k; AT.dir=(k==="farm"||k==="task"||k==="plan"||k==="state")?1:-1; }
-        atRender();
-      };
-    });
-    box.querySelectorAll("tr.at-row").forEach(function(tr){
-      tr.onclick=function(){
-        var id=tr.getAttribute("data-r");
-        AT.open = (AT.open===id) ? null : id;
-        box.querySelectorAll(".at-panel").forEach(function(p){ p.style.display="none"; });
-        box.querySelectorAll("tr.at-row").forEach(function(x){ x.classList.remove("on"); });
-        if(AT.open){ tr.classList.add("on"); atOpen(AT.open); }
-      };
-    });
-  }
-
-  function atOpen(id){
-    var box=el("wm-acts"); if(!box) return;
-    var panel=box.querySelector('.at-panel[data-p="'+id+'"]');
-    var body=box.querySelector('.atp[data-body="'+id+'"]');
-    if(!panel||!body) return;
-    panel.style.display="";
-    var r=null;
-    AT.rows.forEach(function(x){ if(x.row===id) r=x; });
-    if(!r) return;
-    body.innerHTML='<div class="loading">Loading…</div>';
-    call({action:"activity_series", row:id}).then(function(d){
-      body.innerHTML=atPanel(r, d);
-    }).catch(function(){ body.innerHTML='<div class="at-empty">Could not load this activity.</div>'; });
-  }
-
-  // Quantity and money are DIFFERENT SCALES and never share a pair of axes -- two
-  // y-scales on one plot invent a relationship that is not in the data. They get
-  // one small chart each, and delivery over time gets a third on its own axis.
-  function atPanel(r, d){
-    var days=(d.days||[]), reqs=(d.requests||[]);
-    var h='<div class="atp-grid">';
-    h+='<div><div class="atp-h">Quantity &middot; '+esc(r.uom||"units")+'</div>'+
-       atCompare([{k:"Requested",v:r.requested_qty,c:AT_REQ,o:.28},
-                  {k:"Delivered",v:r.done_qty,c:AT_DONE,o:1}], r.planned_qty, function(v){ return fmt(v); })+
-       '<div class="atp-cap">The rule is the planned value, <b>'+fmt(r.planned_qty)+' '+esc(r.uom||"")+
-       '</b>. '+(r.left_qty<0?('Requested <b>'+fmt(-r.left_qty)+'</b> past it.')
-                             :('<b>'+fmt(r.left_qty)+'</b> still unrequested.'))+'</div></div>';
-    h+='<div><div class="atp-h">Value &middot; KES</div>'+
-       atCompare([{k:"Requested",v:r.requested_cost,c:AT_REQ,o:.28},
-                  {k:"Delivered",v:r.done_cost,c:AT_DONE,o:1}], r.planned_cost, function(v){ return money(v); })+
-       '<div class="atp-cap">Planned value <b>'+money(r.planned_cost)+'</b>. '+
-       (r.left_cost<0?('Requested <b>'+money(-r.left_cost)+'</b> past it.')
-                     :('<b>'+money(r.left_cost)+'</b> still unrequested.'))+'</div></div>';
-    h+='<div><div class="atp-h">Delivered per day &middot; confirmed only</div>'+
-       atDays(days, r)+
-       '<div class="atp-cap">'+(days.length
-         ? ('Confirmed on <b>'+fmt(days.length)+'</b> day'+(days.length===1?'':'s')+
-            ' between '+esc(d.period.from)+' and '+esc(d.period.to)+'.')
-         : 'Nothing confirmed in this period yet.')+'</div></div>';
-    h+='</div>';
-    if(reqs.length){
-      h+='<div class="atp-h" style="margin-top:16px">The requests behind it</div>'+
-         '<table class="at" style="font-size:11px"><thead><tr><th>Request</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Period</th>'+
-         '<th class="n">Qty</th><th class="n">Value</th><th>State</th></tr></thead><tbody>';
-      reqs.forEach(function(x){
-        h+='<tr><td>'+esc(x.name)+'</td><td>'+esc(lbl(x.block_section))+'</td>'+
-           '<td>'+esc(x.from_date)+' → '+esc(x.to_date)+'</td>'+
-           '<td class="n">'+fmt(x.quantity)+'</td><td class="n">'+money(x.total_cost)+'</td>'+
-           '<td>'+esc(x.workflow_state||"")+'</td></tr>';
-      });
-      h+='</tbody></table>';
-    }
-    return h;
-  }
-
-  // Two horizontal bars against a reference rule. Bars are 18px (under the 24px
-  // cap), 4px rounded at the data end and square at the baseline, with a 2px
-  // surface gap between them. Values are direct-labelled at the bar end -- two
-  // marks, so labelling both is selective, not a number on every point.
-  function atCompare(series, ref, fmtv){
-    // LABEL_SPACE is reserved, not borrowed: the value sits outside the bar end, so
-    // the plot has to stop short of the edge by enough to hold it. Letting the bar
-    // use the full width pushed "166,500" past the viewBox on the longest rows.
-    var W=360, BH=18, GAP=12, PAD=96, TOP=6, LABEL_SPACE=64;
-    var PLOT=W-PAD-LABEL_SPACE;
-    var H=TOP+series.length*(BH+GAP);
-    var max=Math.max(ref, series[0].v, series[1].v, 1);
-    var x=function(v){ return Math.max(0,(v/max)*PLOT); };
-    var s='<svg viewBox="0 0 '+W+' '+(H+8)+'" width="100%" height="'+(H+8)+'" role="img">';
-    series.forEach(function(sr,i){
-      var y=TOP+i*(BH+GAP), w=x(sr.v);
-      s+='<text x="0" y="'+(y+BH/2+3.5)+'">'+esc(sr.k)+'</text>';
-      s+='<rect x="'+PAD+'" y="'+y+'" width="'+PLOT+'" height="'+BH+'" rx="3" fill="#eef2f6"/>';
-      if(w>0.5)
-        s+='<path d="'+barPath(PAD,y,w,BH,4)+'" fill="'+sr.c+'" fill-opacity="'+sr.o+'"><title>'+
-           esc(sr.k+": "+fmtv(sr.v))+'</title></path>';
-      s+='<text class="v" x="'+(PAD+Math.max(w,0)+6)+'" y="'+(y+BH/2+3.5)+'">'+esc(fmtv(sr.v))+'</text>';
-    });
-    // the reference rule: planned value, recessive, labelled once
-    var rx=PAD+x(ref);
-    s+='<line class="axis" x1="'+rx+'" y1="0" x2="'+rx+'" y2="'+H+'" stroke="'+AT_REF+'" stroke-width="2"/>';
-    s+='</svg>';
-    return s;
-  }
-  // square at the baseline, 4px rounded at the data end
-  function barPath(x,y,w,h,r){
-    r=Math.min(r, w);
-    return "M"+x+","+y+" H"+(x+w-r)+" a"+r+","+r+" 0 0 1 "+r+","+r+
-           " V"+(y+h-r)+" a"+r+","+r+" 0 0 1 "+(-r)+","+r+" H"+x+" Z";
-  }
-
-  function atDays(days, r){
-    var W=300, H=104, L=6, B=20, T=6;
-    if(!days.length)
-      return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'"><text x="0" y="'+(H/2)+'">No confirmed work yet</text></svg>';
-    var max=0; days.forEach(function(d){ if(d.q>max) max=d.q; });
-    if(max<=0) max=1;
-    var iw=W-L-8, ih=H-B-T;
-    var slot=iw/days.length, bw=Math.min(24, slot-4);
-    var s='<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" role="img">';
-    [0,0.5,1].forEach(function(f){
-      var y=T+ih-f*ih;
-      s+='<line class="grid" x1="'+L+'" y1="'+y+'" x2="'+(L+iw)+'" y2="'+y+'"/>';
-    });
-    days.forEach(function(d,i){
-      var bh=Math.max(1,(d.q/max)*ih), x=L+slot*i+(slot-bw)/2, y=T+ih-bh;
-      s+='<path d="'+barPathUp(x,y,bw,bh,4)+'" fill="'+AT_DONE+'"><title>'+
-         esc(String(d.d).slice(5)+": "+fmt(d.q)+" "+(r.uom||"")+" · KES "+fmt(d.c,0))+'</title></path>';
-      if(days.length<=8)
-        s+='<text x="'+(x+bw/2)+'" y="'+(H-7)+'" text-anchor="middle">'+esc(String(d.d).slice(5))+'</text>';
-    });
-    s+='<line class="axis" x1="'+L+'" y1="'+(T+ih)+'" x2="'+(L+iw)+'" y2="'+(T+ih)+'"/>';
-    s+='<text class="v" x="'+L+'" y="'+(T+7)+'">'+esc(fmt(max))+'</text>';
-    s+='</svg>';
-    return s;
-  }
-  // column: square at the baseline, 4px rounded at the top (the data end)
-  function barPathUp(x,y,w,h,r){
-    r=Math.min(r, h, w/2);
-    return "M"+x+","+(y+h)+" V"+(y+r)+" a"+r+","+r+" 0 0 1 "+r+","+(-r)+
-           " H"+(x+w-r)+" a"+r+","+r+" 0 0 1 "+r+","+r+" V"+(y+h)+" Z";
-  }
-
-  // ── completion, plan by plan, week by week ───────────────────────────────
-  // Three figures that get used interchangeably and mean different things: what a
-  // plan was PLANNED for, what was REQUESTED against it, and what was DELIVERED
-  // against that. A plan can be fully requested with nothing done, or barely
-  // requested and fully delivered. One track holds all three -- pale is requested,
-  // solid is delivered, the tick is the planned value both are measured against --
-  // so the relationship is read rather than reconstructed from three columns.
+  // Neither means much without time. A plan two days into its week at 20% is fine;
+  // the same 20% a fortnight after it ended is not. So each plan gets a status read
+  // against the share of its period that has passed, and the list can be cut to
+  // the plans that need someone: behind, or over budget.
   //
-  // A fourth, Spent, used to sit beside them: the part of delivered pay that had
-  // actually been paid out. It read zero on every site and always would, because
-  // it counted `paid=1` and nobody marks paid here -- a column whose only content
-  // was a nought. Removing it took a per-plan SQL query out of the endpoint too.
-  var PC = { from:null, to:null, farm:"", quick:"8w" };
+  // A row is a summary. Opening it loads everything under that plan -- its
+  // activities, the requests raised, the crews, the recorded actuals, the people
+  // who did the work and the payment runs that carry it -- from mp_detail.
+  var PC = { from:null, to:null, farm:"", quick:"8w", seq:0, chip:"all", open:{}, rows:[] };
+  // a running plan is Behind once work done trails the share of its days gone by
+  // this many points; an ended plan is Done from this share of its work
+  var PC_BEHIND_MARGIN = 15;
+  var PC_DONE_AT = 90;
+  var PC_CHIPS = [["all","All"],["running","In progress"],["behind","Behind"],["short","Ended short"],["over","Over budget"]];
+  var PC_STATUS = {
+    upcoming:{label:"Upcoming", cls:"st-up"},
+    ontrack:{label:"On track", cls:"st-ok"},
+    behind:{label:"Behind", cls:"st-bad"},
+    done:{label:"Done", cls:"st-ok"},
+    short:{label:"Ended short", cls:"st-warn"}
+  };
+  (function injectPcCss(){
+    if(document.getElementById("wm-pc-css")) return;
+    var st=document.createElement("style");
+    st.id="wm-pc-css";
+    st.textContent=
+      "#wmp .pcw{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}"+
+      "#wmp .pcw label{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:700;display:block;margin-bottom:4px}"+
+      "#wmp .pcw input,#wmp .pcw select{font-family:inherit;font-size:12px;border:1px solid var(--line);padding:6px 9px;border-radius:var(--rs);background:#fff;color:var(--ink)}"+
+      "#wmp .pcw-quick{display:flex;gap:5px;flex-wrap:wrap;margin-left:auto}"+
+      "#wmp .pcw-quick button,#wmp .pc-chips button{font-family:inherit;font-size:10.5px;font-weight:600;background:#fff;color:var(--mute);border:1px solid var(--line);padding:6px 11px;border-radius:999px;cursor:pointer}"+
+      "#wmp .pcw-quick button.on,#wmp .pc-chips button.on{background:var(--ink);color:#fff;border-color:var(--ink)}"+
+      "#wmp .pc-chips{display:flex;gap:5px;flex-wrap:wrap;margin:14px 0 6px}"+
+      "#wmp .pc-chips b{font-weight:700;margin-left:4px;opacity:.75}"+
+      "#wmp .pc-tbl{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}"+
+      "#wmp .pc-tbl th{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}"+
+      "#wmp .pc-tbl td{padding:7px 8px;border-bottom:1px solid var(--faint);vertical-align:middle}"+
+      "#wmp .pc-tbl .n{text-align:right;white-space:nowrap}"+
+      "#wmp .pc-scroll{max-height:520px;overflow:auto;border:1px solid var(--faint);border-radius:8px}"+
+      "#wmp .pc-scroll thead th{position:sticky;top:0;z-index:2;background:#fff;box-shadow:0 1px 0 var(--line)}"+
+      "#wmp .pc-sum tr.tot td{font-weight:700;border-top:1px solid var(--line)}"+
+      "#wmp .pc-sum tr[data-farm]{cursor:pointer}#wmp .pc-sum tr[data-farm]:hover td{background:var(--faint)}"+
+      "#wmp .pc-sum tr.sel td{background:#eef2ff}"+
+      "#wmp .pc-wk td{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;font-weight:700;padding:14px 8px 5px;border-bottom:1px solid var(--line)}"+
+      "#wmp .pc-wk td span{float:right;letter-spacing:.04em}"+
+      "#wmp .pc-plan{cursor:pointer}#wmp .pc-plan:hover td{background:#fafafa}"+
+      "#wmp .pc-plan.open td{background:#f5f7ff;border-bottom-color:transparent}"+
+      "#wmp .pc-plan td:first-child b{display:block}#wmp .pc-plan td:first-child i{font-style:normal;color:var(--mute);font-size:10.5px}"+
+      "#wmp .pc-car{color:var(--mute);width:14px;text-align:center}"+
+      "#wmp .pc-st{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}"+
+      "#wmp .st-up{background:#f1f5f9;color:#475569}#wmp .st-ok{background:#dcfce7;color:#166534}"+
+      "#wmp .st-bad{background:#fee2e2;color:#991b1b}#wmp .st-warn{background:#fef3c7;color:#92400e}"+
+      "#wmp .pc-flag{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;background:#fee2e2;color:#991b1b;margin-left:4px;white-space:nowrap}"+
+      "#wmp .pc-meter{display:flex;align-items:center;gap:7px;min-width:110px}"+
+      "#wmp .pc-meter s{flex:1;height:6px;border-radius:3px;background:var(--faint);position:relative;overflow:hidden;text-decoration:none;min-width:48px}"+
+      "#wmp .pc-meter s u{position:absolute;left:0;top:0;bottom:0;border-radius:3px}"+
+      "#wmp .pc-meter s em{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink);opacity:.55}"+
+      "#wmp .pc-meter b{min-width:36px;text-align:right;font-weight:700}"+
+      "#wmp .pc-time{font-size:10.5px;color:var(--mute);white-space:nowrap}"+
+      "#wmp .pc-over{color:var(--red);font-weight:700}"+
+      "#wmp .pc-det td{padding:0 8px 14px;background:#f5f7ff;border-bottom:1px solid var(--line)}"+
+      "#wmp .pcd{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px}"+
+      "#wmp .pcd-h{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:11.5px;color:var(--mute);margin-bottom:12px}"+
+      "#wmp .pcd-h b{color:var(--ink)}"+
+      "#wmp .pcd-money{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:12px}"+
+      "#wmp .pcd-m{border:1px solid var(--line);border-radius:8px;padding:8px 10px}"+
+      "#wmp .pcd-m span{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700}"+
+      "#wmp .pcd-m b{display:block;font-size:15px;margin-top:3px}"+
+      "#wmp .pcd-m i{display:block;font-style:normal;font-size:10px;color:var(--mute);margin-top:2px}"+
+      "#wmp .pcd-m.good b{color:var(--green)}#wmp .pcd-m.warn b{color:var(--amber)}#wmp .pcd-m.bad b{color:var(--red)}"+
+      "#wmp .pcd-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:8px}"+
+      "#wmp .pcd-tabs button{font-family:inherit;font-size:11px;font-weight:600;color:var(--mute);background:none;border:0;border-bottom:2px solid transparent;padding:7px 10px;cursor:pointer}"+
+      "#wmp .pcd-tabs button.on{color:var(--ink);border-bottom-color:var(--ink)}"+
+      "#wmp .pcd-tabs button i{font-style:normal;opacity:.6;margin-left:3px}"+
+      "#wmp .pcd-pane{max-height:360px;overflow:auto}"+
+      "#wmp .pcd-pane tr[data-open]{cursor:pointer}#wmp .pcd-pane tr[data-open]:hover td{background:var(--faint)}"+
+      "#wmp .pcd-note{font-size:11px;color:var(--mute);margin:8px 2px 0}"+
+      "#wmp .pcd-note.warn{color:var(--amber)}"+
+      "#wmp .pc-show-sm{display:none}"+
+      "@media(max-width:820px){#wmp .pc-hide-sm{display:none}#wmp .pc-show-sm{display:inline}#wmp .pc-meter{min-width:80px}}";
+    document.head.appendChild(st);
+  })();
 
-  // What a task is called, not what it is filed under. Every read returns a Task
-  // docname, and where Task autoname is a series that docname is
-  // "TASK-2026-00031" -- which is what these tables were showing. TASK_NAMES is
-  // fetched once per screen load; the fallback keeps a site whose tasks are named
-  // by subject looking exactly as it did.
-  var TASK_NAMES = {};
-  function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
+  function localISO(d){ d=new Date(d.getTime()-d.getTimezoneOffset()*60000); return d.toISOString().slice(0,10); }
+  function dayNum(iso){ var p=String(iso).split("-"); return Date.UTC(+p[0],+p[1]-1,+p[2])/86400000; }
+  function shortDate(iso){
+    if(!iso) return "";
+    var M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    // dates arrive as "2026-09-27" or, for a few fields, "2026-09-27 10:42:00"
+    var p=String(iso).slice(0,10).split("-"); return (+p[2])+" "+M[(+p[1])-1];
+  }
+  function pctTxt(v){ return v==null?"—":fmt(v,0)+"%"; }
+
+  // where a plan stands: its share of days gone, its work done, its money, and
+  // the one-word status read from those
+  function pcAssess(r){
+    var today=dayNum(todayISO()), f=dayNum(r.period_from), t=dayNum(r.period_to);
+    var total=Math.max(1, t-f+1);
+    var gone = today<f ? 0 : Math.min(total, today-f+1);
+    var time=gone/total*100;
+    var work=r.completion||0;
+    // status reads recorded work, approved or not: sign-off runs days behind the
+    // field, and a crew working today should not read as Behind until it lands
+    var recorded=Math.max(work, r.recorded_completion||0);
+    var budget=r.planned_value>0 ? (r.earned_value/r.planned_value*100) : null;
+    var over=(r.requested_value>r.planned_value+0.5)||(r.earned_value>r.planned_value+0.5);
+    var st;
+    if(today<f) st="upcoming";
+    else if(today<=t) st=(recorded+PC_BEHIND_MARGIN<time)?"behind":"ontrack";
+    else st=(recorded>=PC_DONE_AT)?"done":"short";
+    return {status:st, time:time, gone:gone, total:total, work:work, recorded:recorded, budget:budget, over:over,
+            running:(today>=f && today<=t)};
+  }
+  function pcChipMatch(r){
+    var a=r._a;
+    if(PC.chip==="running") return a.running;
+    if(PC.chip==="behind") return a.status==="behind";
+    if(PC.chip==="short") return a.status==="short";
+    if(PC.chip==="over") return a.over;
+    return true;
+  }
+  // pct solid; more (optional, >= pct) drawn paler behind it -- work recorded but
+  // not yet approved; tick marks the share of the plan's days gone by
+  function meter(pct, color, tick, more){
+    var w=Math.max(0, Math.min(100, pct||0));
+    var m=more!=null?Math.max(w, Math.min(100, more)):w;
+    return '<span class="pc-meter"'+(m>w?' title="'+fmt(pct,0)+'% approved, '+fmt(more,0)+'% recorded"':'')+'><s>'+
+      (m>w?'<u style="width:'+m+'%;background:'+color+';opacity:.3"></u>':'')+
+      '<u style="width:'+w+'%;background:'+color+'"></u>'+
+      (tick!=null?'<em style="left:'+Math.min(100,tick)+'%" title="share of the plan’s days gone by"></em>':'')+
+      '</s><b>'+pctTxt(pct)+'</b></span>';
+  }
 
   function planCompletion(){
     var box=el("wm-plancomp"); if(!box) return;
@@ -508,227 +217,1236 @@
     if(PC.from) args.from_date=PC.from;
     if(PC.to) args.to_date=PC.to;
     if(PC.farm) args.farm=PC.farm;
+    // a date box now fetches on every change, and typing a year fires several
+    // (0002, 0020, 0202, 2026); only the newest request may draw the card
+    var seq=++PC.seq;
     call(args).then(function(d){
-      var rows=d.plans||[];
-      var h=pcControls(d);
-      if(!rows.length){
-        box.innerHTML=h+'<div class="empty">No master plan covers these dates'+
-          (PC.farm?(' for '+esc(PC.farm)):'')+'. Widen the range, or raise a plan for this period.</div>';
-        pcWire(box); return;
-      }
-      // grouped by the week the plan's period starts in, newest first
-      var byWeek={}, order=[];
-      rows.forEach(function(r){
-        if(!byWeek[r.week]){ byWeek[r.week]=[]; order.push(r.week); }
-        byWeek[r.week].push(r);
-      });
-      order.sort().reverse();
-      order.forEach(function(wk){
-        var list=byWeek[wk];
-        var pv=0, rv=0, ev=0;
-        list.forEach(function(r){ pv+=r.planned_value; rv+=r.requested_value; ev+=r.earned_value; });
-        h+='<div class="pcwk">Week of '+esc(wk)+' &middot; '+fmt(list.length)+' plan'+
-           (list.length===1?'':'s')+' &middot; planned '+money(pv)+' &middot; requested '+money(rv)+
-           ' &middot; delivered '+money(ev)+'</div>';
-        list.forEach(function(r){ h+=pcRow(r); });
-      });
-      box.innerHTML=h;
-      pcWire(box);
+      if(seq!==PC.seq) return;
+      PC.rows=(d.plans||[]).map(function(r){ r._a=pcAssess(r); return r; });
+      PC.d=d;
+      pcDraw();
     }).catch(function(e){
-      box.innerHTML=pcControls({})+'<div class="empty">Could not load completion.</div>';
+      if(seq!==PC.seq) return;
+      box.innerHTML=pcControls({})+'<div class="empty">Could not load the master plans.</div>';
       pcWire(box);
     });
+  }
+
+  function pcDraw(){
+    var box=el("wm-plancomp"); if(!box) return;
+    var rows=PC.rows;
+    var h=pcControls(PC.d||{});
+    if(!rows.length){
+      box.innerHTML=h+'<div class="empty">No master plan starts in these dates'+
+        (PC.farm?(' for '+esc(PC.farm)):'')+'. Widen the range, or raise a plan for this period.</div>';
+      pcWire(box); return;
+    }
+    h+=pcSummary(rows);
+    var counts={all:rows.length, running:0, behind:0, short:0, over:0};
+    rows.forEach(function(r){
+      if(r._a.running) counts.running++;
+      if(r._a.status==="behind") counts.behind++;
+      if(r._a.status==="short") counts.short++;
+      if(r._a.over) counts.over++;
+    });
+    h+='<div class="pc-chips">'+PC_CHIPS.map(function(c){
+      return '<button type="button" data-pcchip="'+c[0]+'"'+(PC.chip===c[0]?' class="on"':'')+'>'+c[1]+'<b>'+counts[c[0]]+'</b></button>';
+    }).join("")+'</div>';
+    var shown=rows.filter(pcChipMatch);
+    if(!shown.length){
+      box.innerHTML=h+'<div class="empty">No plan here is '+esc((PC_CHIPS.filter(function(c){return c[0]===PC.chip;})[0]||[])[1]||"").toLowerCase()+'.</div>';
+      pcWire(box); return;
+    }
+    // grouped by the week each plan starts, newest first
+    var byWeek={}, order=[];
+    shown.forEach(function(r){
+      if(!byWeek[r.week]){ byWeek[r.week]=[]; order.push(r.week); }
+      byWeek[r.week].push(r);
+    });
+    order.sort().reverse();
+    // the list scrolls inside the card; the summary and chips above stay put
+    h+='<div class="pc-scroll"><table class="pc-tbl"><thead><tr>'+
+       '<th></th><th>Master plan</th><th class="pc-hide-sm">Period</th><th>Status</th>'+
+       '<th title="each activity’s output against its target, capped at its own target and weighted by its planned value">Work done</th>'+
+       '<th title="confirmed pay against the plan’s value">Budget used</th>'+
+       '<th class="n pc-hide-sm">Planned KES</th><th class="n pc-hide-sm">Requested KES</th><th class="n">Earned KES</th></tr></thead><tbody>';
+    order.forEach(function(wk){
+      var list=byWeek[wk], pv=0, ev=0;
+      list.forEach(function(r){ pv+=r.planned_value; ev+=r.earned_value; });
+      h+='<tr class="pc-wk"><td colspan="9">Week of '+esc(shortDate(wk))+
+         '<span>'+fmt(list.length)+' plan'+(list.length===1?'':'s')+' &middot; '+money(ev)+' of '+money(pv)+' KES earned</span></td></tr>';
+      list.forEach(function(r){ h+=pcRow(r); });
+    });
+    h+='</tbody></table></div>';
+    h+=pcKey();
+    box.innerHTML=h;
+    pcWire(box);
+    Object.keys(PC.open).forEach(function(n){ if(PC.open[n]) pcLoadDetail(n); });
+  }
+
+  // one line per farm and a total: what management reads before anything else
+  function pcSummary(rows){
+    var farms={}, order=[];
+    function add(k, r){
+      if(!farms[k]){ farms[k]={plans:0, pv:0, wv:0, ev:0, behind:0, short:0, over:0}; order.push(k); }
+      var f=farms[k];
+      f.plans++; f.pv+=r.planned_value; f.wv+=r.planned_value*(r.completion||0)/100; f.ev+=r.earned_value;
+      if(r._a.status==="behind") f.behind++;
+      if(r._a.status==="short") f.short++;
+      if(r._a.over) f.over++;
+    }
+    rows.forEach(function(r){ add(r.farm, r); add("__all", r); });
+    var line=function(k, cls){
+      var f=farms[k];
+      var work=f.pv>0?f.wv/f.pv*100:0, bud=f.pv>0?f.ev/f.pv*100:null;
+      var isAll=k==="__all";
+      return '<tr'+(isAll?' class="tot"':' data-farm="'+esc(k)+'"'+(PC.farm===k?' class="sel"':''))+'>'+
+        '<td>'+(isAll?('All '+esc(TX("top_plural","Farms")).toLowerCase()):esc(k))+'</td>'+
+        '<td class="n">'+fmt(f.plans)+'</td>'+
+        '<td>'+meter(work,"var(--green)")+'</td>'+
+        '<td>'+meter(bud,"#6366f1")+'</td>'+
+        '<td class="n pc-hide-sm">'+money(f.ev)+' / '+money(f.pv)+'</td>'+
+        '<td class="n">'+(f.behind?'<span class="pc-st st-bad">'+f.behind+'</span>':'—')+'</td>'+
+        '<td class="n pc-hide-sm">'+(f.short?'<span class="pc-st st-warn">'+f.short+'</span>':'—')+'</td>'+
+        '<td class="n">'+(f.over?'<span class="pc-flag">'+f.over+'</span>':'—')+'</td></tr>';
+    };
+    var h='<div style="overflow-x:auto"><table class="pc-tbl pc-sum"><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Plans</th>'+
+      '<th>Work done</th><th>Budget used</th><th class="n pc-hide-sm">Earned / planned KES</th><th class="n" title="running plans whose work trails the days gone by">Behind now</th><th class="n pc-hide-sm">Ended short</th><th class="n">Over budget</th></tr></thead><tbody>';
+    order.filter(function(k){return k!=="__all";}).sort().forEach(function(k){ h+=line(k); });
+    if(order.length>2) h+=line("__all");
+    return h+'</tbody></table></div>';
   }
 
   function pcControls(d){
     var q=function(k,lbl){ return '<button type="button" data-pcq="'+k+'"'+(PC.quick===k?' class="on"':'')+'>'+lbl+'</button>'; };
     return '<div class="pcw">'+
-      '<div><label>From</label><input type="date" id="pc-from" value="'+esc(PC.from||d.from_date||"")+'"></div>'+
+      '<div><label>Starting from</label><input type="date" id="pc-from" value="'+esc(PC.from||d.from_date||"")+'"></div>'+
       '<div><label>To</label><input type="date" id="pc-to" value="'+esc(PC.to||d.to_date||"")+'"></div>'+
       '<div><label>'+esc(TX("top_singular","Farm"))+'</label><select id="pc-farm">'+
         farmOptions(PC.farm)+'</select></div>'+
-      '<div><button type="button" id="pc-apply">Apply</button></div>'+
       '<div class="pcw-quick">'+q("4w","4 weeks")+q("8w","8 weeks")+q("12w","12 weeks")+q("all","All")+'</div>'+
     '</div>';
   }
 
   function pcRow(r){
-    // everything is scaled to the larger of planned and requested, so an
-    // over-request runs past the tick instead of being silently clipped to it
-    var base=Math.max(r.planned_value, r.requested_value, 1);
-    var reqW=Math.min(100, r.requested_value/base*100);
-    var doneW=Math.min(100, r.earned_value/base*100);
-    var planX=Math.min(100, r.planned_value/base*100);
-    var over=r.requested_value>r.planned_value+0.005;
-    var cls=r.completion>=80?"hi":(r.completion>=25?"mid":"lo");
-    return '<div class="pc-row">'+
-      '<div class="pc-id"><b>'+esc(r.plan)+' &middot; '+esc(r.farm)+'</b>'+
-        '<span>'+esc(r.period_from)+' &rarr; '+esc(r.period_to)+' &middot; '+esc(r.state)+'</span>'+
-        '<span>'+fmt(r.requested_count)+' request'+(r.requested_count===1?'':'s')+' &middot; '+
-        fmt(r.actuals_count)+' actual'+(r.actuals_count===1?'':'s')+'</span></div>'+
-      '<div><div class="pc-track">'+
-        '<div class="pc-req" style="width:'+reqW+'%"></div>'+
-        (over?'<div class="pc-over" style="left:'+planX+'%;width:'+(reqW-planX)+'%"></div>':'')+
-        '<div class="pc-done" style="width:'+doneW+'%"></div>'+
-        '<div class="pc-plan" style="left:'+planX+'%"></div>'+
-      '</div><div class="pc-legend">'+
-        '<b>'+money(r.earned_value)+'</b> delivered of '+money(r.requested_value)+' requested'+
-        (over?(' &middot; <b style="color:var(--red)">'+money(r.requested_value-r.planned_value)+
-               ' over the planned value</b>'):(' against '+money(r.planned_value)+' planned'))+
-      (r.offplan_count?('<div class="pc-legend" style="color:var(--amber)">'+
-        fmt(r.offplan_count)+' request'+(r.offplan_count===1?'':'s')+' worth '+money(r.offplan_value)+
-        ' went to tasks this plan does not carry &mdash; not counted above</div>'):'')+
-      '</div></div>'+
-      '<div class="pc-figs">'+
-        '<div class="pc-fig"><i>Planned</i><b>'+money(r.planned_value)+'</b></div>'+
-        '<div class="pc-fig"><i>Requested</i><b>'+money(r.requested_value)+'</b></div>'+
-        '<div class="pc-fig"><i>Complete</i><span class="pc-pct '+cls+'">'+fmt(r.completion,0)+'%</span></div>'+
-      '</div>'+
+    var a=r._a, st=PC_STATUS[a.status], open=!!PC.open[r.plan];
+    var over=r.requested_value>r.planned_value+0.5;
+    var time = a.status==="upcoming" ? ('starts '+shortDate(r.period_from))
+             : (a.running ? ('day '+a.gone+' of '+a.total) : 'ended');
+    return '<tr class="pc-plan'+(open?' open':'')+'" data-pcplan="'+esc(r.plan)+'">'+
+      '<td class="pc-car">'+(open?'&#9662;':'&#9656;')+'</td>'+
+      '<td><b>'+esc(r.plan)+' &middot; '+esc(r.farm)+'</b></td>'+
+      '<td class="pc-hide-sm">'+esc(shortDate(r.period_from))+' &ndash; '+esc(shortDate(r.period_to))+'<br><span class="pc-time">'+esc(time)+'</span></td>'+
+      '<td><span class="pc-st '+st.cls+'">'+st.label+'</span>'+(a.over?'<span class="pc-flag">Over budget</span>':'')+
+        '<span class="pc-time pc-show-sm"><br>'+esc(time)+'</span></td>'+
+      '<td>'+meter(a.work,"var(--green)", a.running?a.time:null, a.recorded)+
+        (a.recorded>a.work+0.5?'<span class="pc-time">'+fmt(a.recorded,0)+'% recorded, awaiting approval</span>':'')+'</td>'+
+      '<td>'+meter(a.budget,"#6366f1")+'</td>'+
+      '<td class="n pc-hide-sm">'+money(r.planned_value)+'</td>'+
+      '<td class="n pc-hide-sm'+(over?' pc-over':'')+'">'+money(r.requested_value)+
+        (over?'<br><span style="font-size:10px">+'+money(r.requested_value-r.planned_value)+'</span>':'')+'</td>'+
+      '<td class="n">'+money(r.earned_value)+
+        (r.pending_value?'<br><span class="pc-time">+'+money(r.pending_value)+' awaiting approval</span>':'')+'</td>'+
+    '</tr>'+
+    (open?'<tr class="pc-det"><td colspan="9"><div class="pcd" id="pcd-'+esc(r.plan)+'"><div class="loading">Reading everything under '+esc(r.plan)+'&hellip;</div></div></td></tr>':'');
+  }
+
+  // every term on the card, in one place
+  function pcKey(){
+    var dl=function(rows){ return rows.map(function(r){ return r[0]==="#"?'<h6>'+esc(r[1])+'</h6>':'<dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd>'; }).join(""); };
+    return '<details class="ex-key"><summary>Key: what every term means</summary><dl>'+dl([
+      ["#","Which plans are listed"],
+      ["Starting from / To","A plan is listed when it starts inside these dates. 4, 8 and 12 weeks end today."],
+      ["#","Status"],
+      ["Upcoming","The plan has not started yet."],
+      ["On track","Running, and recorded work is no more than "+PC_BEHIND_MARGIN+" points behind the share of its days gone by."],
+      ["Behind","Running, and recorded work trails the share of its days gone by by more than "+PC_BEHIND_MARGIN+" points."],
+      ["Done","Ended with at least "+PC_DONE_AT+"% of its work recorded."],
+      ["Ended short","Ended with less than "+PC_DONE_AT+"% of its work recorded."],
+      ["Over budget","Requested or earned money is above the plan's value. Shown beside any status."],
+      ["#","Measures"],
+      ["Work done","Each activity's approved output against its target, capped at that target and weighted by its planned value. Never adds different units together."],
+      ["Recorded, awaiting approval","Output entered on actuals that are still in approval. Drawn paler behind Work done; Status counts it."],
+      ["Day 4 of 7 / the tick","How far through its period the plan is. The tick on the Work done bar marks that share."],
+      ["Budget used","Earned (confirmed) pay ÷ the plan's value."],
+      ["Planned KES","The plan's own value: target × rate on each activity."],
+      ["Requested KES","Requests raised against the plan (not rejected). Red when above Planned, with the excess under it."],
+      ["Earned KES","Confirmed pay for the plan's work. \"+N awaiting approval\" is pay recorded but not yet confirmed."],
+      ["#","Inside a plan"],
+      ["Not in a pay run","Confirmed pay that no payment run has picked up yet."],
+      ["In pay runs, unpaid","Pay in payment runs not yet marked Paid."],
+      ["Paid out","Pay in payment runs marked Paid."],
+      ["By salaried staff","Output by staff on salary: real work at no piece-rate pay, so Work done can run ahead of Budget used."],
+      ["Requests to tasks the plan does not carry","Listed under Requests but not counted in the plan's figures."]
+    ])+'</dl></details>';
+  }
+
+  // ── one plan opened: everything under it ──
+  var PCD = {};      // plan -> mp_detail response
+  var PCD_TAB = {};  // plan -> open tab
+  function pcLoadDetail(plan){
+    if(PCD[plan]){ pcDrawDetail(plan); return; }
+    call({action:"mp_detail", plan:plan}).then(function(d){
+      if(d.error){ var b=el("pcd-"+plan); if(b) b.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      PCD[plan]=d; pcDrawDetail(plan);
+    }).catch(function(){
+      var b=el("pcd-"+plan); if(b) b.innerHTML='<div class="empty">Could not load this plan.</div>';
+    });
+  }
+  function pcDrawDetail(plan){
+    var box=el("pcd-"+plan), d=PCD[plan]; if(!box||!d) return;
+    var p=d.plan||{}, m=d.money||{};
+    var tab=PCD_TAB[plan]||"activities";
+    var h='<div class="pcd-h">'+
+      '<span><b>'+esc(p.plan_name||p.name)+'</b></span>'+stateTag(p.workflow_state)+
+      '<span>Raised by <b>'+esc(p.raised_by||"—")+'</b>'+(p.raised_on?' on '+esc(shortDate(p.raised_on)):'')+'</span>'+
+      (p.gm_approved_by?'<span>Approved by <b>'+esc(p.gm_approved_by)+'</b>'+(p.gm_approved_on?' on '+esc(shortDate(p.gm_approved_on)):'')+'</span>':'')+
+      '<span><b>'+fmt(p.total_man_days,0)+'</b> man-days planned</span>'+
+      deskLink("Work Management Master Plan", p.name)+'</div>';
+    // the money, in the order it moves
+    var pv=m.planned||0;
+    var cell=function(lbl, v, sub, cls){ return '<div class="pcd-m'+(cls?' '+cls:'')+'"><span>'+lbl+'</span><b>'+money(v)+'</b>'+(sub?'<i>'+sub+'</i>':'')+'</div>'; };
+    h+='<div class="pcd-money">'+
+      cell("Planned", pv, "KES, the plan’s value")+
+      cell("Requested", m.requested, pv?fmt(m.requested/pv*100,0)+'% of planned':'', m.requested>pv+0.5?'bad':'')+
+      cell("Awaiting approval", m.pending, "recorded, not yet confirmed", m.pending?'warn':'')+
+      cell("Earned", m.earned, pv?fmt(m.earned/pv*100,0)+'% of planned · confirmed':'confirmed', m.earned>pv+0.5?'bad':'good')+
+      cell("Not in a pay run", m.not_in_run, "confirmed, no payment run yet", m.not_in_run?'warn':'')+
+      cell("In pay runs, unpaid", m.unpaid_runs, "", m.unpaid_runs?'warn':'')+
+      cell("Paid out", m.paid, "", m.paid?'good':'')+
+      '<div class="pcd-m"><span>People</span><b>'+fmt(m.people)+'</b><i>'+fmt(m.person_days)+' person-days recorded</i></div>'+
     '</div>';
+    if(m.offplan_count){
+      h+='<div class="pcd-note warn" style="margin:-4px 2px 10px">'+fmt(m.offplan_count)+' request'+(m.offplan_count===1?'':'s')+
+         ' worth '+money(m.offplan)+' KES went to tasks this plan does not carry &mdash; listed under Requests, not counted above.</div>';
+    }
+    var tabs=[["activities","Activities",(d.activities||[]).length],["requests","Requests",(d.requests||[]).length],
+      ["assignments","Crews",(d.assignments||[]).length],["actuals","Actuals",(d.actuals||[]).length],
+      ["people","People",(d.people||[]).length],["payments","Payments",(d.payments||[]).length]];
+    h+='<div class="pcd-tabs">'+tabs.map(function(t){
+      return '<button type="button" data-pcdtab="'+t[0]+'"'+(tab===t[0]?' class="on"':'')+'>'+t[1]+'<i>'+t[2]+'</i></button>';
+    }).join("")+'</div><div class="pcd-pane">'+pcPane(d, tab)+'</div>';
+    box.innerHTML=h;
+    box.querySelectorAll("[data-pcdtab]").forEach(function(b){
+      b.onclick=function(e){ e.stopPropagation(); PCD_TAB[plan]=b.getAttribute("data-pcdtab"); pcDrawDetail(plan); };
+    });
+    box.querySelectorAll("tr[data-open]").forEach(function(tr){
+      tr.onclick=function(){
+        var k=tr.getAttribute("data-open"), v=tr.getAttribute("data-v");
+        if(k==="req") openPlanModal(v);
+        else if(k==="act") openActualModal(v);
+        else if(k==="emp") openEmpModal(v);
+        else if(k==="pay") openPaymentModal(v);
+      };
+    });
+  }
+  function pcPane(d, tab){
+    var T=function(head, body, note){
+      return '<table class="pc-tbl"><thead><tr>'+head.map(function(c){
+        return '<th'+(c.charAt(0)==="#"?' class="n"':'')+'>'+c.replace(/^#/,"")+'</th>'; }).join("")+'</tr></thead><tbody>'+
+        (body||'<tr><td colspan="'+head.length+'" class="empty">Nothing yet.</td></tr>')+'</tbody></table>'+(note?'<div class="pcd-note">'+note+'</div>':'');
+    };
+    var n=function(v,dp){ return '<td class="n">'+fmt(v,dp||0)+'</td>'; };
+    var k=function(v){ return '<td class="n">'+money(v)+'</td>'; };
+    var b="";
+    if(tab==="activities"){
+      (d.activities||[]).forEach(function(a){
+        var sal=a.salaried_qty?'<br><span class="pc-time">'+fmt(a.salaried_qty)+' by salaried staff</span>':'';
+        b+='<tr><td><b>'+esc(a.subject||taskName(a.task))+'</b>'+(a.in_plan?'':' <span class="pc-st st-warn">'+esc(a.consultant_state||"not approved")+'</span>')+'</td>'+
+          '<td>'+esc(a.uom||"")+'</td>'+n(a.target_qty)+n(a.req_qty)+
+          '<td class="n">'+fmt(a.done_qty)+sal+(a.pending_qty?'<br><span class="pc-time">+'+fmt(a.pending_qty)+' awaiting</span>':'')+'</td>'+
+          '<td>'+meter(a.done_pct,"var(--green)")+'</td>'+k(a.planned_value)+k(a.req_value)+k(a.earned)+'</tr>';
+      });
+      return T(["Activity","Unit","#Target","#Requested","#Done","Work done","#Planned KES","#Requested KES","#Earned KES"], b,
+        "Earned is confirmed pay. Output by salaried staff is real work at no piece-rate cost, so work done can run ahead of money earned.");
+    }
+    if(tab==="requests"){
+      (d.requests||[]).forEach(function(r){
+        b+='<tr data-open="req" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.task_subject||taskName(r.task))+'</td>'+
+          '<td>'+esc(lbl(r.block_section))+'</td><td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+
+          '<td class="n">'+fmt(r.quantity)+' '+esc(r.uom||"")+'</td><td class="n">'+fmt(r.people_per_day)+'</td>'+k(r.total_cost)+
+          '<td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.requested_by||"")+'</td></tr>';
+      });
+      return T(["Request","Task","Block","Dates","#Quantity","#People/day","#Cost KES","State","Requested by"], b, "Click a request for its full trail.");
+    }
+    if(tab==="assignments"){
+      (d.assignments||[]).forEach(function(a){
+        b+='<tr><td><b>'+esc(a.name)+'</b> '+deskLink("Work Management Assigner", a.name)+'</td><td>'+esc(a.planner_request||"")+'</td>'+
+          '<td>'+esc(taskName(a.task))+'</td><td>'+esc(lbl(a.block_section))+'</td>'+
+          '<td>'+esc(shortDate(a.from_date))+' &ndash; '+esc(shortDate(a.to_date))+'</td>'+n(a.workers)+
+          '<td>'+stateTag(a.workflow_state)+'</td><td>'+esc(a.assigned_by||"")+'</td></tr>';
+      });
+      return T(["Crew","Request","Task","Block","Dates","#Workers","State","Assigned by"], b);
+    }
+    if(tab==="actuals"){
+      (d.actuals||[]).forEach(function(a){
+        b+='<tr data-open="act" data-v="'+esc(a.name)+'"><td><b>'+esc(a.name)+'</b></td><td>'+esc(taskName(a.task))+'</td>'+
+          '<td>'+esc(shortDate(a.from_date))+' &ndash; '+esc(shortDate(a.to_date))+'</td>'+n(a.people)+
+          '<td class="n">'+fmt(a.qty)+(a.salaried_qty?'<br><span class="pc-time">'+fmt(a.salaried_qty)+' salaried</span>':'')+'</td>'+k(a.pay)+
+          '<td>'+stateTag(a.workflow_state)+'</td><td>'+esc(a.entered_by||"")+'</td></tr>';
+      });
+      return T(["Actual","Task","Dates","#People","#Qty done","#Pay KES","State","Entered by"], b, "Click an actual for its day-by-day record.");
+    }
+    if(tab==="people"){
+      (d.people||[]).forEach(function(p){
+        b+='<tr data-open="emp" data-v="'+esc(p.employee)+'"><td><b>'+esc(p.employee_name||p.employee)+'</b><br><span class="pc-time">'+esc(p.employee)+'</span></td>'+
+          '<td>'+esc(p.employment_type||"")+'</td>'+n(p.days)+'<td>'+esc(shortDate(p.first_day))+' &ndash; '+esc(shortDate(p.last_day))+'</td>'+
+          n(p.qty)+k(p.amount)+k(p.confirmed)+k(p.paid)+'</tr>';
+      });
+      return T(["Worker","Type","#Days","Worked","#Qty","#Earned KES","#Confirmed KES","#Paid KES"], b,
+        "Everyone recorded on this plan’s actuals, rejected ones aside. Click a worker for their history.");
+    }
+    if(tab==="payments"){
+      (d.payments||[]).forEach(function(p){
+        b+='<tr data-open="pay" data-v="'+esc(p.name)+'"><td><b>'+esc(p.name)+'</b></td><td>'+esc(p.employee_name||p.employee||"")+'</td>'+
+          '<td>'+esc(shortDate(p.period_from))+' &ndash; '+esc(shortDate(p.period_to))+'</td>'+k(p.amount)+'<td>'+stateTag(p.workflow_state)+'</td></tr>';
+      });
+      return T(["Payment run","Worker","Period","#This plan KES","State"], b,
+        "The part of each payment run that pays for this plan’s work.");
+    }
+    return "";
   }
 
   function pcWire(box){
-    var ap=el("pc-apply");
-    if(ap) ap.onclick=function(){
-      PC.from=el("pc-from").value; PC.to=el("pc-to").value;
-      PC.farm=el("pc-farm").value; PC.quick=null; planCompletion();
-    };
+    // every control applies the moment it changes, as the farm picker always did;
+    // a typed date that waited for an Apply button looked like a filter doing nothing
+    var df=el("pc-from");
+    if(df) df.onchange=function(){ PC.from=df.value; PC.quick=null; planCompletion(); };
+    var dt=el("pc-to");
+    if(dt) dt.onchange=function(){ PC.to=dt.value; PC.quick=null; planCompletion(); };
     var fs=el("pc-farm");
     if(fs) fs.onchange=function(){ PC.farm=fs.value; planCompletion(); };
     box.querySelectorAll("[data-pcq]").forEach(function(b){
       b.onclick=function(){
         var k=b.getAttribute("data-pcq");
         PC.quick=k; PC.to=todayISO();
+        // n whole weeks ending today: today and the n*7-1 days before it
         PC.from = k==="all" ? "2020-01-01"
-                : todayMinus(k==="4w"?28:(k==="12w"?84:56));
+                : todayMinus(k==="4w"?27:(k==="12w"?83:55));
         planCompletion();
       };
     });
-  }
-  function todayISO(){ return new Date().toISOString().slice(0,10); }
-  function todayMinus(n){ var d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
-
-  function stageCard(title, color, rows){
-    var body=rows.map(function(r){ return '<div class="sc-row"><span class="sc-k">'+r[0]+'</span><span class="sc-v">'+r[1]+'</span></div>'; }).join("");
-    return '<div class="stagecard" style="border-top:3px solid '+color+'">'+
-      '<div class="sc-h" style="color:'+color+'">'+title+'</div>'+body+'</div>';
-  }
-  function farmStrip(rows){
-    if(!rows.length) return '<div class="empty">No '+esc(TX("top_singular","Farm")).toLowerCase()+' data.</div>';
-    var h='<div class="fstrip">';
-    rows.forEach(function(r){
-      h+='<div class="fs-card">'+
-         '<div class="fs-name">'+esc(r.farm)+'</div>'+
-         '<div class="fs-big">'+fmt(r.assigned_workers)+'</div><div class="fs-lbl">assigned workers</div>'+
-         '<div class="fs-line"><span>Active employees</span><b>'+fmt(r.active_employees)+'</b></div>'+
-         '<div class="fs-line"><span>&middot; Task workers</span><b>'+fmt(r.active_task_workers)+'</b></div>'+
-         '<div class="fs-line"><span>&middot; Permanent / salaried</span><b>'+fmt(r.active_permanent)+'</b></div>'+
-         '<div class="fs-line"><span>Awaiting actuals</span><b>'+fmt(r.awaiting_workers)+'</b></div>'+
-         '<div class="fs-line"><span>Confirmed</span><b>'+fmt(r.confirmed_workers)+'</b></div>'+
-         '<div class="fs-line"><span>Crew-days of work</span><b>'+fmt(r.crew_days)+'</b></div>'+
-         '<div class="fs-line" title="Every plan’s people-per-day added up — counts slots across plans, not distinct people, so it can exceed your workforce."><span>Planned slots/day <i class="qmark">?</i></span><b>'+fmt(r.planned_people)+'</b></div>'+
-         '<div class="fs-line"><span>Qty done</span><b>'+fmt(r.actual_qty)+' / '+fmt(r.planned_qty)+'</b></div>'+
-         '<div class="fs-line"><span>Payment</span><b>'+money(r.paid_amount)+'</b></div>'+
-         '<div class="fs-line"><span>Value</span><b>'+money(r.planned_value)+'</b></div>'+
-         '</div>';
+    box.querySelectorAll("[data-pcchip]").forEach(function(b){
+      b.onclick=function(){ PC.chip=b.getAttribute("data-pcchip"); pcDraw(); };
     });
-    return h+'</div>';
+    // a farm's line in the summary is a shortcut to that farm; clicking it again clears it
+    box.querySelectorAll(".pc-sum tr[data-farm]").forEach(function(tr){
+      tr.onclick=function(){ var f=tr.getAttribute("data-farm"); PC.farm=(PC.farm===f?"":f); planCompletion(); };
+    });
+    box.querySelectorAll("tr[data-pcplan]").forEach(function(tr){
+      tr.onclick=function(){ var n=tr.getAttribute("data-pcplan"); PC.open[n]=!PC.open[n]; pcDraw(); };
+    });
+  }
+  // calendar dates on this machine, not UTC: three hours east of Greenwich the
+  // UTC date is yesterday until 3am
+  function todayISO(){ return localISO(new Date()); }
+  function todayMinus(n){ var d=new Date(); d.setDate(d.getDate()-n); return localISO(d); }
+
+  var TASK_NAMES = {};
+  function taskName(t){ return (t && TASK_NAMES[t]) || t || ""; }
+
+
+  // ── activities, people & blocks: the explorer ────────────────────────────
+  // Below the master plans: which activities cost or lag, who earned what, whose
+  // requests turn into work, and where the money goes -- with the history behind
+  // each. One filter bar scopes everything in the section. Four lenses list the
+  // rows; opening one shows every list behind it and loads it into the chart.
+  //
+  // Every figure comes from the same rows on the server -- a worker's recorded
+  // day joined to its actual, crew and request (WMX_JOIN in wm_dashboard) -- so
+  // the lenses, the drill-downs and the chart lines cannot disagree.
+  var EX = {
+    from:null, to:null, farm:"", quick:"8w", q:"",
+    lens:"activities", view:"list", sort:{}, open:null, seq:0,
+    lenses:{}, details:{}, plans:[],
+    chart:{ mode:"measures", kind:"estate", key:"", keyLabel:"", plan:"", activity:"",
+            on:{planned:1, requested:0, recorded:0, confirmed:1, paid:1, output:0, cost:0, people:0},
+            cmpKind:"activity", cmpKeys:[], cmpMeasure:"recorded", running:true, table:false,
+            seq:0, data:null }
+  };
+  var EX_LENSES = [["activities","Activities"],["workers","Workers"],["staff","Staff"],["blocks",esc(TX("unit_plural","Blocks"))]];
+  // eight measures, each its own colour, fixed whichever are switched on. The
+  // money five take slots 1-5 and the two percentages 6-7: each panel's lines are
+  // adjacent slots of a palette validated for adjacent lines (dataviz validator:
+  // CVD dE >= 9.1, normal-vision dE >= 19.6 on white).
+  var EX_MEASURES = [
+    {k:"planned",   label:"Planned",          unit:"kes", color:"#2a78d6", panel:"money"},
+    {k:"requested", label:"Requested",        unit:"kes", color:"#eb6834", panel:"money"},
+    {k:"recorded",  label:"Recorded",         unit:"kes", color:"#1baf7a", panel:"money"},
+    {k:"confirmed", label:"Confirmed",        unit:"kes", color:"#eda100", panel:"money"},
+    {k:"paid",      label:"Paid out",         unit:"kes", color:"#e87ba4", panel:"money"},
+    {k:"output",    label:"Output vs target", unit:"pct", color:"#008300", panel:"perf"},
+    {k:"cost",      label:"Cost/unit vs rate",unit:"pct", color:"#4a3aa7", panel:"perf"},
+    {k:"people",    label:"People per day",   unit:"n",   color:"#e34948", panel:"people"}
+  ];
+  var EX_SUBJECT_COLORS = ["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300"];
+  var EX_PANELS = {money:"Money (KES)", perf:"Performance (%)", people:"People per day"};
+  function exMeasure(k){ return EX_MEASURES.filter(function(m){ return m.k===k; })[0]; }
+
+  (function injectExCss(){
+    if(document.getElementById("wm-ex-css")) return;
+    var st=document.createElement("style");
+    st.id="wm-ex-css";
+    st.textContent=
+      "#wmp .ex-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}"+
+      "#wmp .ex-bar label{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:700;display:block;margin-bottom:4px}"+
+      "#wmp .ex-bar input,#wmp .ex-bar select,#wmp .ex-pick select{font-family:inherit;font-size:12px;border:1px solid var(--line);padding:6px 9px;border-radius:var(--rs);background:#fff;color:var(--ink)}"+
+      "#wmp .ex-bar input[type=search]{min-width:200px}"+
+      "#wmp .ex-pills{display:flex;gap:5px;flex-wrap:wrap}"+
+      "#wmp .ex-pills button{font-family:inherit;font-size:10.5px;font-weight:600;background:#fff;color:var(--mute);border:1px solid var(--line);padding:6px 11px;border-radius:999px;cursor:pointer}"+
+      "#wmp .ex-pills button.on{background:var(--ink);color:#fff;border-color:var(--ink)}"+
+      "#wmp .ex-right{margin-left:auto}"+
+      "#wmp .ex-high{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:16px}"+
+      "#wmp .ex-hi{border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;background:#fff;text-align:left;font-family:inherit}"+
+      "#wmp .ex-hi:hover{border-color:var(--ink)}"+
+      "#wmp .ex-hi span{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700}"+
+      "#wmp .ex-hi b{display:block;font-size:13px;margin-top:4px;color:var(--ink)}"+
+      "#wmp .ex-hi i{display:block;font-style:normal;font-size:11px;color:var(--mute);margin-top:2px}"+
+      "#wmp .ex-hi .ico{float:right;font-size:13px}"+
+      "#wmp .ex-chart{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px;background:#fff}"+
+      "#wmp .ex-chart-h{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}"+
+      "#wmp .ex-chart-h h4{margin:0;font-size:12px;font-weight:700}"+
+      "#wmp .ex-pick{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11px;color:var(--mute)}"+
+      "#wmp .ex-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;background:#eef2ff;color:#3730a3;border-radius:999px;padding:3px 6px 3px 10px}"+
+      "#wmp .ex-chip button{border:0;background:none;cursor:pointer;color:#3730a3;font-size:13px;line-height:1;padding:0 2px}"+
+      "#wmp .ex-legend{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 4px}"+
+      "#wmp .ex-legend button{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:11px;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer}"+
+      "#wmp .ex-legend button.off{color:var(--mute);opacity:.55}"+
+      "#wmp .ex-legend button i{display:inline-block;width:14px;height:2px;border-radius:1px}"+
+      "#wmp .ex-panel{position:relative;margin-top:6px}"+
+      "#wmp .ex-panel h5{margin:4px 0 2px;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:700}"+
+      "#wmp .ex-panel svg{display:block;width:100%;overflow:visible}"+
+      "#wmp .ex-panel .grid{stroke:#eceae4;stroke-width:1}"+
+      "#wmp .ex-panel .base{stroke:#c3c2b7;stroke-width:1}"+
+      "#wmp .ex-panel .ref{stroke:#898781;stroke-width:1;stroke-dasharray:3 3}"+
+      "#wmp .ex-panel text{font-size:10px;fill:#898781;font-variant-numeric:tabular-nums}"+
+      "#wmp .ex-panel .lbl{fill:#52514e;font-weight:600}"+
+      "#wmp .ex-panel .xh{stroke:#898781;stroke-width:1}"+
+      "#wmp .ex-tip{position:fixed;z-index:2147483001;pointer-events:none;background:#fff;border:1px solid rgba(11,11,11,.12);box-shadow:0 6px 18px rgba(0,0,0,.12);border-radius:8px;padding:8px 10px;font-size:11px;min-width:150px;display:none}"+
+      "#wmp .ex-tip .d{color:var(--mute);margin-bottom:4px;font-weight:600}"+
+      "#wmp .ex-tip .r{display:flex;align-items:center;gap:7px;margin-top:2px}"+
+      "#wmp .ex-tip .r i{width:12px;height:2px;border-radius:1px;flex:0 0 auto}"+
+      "#wmp .ex-tip .r b{font-variant-numeric:tabular-nums}"+
+      "#wmp .ex-tip .r span{color:var(--mute)}"+
+      "#wmp .ex-lenstabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}"+
+      "#wmp .ex-scroll{max-height:520px;overflow:auto;border:1px solid var(--faint);border-radius:8px}"+
+      "#wmp .ex-scroll thead th{position:sticky;top:0;z-index:2;background:#fff;box-shadow:0 1px 0 var(--line);cursor:pointer;user-select:none}"+
+      "#wmp .ex-scroll thead th.sorted{color:var(--ink)}"+
+      "#wmp .ex-row{cursor:pointer}#wmp .ex-row:hover td{background:#fafafa}"+
+      "#wmp .ex-row.open td{background:#f5f7ff}"+
+      "#wmp .ex-sub{font-size:10.5px;color:var(--mute)}"+
+      "#wmp .ex-good{color:#006300;font-weight:700}#wmp .ex-bad{color:#b91c1c;font-weight:700}#wmp .ex-warn{color:#92400e;font-weight:700}"+
+      "#wmp .ex-flag{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;margin:1px 2px 1px 0;white-space:nowrap}"+
+      "#wmp .ex-flag.bad{background:#fee2e2;color:#991b1b}#wmp .ex-flag.warn{background:#fef3c7;color:#92400e}"+
+      "#wmp .ex-spark{display:block}"+
+      "#wmp .ex-heat td.c{padding:0;min-width:34px;height:26px;text-align:center;font-size:10px;border:2px solid #fff;border-radius:4px}"+
+      "#wmp .ex-heat td.c:hover{outline:2px solid var(--ink);outline-offset:-2px}"+
+      "#wmp .ex-heat-legend{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--mute);margin:8px 2px}"+
+      "#wmp .ex-heat-legend s{display:inline-block;width:120px;height:8px;border-radius:4px;text-decoration:none}"+
+      "#wmp .ex-det td{padding:0 8px 14px;background:#f5f7ff;border-bottom:1px solid var(--line)}"+
+      "#wmp .ex-key{margin-top:14px;border-top:1px solid var(--faint);padding-top:10px;font-size:11.5px;color:var(--ink)}"+
+      "#wmp .ex-key summary{cursor:pointer;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}"+
+      "#wmp .ex-key dl{display:grid;grid-template-columns:minmax(140px,190px) 1fr;gap:5px 14px;margin:10px 0 4px}"+
+      "#wmp .ex-key dt{font-weight:700}#wmp .ex-key dd{margin:0;color:#52514e}"+
+      "#wmp .ex-key h6{grid-column:1/-1;margin:10px 0 2px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}"+
+      "@media(max-width:820px){#wmp .ex-hide-sm{display:none}#wmp .ex-key dl{grid-template-columns:1fr}#wmp .ex-right{margin-left:0}}";
+    document.head.appendChild(st);
+  })();
+
+  function exTip(){
+    var t=document.getElementById("ex-tip");
+    if(!t){ t=document.createElement("div"); t.id="ex-tip"; t.className="ex-tip"; el("wmp").appendChild(t); }
+    return t;
+  }
+  // tooltip rows are built with textContent: names come from records, not code
+  function exShowTip(ev, title, rows){
+    var t=exTip(); t.textContent="";
+    var d=document.createElement("div"); d.className="d"; d.textContent=title; t.appendChild(d);
+    rows.forEach(function(r){
+      var row=document.createElement("div"); row.className="r";
+      var k=document.createElement("i"); k.style.background=r.color||"transparent"; row.appendChild(k);
+      var b=document.createElement("b"); b.textContent=r.value; row.appendChild(b);
+      var s=document.createElement("span"); s.textContent=r.label; row.appendChild(s);
+      t.appendChild(row);
+    });
+    t.style.display="block";
+    var x=ev.clientX+14, y=ev.clientY+14, w=t.offsetWidth, h=t.offsetHeight;
+    if(x+w>window.innerWidth-8) x=ev.clientX-w-14;
+    if(y+h>window.innerHeight-8) y=ev.clientY-h-14;
+    t.style.left=x+"px"; t.style.top=y+"px";
+  }
+  function exHideTip(){ var t=document.getElementById("ex-tip"); if(t) t.style.display="none"; }
+
+  function exArgs(extra){
+    var a={};
+    if(EX.from) a.from_date=EX.from;
+    if(EX.to) a.to_date=EX.to;
+    if(EX.farm) a.farm=EX.farm;
+    for(var k in (extra||{})) a[k]=extra[k];
+    return a;
+  }
+  function exRange(){
+    var from=EX.from, to=EX.to;
+    if(!from||!to){ to=todayISO(); from=todayMinus(55); }
+    return {from:from, to:to};
+  }
+  function exWeeks(){
+    // Monday weeks covering the range, matching the server's buckets
+    var r=exRange(), out=[];
+    var d=new Date(r.from+"T00:00:00"); d.setDate(d.getDate()-((d.getDay()+6)%7));
+    var end=new Date(r.to+"T00:00:00");
+    while(d<=end){ out.push(localISO(d)); d.setDate(d.getDate()+7); }
+    return out;
+  }
+  function exPct(v){ return v==null?"—":fmt(v,0)+"%"; }
+  function exHours(m){
+    if(m==null) return "—";
+    if(m<60) return fmt(m)+" min";
+    if(m<60*48) return fmt(m/60,1)+" h";
+    return fmt(m/1440,1)+" days";
+  }
+  // benchmark tints: output against target, cost against rate, done/delivered
+  function exTintOut(v){ return v==null?"":(v>=95?"ex-good":(v<80?"ex-bad":"ex-warn")); }
+  function exTintCost(v){ return v==null?"":(v>115?"ex-bad":(v>105?"ex-warn":"ex-good")); }
+  function exTintDone(v){ return v==null?"":(v>=90?"ex-good":(v<50?"ex-bad":"ex-warn")); }
+
+  // ── the section: filters, highlights, chart, lenses, key ──
+  function exInit(){
+    var box=el("wm-ex"); if(!box) return;
+    var q=function(k,l){ return '<button type="button" data-exq="'+k+'"'+(EX.quick===k?' class="on"':'')+'>'+l+'</button>'; };
+    box.innerHTML=
+      '<div class="ex-bar">'+
+        '<div><label>From</label><input type="date" id="ex-from"></div>'+
+        '<div><label>To</label><input type="date" id="ex-to"></div>'+
+        '<div><label>'+esc(TX("top_singular","Farm"))+'</label><select id="ex-farm">'+farmOptions(EX.farm)+'</select></div>'+
+        '<div><label>Find</label><input type="search" id="ex-q" placeholder="Activity, worker, person or '+esc(TX("unit_singular","Block")).toLowerCase()+'…"></div>'+
+        '<div class="ex-pills ex-right" id="ex-quick">'+q("4w","4 weeks")+q("8w","8 weeks")+q("12w","12 weeks")+q("all","All")+'</div>'+
+      '</div>'+
+      '<div class="ex-high" id="ex-high"><div class="loading">Looking for what stands out&hellip;</div></div>'+
+      '<div class="ex-chart" id="ex-chart"></div>'+
+      '<div class="ex-lenstabs">'+
+        '<div class="ex-pills" id="ex-lenses">'+EX_LENSES.map(function(l){
+          return '<button type="button" data-exlens="'+l[0]+'"'+(EX.lens===l[0]?' class="on"':'')+'>'+l[1]+'</button>'; }).join("")+'</div>'+
+        '<div class="ex-pills ex-right" id="ex-views">'+
+          '<button type="button" data-exview="list"'+(EX.view==="list"?' class="on"':'')+'>List</button>'+
+          '<button type="button" data-exview="heat"'+(EX.view==="heat"?' class="on"':'')+'>Heatmap</button></div>'+
+      '</div>'+
+      '<div id="ex-lens"><div class="loading">Reading the lenses&hellip;</div></div>'+
+      exKey();
+    var r=exRange();
+    el("ex-from").value=EX.from||r.from; el("ex-to").value=EX.to||r.to;
+    el("ex-from").onchange=function(){ EX.from=this.value; EX.quick=null; exReload(); };
+    el("ex-to").onchange=function(){ EX.to=this.value; EX.quick=null; exReload(); };
+    el("ex-farm").onchange=function(){ EX.farm=this.value; exReload(); };
+    var qt=null;
+    el("ex-q").oninput=function(){ var v=this.value; clearTimeout(qt); qt=setTimeout(function(){ EX.q=v.toLowerCase(); exDrawLens(); },160); };
+    box.querySelectorAll("[data-exq]").forEach(function(b){
+      b.onclick=function(){
+        var k=b.getAttribute("data-exq");
+        EX.quick=k; EX.to=todayISO();
+        EX.from = k==="all" ? "2020-01-01" : todayMinus(k==="4w"?27:(k==="12w"?83:55));
+        el("ex-from").value=EX.from; el("ex-to").value=EX.to;
+        box.querySelectorAll("[data-exq]").forEach(function(x){ x.classList.toggle("on", x===b); });
+        exReload();
+      };
+    });
+    box.querySelectorAll("[data-exlens]").forEach(function(b){
+      b.onclick=function(){ EX.lens=b.getAttribute("data-exlens"); EX.open=null;
+        box.querySelectorAll("[data-exlens]").forEach(function(x){ x.classList.toggle("on", x===b); });
+        exLoadLens(EX.lens); };
+    });
+    box.querySelectorAll("[data-exview]").forEach(function(b){
+      b.onclick=function(){ EX.view=b.getAttribute("data-exview");
+        box.querySelectorAll("[data-exview]").forEach(function(x){ x.classList.toggle("on", x===b); });
+        exLoadLens(EX.lens); };
+    });
+    exReload();
+  }
+
+  // a filter changed: every lens, the plans list and the chart re-read the slice
+  function exReload(){
+    var seq=++EX.seq;
+    EX.lenses={}; EX.details={}; EX.open=null;
+    // refetch keeps the frame: the old render stays, dimmed, until the new one lands
+    ["ex-lens","ex-chart","ex-high"].forEach(function(id){ var n=el(id); if(n) n.style.opacity=".55"; });
+    var loads=EX_LENSES.map(function(l){
+      return call(exArgs({action:"ex_lens", lens:l[0]})).then(function(d){ if(seq===EX.seq) EX.lenses[l[0]]=d; });
+    });
+    loads.push(call(exArgs({action:"plan_completion"})).then(function(d){ if(seq===EX.seq) EX.plans=d.plans||[]; }));
+    Promise.all(loads).then(function(){
+      if(seq!==EX.seq) return;
+      ["ex-lens","ex-chart","ex-high"].forEach(function(id){ var n=el(id); if(n) n.style.opacity=""; });
+      // the farm list arrives with the dashboard's other reads, after this bar was drawn
+      var fs=el("ex-farm"); if(fs && fs.options.length<=1 && FARM_LIST.length) fs.innerHTML=farmOptions(EX.farm);
+      exDrawHighlights();
+      exLoadLens(EX.lens);
+      exDrawChartFrame(); exLoadSeries();
+    }).catch(function(){
+      if(seq!==EX.seq) return;
+      var n=el("ex-lens"); if(n){ n.style.opacity=""; n.innerHTML='<div class="empty">Could not read the explorer.</div>'; }
+    });
+  }
+
+  // ── highlights: what stands out in the current slice ──
+  function exDrawHighlights(){
+    var box=el("ex-high"); if(!box) return;
+    var A=(EX.lenses.activities||{}).rows||[], W=(EX.lenses.workers||{}).rows||[];
+    var S=(EX.lenses.staff||{}).rows||[], B=(EX.lenses.blocks||{}).rows||[];
+    var cards=[];
+    var totPaid=A.reduce(function(s,r){ return s+(r.paid_amt||0); },0);
+    var over=A.filter(function(r){ return r.cost_pct!=null && r.paid_amt>=Math.max(5000,totPaid*0.01); })
+              .sort(function(a,b){ return b.cost_pct-a.cost_pct; })[0];
+    if(over && over.cost_pct>105) cards.push({ico:"▲", tone:"bad", k:"Furthest over its rate",
+      b:(over.subject||taskName(over.task))+" · "+exPct(over.cost_pct), i:"paid "+money(over.paid_amt)+" KES for work valued at "+money(over.rated),
+      go:{lens:"activities", key:over.task}});
+    var low=A.map(function(r){ return {lens:"activities", key:r.task, name:r.subject||taskName(r.task), v:r.out_pct, pd:r.person_days}; })
+      .concat(B.map(function(r){ return {lens:"blocks", key:r.block, name:lbl(r.block), v:r.out_pct, pd:r.person_days}; }))
+      .filter(function(x){ return x.v!=null && x.pd>=20; }).sort(function(a,b){ return a.v-b.v; })[0];
+    if(low && low.v<95) cards.push({ico:"▼", tone:"bad", k:"Furthest below target", b:low.name+" · "+exPct(low.v),
+      i:"output against the daily target, over "+fmt(low.pd)+" person-days", go:{lens:low.lens, key:low.key}});
+    var top=W.slice().sort(function(a,b){ return b.confirmed-a.confirmed; })[0];
+    if(top && top.confirmed>0){
+      var perDay=W.filter(function(r){ return r.confirmed>0 && r.days>0; }).map(function(r){ return r.confirmed/r.days; }).sort(function(a,b){ return a-b; });
+      var med=perDay.length?perDay[Math.floor(perDay.length/2)]:0;
+      var hi=W.filter(function(r){ return r.days>0 && med>0 && r.confirmed/r.days>2*med; }).length;
+      cards.push({ico:"★", tone:"", k:"Top earner", b:(top.name||top.employee)+" · "+money(top.confirmed)+" KES",
+        i:fmt(top.days)+" days"+(hi?(" · "+hi+" worker"+(hi===1?"":"s")+" earn over twice the median day"):""), go:{lens:"workers", key:top.employee}});
+    }
+    var wd=EX.lenses.workers||{};
+    if(wd.scan_from){
+      var ns=W.filter(function(r){ return r.noscan_days>0; });
+      var nd=ns.reduce(function(s,r){ return s+r.noscan_days; },0);
+      if(nd) cards.push({ico:"⚠", tone:"bad", k:"Paid with no check-in scan", b:fmt(nd)+" day"+(nd===1?"":"s")+" · "+ns.length+" worker"+(ns.length===1?"":"s"),
+        i:"scans exist from "+shortDate(wd.scan_from), go:{lens:"workers", sort:"noscan_days"}});
+    }
+    var un=W.reduce(function(s,r){ return s+(r.unpaid_confirmed||0); },0);
+    if(un>0) cards.push({ico:"⏸", tone:"warn", k:"Confirmed, not yet paid", b:money(un)+" KES",
+      i:W.filter(function(r){ return r.unpaid_confirmed>0; }).length+" workers waiting on a paid payment run", go:{lens:"workers", sort:"unpaid_confirmed"}});
+    var weak=S.filter(function(r){ return r.requested>=50000 && r.delivered_pct!=null; }).sort(function(a,b){ return a.delivered_pct-b.delivered_pct; })[0];
+    if(weak && weak.delivered_pct<60) cards.push({ico:"↓", tone:"warn", k:"Requests delivering least", b:(weak.name||weak.user)+" · "+exPct(weak.delivered_pct),
+      i:money(weak.delivered)+" of "+money(weak.requested)+" KES requested", go:{lens:"staff", key:weak.user}});
+    if(!cards.length){ box.innerHTML='<div class="empty">Nothing stands out in this slice.</div>'; return; }
+    box.innerHTML=cards.slice(0,6).map(function(c,i){
+      return '<button type="button" class="ex-hi" data-exhi="'+i+'"><span>'+esc(c.k)+
+        '<em class="ico ex-'+(c.tone||"good")+'" style="font-style:normal">'+c.ico+'</em></span><b>'+esc(c.b)+'</b><i>'+esc(c.i)+'</i></button>';
+    }).join("");
+    box.querySelectorAll("[data-exhi]").forEach(function(b){
+      b.onclick=function(){
+        var g=cards[+b.getAttribute("data-exhi")].go;
+        EX.lens=g.lens; EX.view="list";
+        if(g.sort) EX.sort[g.lens]={k:g.sort, dir:-1};
+        document.querySelectorAll("#wm-ex [data-exlens]").forEach(function(x){ x.classList.toggle("on", x.getAttribute("data-exlens")===g.lens); });
+        document.querySelectorAll("#wm-ex [data-exview]").forEach(function(x){ x.classList.toggle("on", x.getAttribute("data-exview")==="list"); });
+        EX.open=g.key?{lens:g.lens, key:g.key}:null;
+        exLoadLens(g.lens, function(){
+          if(g.key) exSelectSubject(g.lens, g.key);
+          var row=document.querySelector('#ex-lens tr[data-exkey="'+(window.CSS&&CSS.escape?CSS.escape(g.key||""):g.key)+'"]');
+          (row||el("ex-lens")).scrollIntoView({block:"nearest", behavior:"smooth"});
+        });
+      };
+    });
+  }
+
+  // ── lenses ──
+  var EX_COLS = {
+    activities:[
+      {k:"subject", label:"Activity", get:function(r){ return (r.subject||taskName(r.task)||"").toLowerCase(); },
+        cell:function(r){ return '<b>'+esc(r.subject||taskName(r.task))+'</b><br><span class="ex-sub">'+esc(r.uom||"")+' &middot; '+fmt(r.people)+' people</span>'; }},
+      {k:"done_pct", label:"Done", num:1, tip:"recorded output ÷ requested quantity",
+        cell:function(r){ return '<span class="'+exTintDone(r.done_pct)+'">'+exPct(r.done_pct)+'</span>'; }},
+      {k:"out_pct", label:"Output vs target", num:1, tip:"output per person-day ÷ the daily target",
+        cell:function(r){ return '<span class="'+exTintOut(r.out_pct)+'">'+exPct(r.out_pct)+'</span>'; }},
+      {k:"cost_pct", label:"Cost/unit vs rate", num:1, tip:"pay ÷ output at the rate; 100% = exactly the rate",
+        cell:function(r){ return '<span class="'+exTintCost(r.cost_pct)+'">'+exPct(r.cost_pct)+'</span>'; }},
+      {k:"confirmed", label:"Earned KES", num:1, cell:function(r){ return money(r.confirmed); }},
+      {k:"trend", label:"Weekly KES", nosort:1, sm:1, cell:function(r){ return exSpark(r.trend); }}
+    ],
+    workers:[
+      {k:"name", label:"Worker", get:function(r){ return (r.name||"").toLowerCase(); },
+        cell:function(r){ return '<b>'+esc(r.name||r.employee)+'</b><br><span class="ex-sub">'+esc(r.employee)+' &middot; '+esc(r.employment_type||"—")+'</span>'; }},
+      {k:"farm", label:esc(TX("top_singular","Farm")), get:function(r){ return (r.farm||"").toLowerCase(); }, sm:1,
+        cell:function(r){ return esc(r.farm||"")+(r.farms>1?' <span class="ex-sub">+'+(r.farms-1)+'</span>':''); }},
+      {k:"days", label:"Days", num:1, cell:function(r){ return fmt(r.days); }},
+      {k:"confirmed", label:"Earned KES", num:1, tip:"confirmed pay",
+        cell:function(r){ return money(r.confirmed)+(r.unpaid_confirmed>0?'<br><span class="ex-sub">'+money(r.unpaid_confirmed)+' not yet paid</span>':''); }},
+      {k:"out_pct", label:"Output vs target", num:1, cell:function(r){ return '<span class="'+exTintOut(r.out_pct)+'">'+exPct(r.out_pct)+'</span>'; }},
+      {k:"noscan_days", label:"Flags", num:1, tip:"paid days with no check-in scan · days on two farms at once",
+        cell:function(r){
+          var f="";
+          if(r.noscan_days) f+='<span class="ex-flag bad" title="paid days with no check-in scan">⚠ '+r.noscan_days+' no scan</span>';
+          if(r.multi_farm_days) f+='<span class="ex-flag warn" title="days recorded on two farms">⇄ '+r.multi_farm_days+' two farms</span>';
+          return f||'<span class="ex-sub">—</span>'; }}
+    ],
+    staff:[
+      {k:"name", label:"Person", get:function(r){ return (r.name||"").toLowerCase(); },
+        cell:function(r){ return '<b>'+esc(r.name||r.user)+'</b><br><span class="ex-sub">'+
+          [r.requests?r.requests+" requests":"", r.crews?r.crews+" crews":"", r.actuals?r.actuals+" actuals":"", r.approvals?r.approvals+" approvals":""]
+            .filter(function(x){return x;}).join(" &middot; ")+'</span>'; }},
+      {k:"requested", label:"Requested KES", num:1, cell:function(r){ return r.requested?money(r.requested):'<span class="ex-sub">—</span>'; }},
+      {k:"delivered", label:"Delivered KES", num:1, tip:"confirmed pay on their requests", cell:function(r){ return r.requested?money(r.delivered):'<span class="ex-sub">—</span>'; }},
+      {k:"delivered_pct", label:"Delivered", num:1, cell:function(r){ return r.requested?'<span class="'+exTintDone(r.delivered_pct)+'">'+exPct(r.delivered_pct)+'</span>':'<span class="ex-sub">—</span>'; }},
+      {k:"approve_median_min", label:"Approves in", num:1, tip:"median time from submitted to their approval",
+        cell:function(r){ return r.approvals?exHours(r.approve_median_min):'<span class="ex-sub">—</span>'; }}
+    ],
+    blocks:[
+      {k:"block", label:esc(TX("unit_singular","Block")), get:function(r){ return (r.block||"").toLowerCase(); },
+        cell:function(r){ return '<b>'+esc(lbl(r.block)||"—")+'</b><br><span class="ex-sub">'+fmt(r.activities)+' activities &middot; '+fmt(r.people)+' people</span>'; }},
+      {k:"farm", label:esc(TX("top_singular","Farm")), sm:1, get:function(r){ return (r.farm||"").toLowerCase(); }, cell:function(r){ return esc(r.farm||""); }},
+      {k:"recorded", label:"Labour KES", num:1, cell:function(r){ return money(r.recorded); }},
+      {k:"kes_per_ha", label:"KES / ha", num:1, tip:"labour KES ÷ the block's area; — where no area is recorded",
+        cell:function(r){ return r.kes_per_ha!=null?money(r.kes_per_ha):'<span class="ex-sub" title="no area recorded on this block">—</span>'; }},
+      {k:"person_days", label:"Person-days", num:1, cell:function(r){ return fmt(r.person_days); }},
+      {k:"trend", label:"Weekly KES", nosort:1, sm:1, cell:function(r){ return exSpark(r.trend); }}
+    ]
+  };
+  var EX_DEFAULT_SORT = {activities:"confirmed", workers:"confirmed", staff:"requested", blocks:"recorded"};
+  var EX_HEAT = {
+    activities:{label:"Output vs target, by week", diverge:true},
+    workers:{label:"KES recorded, by week"},
+    staff:{label:"Delivered % of requested, by week of request", pct:true},
+    blocks:{label:"Labour KES, by week"}
+  };
+
+  function exSpark(trend){
+    var wks=exWeeks(), vals=wks.map(function(w){ return (trend||{})[w]||0; });
+    var max=Math.max.apply(null, vals.concat([1])), W=88, H=22;
+    var pts=vals.map(function(v,i){ return (wks.length>1?i/(wks.length-1)*W:W/2).toFixed(1)+","+(H-2-(v/max)*(H-4)).toFixed(1); }).join(" ");
+    return '<svg class="ex-spark" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" aria-hidden="true">'+
+      '<polyline points="'+pts+'" fill="none" stroke="#2a78d6" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  }
+  function exRowKey(lens, r){ return lens==="activities"?r.task:(lens==="workers"?r.employee:(lens==="staff"?r.user:r.block)); }
+  function exRowName(lens, r){
+    return lens==="activities"?(r.subject||taskName(r.task)):(lens==="workers"?(r.name||r.employee):(lens==="staff"?(r.name||r.user):lbl(r.block)));
+  }
+  function exMatch(lens, r){
+    if(!EX.q) return true;
+    return [exRowName(lens,r), exRowKey(lens,r), r.farm, r.employment_type, r.uom].join(" ").toLowerCase().indexOf(EX.q)>=0;
+  }
+  function exSorted(lens){
+    var rows=((EX.lenses[lens]||{}).rows||[]).filter(function(r){ return exMatch(lens,r); });
+    var s=EX.sort[lens]||{k:EX_DEFAULT_SORT[lens], dir:-1};
+    var col=EX_COLS[lens].filter(function(c){ return c.k===s.k; })[0];
+    var get=(col&&col.get)||function(r){ return r[s.k]; };
+    return rows.slice().sort(function(a,b){
+      var x=get(a), y=get(b);
+      if(x==null&&y==null) return 0; if(x==null) return 1; if(y==null) return -1;
+      return (x<y?-1:(x>y?1:0))*s.dir;
+    });
+  }
+
+  function exLoadLens(lens, after){
+    var box=el("ex-lens"); if(!box) return;
+    if(EX.view==="heat"){
+      var have=EX.lenses[lens];
+      if(have && have.grid){ exDrawLens(); if(after) after(); return; }
+      box.style.opacity=".55";
+      call(exArgs({action:"ex_lens", lens:lens, heat:1})).then(function(d){
+        EX.lenses[lens]=d; box.style.opacity=""; exDrawLens(); if(after) after();
+      });
+      return;
+    }
+    if(EX.lenses[lens]){ exDrawLens(); if(after) after(); return; }
+    call(exArgs({action:"ex_lens", lens:lens})).then(function(d){ EX.lenses[lens]=d; exDrawLens(); if(after) after(); });
+  }
+
+  function exDrawLens(){
+    var box=el("ex-lens"); if(!box) return;
+    var lens=EX.lens, rows=exSorted(lens);
+    if(!(EX.lenses[lens])){ box.innerHTML='<div class="loading">Reading&hellip;</div>'; return; }
+    if(!rows.length){ box.innerHTML='<div class="empty">Nothing recorded '+(EX.q?'matches “'+esc(EX.q)+'” ':'')+'in this slice.</div>'; return; }
+    if(EX.view==="heat"){ box.innerHTML=exHeat(lens, rows); exWireHeat(box, lens); return; }
+    var cols=EX_COLS[lens], s=EX.sort[lens]||{k:EX_DEFAULT_SORT[lens], dir:-1};
+    var h='<div class="ex-scroll"><table class="pc-tbl"><thead><tr>'+cols.map(function(c){
+      return '<th'+(c.nosort?'':' data-exsort="'+c.k+'"')+' class="'+(c.num?'n ':'')+(c.sm?'ex-hide-sm ':'')+(s.k===c.k?'sorted':'')+'"'+
+        (c.tip?' title="'+esc(c.tip)+'"':'')+'>'+c.label+(s.k===c.k?(s.dir<0?' ↓':' ↑'):'')+'</th>';
+    }).join("")+'</tr></thead><tbody>';
+    rows.slice(0,400).forEach(function(r){
+      var key=exRowKey(lens,r), open=EX.open&&EX.open.lens===lens&&EX.open.key===key;
+      h+='<tr class="ex-row'+(open?' open':'')+'" data-exkey="'+esc(key||"")+'">'+cols.map(function(c){
+        return '<td class="'+(c.num?'n ':'')+(c.sm?'ex-hide-sm':'')+'">'+c.cell(r)+'</td>'; }).join("")+'</tr>';
+      if(open) h+='<tr class="ex-det"><td colspan="'+cols.length+'"><div class="pcd" id="exd"><div class="loading">Reading everything behind '+esc(exRowName(lens,r))+'&hellip;</div></div></td></tr>';
+    });
+    h+='</tbody></table></div>';
+    if(rows.length>400) h+='<div class="pcd-note">Showing the first 400 of '+fmt(rows.length)+'. Narrow the dates, '+esc(TX("top_singular","Farm")).toLowerCase()+' or search to see the rest.</div>';
+    box.innerHTML=h;
+    box.querySelectorAll("th[data-exsort]").forEach(function(th){
+      th.onclick=function(){
+        var k=th.getAttribute("data-exsort"), cur=EX.sort[lens]||{k:EX_DEFAULT_SORT[lens], dir:-1};
+        EX.sort[lens]={k:k, dir:cur.k===k?-cur.dir:-1}; exDrawLens();
+      };
+    });
+    box.querySelectorAll("tr[data-exkey]").forEach(function(tr){
+      tr.onclick=function(){
+        var k=tr.getAttribute("data-exkey");
+        var same=EX.open&&EX.open.lens===lens&&EX.open.key===k;
+        EX.open=same?null:{lens:lens, key:k};
+        exDrawLens();
+        if(!same) exSelectSubject(lens, k);
+      };
+    });
+    if(EX.open && EX.open.lens===lens) exLoadDetail(lens, EX.open.key);
+  }
+
+  function exHeatColor(v, max, diverge){
+    if(v==null) return "#f4f3ef";
+    if(diverge){
+      // diverging around 100%: blue above target, red below, grey at target
+      var d=Math.max(-1, Math.min(1, (v-100)/40));
+      if(Math.abs(d)<0.06) return "#f0efec";
+      var blue=["#cde2fb","#9ec5f4","#6da7ec","#3987e5","#256abf"], red=["#fcdcd9","#f6b4ae","#ee8a83","#e34948","#c22f2f"];
+      var i=Math.min(4, Math.floor(Math.abs(d)*5));
+      return d>0?blue[i]:red[i];
+    }
+    var ramp=["#e7f0fc","#cde2fb","#9ec5f4","#6da7ec","#3987e5","#2a78d6","#1c5cab","#104281"];
+    if(!v) return "#f4f3ef";
+    return ramp[Math.min(7, Math.floor(v/(max||1)*7.999))];
+  }
+  function exHeat(lens, rows){
+    var grid=(EX.lenses[lens]||{}).grid||{}, wks=exWeeks(), cfg=EX_HEAT[lens];
+    rows=rows.slice(0,60);
+    var max=0;
+    rows.forEach(function(r){ var g=grid[exRowKey(lens,r)]||{}; wks.forEach(function(w){ if(g[w]!=null && g[w]>max) max=g[w]; }); });
+    if(cfg.pct) max=Math.max(100, max);
+    var h='<div class="ex-heat-legend"><b style="color:var(--ink)">'+esc(cfg.label)+'</b>'+
+      (cfg.diverge
+        ? '<span>below target</span><s style="background:linear-gradient(90deg,#c22f2f,#f6b4ae,#f0efec,#9ec5f4,#256abf)"></s><span>above target</span>'
+        : '<span>0</span><s style="background:linear-gradient(90deg,#e7f0fc,#6da7ec,#104281)"></s><span>'+(cfg.pct?fmt(max,0)+'%':money(max)+(lens==="staff"?'':' KES'))+'</span>')+
+      '<span style="margin-left:auto">click a cell to chart that row from that week</span></div>';
+    h+='<div class="ex-scroll"><table class="pc-tbl ex-heat"><thead><tr><th>'+EX_COLS[lens][0].label+'</th>'+
+      wks.map(function(w){ return '<th class="n" style="text-align:center">'+esc(shortDate(w))+'</th>'; }).join("")+'</tr></thead><tbody>';
+    rows.forEach(function(r){
+      var key=exRowKey(lens,r), g=grid[key]||{};
+      h+='<tr><td><b>'+esc(exRowName(lens,r))+'</b></td>'+wks.map(function(w){
+        var v=g[w];
+        var txt=v==null?'':(cfg.diverge||cfg.pct?fmt(v,0):'');
+        var dark=v!=null && !cfg.diverge && v/(max||1)>0.55;
+        if(cfg.diverge && v!=null && Math.abs(v-100)>24) dark=true;
+        return '<td class="c" data-exhk="'+esc(key||"")+'" data-exhw="'+w+'" data-exhv="'+(v==null?'':v)+'" style="background:'+exHeatColor(v,max,cfg.diverge)+
+          ';color:'+(dark?'#fff':'#52514e')+'">'+txt+'</td>';
+      }).join("")+'</tr>';
+    });
+    h+='</tbody></table></div>';
+    if(((EX.lenses[lens]||{}).rows||[]).length>60) h+='<div class="pcd-note">The 60 rows at the top of the current sort. Sort or search in List view to choose others.</div>';
+    return h;
+  }
+  function exWireHeat(box, lens){
+    var cfg=EX_HEAT[lens];
+    box.querySelectorAll("td[data-exhk]").forEach(function(td){
+      var name=td.parentNode.firstChild.textContent;
+      td.onmousemove=function(ev){
+        var v=td.getAttribute("data-exhv");
+        exShowTip(ev, name+" · week of "+shortDate(td.getAttribute("data-exhw")),
+          [{label:cfg.label.split(",")[0], value:v===''?"nothing recorded":(cfg.diverge||cfg.pct?fmt(+v,0)+"%":money(+v)+" KES")}]);
+      };
+      td.onmouseleave=exHideTip;
+      td.onclick=function(){
+        exHideTip();
+        EX.view="list"; EX.open={lens:lens, key:td.getAttribute("data-exhk")};
+        document.querySelectorAll("#wm-ex [data-exview]").forEach(function(x){ x.classList.toggle("on", x.getAttribute("data-exview")==="list"); });
+        exDrawLens(); exSelectSubject(lens, td.getAttribute("data-exhk"));
+        var c=el("ex-chart"); if(c) c.scrollIntoView({block:"nearest", behavior:"smooth"});
+      };
+    });
+  }
+
+  // ── drill-down ──
+  function exLoadDetail(lens, key){
+    var kind={activities:"activity", workers:"worker", staff:"staff", blocks:"block"}[lens];
+    var ck=lens+"|"+key;
+    if(EX.details[ck]){ exDrawDetail(lens, key, EX.details[ck]); return; }
+    call(exArgs({action:"ex_detail", kind:kind, key:key})).then(function(d){
+      EX.details[ck]=d; if(EX.open&&EX.open.key===key) exDrawDetail(lens, key, d);
+    }).catch(function(){ var b=el("exd"); if(b) b.innerHTML='<div class="empty">Could not load this row.</div>'; });
+  }
+  var EX_TAB = {};
+  function exDrawDetail(lens, key, d){
+    var box=el("exd"); if(!box) return;
+    if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+    var row=((EX.lenses[lens]||{}).rows||[]).filter(function(r){ return exRowKey(lens,r)===key; })[0]||{};
+    var cell=function(l,v,sub,cls){ return '<div class="pcd-m'+(cls?' '+cls:'')+'"><span>'+l+'</span><b>'+v+'</b>'+(sub?'<i>'+sub+'</i>':'')+'</div>'; };
+    var h='', tabs=[];
+    if(lens!=="staff"){
+      var o=d.overview||{};
+      var sal=o.qty?o.salaried_qty/o.qty*100:null;
+      h+='<div class="pcd-money">'+
+        cell("Recorded", money(o.recorded)+' <small>KES</small>', fmt(o.person_days)+' person-days')+
+        cell("Confirmed", money(o.confirmed), o.recorded?fmt(o.confirmed/o.recorded*100,0)+'% of recorded':'', 'good')+
+        cell("Paid out", money(o.paid_out), "in payment runs marked Paid", o.paid_out?'good':'')+
+        cell("Output vs target", exPct(o.out_pct), "per person-day", o.out_pct!=null&&o.out_pct<80?'bad':'')+
+        cell("Cost/unit vs rate", exPct(o.cost_pct), "100% = exactly the rate", o.cost_pct!=null&&o.cost_pct>115?'bad':'')+
+        cell("By salaried staff", sal==null?"—":fmt(sal,0)+"%", "of output, at no piece-rate pay")+
+        cell("People", fmt(o.people), fmt(o.days)+' days worked')+
+        (lens==="blocks"?cell("Area", d.area_ha?fmt(d.area_ha,2)+" ha":"not recorded", d.area_ha?money(o.recorded/d.area_ha)+' KES/ha':''):'')+
+      '</div>';
+      if(lens!=="activities") tabs.push(["acts","Activities",d.by_activity]);
+      if(lens!=="workers") tabs.push(["workers","Workers",d.by_worker]);
+      if(lens!=="blocks") tabs.push(["blocks",esc(TX("unit_plural","Blocks")),d.by_block]);
+      tabs.push(["plans","Master plans",d.by_plan]);
+      tabs.push(["weeks","Weeks",d.by_week]);
+      tabs.push(["days", lens==="workers"?"Days":"Actuals", d.days]);
+    } else {
+      tabs=[["reqs","Requests",d.requests],["crews","Crews",d.crews],["acts_in","Actuals entered",d.actuals],["apprs","Approvals",d.approvals]];
+    }
+    var tab=EX_TAB[lens]; if(!tabs.some(function(t){ return t[0]===tab; })) tab=tabs[0][0];
+    h+='<div class="pcd-tabs">'+tabs.map(function(t){
+      return '<button type="button" data-extab="'+t[0]+'"'+(t[0]===tab?' class="on"':'')+'>'+t[1]+'<i>'+((t[2]||[]).length)+'</i></button>'; }).join("")+
+      (lens==="blocks"?'<button type="button" data-excc="1" style="margin-left:auto">Open in Cost centres ↗</button>':'')+
+      '</div><div class="pcd-pane">'+exPane(lens, tab, d)+'</div>';
+    box.innerHTML=h;
+    box.querySelectorAll("[data-extab]").forEach(function(b){
+      b.onclick=function(e){ e.stopPropagation(); EX_TAB[lens]=b.getAttribute("data-extab"); exDrawDetail(lens, key, d); };
+    });
+    var cc=box.querySelector("[data-excc]");
+    if(cc) cc.onclick=function(){
+      var q=el("cc-q"); if(q){ q.value=lbl(key); q.dispatchEvent(new Event("input",{bubbles:true})); q.dispatchEvent(new Event("change",{bubbles:true})); }
+      var c=el("cc-list")||q; if(c) c.scrollIntoView({block:"start", behavior:"smooth"});
+    };
+    box.querySelectorAll("tr[data-open]").forEach(function(tr){
+      tr.onclick=function(e){
+        e.stopPropagation();
+        var k=tr.getAttribute("data-open"), v=tr.getAttribute("data-v");
+        if(k==="req") openPlanModal(v); else if(k==="act") openActualModal(v);
+        else if(k==="emp") openEmpModal(v); else if(k==="pay") openPaymentModal(v);
+        else if(k==="mp"){ EX.chart.mode="measures"; EX.chart.plan=v; EX.chart.activity=lens==="activities"?key:"";
+          EX.chart.kind=EX.chart.activity?"activity":"estate"; EX.chart.key=EX.chart.activity; exDrawChartFrame(); exLoadSeries();
+          var c=el("ex-chart"); if(c) c.scrollIntoView({block:"nearest", behavior:"smooth"}); }
+      };
+    });
+  }
+  function exPane(lens, tab, d){
+    var T=function(head, body, note){
+      return '<table class="pc-tbl"><thead><tr>'+head.map(function(c){
+        return '<th'+(c.charAt(0)==="#"?' class="n"':'')+'>'+c.replace(/^#/,"")+'</th>'; }).join("")+'</tr></thead><tbody>'+
+        (body||'<tr><td colspan="'+head.length+'" class="empty">Nothing in this slice.</td></tr>')+'</tbody></table>'+(note?'<div class="pcd-note">'+note+'</div>':'');
+    };
+    var n=function(v,dp){ return '<td class="n">'+fmt(v,dp||0)+'</td>'; };
+    var k=function(v){ return '<td class="n">'+money(v)+'</td>'; };
+    var g=function(r){ return '<td class="n"><span class="'+exTintOut(r.out_pct)+'">'+exPct(r.out_pct)+'</span></td>'; };
+    var grp=function(rows, first, opener){
+      var b="";
+      (rows||[]).forEach(function(r){
+        b+='<tr'+(opener?' data-open="'+opener+'" data-v="'+esc(r.k||"")+'"':'')+'>'+first(r)+n(r.person_days)+n(r.people)+
+          '<td class="n">'+fmt(r.qty)+' <span class="ex-sub">'+esc(r.uom||"")+'</span></td>'+g(r)+k(r.recorded)+k(r.confirmed)+'</tr>';
+      });
+      return b;
+    };
+    var head=["#Person-days","#People","#Output","#Output vs target","#Recorded KES","#Confirmed KES"];
+    if(tab==="acts") return T(["Activity"].concat(head), grp(d.by_activity, function(r){ return '<td><b>'+esc(r.label||taskName(r.k))+'</b></td>'; }));
+    if(tab==="workers") return T(["Worker"].concat(head), grp(d.by_worker, function(r){ return '<td><b>'+esc(r.label||r.k)+'</b><br><span class="ex-sub">'+esc(r.k)+'</span></td>'; }, "emp"),
+      "Click a worker for their full record.");
+    if(tab==="blocks") return T([esc(TX("unit_singular","Block"))].concat(head), grp(d.by_block, function(r){ return '<td><b>'+esc(lbl(r.k)||"—")+'</b> <span class="ex-sub">'+esc(r.label||"")+'</span></td>'; }));
+    if(tab==="plans") return T(["Master plan"].concat(head), grp(d.by_plan, function(r){
+        return '<td><b>'+esc(r.k||"No plan named")+'</b> <span class="ex-sub">'+esc(r.label||"")+'</span></td>'; }, "mp"),
+      "Click a plan to chart "+(lens==="activities"?"this activity within it":"it")+".");
+    if(tab==="weeks") return T(["Week of"].concat(head), grp((d.by_week||[]).slice().sort(function(a,b){ return a.k<b.k?1:-1; }),
+      function(r){ return '<td><b>'+esc(shortDate(r.k))+'</b></td>'; }));
+    var b="";
+    if(tab==="days" && lens==="workers"){
+      (d.days||[]).forEach(function(r){
+        var sc=r.scanned==null?'<span class="ex-sub" title="before this site had scans">—</span>':(r.scanned?'<span class="ex-good" title="checked in that day">✓</span>':'<span class="ex-bad" title="no check-in scan that day">✗</span>');
+        b+='<tr data-open="act" data-v="'+esc(r.actual)+'"><td><b>'+esc(shortDate(r.work_date))+'</b></td><td>'+esc(r.subject||taskName(r.task))+'</td>'+
+          '<td>'+esc(lbl(r.block))+'</td>'+'<td class="n">'+fmt(r.qty)+' <span class="ex-sub">'+esc(r.uom||"")+'</span></td>'+n(r.hours,1)+k(r.amount)+
+          '<td>'+stateTag(r.workflow_state)+'</td><td style="text-align:center">'+sc+'</td></tr>';
+      });
+      return T(["Date","Activity",esc(TX("unit_singular","Block")),"#Output","#Hours","#KES","State","Scan"], b, "Click a day for its actual.");
+    }
+    if(tab==="days"){
+      (d.days||[]).forEach(function(r){
+        b+='<tr data-open="act" data-v="'+esc(r.actual)+'"><td><b>'+esc(r.actual)+'</b></td><td>'+esc(r.subject||taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+          '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+n(r.people)+
+          '<td class="n">'+fmt(r.qty)+' <span class="ex-sub">'+esc(r.uom||"")+'</span></td>'+k(r.amount)+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
+      });
+      return T(["Actual","Activity",esc(TX("unit_singular","Block")),"Dates","#People","#Output","#KES","State"], b, "Click an actual for its day-by-day record.");
+    }
+    if(tab==="reqs"){
+      (d.requests||[]).forEach(function(r){
+        b+='<tr data-open="req" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.subject||taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+          '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+k(r.total_cost)+k(r.delivered)+
+          '<td>'+stateTag(r.workflow_state)+'</td><td>'+esc(r.approved_by||"")+'</td></tr>';
+      });
+      return T(["Request","Activity",esc(TX("unit_singular","Block")),"Dates","#Requested KES","#Delivered KES","State","Approved by"], b, "Click a request for its full trail.");
+    }
+    if(tab==="crews"){
+      (d.crews||[]).forEach(function(r){
+        b+='<tr data-open="req" data-v="'+esc(r.planner_request||"")+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+          '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+n(r.workers)+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
+      });
+      return T(["Crew","Activity",esc(TX("unit_singular","Block")),"Dates","#Workers","State"], b, "Click a crew for the request behind it.");
+    }
+    if(tab==="acts_in"){
+      (d.actuals||[]).forEach(function(r){
+        b+='<tr data-open="act" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(taskName(r.task))+'</td><td>'+esc(lbl(r.block))+'</td>'+
+          '<td>'+esc(shortDate(r.from_date))+' &ndash; '+esc(shortDate(r.to_date))+'</td>'+n(r.qty)+k(r.pay)+'<td>'+stateTag(r.workflow_state)+'</td></tr>';
+      });
+      return T(["Actual","Activity",esc(TX("unit_singular","Block")),"Dates","#Output","#Pay KES","State"], b);
+    }
+    if(tab==="apprs"){
+      (d.approvals||[]).forEach(function(r){
+        b+='<tr data-open="req" data-v="'+esc(r.name)+'"><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.subject||"")+'</td><td>'+esc(r.requested_by||"")+'</td>'+
+          k(r.total_cost)+'<td>'+esc(fmtDT(r.approved_at))+'</td><td class="n">'+exHours(r.minutes)+'</td></tr>';
+      });
+      return T(["Request","Activity","Requested by","#KES","Approved","#Took"], b, "Took = from submitted to this person's approval.");
+    }
+    return "";
+  }
+
+  // ── the trends chart ──
+  // a lens row clicked becomes the chart's subject
+  function exSelectSubject(lens, key){
+    var kind={activities:"activity", workers:"worker", blocks:"block", staff:null}[lens];
+    if(!kind) return;
+    var row=((EX.lenses[lens]||{}).rows||[]).filter(function(r){ return exRowKey(lens,r)===key; })[0];
+    var c=EX.chart;
+    if(c.mode==="compare"){
+      if(c.cmpKind!==kind){ c.cmpKind=kind; c.cmpKeys=[]; }
+      if(c.cmpKeys.indexOf(key)<0){ c.cmpKeys.push(key); if(c.cmpKeys.length>6) c.cmpKeys.shift(); }
+    } else {
+      c.kind=kind; c.key=key; c.keyLabel=row?exRowName(lens,row):key;
+      if(kind==="activity") c.activity=key; else { c.activity=""; if(kind!=="estate") c.plan=""; }
+    }
+    exDrawChartFrame(); exLoadSeries();
+  }
+  function exSubjectLabel(kind, key){
+    var lens={activity:"activities", worker:"workers", block:"blocks"}[kind];
+    if(kind==="plan") return key;
+    var row=((EX.lenses[lens]||{}).rows||[]).filter(function(r){ return exRowKey(lens,r)===key; })[0];
+    return row?exRowName(lens,row):key;
+  }
+  function exDrawChartFrame(){
+    var box=el("ex-chart"); if(!box) return;
+    var c=EX.chart;
+    var acts=((EX.lenses.activities||{}).rows||[]).slice().sort(function(a,b){ return (a.subject||"")<(b.subject||"")?-1:1; });
+    var plans=EX.plans||[];
+    var h='<div class="ex-chart-h"><h4>Trends</h4>'+
+      '<div class="ex-pills"><button type="button" data-exmode="measures"'+(c.mode==="measures"?' class="on"':'')+'>Measures</button>'+
+      '<button type="button" data-exmode="compare"'+(c.mode==="compare"?' class="on"':'')+'>Compare</button></div>';
+    if(c.mode==="measures"){
+      h+='<div class="ex-pick">'+
+        '<select id="ex-cplan" title="Master plan"><option value="">All master plans</option>'+plans.map(function(p){
+          return '<option value="'+esc(p.plan)+'"'+(c.plan===p.plan?' selected':'')+'>'+esc(p.plan)+' · '+esc(p.farm)+' · '+esc(shortDate(p.period_from))+'</option>'; }).join("")+'</select>'+
+        '<select id="ex-cact" title="Activity"><option value="">All activities</option>'+acts.map(function(a){
+          return '<option value="'+esc(exRowKey("activities",a))+'"'+(c.activity===a.task?' selected':'')+'>'+esc(a.subject||taskName(a.task))+'</option>'; }).join("")+'</select>'+
+        ((c.kind==="worker"||c.kind==="block")?'<span class="ex-chip">'+(c.kind==="worker"?"Worker: ":esc(TX("unit_singular","Block"))+": ")+esc(c.keyLabel||c.key)+
+          '<button type="button" data-exclear="1" title="Back to all work">×</button></span>':'')+
+        '</div>';
+    } else {
+      h+='<div class="ex-pick">'+
+        '<select id="ex-ckind"><option value="activity"'+(c.cmpKind==="activity"?' selected':'')+'>Activities</option>'+
+          '<option value="plan"'+(c.cmpKind==="plan"?' selected':'')+'>Master plans</option>'+
+          '<option value="worker"'+(c.cmpKind==="worker"?' selected':'')+'>Workers</option>'+
+          '<option value="block"'+(c.cmpKind==="block"?' selected':'')+'>'+esc(TX("unit_plural","Blocks"))+'</option></select>'+
+        '<select id="ex-cmeas">'+EX_MEASURES.filter(function(m){ return !((c.cmpKind==="worker"||c.cmpKind==="block") && (m.k==="planned"||(c.cmpKind==="worker"&&m.k==="requested"))); })
+          .map(function(m){ return '<option value="'+m.k+'"'+(c.cmpMeasure===m.k?' selected':'')+'>'+esc(m.label)+'</option>'; }).join("")+'</select>'+
+        (c.cmpKind==="activity"||c.cmpKind==="plan"
+          ? '<select id="ex-cadd"><option value="">+ Add '+(c.cmpKind==="plan"?"a master plan":"an activity")+'…</option>'+
+              (c.cmpKind==="plan"?plans.map(function(p){ return '<option value="'+esc(p.plan)+'">'+esc(p.plan)+' · '+esc(p.farm)+'</option>'; })
+                                 :acts.map(function(a){ return '<option value="'+esc(exRowKey("activities",a))+'">'+esc(a.subject||taskName(a.task))+'</option>'; })).join("")+'</select>'
+          : '<span>pick '+(c.cmpKind==="worker"?"workers":esc(TX("unit_plural","Blocks")).toLowerCase())+' from the list below</span>')+
+        c.cmpKeys.map(function(k,i){ return '<span class="ex-chip" style="background:#fff;border:1px solid var(--line);color:var(--ink)"><i style="display:inline-block;width:12px;height:2px;background:'+EX_SUBJECT_COLORS[i]+'"></i>'+
+          esc(exSubjectLabel(c.cmpKind,k))+'<button type="button" data-exdrop="'+esc(k)+'" style="color:var(--mute)">×</button></span>'; }).join("")+
+        '</div>';
+    }
+    var kesOn=c.mode==="compare"?exMeasure(c.cmpMeasure).unit==="kes":EX_MEASURES.some(function(m){ return c.on[m.k] && m.unit==="kes"; });
+    h+='<div class="ex-pills ex-right">'+
+      (kesOn?'<button type="button" data-exrun="1"'+(c.running?' class="on"':'')+' title="KES lines add up from the first day of the range">Running total</button>':'')+
+      '<button type="button" data-extable="1"'+(c.table?' class="on"':'')+'>Table</button></div></div>';
+    if(c.mode==="measures"){
+      h+='<div class="ex-legend">'+EX_MEASURES.map(function(m){
+        var na=(m.k==="planned"&&(c.kind==="worker"||c.kind==="block"))||(m.k==="requested"&&c.kind==="worker");
+        if(na) return "";
+        return '<button type="button" data-exm="'+m.k+'" class="'+(c.on[m.k]?'':'off')+'"><i style="background:'+m.color+'"></i>'+esc(m.label)+'</button>';
+      }).join("")+'</div>';
+    }
+    h+='<div id="ex-plot"><div class="loading">Drawing&hellip;</div></div>';
+    box.innerHTML=h;
+    box.querySelectorAll("[data-exmode]").forEach(function(b){ b.onclick=function(){ c.mode=b.getAttribute("data-exmode"); exDrawChartFrame(); exLoadSeries(); }; });
+    var cp=el("ex-cplan"); if(cp) cp.onchange=function(){ c.plan=cp.value; if(!c.activity){ c.kind="estate"; c.key=""; c.keyLabel=""; } exDrawChartFrame(); exLoadSeries(); };
+    var ca=el("ex-cact"); if(ca) ca.onchange=function(){ c.activity=ca.value; c.kind=ca.value?"activity":"estate"; c.key=ca.value;
+      c.keyLabel=ca.value?ca.options[ca.selectedIndex].text:""; exDrawChartFrame(); exLoadSeries(); };
+    var ck=el("ex-ckind"); if(ck) ck.onchange=function(){ c.cmpKind=ck.value; c.cmpKeys=[]; exDrawChartFrame(); exLoadSeries(); };
+    var cm=el("ex-cmeas"); if(cm) cm.onchange=function(){ c.cmpMeasure=cm.value; exDrawChartFrame(); exLoadSeries(); };
+    var cadd=el("ex-cadd"); if(cadd) cadd.onchange=function(){ if(cadd.value && c.cmpKeys.indexOf(cadd.value)<0 && c.cmpKeys.length<6){ c.cmpKeys.push(cadd.value); } exDrawChartFrame(); exLoadSeries(); };
+    box.querySelectorAll("[data-exdrop]").forEach(function(b){ b.onclick=function(){ var k=b.getAttribute("data-exdrop"); c.cmpKeys=c.cmpKeys.filter(function(x){ return x!==k; }); exDrawChartFrame(); exLoadSeries(); }; });
+    var cl=box.querySelector("[data-exclear]"); if(cl) cl.onclick=function(){ c.kind=c.activity?"activity":"estate"; c.key=c.activity; c.keyLabel=""; exDrawChartFrame(); exLoadSeries(); };
+    box.querySelectorAll("[data-exm]").forEach(function(b){ b.onclick=function(){ var k=b.getAttribute("data-exm"); c.on[k]=c.on[k]?0:1; exDrawChartFrame(); exLoadSeries(); }; });
+    var rb=box.querySelector("[data-exrun]"); if(rb) rb.onclick=function(){ c.running=!c.running; rb.classList.toggle("on", c.running); exDrawPlot(); };
+    var tb=box.querySelector("[data-extable]"); if(tb) tb.onclick=function(){ c.table=!c.table; tb.classList.toggle("on", c.table); exDrawPlot(); };
+  }
+  function exLoadSeries(){
+    var c=EX.chart, seq=++c.seq, a;
+    if(c.mode==="compare"){
+      if(!c.cmpKeys.length){ c.data=null; var p=el("ex-plot"); if(p) p.innerHTML='<div class="empty">Add up to six '+(c.cmpKind==="plan"?"master plans":(c.cmpKind==="activity"?"activities":(c.cmpKind==="worker"?"workers":esc(TX("unit_plural","Blocks")).toLowerCase())))+' to compare one measure, one line each.</div>'; return; }
+      a=exArgs({action:"ex_series", mode:"compare", kind:c.cmpKind, keys:c.cmpKeys.join("||"), measures:c.cmpMeasure});
+    } else {
+      var ms=EX_MEASURES.filter(function(m){ return c.on[m.k]; }).map(function(m){ return m.k; });
+      if(!ms.length){ c.data=null; var p2=el("ex-plot"); if(p2) p2.innerHTML='<div class="empty">Switch a line on in the legend above.</div>'; return; }
+      a=exArgs({action:"ex_series", mode:"measures", kind:c.kind, keys:c.key||"", plan:c.plan||"", measures:ms.join(",")});
+    }
+    var plot=el("ex-plot"); if(plot) plot.style.opacity=".55";
+    call(a).then(function(d){
+      if(seq!==c.seq) return;
+      c.data=d; if(plot) plot.style.opacity=""; exDrawPlot();
+    }).catch(function(){ if(seq!==c.seq) return; if(plot){ plot.style.opacity=""; plot.innerHTML='<div class="empty">Could not draw the chart.</div>'; } });
+  }
+  // series to draw: [{label, color, unit, panel, values:[...]}], one per line
+  function exLines(){
+    var c=EX.chart, d=c.data; if(!d) return [];
+    var b=d.buckets||[], out=[];
+    var vals=function(series, k, unit){
+      var acc=0;
+      return b.map(function(x){
+        var v=(series[k]||{})[x];
+        if(unit==="kes"){ v=v||0; if(c.running){ acc+=v; return acc; } return v; }
+        return v==null?null:v;
+      });
+    };
+    if(c.mode==="compare"){
+      var m=exMeasure(c.cmpMeasure);
+      (d.subjects||[]).forEach(function(s,i){
+        out.push({label:exSubjectLabel(c.cmpKind==="plan"?"plan":c.cmpKind, s.key), color:EX_SUBJECT_COLORS[i], unit:m.unit, panel:m.panel, values:vals(s.series, m.k, m.unit)});
+      });
+    } else {
+      var s0=(d.subjects||[])[0]||{series:{}};
+      EX_MEASURES.forEach(function(m){
+        if(!c.on[m.k] || !s0.series[m.k]) return;
+        out.push({label:m.label, color:m.color, unit:m.unit, panel:m.panel, values:vals(s0.series, m.k, m.unit)});
+      });
+    }
+    return out;
+  }
+  function exFmtV(v, unit){ if(v==null) return "—"; return unit==="kes"?money(v)+" KES":(unit==="pct"?fmt(v,0)+"%":fmt(v,1)); }
+  function exDrawPlot(){
+    var box=el("ex-plot"), c=EX.chart, d=c.data; if(!box||!d) return;
+    var lines=exLines(), b=d.buckets||[];
+    if(!lines.length || !b.length){ box.innerHTML='<div class="empty">Nothing recorded for this in the chosen dates.</div>'; return; }
+    var title=c.mode==="compare"?exMeasure(c.cmpMeasure).label:
+      ((c.kind==="activity"&&c.plan)?(c.keyLabel||exSubjectLabel("activity",c.key))+" within "+c.plan:
+       (c.kind==="activity"?(c.keyLabel||exSubjectLabel("activity",c.key)):(c.kind==="worker"||c.kind==="block"?(c.keyLabel||c.key):(c.plan?c.plan:"All work"))));
+    var gran=d.granularity==="day"?"per day":"per week";
+    var sub=title+" · "+(c.running&&lines.some(function(l){ return l.unit==="kes"; })?"KES as a running total, ":"")+gran;
+    if(c.table){
+      var h='<div class="pcd-note" style="margin:4px 0 6px">'+esc(sub)+'</div><div class="ex-scroll" style="max-height:360px"><table class="pc-tbl"><thead><tr><th>'+(d.granularity==="day"?"Day":"Week of")+'</th>'+
+        lines.map(function(l){ return '<th class="n">'+esc(l.label)+'</th>'; }).join("")+'</tr></thead><tbody>';
+      b.forEach(function(x,i){ h+='<tr><td>'+esc(shortDate(x))+'</td>'+lines.map(function(l){ return '<td class="n">'+exFmtV(l.values[i], l.unit)+'</td>'; }).join("")+'</tr>'; });
+      box.innerHTML=h+'</tbody></table></div>'; return;
+    }
+    // one small chart per unit, stacked on the same dates: never two scales on one axis
+    var panels=["money","perf","people"].filter(function(p){ return lines.some(function(l){ return l.panel===p; }); });
+    var W=Math.max(320, box.clientWidth||900), L=58, R=150, H=panels.length>1?150:210, T=10, B=22;
+    var iw=W-L-R, ih=H-T-B;
+    var xAt=function(i){ return L+(b.length>1?i/(b.length-1)*iw:iw/2); };
+    // round tick steps (1, 2, 2.5, 5 x 10^n) aiming at about four gridlines
+    var niceStep=function(max){
+      var raw=max/4, mag=Math.pow(10, Math.floor(Math.log10(raw||1))), f=raw/mag;
+      return (f<=1?1:(f<=2?2:(f<=2.5?2.5:(f<=5?5:10))))*mag;
+    };
+    var html='<div class="pcd-note" style="margin:4px 0 0">'+esc(sub)+'</div>';
+    panels.forEach(function(p){
+      var pl=lines.filter(function(l){ return l.panel===p; });
+      var max=0; pl.forEach(function(l){ l.values.forEach(function(v){ if(v!=null&&v>max) max=v; }); });
+      if(p==="perf") max=Math.max(max, 110);
+      max=max||1;
+      var step=niceStep(max), nice=Math.ceil(max/step)*step;
+      var yAt=function(v){ return T+ih-(v/nice)*ih; };
+      var s='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(EX_PANELS[p])+'">';
+      for(var g=0; g<=nice+1e-9; g+=step){
+        var y=yAt(g).toFixed(1);
+        s+='<line class="'+(g===0?'base':'grid')+'" x1="'+L+'" x2="'+(L+iw)+'" y1="'+y+'" y2="'+y+'"/>';
+        s+='<text x="'+(L-6)+'" y="'+(+y+3)+'" text-anchor="end">'+(p==="money"?money(g):(p==="perf"?fmt(g,0)+"%":fmt(g,0)))+'</text>';
+      }
+      if(p==="perf") s+='<line class="ref" x1="'+L+'" x2="'+(L+iw)+'" y1="'+yAt(100).toFixed(1)+'" y2="'+yAt(100).toFixed(1)+'"/>'+
+        '<text x="'+(L+4)+'" y="'+(yAt(100)-4).toFixed(1)+'">target / rate</text>';
+      var every=Math.max(1, Math.ceil(b.length/8));
+      b.forEach(function(x,i){ if(i%every===0||i===b.length-1) s+='<text x="'+xAt(i).toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle">'+esc(shortDate(x))+'</text>'; });
+      var ends=[];
+      pl.forEach(function(l){
+        // a week with no work has no percentage: the line joins the weeks that do,
+        // and when they are few each one gets a marker so a lone week still shows
+        var pts=[]; l.values.forEach(function(v,i){ if(v!=null) pts.push([xAt(i), yAt(v), v]); });
+        if(!pts.length) return;
+        s+='<path d="'+pts.map(function(q,i){ return (i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1); }).join("")+
+          '" fill="none" stroke="'+l.color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+        if(pts.length<b.length && pts.length<=12) pts.forEach(function(q){
+          s+='<circle cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="4" fill="'+l.color+'" stroke="#fff" stroke-width="2"/>'; });
+        var last=pts[pts.length-1];
+        ends.push({x:last[0], y:last[1], l:l, v:last[2]});
+      });
+      // labels beside each line's last point, nudged apart where they would touch
+      ends.sort(function(a,b){ return a.y-b.y; });
+      for(var e=1;e<ends.length;e++){ var prev=ends[e-1].ly!=null?ends[e-1].ly:ends[e-1].y; if(ends[e].y-prev<12) ends[e].ly=prev+12; }
+      ends.forEach(function(e){
+        var ly=e.ly!=null?e.ly:e.y;
+        var name=e.l.label.length>16?e.l.label.slice(0,15)+"…":e.l.label;
+        s+='<circle cx="'+e.x.toFixed(1)+'" cy="'+e.y.toFixed(1)+'" r="3" fill="'+e.l.color+'" stroke="#fff" stroke-width="2"/>';
+        s+='<text class="lbl" x="'+(e.x+8).toFixed(1)+'" y="'+(ly+3).toFixed(1)+'">'+esc(exFmtV(e.v, e.l.unit).replace(" KES",""))+' '+esc(name)+'</text>';
+      });
+      s+='<line class="xh" x1="0" x2="0" y1="'+T+'" y2="'+(T+ih)+'" style="display:none"/>';
+      s+='<rect class="hit" x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="transparent"/></svg>';
+      html+='<div class="ex-panel" data-panel="'+p+'"><h5>'+esc(EX_PANELS[p])+'</h5>'+s+'</div>';
+    });
+    box.innerHTML=html;
+    // crosshair: the pointer picks a date, the tooltip lists every visible line at it
+    box.querySelectorAll(".ex-panel").forEach(function(pn){
+      var svg=pn.querySelector("svg"), hit=pn.querySelector(".hit");
+      hit.onmousemove=function(ev){
+        var r=svg.getBoundingClientRect(), x=(ev.clientX-r.left)*(W/r.width);
+        var i=Math.max(0, Math.min(b.length-1, Math.round((x-L)/(iw||1)*(b.length-1))));
+        box.querySelectorAll(".xh").forEach(function(xh){ xh.setAttribute("x1",xAt(i)); xh.setAttribute("x2",xAt(i)); xh.style.display=""; });
+        exShowTip(ev, (d.granularity==="day"?"":"Week of ")+shortDate(b[i]), lines.map(function(l){ return {color:l.color, label:l.label, value:exFmtV(l.values[i], l.unit)}; }));
+      };
+      hit.onmouseleave=function(){ exHideTip(); box.querySelectorAll(".xh").forEach(function(xh){ xh.style.display="none"; }); };
+    });
+  }
+
+  // ── the key: every term, in one place ──
+  function exKey(){
+    var dl=function(rows){ return rows.map(function(r){ return r[0]==="#"?'<h6>'+esc(r[1])+'</h6>':'<dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd>'; }).join(""); };
+    return '<details class="ex-key"><summary>Key: what every term means</summary><dl>'+dl([
+      ["#","Where the numbers come from"],
+      ["Recorded","Every worker-day entered on an actual, whatever its approval state, except rejected actuals and rejected requests."],
+      ["Confirmed / Earned","Recorded pay on actuals that finished approval (state CONFIRMED). Earned KES is confirmed pay."],
+      ["Paid out","Confirmed pay carried by a payment run whose state is Paid."],
+      ["Planned","A master plan's activity values, spread evenly over the plan's days."],
+      ["Requested","Requests raised (not rejected), each spread evenly over the days it covers."],
+      ["#","Measures"],
+      ["Done","Output recorded ÷ quantity requested, in the activity's own unit."],
+      ["Output vs target","Output per person-day ÷ the request's daily target. 100% = exactly on target. Taken day by day, so activities in different units can be compared."],
+      ["Cost/unit vs rate","Pay ÷ output valued at the rate, over paid days. 100% = paid exactly the rate; above it, the work cost more per unit than the rate says."],
+      ["By salaried staff","Output on days with no piece-rate pay. Real work at no task cost, which is why work done can run ahead of money."],
+      ["Delivered (staff)","Confirmed pay on the requests a person raised ÷ what those requests asked for."],
+      ["Approves in","The middle (median) time between a request being submitted and this person approving it."],
+      ["KES / ha","Labour KES on a "+esc(TX("unit_singular","Block")).toLowerCase()+" ÷ its recorded area. Blank where no area is recorded."],
+      ["#","Flags and colours"],
+      ["⚠ no scan","Days paid with no check-in scan for that worker that day. Only counted from the first day this site has scans."],
+      ["⇄ two farms","Days the worker was recorded on two farms at once."],
+      ["Green / amber / red figures","Output vs target: green 95%+, red under 80%. Cost/unit vs rate: green to 105%, amber to 115%, red above. Done and Delivered: green 90%+, red under 50%."],
+      ["Heatmap","Activities: blue above target, red below, grey on target. Workers, staff and "+esc(TX("unit_plural","Blocks")).toLowerCase()+": darker = more."],
+      ["#","The chart"],
+      ["Measures / Compare","Measures: one subject, any lines. Compare: up to six plans, activities, workers or "+esc(TX("unit_plural","Blocks")).toLowerCase()+", one measure each."],
+      ["Picking a plan and an activity","Charts that activity within that plan."],
+      ["Running total","KES lines add up from the start of the range, so the gap between Planned and Confirmed reads as how far behind."],
+      ["Days or weeks","Daily up to six weeks of range, Monday-started weeks beyond."]
+    ])+'</dl></details>';
   }
 
   function skeleton(){
     return '<div class="kpis">'+
       Array(6).join(0).split("0").map(function(){return '<div class="kpi"><div class="sk sk-kpi"></div></div>';}).join("")+
-      '</div>'+
-      '<div class="sech">Pipeline</div><div class="card"><div class="bd"><div class="sk sk-bar"></div></div></div>'+
-      '<div class="sech">Per-'+esc(TX("top_singular","Farm")).toLowerCase()+'</div><div class="card"><div class="bd"><div class="sk sk-bar"></div></div></div>';
+      '</div>';
   }
 
   function render(D){
-    var t=D.totals||{};
-    var farms=D.farms||[];
     el("wm-body").innerHTML=
-      // ===== TOP: pipeline command center =====
-      '<div class="sech">Activity across the pipeline</div>'+
-      '<div class="stagegrid">'+
-        stageCard("PLANNED","#6b7280",[
-          ["Approved plans",fmt(t.approved_plans)],
-          ["Crew-days of work",fmt(t.crew_days)],
-          ["Sum of daily crews",fmt(t.planned_people)],
-          ["Target output",fmt(t.planned_qty)],
-          ["Planned value",money(t.planned_value)+" KES"]])+
-        stageCard("ASSIGNED","#2563eb",[
-          ["Assignments",fmt(t.assignments)],
-          ["Assigned workers",fmt(t.assigned_workers)],
-          ["Active employees",fmt(t.active_employees)],
-          ["· Task workers",fmt(t.active_task_workers)],
-          ["· Permanent / salaried",fmt(t.active_permanent)],
-          ["Awaiting actuals",fmt(t.awaiting_workers)],
-          ["Confirmed",fmt(t.confirmed_workers)]])+
-        stageCard("ACTUAL","#0a7a43",[
-          ["Confirmed actuals",fmt(t.act_confirmed)],
-          ["Qty done",fmt(t.actual_qty)],
-          ["Of target",dpct(t.actual_qty,t.planned_qty)],
-          ["Confirmed pay",money(t.actual_payment)+" KES"]])+
-        stageCard("PAYMENT","#7c3aed",[
-          ["Workers paid",fmt(t.workers_paid)],
-          ["Payment amount",money(t.paid_amount||t.paid_total)+" KES"],
-          ["Unpaid",money(t.unpaid)+" KES"],
-          ["Awaiting runs",fmt(t.pay_pending)]])+
-      '</div>'+
-      '<div class="explain">'+
-        '<b>Reading these numbers:</b> '+
-        '<span><b>Approved plans</b> — how many work plans are approved.</span>'+
-        '<span><b>Crew-days of work</b> — total labour the plans need (workers/day × working days, across every plan). This is the real workload, not a headcount.</span>'+
-        '<span><b>Sum of daily crews</b> — every plan’s people-per-day added up. It counts slots across plans, so it is normally far larger than the number of people you employ (that is why it can exceed your workforce).</span>'+
-        '<span><b>Planned value</b> — target output × rate across approved plans: what the planned work is worth when fully delivered.</span>'+
-        '<span><b>Assigned workers</b> — distinct people actually put on jobs (each counted once).</span>'+
-        '<span><b>Active employees</b> — everyone active on the four '+esc(TX("top_plural","Farms")).toLowerCase()+' right now, split into task workers (paid per output) and permanent/salaried staff.</span>'+
-        '<span><b>Awaiting actuals</b> — assigned people whose work has not been recorded/confirmed yet.</span>'+
-        '<span><b>Confirmed</b> — people whose work is signed off through FM → HR → GM.</span>'+
-      '</div>'+
-      // ===== every budget line, one table =====
-      '<div class="sech">Planned value &amp; delivery</div>'+
-      '<div class="card"><div class="hd"><h3>Every activity, planned against delivered</h3>'+
-        '<div class="cap">one row per budget line &middot; filter and sort across '+esc(TX("top_plural","Farms")).toLowerCase()+' &middot; click a row for its charts</div></div>'+
-        '<div class="bd">'+
-          '<div class="subtabs" id="wm-pv-tabs" style="margin-bottom:10px">'+
-            '<button type="button" class="subtab on" data-pv="plan">By master plan</button>'+
-            '<button type="button" class="subtab" data-pv="act">By activity</button>'+
-          '</div>'+
-          '<div class="pex-filters" id="mv-filters">'+
-            '<select id="mv-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
-            '<label>From <input type="date" id="mv-from" /></label>'+
-            '<label>To <input type="date" id="mv-to" /></label>'+
-            '<button id="mv-clear" class="pex-clear">Clear</button>'+
-          '</div>'+
-          '<div id="wm-mpv"><div class="loading">Reading master plans&hellip;</div></div>'+
-          '<div id="wm-acts" style="display:none"><div class="loading">Reading activities&hellip;</div></div>'+
-        '</div></div>'+
       // ===== how much of each plan actually happened =====
-      '<div class="sech">Plan completion &mdash; planned, requested, delivered</div>'+
-      '<div class="card"><div class="hd"><h3>How much of each master plan actually happened</h3>'+
-        '<div class="cap">by the week the plan starts &middot; filter by date range and '+esc(TX("top_singular","Farm")).toLowerCase()+'</div></div>'+
+      '<div class="sech">Master plans &mdash; progress &amp; money</div>'+
+      '<div class="card"><div class="hd"><h3>How each master plan is going</h3>'+
+        '<div class="cap">work done against time gone by &middot; money planned, earned and paid &middot; open a plan for everything under it</div></div>'+
         '<div class="bd" id="wm-plancomp"><div class="loading">Measuring completion&hellip;</div></div></div>'+
-      // ===== per-farm worker + value summary strip =====
-      '<div class="sech">Workers &amp; value per '+esc(TX("top_singular","Farm")).toLowerCase()+'</div>'+
-      '<div class="card"><div class="bd" id="wm-farmstrip">'+farmStrip(farms)+'</div></div>'+
-      // ===== approval speed: how long each sign-off step takes =====
-      '<div class="sech">Pipeline performers &mdash; planners &amp; assigners</div>'+
-      '<div class="card"><div class="hd"><h3>Who plans the work, and what it costs</h3><div class="cap">per person &middot; plans created, targets vs actuals, planned vs money spent, cost per unit &middot; last 12 weeks</div></div>'+
-        '<div class="bd">'+
-          '<div class="subtabs" id="wm-perf-tabs" style="margin-bottom:10px">'+
-            '<button type="button" class="subtab on" data-pp="creators">Plan creators</button>'+
-            '<button type="button" class="subtab" data-pp="assigners">Assigners</button>'+
-            '<button type="button" class="subtab" data-pp="enterers">Actuals enterers</button>'+
-          '</div>'+
-          '<div class="pex-filters" id="pf-filters">'+
-            '<label>From <input type="date" id="pf-from" /></label>'+
-            '<label>To <input type="date" id="pf-to" /></label>'+
-            '<button id="pf-clear" class="pex-clear">Clear</button>'+
-            '<button id="pf-xls" class="pex-clear">Download for Excel</button>'+
-          '</div>'+
-          '<div id="wm-perf-body"><div class="loading">Measuring planners&hellip;</div></div>'+
-        '</div></div>'+
+      // ===== activities, people & blocks, in depth =====
+      '<div class="sech">Activities, people &amp; '+esc(TX("unit_plural","Blocks")).toLowerCase()+'</div>'+
+      '<div class="card"><div class="hd"><h3>What the work costs, who did it and where</h3>'+
+        '<div class="cap">pick a lens &middot; open any row for everything behind it &middot; the chart follows what you open</div></div>'+
+        '<div class="bd" id="wm-ex"><div class="loading">Reading the work&hellip;</div></div></div>'+
       // ===== trends & analytics tabs =====
       '<div class="sech">Trends &amp; analytics</div>'+
       '<div class="card"><div class="hd"><h3>What the numbers are doing</h3><div class="cap">confirmed work only &middot; last 12 weeks</div></div>'+
@@ -787,22 +1505,6 @@
           '</div>'+
           '<div id="cc-list" style="max-height:520px;overflow:auto;border-top:1px solid #eee">Loading&hellip;</div>'+
         '</div></div>'+
-      // ===== EMPLOYEE & ASSIGNMENT TRACKER =====
-      '<div class="sech">Employee &amp; assignment tracker &mdash; who is on what</div>'+
-      '<div class="card"><div class="hd"><h3>Worker assignments</h3><div class="cap">KPIs, per-worker timeline (active / upcoming / past) &amp; double-booking flags</div></div>'+
-        '<div class="bd">'+
-          '<div class="pex-filters" id="et-filters">'+
-            '<input id="et-q" placeholder="Search worker name or ID…" style="min-width:220px" />'+
-            '<select id="et-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
-            '<select id="et-state"><option value="">All states</option><option>Draft</option><option>Pending Farm Manager</option><option>Pending HR Head</option><option>Pending GM</option><option>Assigned</option><option>Rejected</option></select>'+
-            '<input id="et-task" placeholder="Task" />'+
-            '<label>From <input type="date" id="et-from" /></label>'+
-            '<label>To <input type="date" id="et-to" /></label>'+
-            '<button id="et-clear" class="pex-clear">Clear</button>'+
-          '</div>'+
-          '<div id="et-summary" class="et-summary"></div>'+
-          '<div id="et-list"><div class="empty">Type a worker name above to see their assignments.</div></div>'+
-        '</div></div>'+
       '<div class="sech">Crew movements &mdash; who left, who joined, who swapped</div>'+
       '<div class="card"><div class="hd"><h3>Substitution history</h3><div class="cap">every mid-period movement &middot; a leaver keeps pay for days worked; Days/Qty/Pay are what that row&rsquo;s worker did on the plan</div></div><div class="bd"><div class="pex-filters" id="subs-filters"><select id="subs-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div><div id="wm-subs" style="max-height:360px;overflow:auto">Loading&hellip;</div></div></div>'+
       '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered &middot; field intelligence</div>'+
@@ -853,13 +1555,12 @@
           '<div class="subtabs" id="wm-q-tabs"></div>'+
           '<div id="wm-q-body" style="max-height:420px;overflow:auto;margin-top:10px"></div>'+
         '</div></div>';
-    pvTabs();   // the master-plan view is the default; activityTable() loads when its tab is opened
     planCompletion();
+    exInit();
     initCharts();
     initQueues(D);
     initTimeline();
     initFieldIntel();
-    initPerformers();
   }
 
   // ============ APPROVAL SPEED (step by step) ============
@@ -1862,133 +2563,6 @@
       box.innerHTML=h+'</tbody></table>';
     }).catch(function(e){ box.innerHTML='<div class="empty">Could not load cost breakdown.</div>'; });
   }
-  function etState(){
-    return {
-      q:(el("et-q")||{}).value||"",
-      farm:(el("et-farm")||{}).value||"",
-      state:(el("et-state")||{}).value||"",
-      task:(el("et-task")||{}).value||"",
-      from_date:(el("et-from")||{}).value||"",
-      to_date:(el("et-to")||{}).value||""
-    };
-  }
-  function etKpi(k,v,cls){ return '<div class="etk'+(cls?(" "+cls):"")+'"><div class="etk-k">'+k+'</div><div class="etk-v">'+v+'</div></div>'; }
-  function etTimeSplit(list){
-    // split a worker's assignments into active / upcoming / past by today's date
-    var t=new Date(); t.setHours(0,0,0,0);
-    var buckets={active:[],upcoming:[],past:[]};
-    list.forEach(function(r){
-      var f=r.from_date?new Date(r.from_date+"T00:00:00"):null;
-      var to=r.to_date?new Date(r.to_date+"T00:00:00"):null;
-      if(f && to){
-        if(to<t) buckets.past.push(r);
-        else if(f>t) buckets.upcoming.push(r);
-        else buckets.active.push(r);
-      } else buckets.active.push(r);
-    });
-    return buckets;
-  }
-  function etRowsHtml(rows){
-    var h='<table class="pex et-inner"><thead><tr><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Period</th><th>State</th><th>Worker</th><th>Plan</th></tr></thead><tbody>';
-    rows.forEach(function(r){
-      var wtag=(r.wstatus==="Left")?'<span class="pex-st" style="background:#b91c1c">left</span>':'<span class="pex-st" style="background:#0a7a43">active</span>';
-      var ov=r.overlap?' <span class="et-ovtag" title="Overlaps another live assignment">⚠ overlap</span>':'';
-      h+='<tr'+(r.plan?(' data-open="'+esc(r.plan)+'" data-dt="plan" style="cursor:pointer"'):'')+'>'+
-         '<td>'+esc(taskName(r.task))+ov+'</td>'+
-         '<td>'+esc(r.farm||"")+'</td>'+
-         '<td>'+esc(lbl(r.block_section)||"")+'</td>'+
-         '<td>'+esc(r.from_date||"?")+' → '+esc(r.to_date||"?")+'</td>'+
-         '<td>'+stateTag(r.state)+'</td>'+
-         '<td>'+wtag+'</td>'+
-         '<td>'+(r.plan?('<span class="et-planjump" data-plan="'+esc(r.plan)+'">'+esc(r.plan)+' ↗</span>'):"—")+'</td></tr>';
-    });
-    return h+'</tbody></table>';
-  }
-  function loadTracker(){
-    var box=el("et-list"); if(!box) return;
-    var a=etState();
-    if(!a.q && !a.farm && !a.task && !a.state){ box.innerHTML='<div class="empty">Type a worker name (or pick a '+esc(TX("top_singular","Farm")).toLowerCase()+') to see assignments.</div>'; var su=el("et-summary"); if(su) su.innerHTML=""; return; }
-    box.innerHTML="Loading…";
-    a.action="emp_tracker";
-    call(a).then(function(d){
-      var fs=el("et-farm");
-      if(fs && fs.options.length<=1 && d.farms){ d.farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); }); }
-      var summ=d.summary||[]; var rows=d.assignments||[]; var k=d.kpis||{};
-      // ---- KPI strip ----
-      var su=el("et-summary");
-      if(su){
-        if(rows.length){
-          su.innerHTML='<div class="etkpis">'+
-            etKpi("Workers",fmt(k.workers))+
-            etKpi("Assignments",fmt(k.assignments))+
-            etKpi(esc(TX("top_plural","Farms")),fmt(k.farms))+
-            etKpi("Tasks",fmt(k.tasks))+
-            etKpi("Active slots",fmt(k.active_slots))+
-            etKpi("Awaiting approval",fmt(k.pending))+
-            etKpi("Rejected",fmt(k.rejected),(k.rejected>0?"warn":""))+
-            etKpi("Double-booked",fmt(k.conflict_workers)+(k.conflict_pairs?(" · "+fmt(k.conflict_pairs)+" clash"+(k.conflict_pairs>1?"es":"")):""),(k.conflict_workers>0?"bad":""))+
-            '</div>';
-        } else su.innerHTML="";
-      }
-      if(!rows.length){ box.innerHTML='<div class="empty">No assignments found for this search.</div>'; return; }
-      // ---- group assignment rows by worker ----
-      var byemp={}; var order=[];
-      rows.forEach(function(r){ if(!byemp[r.employee]){ byemp[r.employee]=[]; order.push(r.employee); } byemp[r.employee].push(r); });
-      // summary lookup for header stats
-      var smap={}; summ.forEach(function(g){ smap[g.employee]=g; });
-      var h='';
-      order.forEach(function(emp,idx){
-        var list=byemp[emp]; var g=smap[emp]||{};
-        var nm=(list[0].employee_name||emp);
-        var conflict=g.has_conflict?'<span class="et-ovtag">⚠ double-booked</span>':'';
-        var b=etTimeSplit(list);
-        h+='<div class="etw" data-w="'+idx+'">'+
-             '<div class="etw-head" data-toggle="'+idx+'">'+
-               '<div class="etw-name"><span class="etw-caret" id="etw-caret-'+idx+'">▸</span> '+esc(nm)+' '+conflict+'</div>'+
-               '<div class="etw-mini">'+
-                 '<span><b>'+fmt(list.length)+'</b> assignments</span>'+
-                 '<span><b>'+fmt(b.active.length)+'</b> active</span>'+
-                 '<span><b>'+fmt(b.upcoming.length)+'</b> upcoming</span>'+
-                 '<span><b>'+fmt(b.past.length)+'</b> past</span>'+
-                 '<span><b>'+fmt(g.farm_count||0)+'</b> '+esc(TX("top_plural","Farms")).toLowerCase()+'</span>'+
-                 '<span><b>'+fmt(g.task_count||0)+'</b> tasks</span>'+
-                 '<a href="#" class="et-emplink" data-emp="'+esc(emp)+'">full detail ↗</a>'+
-               '</div>'+
-             '</div>'+
-             '<div class="etw-body" id="etw-body-'+idx+'" style="display:none">'+
-               (b.active.length?('<div class="et-tl"><div class="et-tl-h et-tl-active">Active now ('+b.active.length+')</div>'+etRowsHtml(b.active)+'</div>'):'')+
-               (b.upcoming.length?('<div class="et-tl"><div class="et-tl-h et-tl-up">Upcoming ('+b.upcoming.length+')</div>'+etRowsHtml(b.upcoming)+'</div>'):'')+
-               (b.past.length?('<div class="et-tl"><div class="et-tl-h et-tl-past">Past ('+b.past.length+')</div>'+etRowsHtml(b.past)+'</div>'):'')+
-             '</div>'+
-           '</div>';
-      });
-      box.innerHTML=h;
-      // wire expand/collapse
-      box.querySelectorAll(".etw-head").forEach(function(hd){
-        hd.onclick=function(ev){
-          if(ev.target && ev.target.classList && ev.target.classList.contains("et-emplink")) return;
-          var i=hd.getAttribute("data-toggle");
-          var bd=el("etw-body-"+i); var ca=el("etw-caret-"+i);
-          if(!bd) return;
-          var open=bd.style.display!=="none";
-          bd.style.display=open?"none":"block";
-          if(ca) ca.textContent=open?"▸":"▾";
-        };
-      });
-      // wire plan jumps + worker links
-      box.querySelectorAll(".et-planjump").forEach(function(sp){ sp.onclick=function(ev){ ev.stopPropagation(); openPlanModal(sp.getAttribute("data-plan"),"plan"); }; });
-      box.querySelectorAll("tr[data-open]").forEach(function(tr){ tr.onclick=function(){ openPlanModal(tr.getAttribute("data-open"),"plan"); }; });
-      box.querySelectorAll(".et-emplink").forEach(function(lnk){ lnk.onclick=function(ev){ ev.preventDefault(); ev.stopPropagation(); openEmpModal(lnk.getAttribute("data-emp")); }; });
-      // auto-open the first worker for quick read
-      if(order.length){ var fb=el("etw-body-0"), fc=el("etw-caret-0"); if(fb){ fb.style.display="block"; if(fc) fc.textContent="▾"; } }
-    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load tracker.</div>'; });
-  }
-  function wireTracker(){
-    ["et-q","et-task"].forEach(function(id){ var e=el(id); if(e) e.oninput=debounce(loadTracker,350); });
-    ["et-farm","et-state","et-from","et-to"].forEach(function(id){ var e=el(id); if(e) e.onchange=loadTracker; });
-    var clr=el("et-clear"); if(clr) clr.onclick=function(){ ["et-q","et-task","et-from","et-to"].forEach(function(id){ var e=el(id); if(e) e.value=""; }); ["et-farm","et-state"].forEach(function(id){ var e=el(id); if(e) e.value=""; }); loadTracker(); };
-  }
-
   // ===== COST CENTRE (block) =====
   var CC={};
   function ccState(){
@@ -2893,264 +3467,6 @@
   // A CSV rather than a real .xlsx: it opens straight into Excel and needs no
   // library, where a true workbook would mean lazy-loading XLSX the way the
   // payment screen does. Say so if you want the workbook instead.
-  function exportPerformers(){
-    if(!PP.data){ toast("Nothing to export yet"); return; }
-    var rows=(PP.tab==="assigners"?PP.data.assigners:(PP.tab==="enterers"?PP.data.enterers:PP.data.creators))||[];
-    if(!rows.length){ toast("Nothing to export"); return; }
-    var cols=Object.keys(rows[0]);
-    var esc2=function(v){
-      if(v===null||v===undefined) return "";
-      var t=String(v);
-      return /[",\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t;
-    };
-    var lines=[cols.join(",")];
-    rows.forEach(function(r){ lines.push(cols.map(function(c){ return esc2(r[c]); }).join(",")); });
-    var r=ppRange();
-    var name="pipeline-performers-"+PP.tab+(r.from_date?"-"+r.from_date:"")+(r.to_date?"-to-"+r.to_date:"")+".csv";
-    var blob=new Blob(["\ufeff"+lines.join("\r\n")], {type:"text/csv;charset=utf-8;"});
-    var a=document.createElement("a");
-    a.href=URL.createObjectURL(blob); a.download=name;
-    document.body.appendChild(a); a.click();
-    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
-    toast("Downloaded "+name);
-  }
-
-  // ============ PIPELINE PERFORMERS (planners & assigners) ============
-  var PP={data:null, tab:"creators"};
-  function initPerformers(){
-    var box=el("wm-perf-body"); if(!box) return;
-    var tabs=el("wm-perf-tabs");
-    if(tabs){
-      tabs.querySelectorAll(".subtab").forEach(function(b){
-        b.onclick=function(){
-          tabs.querySelectorAll(".subtab").forEach(function(x){ x.classList.toggle("on", x===b); });
-          PP.tab=b.getAttribute("data-pp");
-          renderPerformers();
-        };
-      });
-    }
-    ["pf-from","pf-to"].forEach(function(id){
-      var e=el(id); if(e) e.onchange=function(){ loadPerformers(); };
-    });
-    var pfc=el("pf-clear");
-    if(pfc) pfc.onclick=function(){ ["pf-from","pf-to"].forEach(function(id){ var e=el(id); if(e) e.value=""; }); loadPerformers(); };
-    var pfx=el("pf-xls"); if(pfx) pfx.onclick=function(){ exportPerformers(); };
-    loadPerformers();
-  }
-  function ppRange(){
-    return {from_date:(el("pf-from")||{}).value||"", to_date:(el("pf-to")||{}).value||""};
-  }
-  function loadPerformers(){
-    var box=el("wm-perf-body"); if(!box) return;
-    box.innerHTML='<div class="loading">Measuring planners&hellip;</div>';
-    var a=ppRange(); a.action="planner_performance";
-    call(a).then(function(d){
-      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
-      PP.data=d; renderPerformers();
-    }).catch(function(e){ box.innerHTML='<div class="empty">Could not measure planners: '+esc(e.message)+'</div>'; });
-  }
-  function shortUser(u){ return (u||"").split("@")[0]; }
-  function ppPct(v){
-    var c=v>=90?"#0a7a43":(v>=60?"#a06000":"#b91c1c");
-    return '<b style="color:'+c+'">'+fmt(v,0)+'%</b>';
-  }
-  function renderPerformers(){
-    var box=el("wm-perf-body"); if(!box||!PP.data) return;
-    var rows=(PP.tab==="assigners"?PP.data.assigners:(PP.tab==="enterers"?PP.data.enterers:PP.data.creators))||[];
-    if(!rows.length){ box.innerHTML='<div class="empty">No activity in this window.</div>'; return; }
-    // Best-delivering first. Sorted on a copy: the chips below read rows[0] as
-    // the server ordered it, and re-pointing that would change what they mean.
-    var srows=rows.slice();
-    if(srows.length && srows[0].achieved_pct !== undefined){
-      srows.sort(function(a,b){ return (b.achieved_pct||0)-(a.achieved_pct||0); });
-    }
-    // most / least expensive by cost per unit (only people with real volume)
-    var judged=rows.filter(function(r){ return (r.actual_qty||0)>500 && r.cost_per_unit>0; });
-    var maxC=null,minC=null;
-    judged.forEach(function(r){
-      if(!maxC||r.cost_per_unit>maxC.cost_per_unit) maxC=r;
-      if(!minC||r.cost_per_unit<minC.cost_per_unit) minC=r;
-    });
-    var chips='';
-    if(rows.length){
-      var most=rows[0];
-      chips+='<div style="border:1px solid var(--line);border-radius:12px;padding:7px 13px;background:var(--wash)"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:600">Most '+(PP.tab==="assigners"?"assignments":"plans")+'</div><b>'+esc(shortUser(most.person))+'</b> <span class="hint">'+fmt(PP.tab==="assigners"?most.assignments:most.plans)+'</span></div>';
-    }
-    if(minC) chips+='<div style="border:1px solid var(--line);border-radius:12px;padding:7px 13px"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#0a7a43;font-weight:600">Least expensive</div><b>'+esc(shortUser(minC.person))+'</b> <span class="hint">KES '+fmt(minC.cost_per_unit,2)+'/unit</span></div>';
-    if(maxC) chips+='<div style="border:1px solid var(--line);border-radius:12px;padding:7px 13px"><div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#b91c1c;font-weight:600">Most expensive</div><b>'+esc(shortUser(maxC.person))+'</b> <span class="hint">KES '+fmt(maxC.cost_per_unit,2)+'/unit</span></div>';
-    var h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'+chips+'</div>';
-    var sth=' style="position:sticky;top:0;background:#fff;z-index:1"';
-    if(PP.tab==="creators"){
-      h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
-        '<th'+sth+'>Planner</th><th class="n"'+sth+'>Plans</th><th class="n"'+sth+'>Target qty</th>'+
-        '<th class="n"'+sth+'>Actual qty</th><th class="n"'+sth+'>Achieved</th>'+
-        '<th class="n"'+sth+'>Planned KES</th><th class="n"'+sth+'>Spent KES</th>'+
-        '<th class="n"'+sth+'>Of plan</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
-      srows.forEach(function(r){
-        var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
-        h+='<tr'+hot+'><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
-          '<td class="n m">'+fmt(r.plans)+'</td><td class="n m">'+fmt(r.target_qty)+'</td>'+
-          '<td class="n m">'+fmt(r.actual_qty)+'</td><td class="n">'+ppPct(r.achieved_pct)+'</td>'+
-          '<td class="n m">'+fmt(r.planned,0)+'</td><td class="n m">'+fmt(r.spent,0)+'</td>'+
-          '<td class="n">'+ppPct(r.spend_pct)+'</td>'+
-          '<td class="n m">'+(r.cost_per_unit>0?fmt(r.cost_per_unit,2):"—")+'</td></tr>';
-      });
-      h+='</tbody></table></div>';
-      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
-        '<span><b>Plans</b> — approved plans this person created in the window.</span>'+
-        '<span><b>Target qty</b> — the output their plans promised (sum of plan targets, in each task\'s units).</span>'+
-        '<span><b>Actual qty</b> — confirmed output actually delivered on those plans.</span>'+
-        '<span><b>Achieved</b> — Actual ÷ Target: how much of what they planned got done (green ≥90%, amber ≥60%, red below).</span>'+
-        '<span><b>Planned KES</b> — what their plans were worth if fully delivered (rate × target).</span>'+
-        '<span><b>Spent KES</b> — confirmed pay actually earned on their plans.</span>'+
-        '<span><b>Of plan</b> — Spent ÷ Planned. Low is NOT automatically savings — read it with Achieved (50% spent at 50% achieved just means half the work happened).</span>'+
-        '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this planner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
-    } else if(PP.tab==="enterers"){
-      h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
-        '<th'+sth+'>Enterer</th><th class="n"'+sth+'>Docs</th><th class="n"'+sth+'>Worker-days</th>'+
-        '<th class="n"'+sth+'>Qty entered</th><th class="n"'+sth+'>Value KES</th>'+
-        '<th class="n"'+sth+'>Avg entry lag</th><th class="n"'+sth+'>Rejected</th></tr></thead><tbody>';
-      srows.forEach(function(r){
-        h+='<tr><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
-          '<td class="n m">'+fmt(r.docs)+'</td><td class="n m">'+fmt(r.worker_days)+'</td>'+
-          '<td class="n m">'+fmt(r.qty)+'</td><td class="n m">'+fmt(r.value,0)+'</td>'+
-          '<td class="n m">'+(r.lag_days!=null?fmt(r.lag_days,1)+"d":"—")+'</td>'+
-          '<td class="n m"'+(r.rejected?' style="color:var(--bad);font-weight:700"':'')+'>'+fmt(r.rejected)+'</td></tr>';
-      });
-      h+='</tbody></table></div>';
-      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
-        '<span><b>Docs</b> — actuals documents they entered.</span>'+
-        '<span><b>Worker-days</b> — distinct worker-day records inside them.</span>'+
-        '<span><b>Avg entry lag</b> — average days between the work date and when it was typed in; late entry is where errors breed.</span>'+
-        '<span><b>Rejected</b> — documents currently bounced by an approver.</span>'+
-        '<span>Click a name for their full evaluation.</span></div>';
-    } else {
-      h+='<div class="tablewrap" style="max-height:440px;overflow-y:auto"><table><thead><tr>'+
-        '<th'+sth+'>Assigner</th><th class="n"'+sth+'>Assignments</th><th class="n"'+sth+'>Workers put on jobs</th>'+
-        '<th class="n"'+sth+'>Target qty</th><th class="n"'+sth+'>Actual qty</th><th class="n"'+sth+'>Achieved</th>'+
-        '<th class="n"'+sth+'>Spent KES</th><th class="n"'+sth+'>KES / unit</th></tr></thead><tbody>';
-      srows.forEach(function(r){
-        var hot=(maxC&&r.person===maxC.person)?' style="background:rgba(185,28,28,.05)"':((minC&&r.person===minC.person)?' style="background:rgba(10,122,67,.05)"':'');
-        h+='<tr'+hot+'><td><a href="#" class="pp-person" data-person="'+esc(r.person)+'" style="font-weight:700;color:var(--ink);text-decoration:underline dotted">'+esc(shortUser(r.person))+'</a></td>'+
-          '<td class="n m">'+fmt(r.assignments)+'</td><td class="n m">'+fmt(r.workers_put)+'</td>'+
-          '<td class="n m">'+fmt(r.target_qty)+'</td><td class="n m">'+fmt(r.actual_qty)+'</td>'+
-          '<td class="n">'+ppPct(r.achieved_pct)+'</td>'+
-          '<td class="n m">'+fmt(r.spent,0)+'</td>'+
-          '<td class="n m">'+(r.cost_per_unit>0?fmt(r.cost_per_unit,2):"—")+'</td></tr>';
-      });
-      h+='</tbody></table></div>';
-      h+='<div class="explain" style="margin-top:8px;font-size:10px"><b>Key:</b>'+
-        '<span><b>Assignments</b> — assignments this person created in the window.</span>'+
-        '<span><b>Workers put on jobs</b> — assignment rows they created (a worker on two assignments counts twice).</span>'+
-        '<span><b>Target qty</b> — the targets of the plans their assignments serve.</span>'+
-        '<span><b>Actual qty</b> — confirmed output delivered on their assignments.</span>'+
-        '<span><b>Achieved</b> — Actual ÷ Target (green ≥90%, amber ≥60%, red below).</span>'+
-        '<span><b>Spent KES</b> — confirmed pay earned on their assignments.</span>'+
-        '<span><b>KES/unit</b> — Spent ÷ Actual: what one unit of output cost under this assigner. The most/least-expensive chips only judge people with real volume (&gt;500 units).</span></div>';
-    }
-    box.innerHTML=h;
-    box.querySelectorAll(".pp-person").forEach(function(a){
-      a.onclick=function(ev){ ev.preventDefault(); openPersonKpi(PP.tab, a.getAttribute("data-person")); };
-    });
-  }
-
-  // ── person KPI popup ──
-  function pkTile(k,v,u,color){
-    return '<div style="border:1px solid var(--line);border-radius:12px;padding:9px 13px;background:var(--wash)">'+
-      '<div style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:600">'+k+'</div>'+
-      '<div style="font-size:17px;font-weight:700;color:'+(color||"var(--ink)")+'">'+v+'</div>'+
-      (u?'<div style="font-size:9.5px;color:var(--mute)">'+u+'</div>':'')+'</div>';
-  }
-  function ensurePkModal(){
-    if(el("wm-pk-overlay")) return;
-    var d=document.createElement("div");
-    d.id="wm-pk-overlay";
-    d.style.cssText="display:none;position:fixed;inset:0;background:rgba(20,18,12,.42);z-index:900;padding:4vh 4vw;overflow:auto";
-    d.innerHTML='<div id="wm-pk-card" style="max-width:1020px;margin:0 auto;background:rgba(250,250,246,.97);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.8);border-radius:18px;box-shadow:0 40px 80px -30px rgba(10,10,10,.45);padding:22px 26px">'+
-      '<div style="display:flex;align-items:flex-start;gap:12px"><div style="flex:1"><div id="wm-pk-title" style="font-size:18px;font-weight:700"></div><div id="wm-pk-sub" style="font-size:11px;color:var(--mute);margin-top:2px"></div></div>'+
-      '<button type="button" id="wm-pk-x" style="border:1px solid var(--line);background:none;border-radius:10px;width:30px;height:30px;font-size:16px;cursor:pointer;color:var(--mute)">&times;</button></div>'+
-      '<div id="wm-pk-body" style="margin-top:14px"><div class="loading">Evaluating&hellip;</div></div></div>';
-    document.body.appendChild(d);
-    el("wm-pk-x").onclick=function(){ d.style.display="none"; };
-    d.addEventListener("click",function(ev){ if(ev.target===d) d.style.display="none"; });
-    document.addEventListener("keydown",function(ev){ if(ev.key==="Escape") d.style.display="none"; });
-  }
-  function openPersonKpi(tab, person){
-    ensurePkModal();
-    var role = tab==="assigners"?"assigner":(tab==="enterers"?"enterer":"creator");
-    var roleName = role==="assigner"?"Assigner":(role==="enterer"?"Actuals enterer":"Plan creator");
-    el("wm-pk-overlay").style.display="block";
-    el("wm-pk-title").textContent=shortUser(person);
-    el("wm-pk-sub").textContent=person+" · "+roleName;
-    el("wm-pk-body").innerHTML='<div class="loading">Evaluating&hellip;</div>';
-    call({action:"person_kpi", role:role, person:person}).then(function(d){
-      if(d.error){ el("wm-pk-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
-      renderPersonKpi(d, role);
-    }).catch(function(e){ el("wm-pk-body").innerHTML='<div class="empty">Could not evaluate: '+esc(e.message)+'</div>'; });
-  }
-  function pkPctColor(v, goodHigh){
-    if(v==null) return "var(--ink)";
-    if(goodHigh) return v>=90?"#0a7a43":(v>=60?"#a06000":"#b91c1c");
-    return v<=5?"#0a7a43":(v<=15?"#a06000":"#b91c1c");
-  }
-  function renderPersonKpi(d, role){
-    var k=d.kpi||{}, rows=d.rows||[];
-    var win=d.window||{};
-    var h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px">';
-    if(role==="creator"){
-      h+=pkTile("Plans", fmt(k.plans), fmt(k.approved)+" approved · "+fmt(k.rejected)+" rejected");
-      h+=pkTile("Achieved", fmt(k.achieved,0)+"%", fmt(k.actual)+" of "+fmt(k.target)+" units", pkPctColor(k.achieved,true));
-      h+=pkTile("Planned", "KES "+fmt(k.planned,0), "what their plans promised");
-      h+=pkTile("Spent", "KES "+fmt(k.spent,0), fmt(k.of_planned,0)+"% of planned");
-      h+=pkTile("KES / unit", k.cost_per_unit>0?fmt(k.cost_per_unit,2):"—", "raw cost of one unit");
-      if(k.vs_peers_pct!=null){
-        var vp=k.vs_peers_pct;
-        h+=pkTile("Vs peers, same tasks", (vp>0?"+":"")+fmt(vp,1)+"%", vp>0?"more expensive than others on the same tasks":"cheaper than others on the same tasks", vp>5?"#b91c1c":(vp<-5?"#0a7a43":"var(--ink)"));
-      }
-      h+=pkTile("Closed early", fmt(k.closed_early), fmt(k.closed_early_pct,0)+"% of their plans — targets not reached", pkPctColor(k.closed_early_pct,false));
-      h+=pkTile("Rejected", fmt(k.rejected_pct,0)+"%", "plans bounced by the approver", pkPctColor(k.rejected_pct,false));
-      if(k.approval_wait_h!=null) h+=pkTile("Approval wait", fmt(k.approval_wait_h,1)+"h", "avg creation → approval");
-    } else if(role==="assigner"){
-      h+=pkTile("Assignments", fmt(k.assignments), fmt(k.rejected)+" rejected");
-      h+=pkTile("Crew fill", fmt(k.fill_pct,0)+"%", "workers put on vs plan crew size", pkPctColor(k.fill_pct,true));
-      h+=pkTile("Achieved", fmt(k.achieved,0)+"%", fmt(k.actual)+" of "+fmt(k.target)+" units", pkPctColor(k.achieved,true));
-      h+=pkTile("Spent", "KES "+fmt(k.spent,0), (k.cost_per_unit>0?fmt(k.cost_per_unit,2)+" per unit":""));
-      h+=pkTile("Substitutions", fmt(k.substitutions), fmt(k.subs_per_asg,1)+" per assignment — crew churn", k.subs_per_asg>2?"#a06000":"var(--ink)");
-      h+=pkTile("Attendance overrides", fmt(k.overrides), "conflicts pushed through on their assignments", k.overrides>0?"#a06000":"#0a7a43");
-      if(k.staffing_wait_h!=null) h+=pkTile("Staffing speed", fmt(k.staffing_wait_h,1)+"h", "avg plan approval → assignment created");
-      h+=pkTile("Rejected", fmt(k.rejected_pct,0)+"%", "assignments bounced", pkPctColor(k.rejected_pct,false));
-    } else {
-      h+=pkTile("Documents", fmt(k.docs), fmt(k.rejected)+" rejected ("+fmt(k.rejected_pct,0)+"%)");
-      h+=pkTile("Qty entered", fmt(k.qty), "units recorded");
-      h+=pkTile("Value entered", "KES "+fmt(k.value,0), "confirmed pay on their documents");
-      h+=pkTile("Entry lag", k.lag_days!=null?fmt(k.lag_days,1)+"d":"—", "avg days from work date to entry — late entry breeds errors", k.lag_days>3?"#b91c1c":(k.lag_days>1.5?"#a06000":"#0a7a43"));
-      h+=pkTile("Absent-day rows", fmt(k.flagged_absent), "their rows on validated marked-Absent days", k.flagged_absent>0?"#a06000":"#0a7a43");
-      h+=pkTile("Zero-pay rows", fmt(k.flagged_zero), "quantities they entered that valued at 0", k.flagged_zero>0?"#b91c1c":"#0a7a43");
-    }
-    h+='</div>';
-    if(rows.length){
-      var isEnt=role==="enterer";
-      h+='<div class="sech" style="margin-top:14px;font-size:10px">'+(role==="creator"?"Their plans":(role==="assigner"?"Their assignments":"Their documents"))+' &middot; window '+esc(win.from||"")+' → '+esc(win.to||"")+'</div>';
-      h+='<div style="max-height:320px;overflow-y:auto"><table><thead><tr>'+
-        '<th>Doc</th><th>Task</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period</th>'+(isEnt?'<th>Entered</th>':'')+
-        (role==="assigner"?'<th class="n">Crew</th>':'')+
-        (isEnt?'':'<th class="n">Target</th>')+'<th class="n">Actual</th>'+
-        (isEnt?'':'<th class="n">Achieved</th>')+'<th class="n">'+(role==="creator"?"Spent":"Spent KES")+'</th><th>Status</th></tr></thead><tbody>';
-      rows.forEach(function(r){
-        h+='<tr><td class="m" style="font-size:10px">'+esc(r.doc)+'</td><td>'+esc(taskName(r.task))+'</td><td>'+esc(r.farm||"")+'</td>'+
-          '<td class="m" style="font-size:10px">'+esc(r.period||"")+'</td>'+
-          (isEnt?'<td class="m" style="font-size:10px">'+esc(r.entered||"")+'</td>':'')+
-          (role==="assigner"?'<td class="n m">'+esc(r.crew||"")+'</td>':'')+
-          (isEnt?'':'<td class="n m">'+fmt(r.target)+'</td>')+'<td class="n m">'+fmt(r.actual)+'</td>'+
-          (isEnt?'':'<td class="n">'+ppPct(r.achieved)+'</td>')+'<td class="n m">'+fmt(r.spent,0)+'</td>'+
-          '<td style="font-size:10px">'+esc(r.state||"")+'</td></tr>';
-      });
-      h+='</tbody></table></div>';
-    }
-    el("wm-pk-body").innerHTML=h;
-  }
-
-
   function load(){
     el("wm-body").innerHTML=skeleton();
     call({action:"dash"}).then(function(D){
@@ -3158,7 +3474,6 @@
       render(D);
       wirePex();
       wireCostCentre();
-      wireTracker();
       loadSubs();
     }).catch(function(e){
       el("wm-body").innerHTML='<div class="err">Could not load dashboard: '+esc(e&&e.message?e.message:e)+' &mdash; <a href="#" onclick="location.reload();return false;">retry</a></div>';

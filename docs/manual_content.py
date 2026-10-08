@@ -322,10 +322,6 @@ def sections():
 			  "workers keep all recorded work and pay — release only stops new quantities."),
 
 		("h2", "Dashboard"),
-		("b", "Activity across the pipeline — stage cards for Planned, Assigned (with active "
-			  "employees split into task workers and permanent staff), Actual and Payment."),
-		("b", "Workers & value per farm — per-farm cards: assigned workers, active employees "
-			  "(task/permanent split), awaiting actuals, confirmed, quantities and value."),
 		("b", "Delivery timeline — planned vs staffed vs delivered per day, with farm and date "
 			  "filters and quantity/KES toggle."),
 		("b", "Field intelligence (beside the timeline) — two tabs: Efficiency (Ha per man-day "
@@ -340,31 +336,8 @@ def sections():
 			  "toggle reads the same money by section instead of by block; either way, click a "
 			  "row for the tasks, workers, weekly trend and GL accounts behind it."),
 		("b", "Crew movements — substitution history: who left, who joined, swaps."),
-		("h3", "Pipeline performers"),
-		("p", "Planner and assigner economics, per person, with most/least-expensive callouts "
-			  "(judged only on people with real volume, more than 500 units)."),
-		("table", ("Column key", ["Column", "Meaning"], [
-			["Plans", "Approved plans created in the window"],
-			["Target qty", "The output those plans promised"],
-			["Actual qty", "Confirmed output delivered"],
-			["Achieved", "Actual ÷ Target (green 90%+, amber 60%+, red below)"],
-			["Budget KES", "What the plans are worth if fully delivered (rate × target)"],
-			["Spent KES", "Confirmed pay earned on them"],
-			["Of budget", "Spent ÷ Budget"],
-			["KES/unit", "Spent ÷ Actual — what one unit of output cost under this person"],
-		])),
-		("note", "'Of budget' being low is NOT automatically a saving. Read it with Achieved: "
-				 "50% spent at 50% achieved just means half the work happened."),
-		("p", "The Assigners tab uses the same definitions over their assignments, plus Workers "
-			  "put on jobs (assignment rows they created — a worker on two assignments counts "
-			  "twice). A third tab evaluates Actuals enterers: documents, worker-days, value "
-			  "entered, average entry lag and rejections. Click any name for that person's full "
-			  "evaluation popup: volume, delivery (achieved %, closed-early rate), money "
-			  "(budget vs spent, KES/unit, and a task-adjusted 'vs peers on the same tasks' "
-			  "benchmark that removes task-mix unfairness), speed (approval wait / staffing "
-			  "speed / entry lag), quality (rejections, substitutions, attendance overrides, "
-			  "flagged rows) and the list of their documents."),
-
+		("b", "Master plans — progress & money: a summary per farm (work done, budget used, earned against planned, plans behind now, ended short and over budget), then every plan that starts in the chosen dates with its status read against the share of its days gone by. Open a plan for its money trail (planned → requested → awaiting approval → earned → paid out), its activities, requests, crews, actuals, people and payment runs. A key under the card defines every term."),
+		("b", "Activities, people & blocks — one explorer with a shared filter bar. Highlights pick out what stands out (the activity furthest over its rate, the furthest below target, the top earner, days paid with no check-in scan, confirmed pay not yet paid, the requests delivering least). The Trends chart draws money, performance and people over time for the whole estate, a master plan, an activity, an activity within a plan, a worker or a block, or compares up to six of them. Four lenses list Activities, Workers, Staff and Blocks, each as a list or a heatmap by week; open any row for everything behind it. A key defines every term."),
 		("h2", "Field intelligence, explained"),
 		("p", "The Field intelligence card sits beside the Delivery timeline on the dashboard. "
 			  "It answers two everyday management questions: 'what does our work actually cost "

@@ -163,6 +163,111 @@ def wm_dashboard(**kwargs):
         return sorted(wmsec_out, key=lambda r: -r["labour_spend"])
 
 
+    # ===== ACTIVITY, PEOPLE & BLOCK EXPLORER: shared pieces =====
+    # Every explorer figure comes from the same rows: a worker's recorded day
+    # (Work Actuals Employee), joined up to its actual, its crew and the request
+    # behind it. Rejected actuals and rejected requests are never counted. The
+    # helpers below build that join once, so the four lenses, the drill-downs and the
+    # chart lines cannot drift apart in what they count.
+    WMX_JOIN = """
+        FROM `tabWork Actuals Employee` ae
+        INNER JOIN `tabWork Management Actuals` ac ON ae.parent = ac.name
+        INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+        INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+        WHERE IFNULL(ac.workflow_state,'') != 'Rejected'
+          AND IFNULL(pr.workflow_state,'') != 'Rejected'
+          AND ae.work_date >= %(xf)s AND ae.work_date <= %(xt)s
+    """
+    # The same rows, each knowing whether a payment run marked Paid carries it. The
+    # set of paid (actual, worker) pairs is built once and joined, not probed per row:
+    # a correlated lookup per worker-day took 22s over eight weeks of the estate.
+    WMX_JOIN_PAID = WMX_JOIN.replace("""
+        WHERE IFNULL(ac.workflow_state,'') != 'Rejected'""", """
+        LEFT JOIN (SELECT DISTINCT pl.actuals, pl.employee
+                   FROM `tabWork Payment Line` pl
+                   INNER JOIN `tabWork Management Payment` pp ON pl.parent = pp.name
+                   WHERE pp.workflow_state = 'Paid') wpp
+               ON wpp.actuals = ae.parent AND wpp.employee = ae.employee
+        WHERE IFNULL(ac.workflow_state,'') != 'Rejected'""")
+    WMX_ISPAID = "wpp.actuals IS NOT NULL"
+    # Monday-started weeks, the pay week this app runs on
+    WMX_WEEK = "DATE_SUB(ae.work_date, INTERVAL WEEKDAY(ae.work_date) DAY)"
+    # output against the request's daily target, per worker-day: a ratio, so it can
+    # be averaged across activities without ever adding hours to trees
+    WMX_OUT = "AVG(CASE WHEN pr.daily_target > 0 THEN ae.actual_quantity / pr.daily_target END)"
+    # pay against output valued at the rate, over paid days only (salaried output
+    # costs no piece-rate pay and would read as a bargain)
+    WMX_PAID = "SUM(CASE WHEN ae.amount > 0 THEN ae.amount ELSE 0 END)"
+    WMX_RATED = "SUM(CASE WHEN ae.amount > 0 THEN ae.actual_quantity * pr.rate ELSE 0 END)"
+    WMX_CONF = "SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN ae.amount ELSE 0 END)"
+
+
+    def wmx_range():
+        """from/to/farm from the request, bounded by the caller's farms."""
+        xf = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -55))
+        xt = frappe.form_dict.get("to_date") or frappe.utils.today()
+        xfarm = (frappe.form_dict.get("farm") or "").strip()
+        args = {"xf": xf, "xt": xt}
+        sql = ""
+        if xfarm:
+            sql = " AND ac.farm = %(xfarm)s"
+            args["xfarm"] = xfarm
+        elif FARMS:
+            sql = " AND ac.farm IN %(xfarms)s"
+            args["xfarms"] = FARMS
+        return sql, args
+
+
+    def wmx_plan_condition(plan_name, args, alias):
+        """The master-plan attribution rule, the one the plans card uses: a request
+        belongs to the plan it names; only a request naming none falls back to sitting
+        inside the plan's farm and period."""
+        mp = frappe.db.get_value("Work Management Master Plan", plan_name,
+            ["farm", "period_from", "period_to"], as_dict=True)
+        if not mp:
+            return " AND 1=0"
+        args["xplan"] = plan_name
+        args["xpfarm"] = mp.farm
+        args["xpfrom"] = mp.period_from
+        args["xpto"] = mp.period_to
+        return (" AND (" + alias + ".master_plan = %(xplan)s OR (IFNULL(" + alias + ".master_plan,'') = ''"
+                " AND " + alias + ".farm = %(xpfarm)s AND " + alias + ".from_date >= %(xpfrom)s"
+                " AND " + alias + ".to_date <= %(xpto)s))")
+
+
+    def wmx_subject(kind, key, plan, args):
+        """SQL narrowing the worker-day rows to one subject."""
+        sql = ""
+        if plan:
+            sql = sql + wmx_plan_condition(plan, args, "pr")
+        if kind == "activity" and key:
+            args["xkey"] = key
+            sql = sql + " AND ac.task = %(xkey)s"
+        elif kind == "worker" and key:
+            args["xkey"] = key
+            sql = sql + " AND ae.employee = %(xkey)s"
+        elif kind == "block" and key:
+            args["xkey"] = key
+            sql = sql + " AND ac.block_section = %(xkey)s"
+        return sql
+
+
+    def wmx_pct(num, den):
+        return frappe.utils.flt(num / den * 100, 1) if den else None
+
+
+    def wmx_scan_from():
+        """The first day this site has any check-in scan. Before it, a day with no scan
+        says nothing about the worker -- the scanner simply was not there yet."""
+        first = frappe.db.sql("SELECT MIN(DATE(time)) FROM `tabEmployee Checkin`")
+        return first[0][0] if first and first[0][0] else None
+
+
+    def wmx_monday(d):
+        d = frappe.utils.getdate(d)
+        return frappe.utils.add_days(d, -d.weekday())
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -3499,7 +3604,11 @@ def wm_dashboard(**kwargs):
         # PLANNED for (the plan's own value), what was REQUESTED against it, and what
         # was SPENT delivering it. A plan can be fully requested and nothing done, or
         # under-requested and fully delivered; only holding the three apart says which.
-        pc_from = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -56)
+        # A plan belongs to the range when it STARTS in it, the same rule the card
+        # groups by (the week of period_from). Overlap put a month-long plan under
+        # every range, so 4 weeks, 8 weeks and All all came back the same. The
+        # default is the card's "8 weeks" button: today and the 55 days before it.
+        pc_from = frappe.form_dict.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -55)
         pc_to = frappe.form_dict.get("to_date") or frappe.utils.today()
         pc_farm = frappe.form_dict.get("farm") or ""
         pc_args = {"a": pc_from, "b": pc_to}
@@ -3507,11 +3616,15 @@ def wm_dashboard(**kwargs):
         if pc_farm:
             pc_where = " AND farm = %(fm)s"
             pc_args["fm"] = pc_farm
+        elif FARMS:
+            # no farm named means every farm this caller may see, not every farm
+            pc_where = " AND farm IN %(fms)s"
+            pc_args["fms"] = FARMS
         pc_out = []
         for pc in frappe.db.sql("""
             SELECT name, farm, period_from, period_to, workflow_state, total_cost, total_man_days
             FROM `tabWork Management Master Plan`
-            WHERE period_from <= %(b)s AND period_to >= %(a)s""" + pc_where + """
+            WHERE period_from >= %(a)s AND period_from <= %(b)s""" + pc_where + """
             ORDER BY period_from DESC, farm
         """, pc_args, as_dict=True):
             # WHICH TASKS THE PLAN ACTUALLY BUDGETS. Requested is counted only over
@@ -3558,18 +3671,41 @@ def wm_dashboard(**kwargs):
                   AND ac.workflow_state = 'CONFIRMED'
             """, {"f": pc.farm, "plan": pc.name, "pfrom": pc.period_from, "pto": pc.period_to,
                   "tk": pc_tasks}, as_dict=True)[0]
-            # quantity completion is summed per activity so a line delivered twice over
-            # cannot mask one never started -- each line contributes at most its own share
+            pc_pend = frappe.db.sql("""
+                SELECT COALESCE(SUM(ac.total_payment),0) c
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                WHERE pr.farm = %(f)s AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                  AND (pr.master_plan = %(plan)s
+                       OR (IFNULL(pr.master_plan,'') = ''
+                           AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s))
+                  AND pr.task IN %(tk)s
+                  AND IFNULL(ac.workflow_state,'') NOT IN ('CONFIRMED','Rejected')
+            """, {"f": pc.farm, "plan": pc.name, "pfrom": pc.period_from, "pto": pc.period_to,
+                  "tk": pc_tasks}, as_dict=True)[0]
+            # quantity completion is taken per activity so a line delivered twice over
+            # cannot mask one never started -- each line contributes at most its own share.
+            # The shares are weighted by each line's planned value, never by adding the
+            # quantities up: a plan's lines are in different units (hours, metres, tubes),
+            # and a sum across them meant nothing.
             pc_pq = 0.0
             pc_dq = 0.0
+            pc_wv = 0.0
+            pc_wr = 0.0
+            pc_wd = 0.0
             for pc_a in frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": pc.name, "consultant_state": "OK"},
-                    fields=["task", "work_qty"]):
+                    fields=["task", "work_qty", "cost"]):
                 pc_bq = frappe.utils.flt(pc_a.work_qty)
                 if pc_bq <= 0:
                     continue
+                # q is confirmed output; r adds what is recorded and still in approval, so a
+                # crew working this week does not read as idle while sign-off catches up
                 pc_ad = frappe.db.sql("""
-                    SELECT COALESCE(SUM(ac.total_actual_qty),0) q
+                    SELECT COALESCE(SUM(CASE WHEN ac.workflow_state = 'CONFIRMED'
+                                        THEN ac.total_actual_qty ELSE 0 END),0) q,
+                           COALESCE(SUM(ac.total_actual_qty),0) r
                     FROM `tabWork Management Actuals` ac
                     INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
                     INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
@@ -3577,17 +3713,18 @@ def wm_dashboard(**kwargs):
                       AND IFNULL(pr.workflow_state,'') != 'Rejected'
                       AND (pr.master_plan = %(plan)s
                            OR (IFNULL(pr.master_plan,'') = ''
-                               AND (pr.master_plan = %(plan)s
-                               OR (IFNULL(pr.master_plan,'') = ''
-                                   AND (pr.master_plan = %(plan)s
-                        OR (IFNULL(pr.master_plan,'') = ''
-                            AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s))))))
-                      AND ac.workflow_state = 'CONFIRMED'
+                               AND pr.from_date >= %(pfrom)s AND pr.to_date <= %(pto)s))
+                      AND IFNULL(ac.workflow_state,'') != 'Rejected'
                 """, {"f": pc.farm, "t": pc_a.task,
                       "plan": pc.name, "pfrom": pc.period_from, "pto": pc.period_to}, as_dict=True)[0]
                 pc_dqi = frappe.utils.flt(pc_ad.q)
                 pc_pq = pc_pq + pc_bq
                 pc_dq = pc_dq + (pc_bq if pc_dqi > pc_bq else pc_dqi)
+                pc_cw = frappe.utils.flt(pc_a.cost) or pc_bq
+                pc_wd = pc_wd + pc_cw
+                pc_wv = pc_wv + pc_cw * (1 if pc_dqi >= pc_bq else pc_dqi / pc_bq)
+                pc_rqi = frappe.utils.flt(pc_ad.r)
+                pc_wr = pc_wr + pc_cw * (1 if pc_rqi >= pc_bq else pc_rqi / pc_bq)
             pc_val = frappe.utils.flt(pc.total_cost, 2)
             pc_out.append({
                 "plan": pc.name, "farm": pc.farm, "state": pc.workflow_state,
@@ -3598,8 +3735,10 @@ def wm_dashboard(**kwargs):
                 "requested_count": frappe.utils.cint(pc_req.n),
                 "earned_value": frappe.utils.flt(pc_act.c, 2),
                 "actuals_count": frappe.utils.cint(pc_act.n),
+                "pending_value": frappe.utils.flt(pc_pend.c, 2),
                 "target_qty": pc_pq, "done_qty": pc_dq,
-                "completion": frappe.utils.flt(pc_dq / pc_pq * 100, 1) if pc_pq > 0 else 0,
+                "completion": frappe.utils.flt(pc_wv / pc_wd * 100, 1) if pc_wd > 0 else 0,
+                "recorded_completion": frappe.utils.flt(pc_wr / pc_wd * 100, 1) if pc_wd > 0 else 0,
                 "requested_pct": frappe.utils.flt(frappe.utils.flt(pc_req.c) / pc_val * 100, 1) if pc_val > 0 else 0,
                 "offplan_value": frappe.utils.flt(pc_off.c, 2),
                 "offplan_count": frappe.utils.cint(pc_off.n),
@@ -3607,6 +3746,685 @@ def wm_dashboard(**kwargs):
         out["plans"] = pc_out
         out["from_date"] = str(pc_from)
         out["to_date"] = str(pc_to)
+
+    elif action == "mp_detail":
+        # ONE MASTER PLAN, EVERYTHING THAT HAPPENED UNDER IT. The completion card says
+        # how far a plan got; this says why: what each activity asked for and got, the
+        # requests raised against it, the crews put on them, what was recorded, who did
+        # the work and what they earned, and how much of that has actually been paid.
+        #
+        # Attribution is the completion card's own rule, so the two cannot disagree: a
+        # request belongs to the plan it names, and only a request naming no plan falls
+        # back to sitting inside the plan's farm and period.
+        md_name = frappe.form_dict.get("plan") or ""
+        md_plan = frappe.db.get_value("Work Management Master Plan", md_name,
+            ["name", "plan_name", "farm", "period_from", "period_to", "workflow_state",
+             "total_cost", "total_man_days", "raised_by", "raised_on",
+             "gm_approved_by", "gm_approved_on"], as_dict=True) if md_name else None
+        if not md_plan:
+            out["error"] = "No master plan " + str(md_name)
+        elif FARMS and md_plan.farm not in FARMS:
+            # the guard above only sees a farm named in the request; this one is named
+            # by the plan, so it is checked here
+            out["error"] = str(md_plan.farm) + " is not a farm you are working."
+        else:
+            md_acts = frappe.db.get_all("Work Management Master Plan Activity",
+                filters={"parent": md_plan.name},
+                fields=["task", "task_subject", "uom", "rate", "man_days", "days", "work_qty",
+                        "cost", "consultant_state"],
+                order_by="idx")
+            md_ok = {}
+            for md_a in md_acts:
+                if md_a.consultant_state == "OK":
+                    md_ok[md_a.task] = 1
+
+            md_reqs = frappe.db.sql("""
+                SELECT name, task, task_subject, block_section, from_date, to_date,
+                       quantity, uom, total_cost, workflow_state, requested_by,
+                       people_per_day, person_days
+                FROM `tabWork Management Planner`
+                WHERE farm = %(f)s
+                  AND (master_plan = %(plan)s
+                       OR (IFNULL(master_plan,'') = ''
+                           AND from_date >= %(pfrom)s AND to_date <= %(pto)s))
+                ORDER BY from_date, name
+            """, {"f": md_plan.farm, "plan": md_plan.name,
+                  "pfrom": md_plan.period_from, "pto": md_plan.period_to}, as_dict=True)
+            md_req_names = [r.name for r in md_reqs] or ["__none__"]
+
+            md_asgs = frappe.db.sql("""
+                SELECT a.name, a.planner_request, a.task, a.block_section, a.from_date,
+                       a.to_date, a.workflow_state, a.assigned_by,
+                       SUM(CASE WHEN IFNULL(we.status,'Active') = 'Active' THEN 1 ELSE 0 END) workers
+                FROM `tabWork Management Assigner` a
+                LEFT JOIN `tabWork Assignment Employee` we ON we.parent = a.name
+                WHERE a.planner_request IN %(rq)s
+                GROUP BY a.name
+                ORDER BY a.from_date, a.name
+            """, {"rq": md_req_names}, as_dict=True)
+
+            md_actuals = frappe.db.sql("""
+                SELECT ac.name, asg.planner_request, pr.task, ac.from_date, ac.to_date,
+                       ac.workflow_state, ac.total_actual_qty qty, ac.total_payment pay,
+                       ac.custom_salaried_qty salaried_qty, ac.actual_people people,
+                       ac.entered_by
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                WHERE pr.name IN %(rq)s
+                ORDER BY ac.from_date, ac.name
+            """, {"rq": md_req_names}, as_dict=True)
+            md_act_names = [a.name for a in md_actuals if a.workflow_state != "Rejected"] or ["__none__"]
+
+            # per-activity roll-up, from the rows already read
+            md_req_state = {}
+            for r in md_reqs:
+                md_req_state[r.name] = r.workflow_state
+            md_by_task = {}
+            for md_a in md_acts:
+                md_by_task[md_a.task] = {"req_qty": 0.0, "req_value": 0.0, "done_qty": 0.0,
+                                         "salaried_qty": 0.0,
+                                         "pending_qty": 0.0, "earned": 0.0, "pending_pay": 0.0,
+                                         "requests": 0}
+            md_money = {"requested": 0.0, "offplan": 0.0, "offplan_count": 0,
+                        "earned": 0.0, "pending": 0.0}
+            for r in md_reqs:
+                if r.workflow_state == "Rejected":
+                    continue
+                if r.task in md_ok:
+                    md_money["requested"] = md_money["requested"] + frappe.utils.flt(r.total_cost)
+                else:
+                    md_money["offplan"] = md_money["offplan"] + frappe.utils.flt(r.total_cost)
+                    md_money["offplan_count"] = md_money["offplan_count"] + 1
+                if r.task in md_by_task:
+                    md_t = md_by_task[r.task]
+                    md_t["req_qty"] = md_t["req_qty"] + frappe.utils.flt(r.quantity)
+                    md_t["req_value"] = md_t["req_value"] + frappe.utils.flt(r.total_cost)
+                    md_t["requests"] = md_t["requests"] + 1
+            for a in md_actuals:
+                if a.workflow_state == "Rejected" or md_req_state.get(a.planner_request) == "Rejected":
+                    continue
+                md_conf = a.workflow_state == "CONFIRMED"
+                if a.task in md_ok:
+                    if md_conf:
+                        md_money["earned"] = md_money["earned"] + frappe.utils.flt(a.pay)
+                    else:
+                        md_money["pending"] = md_money["pending"] + frappe.utils.flt(a.pay)
+                if a.task in md_by_task:
+                    md_t = md_by_task[a.task]
+                    if md_conf:
+                        md_t["done_qty"] = md_t["done_qty"] + frappe.utils.flt(a.qty)
+                        # output by salaried staff costs no piece-rate pay, which is why
+                        # work done can run ahead of money earned
+                        md_t["salaried_qty"] = md_t["salaried_qty"] + frappe.utils.flt(a.salaried_qty)
+                        md_t["earned"] = md_t["earned"] + frappe.utils.flt(a.pay)
+                    else:
+                        md_t["pending_qty"] = md_t["pending_qty"] + frappe.utils.flt(a.qty)
+                        md_t["pending_pay"] = md_t["pending_pay"] + frappe.utils.flt(a.pay)
+
+            md_activities = []
+            for md_a in md_acts:
+                md_t = md_by_task.get(md_a.task) or {}
+                md_target = frappe.utils.flt(md_a.work_qty)
+                md_done = frappe.utils.flt(md_t.get("done_qty"))
+                md_activities.append({
+                    "task": md_a.task, "subject": md_a.task_subject, "uom": md_a.uom,
+                    "rate": frappe.utils.flt(md_a.rate, 4), "man_days": frappe.utils.flt(md_a.man_days, 2),
+                    "target_qty": md_target, "planned_value": frappe.utils.flt(md_a.cost, 2),
+                    "in_plan": 1 if md_a.task in md_ok else 0, "consultant_state": md_a.consultant_state,
+                    "requests": md_t.get("requests") or 0,
+                    "req_qty": frappe.utils.flt(md_t.get("req_qty"), 2),
+                    "req_value": frappe.utils.flt(md_t.get("req_value"), 2),
+                    "done_qty": frappe.utils.flt(md_done, 2),
+                    "pending_qty": frappe.utils.flt(md_t.get("pending_qty"), 2),
+                    "salaried_qty": frappe.utils.flt(md_t.get("salaried_qty"), 2),
+                    "earned": frappe.utils.flt(md_t.get("earned"), 2),
+                    "pending_pay": frappe.utils.flt(md_t.get("pending_pay"), 2),
+                    "done_pct": frappe.utils.flt(md_done / md_target * 100, 1) if md_target > 0 else 0,
+                })
+
+            # who did the work: every recorded day on this plan's actuals, rejected ones aside
+            md_people = frappe.db.sql("""
+                SELECT ae.employee, MAX(ae.employee_name) employee_name,
+                       MAX(ae.employment_type) employment_type,
+                       COUNT(DISTINCT ae.work_date) days,
+                       COALESCE(SUM(ae.actual_quantity),0) qty,
+                       COALESCE(SUM(ae.amount),0) amount,
+                       COALESCE(SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN ae.amount ELSE 0 END),0) confirmed,
+                       COALESCE(SUM(CASE WHEN ae.paid = 1 THEN ae.amount ELSE 0 END),0) paid,
+                       MIN(ae.work_date) first_day, MAX(ae.work_date) last_day
+                FROM `tabWork Actuals Employee` ae
+                INNER JOIN `tabWork Management Actuals` ac ON ae.parent = ac.name
+                WHERE ac.name IN %(ac)s
+                GROUP BY ae.employee
+                ORDER BY amount DESC, employee_name
+            """, {"ac": md_act_names}, as_dict=True)
+
+            # payment runs carrying this plan's actuals, and how much of each is this plan's
+            md_pays = frappe.db.sql("""
+                SELECT pl.parent name, p.workflow_state, p.employee, p.employee_name,
+                       p.period_from, p.period_to, COALESCE(SUM(pl.amount),0) amount
+                FROM `tabWork Payment Line` pl
+                INNER JOIN `tabWork Management Payment` p ON pl.parent = p.name
+                WHERE pl.actuals IN %(ac)s
+                GROUP BY pl.parent
+                ORDER BY p.period_from DESC, p.employee_name
+            """, {"ac": md_act_names}, as_dict=True)
+            md_paid = 0.0
+            md_in_runs = 0.0
+            for md_p in md_pays:
+                md_in_runs = md_in_runs + frappe.utils.flt(md_p.amount)
+                if md_p.workflow_state == "Paid":
+                    md_paid = md_paid + frappe.utils.flt(md_p.amount)
+
+            md_planned = frappe.utils.flt(md_plan.total_cost, 2)
+            out["plan"] = md_plan
+            out["money"] = {
+                "planned": md_planned,
+                "requested": frappe.utils.flt(md_money["requested"], 2),
+                "offplan": frappe.utils.flt(md_money["offplan"], 2),
+                "offplan_count": md_money["offplan_count"],
+                "earned": frappe.utils.flt(md_money["earned"], 2),
+                "pending": frappe.utils.flt(md_money["pending"], 2),
+                "in_runs": frappe.utils.flt(md_in_runs, 2),
+                "paid": frappe.utils.flt(md_paid, 2),
+                "unpaid_runs": frappe.utils.flt(md_in_runs - md_paid, 2),
+                # confirmed work no payment run has picked up yet
+                "not_in_run": frappe.utils.flt(md_money["earned"] - md_in_runs, 2) if md_money["earned"] > md_in_runs else 0,
+                "people": len(md_people),
+                "person_days": frappe.utils.cint(frappe.db.sql("""
+                    SELECT COUNT(*) FROM (SELECT DISTINCT ae.employee, ae.work_date
+                    FROM `tabWork Actuals Employee` ae WHERE ae.parent IN %(ac)s) d
+                """, {"ac": md_act_names})[0][0]),
+            }
+            out["activities"] = md_activities
+            out["requests"] = md_reqs
+            out["assignments"] = md_asgs
+            out["actuals"] = md_actuals
+            out["people"] = md_people
+            out["payments"] = md_pays
+
+    elif action == "ex_lens":
+        # ONE LENS OF THE EXPLORER: activities, workers, staff or blocks, one row each,
+        # over the filter's dates and farms. heat=1 adds the same rows against weeks.
+        ex_lens = frappe.form_dict.get("lens") or "activities"
+        ex_heat = frappe.utils.cint(frappe.form_dict.get("heat"))
+        ex_sql, ex_args = wmx_range()
+        ex_rows = []
+        ex_grid = {}
+        if ex_lens == "activities":
+            ex_rows = frappe.db.sql("""
+                SELECT ac.task task, MAX(pr.task_subject) subject, MAX(pr.uom) uom,
+                       COUNT(*) person_days, COUNT(DISTINCT ae.employee) people,
+                       COALESCE(SUM(ae.actual_quantity),0) qty,
+                       COALESCE(SUM(ae.amount),0) recorded,
+                       """ + WMX_CONF + """ confirmed,
+                       """ + WMX_OUT + """ out_ratio,
+                       """ + WMX_PAID + """ paid_amt, """ + WMX_RATED + """ rated
+                """ + WMX_JOIN + ex_sql + """
+                GROUP BY ac.task
+            """, ex_args, as_dict=True)
+            ex_req = {}
+            ex_rsql = ex_sql.replace("ac.farm", "farm")
+            for r in frappe.db.sql("""
+                SELECT task, COALESCE(SUM(quantity),0) q FROM `tabWork Management Planner`
+                WHERE IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date >= %(xf)s AND from_date <= %(xt)s""" + ex_rsql + """
+                GROUP BY task
+            """, ex_args, as_dict=True):
+                ex_req[r.task] = frappe.utils.flt(r.q)
+            for r in ex_rows:
+                r["requested_qty"] = ex_req.get(r.task) or 0
+                r["done_pct"] = wmx_pct(r.qty, r["requested_qty"])
+                r["out_pct"] = frappe.utils.flt(r.out_ratio * 100, 1) if r.out_ratio is not None else None
+                r["cost_pct"] = wmx_pct(r.paid_amt, r.rated)
+                r["key"] = r.task
+            ex_trend = frappe.db.sql("""
+                SELECT ac.task k, """ + WMX_WEEK + """ wk, COALESCE(SUM(ae.amount),0) v
+                """ + WMX_JOIN + ex_sql + """ GROUP BY ac.task, wk
+            """, ex_args, as_dict=True)
+            if ex_heat:
+                for r in frappe.db.sql("""
+                    SELECT ac.task k, """ + WMX_WEEK + """ wk, """ + WMX_OUT + """ v
+                    """ + WMX_JOIN + ex_sql + """ GROUP BY ac.task, wk
+                """, ex_args, as_dict=True):
+                    ex_grid.setdefault(r.k, {})[str(r.wk)] = frappe.utils.flt(r.v * 100, 1) if r.v is not None else None
+        elif ex_lens == "workers":
+            ex_rows = frappe.db.sql("""
+                SELECT ae.employee employee, MAX(ae.employee_name) name,
+                       MAX(ae.employment_type) employment_type, MAX(ac.farm) farm,
+                       COUNT(DISTINCT ac.farm) farms, COUNT(DISTINCT ae.work_date) days,
+                       COALESCE(SUM(ae.actual_quantity),0) qty,
+                       COALESCE(SUM(ae.amount),0) recorded,
+                       """ + WMX_CONF + """ confirmed,
+                       """ + WMX_OUT + """ out_ratio
+                """ + WMX_JOIN + ex_sql + """
+                GROUP BY ae.employee
+            """, ex_args, as_dict=True)
+            # what of each worker's pay a payment run has marked Paid
+            ex_paid = {}
+            for r in frappe.db.sql("""
+                SELECT ae.employee k, COALESCE(SUM(ae.amount),0) v
+                """ + WMX_JOIN_PAID + ex_sql + """
+                  AND """ + WMX_ISPAID + """
+                GROUP BY ae.employee
+            """, ex_args, as_dict=True):
+                ex_paid[r.k] = frappe.utils.flt(r.v)
+            # paid days with no check-in scan that day, counted only from the first day
+            # this site has scans at all
+            ex_noscan = {}
+            ex_sf = wmx_scan_from()
+            if ex_sf:
+                ex_args["xsf"] = ex_sf
+                for r in frappe.db.sql("""
+                    SELECT ae.employee k, COUNT(DISTINCT ae.work_date) v
+                    """ + WMX_JOIN + ex_sql + """
+                      AND ae.amount > 0 AND ae.work_date >= %(xsf)s
+                      AND NOT EXISTS (SELECT 1 FROM `tabEmployee Checkin` ec
+                                      WHERE ec.employee = ae.employee
+                                        AND ec.time >= ae.work_date
+                                        AND ec.time < DATE_ADD(ae.work_date, INTERVAL 1 DAY))
+                    GROUP BY ae.employee
+                """, ex_args, as_dict=True):
+                    ex_noscan[r.k] = frappe.utils.cint(r.v)
+            # days recorded on two farms at once
+            ex_multi = {}
+            for r in frappe.db.sql("""
+                SELECT d.k k, COUNT(*) v FROM (
+                    SELECT ae.employee k, ae.work_date dd
+                    """ + WMX_JOIN + ex_sql + """
+                    GROUP BY ae.employee, ae.work_date HAVING COUNT(DISTINCT ac.farm) > 1
+                ) d GROUP BY d.k
+            """, ex_args, as_dict=True):
+                ex_multi[r.k] = frappe.utils.cint(r.v)
+            for r in ex_rows:
+                r["key"] = r.employee
+                r["paid"] = ex_paid.get(r.employee) or 0
+                r["unpaid_confirmed"] = frappe.utils.flt(r.confirmed) - r["paid"] if frappe.utils.flt(r.confirmed) > r["paid"] else 0
+                r["noscan_days"] = ex_noscan.get(r.employee) or 0
+                r["multi_farm_days"] = ex_multi.get(r.employee) or 0
+                r["out_pct"] = frappe.utils.flt(r.out_ratio * 100, 1) if r.out_ratio is not None else None
+            ex_trend = []
+            out["scan_from"] = str(ex_sf) if ex_sf else None
+            if ex_heat:
+                for r in frappe.db.sql("""
+                    SELECT ae.employee k, """ + WMX_WEEK + """ wk, COALESCE(SUM(ae.amount),0) v
+                    """ + WMX_JOIN + ex_sql + """ GROUP BY ae.employee, wk
+                """, ex_args, as_dict=True):
+                    ex_grid.setdefault(r.k, {})[str(r.wk)] = frappe.utils.flt(r.v, 2)
+        elif ex_lens == "blocks":
+            ex_rows = frappe.db.sql("""
+                SELECT ac.block_section block, MAX(ac.farm) farm,
+                       COUNT(*) person_days, COUNT(DISTINCT ae.employee) people,
+                       COUNT(DISTINCT ac.task) activities,
+                       COALESCE(SUM(ae.amount),0) recorded,
+                       """ + WMX_CONF + """ confirmed,
+                       """ + WMX_OUT + """ out_ratio
+                """ + WMX_JOIN + ex_sql + """
+                GROUP BY ac.block_section
+            """, ex_args, as_dict=True)
+            ex_area = {}
+            ex_bnames = [r.block for r in ex_rows if r.block] or ["__none__"]
+            for w in frappe.db.get_all("Warehouse", filters={"name": ["in", ex_bnames]},
+                    fields=["name", "custom_area_ha"]):
+                ex_area[w.name] = frappe.utils.flt(w.custom_area_ha)
+            for r in ex_rows:
+                r["key"] = r.block
+                r["area_ha"] = ex_area.get(r.block) or 0
+                r["kes_per_ha"] = frappe.utils.flt(frappe.utils.flt(r.recorded) / r["area_ha"], 2) if r["area_ha"] else None
+                r["out_pct"] = frappe.utils.flt(r.out_ratio * 100, 1) if r.out_ratio is not None else None
+            ex_trend = frappe.db.sql("""
+                SELECT ac.block_section k, """ + WMX_WEEK + """ wk, COALESCE(SUM(ae.amount),0) v
+                """ + WMX_JOIN + ex_sql + """ GROUP BY ac.block_section, wk
+            """, ex_args, as_dict=True)
+            if ex_heat:
+                for r in ex_trend:
+                    ex_grid.setdefault(r.k, {})[str(r.wk)] = frappe.utils.flt(r.v, 2)
+        else:
+            # STAFF: everyone who raises, assigns, records or approves work. Requested
+            # and delivered are counted on the requests a person raised; delivered is
+            # confirmed pay on them. Approval time is how long their own sign-offs took.
+            ex_rsql = ex_sql.replace("ac.farm", "pr.farm")
+            ex_people = {}
+
+            def ex_person(p):
+                if p not in ex_people:
+                    ex_people[p] = {"key": p, "user": p, "requests": 0, "requested": 0.0,
+                                    "delivered": 0.0, "crews": 0, "actuals": 0,
+                                    "approvals": 0, "approve_minutes": []}
+                return ex_people[p]
+
+            for r in frappe.db.sql("""
+                SELECT pr.requested_by p, COUNT(*) n, COALESCE(SUM(pr.total_cost),0) c
+                FROM `tabWork Management Planner` pr
+                WHERE IFNULL(pr.workflow_state,'') != 'Rejected'
+                  AND pr.from_date >= %(xf)s AND pr.from_date <= %(xt)s""" + ex_rsql + """
+                  AND IFNULL(pr.requested_by,'') != ''
+                GROUP BY pr.requested_by
+            """, ex_args, as_dict=True):
+                ex_p = ex_person(r.p)
+                ex_p["requests"] = frappe.utils.cint(r.n)
+                ex_p["requested"] = frappe.utils.flt(r.c)
+            for r in frappe.db.sql("""
+                SELECT pr.requested_by p, COALESCE(SUM(ac.total_payment),0) c
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                  AND pr.from_date >= %(xf)s AND pr.from_date <= %(xt)s""" + ex_rsql + """
+                  AND IFNULL(pr.requested_by,'') != ''
+                GROUP BY pr.requested_by
+            """, ex_args, as_dict=True):
+                ex_person(r.p)["delivered"] = frappe.utils.flt(r.c)
+            for r in frappe.db.sql("""
+                SELECT asg.assigned_by p, COUNT(*) n FROM `tabWork Management Assigner` asg
+                WHERE asg.from_date >= %(xf)s AND asg.from_date <= %(xt)s""" + ex_sql.replace("ac.farm", "asg.farm") + """
+                  AND IFNULL(asg.assigned_by,'') != '' GROUP BY asg.assigned_by
+            """, ex_args, as_dict=True):
+                ex_person(r.p)["crews"] = frappe.utils.cint(r.n)
+            for r in frappe.db.sql("""
+                SELECT ac.entered_by p, COUNT(*) n FROM `tabWork Management Actuals` ac
+                WHERE ac.from_date >= %(xf)s AND ac.from_date <= %(xt)s""" + ex_sql + """
+                  AND IFNULL(ac.entered_by,'') != '' GROUP BY ac.entered_by
+            """, ex_args, as_dict=True):
+                ex_person(r.p)["actuals"] = frappe.utils.cint(r.n)
+            for r in frappe.db.sql("""
+                SELECT pr.approved_by p,
+                       TIMESTAMPDIFF(MINUTE, pr.custom_submitted_at, pr.custom_approved_at) m
+                FROM `tabWork Management Planner` pr
+                WHERE pr.from_date >= %(xf)s AND pr.from_date <= %(xt)s""" + ex_rsql + """
+                  AND IFNULL(pr.approved_by,'') != ''
+            """, ex_args, as_dict=True):
+                ex_p = ex_person(r.p)
+                ex_p["approvals"] = ex_p["approvals"] + 1
+                if r.m is not None and r.m >= 0:
+                    ex_p["approve_minutes"].append(r.m)
+            ex_names = {}
+            if ex_people:
+                for u in frappe.db.get_all("User", filters={"name": ["in", list(ex_people.keys())]},
+                        fields=["name", "full_name"]):
+                    ex_names[u.name] = u.full_name
+            for p in ex_people.values():
+                ms = sorted(p["approve_minutes"])
+                p["approve_median_min"] = ms[len(ms) // 2] if ms else None
+                p["approve_minutes"] = None
+                p["name"] = ex_names.get(p["user"]) or p["user"]
+                p["delivered_pct"] = wmx_pct(p["delivered"], p["requested"])
+                ex_rows.append(p)
+            ex_trend = []
+            if ex_heat:
+                ex_hreq = {}
+                for r in frappe.db.sql("""
+                    SELECT pr.requested_by k, DATE_SUB(pr.from_date, INTERVAL WEEKDAY(pr.from_date) DAY) wk,
+                           COALESCE(SUM(pr.total_cost),0) v
+                    FROM `tabWork Management Planner` pr
+                    WHERE IFNULL(pr.workflow_state,'') != 'Rejected'
+                      AND pr.from_date >= %(xf)s AND pr.from_date <= %(xt)s""" + ex_rsql + """
+                    GROUP BY pr.requested_by, wk
+                """, ex_args, as_dict=True):
+                    ex_hreq[(r.k, str(r.wk))] = frappe.utils.flt(r.v)
+                for r in frappe.db.sql("""
+                    SELECT pr.requested_by k, DATE_SUB(pr.from_date, INTERVAL WEEKDAY(pr.from_date) DAY) wk,
+                           COALESCE(SUM(ac.total_payment),0) v
+                    FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                    INNER JOIN `tabWork Management Planner` pr ON asg.planner_request = pr.name
+                    WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(pr.workflow_state,'') != 'Rejected'
+                      AND pr.from_date >= %(xf)s AND pr.from_date <= %(xt)s""" + ex_rsql + """
+                    GROUP BY pr.requested_by, wk
+                """, ex_args, as_dict=True):
+                    ex_grid.setdefault(r.k, {})[str(r.wk)] = wmx_pct(frappe.utils.flt(r.v), ex_hreq.get((r.k, str(r.wk))) or 0)
+                for kk in ex_hreq:
+                    ex_grid.setdefault(kk[0], {}).setdefault(kk[1], 0)
+        ex_tr = {}
+        for r in ex_trend:
+            ex_tr.setdefault(r.k, {})[str(r.wk)] = frappe.utils.flt(r.v, 2)
+        for r in ex_rows:
+            r["trend"] = ex_tr.get(r["key"]) or {}
+        out["lens"] = ex_lens
+        out["rows"] = ex_rows
+        out["from_date"] = str(ex_args["xf"])
+        out["to_date"] = str(ex_args["xt"])
+        if ex_heat:
+            out["grid"] = ex_grid
+
+    elif action == "ex_detail":
+        # ONE ROW OF A LENS, OPENED: every list behind it, over the same filter.
+        xd_kind = frappe.form_dict.get("kind") or ""
+        xd_key = frappe.form_dict.get("key") or ""
+        xd_sql, xd_args = wmx_range()
+        if xd_kind in ("activity", "worker", "block"):
+            xd_sub = xd_sql + wmx_subject(xd_kind, xd_key, None, xd_args)
+            out["overview"] = frappe.db.sql("""
+                SELECT COUNT(*) person_days, COUNT(DISTINCT ae.employee) people,
+                       COUNT(DISTINCT ae.work_date) days,
+                       COALESCE(SUM(ae.actual_quantity),0) qty,
+                       COALESCE(SUM(ae.amount),0) recorded, """ + WMX_CONF + """ confirmed,
+                       """ + WMX_OUT + """ out_ratio, """ + WMX_PAID + """ paid_amt, """ + WMX_RATED + """ rated,
+                       MAX(pr.uom) uom, MAX(pr.task_subject) subject
+                """ + WMX_JOIN + xd_sub, xd_args, as_dict=True)[0]
+            xd_o = out["overview"]
+            xd_o["out_pct"] = frappe.utils.flt(xd_o.out_ratio * 100, 1) if xd_o.out_ratio is not None else None
+            xd_o["cost_pct"] = wmx_pct(xd_o.paid_amt, xd_o.rated)
+            xd_o["paid_out"] = frappe.utils.flt(frappe.db.sql("""
+                SELECT COALESCE(SUM(ae.amount),0) """ + WMX_JOIN_PAID + xd_sub + """
+                  AND """ + WMX_ISPAID + """
+            """, xd_args)[0][0])
+            xd_o["salaried_qty"] = frappe.utils.flt(frappe.db.sql("""
+                SELECT COALESCE(SUM(ae.actual_quantity),0) """ + WMX_JOIN + xd_sub + """
+                  AND IFNULL(ae.amount,0) = 0
+            """, xd_args)[0][0])
+
+            def xd_group(col, label_col):
+                rows = frappe.db.sql("""
+                    SELECT """ + col + """ k, """ + label_col + """ label,
+                           COUNT(*) person_days, COUNT(DISTINCT ae.employee) people,
+                           COALESCE(SUM(ae.actual_quantity),0) qty, MAX(pr.uom) uom,
+                           COALESCE(SUM(ae.amount),0) recorded, """ + WMX_CONF + """ confirmed,
+                           """ + WMX_OUT + """ out_ratio
+                    """ + WMX_JOIN + xd_sub + """
+                    GROUP BY """ + col + """ ORDER BY recorded DESC LIMIT 300
+                """, xd_args, as_dict=True)
+                for r in rows:
+                    r["out_pct"] = frappe.utils.flt(r.out_ratio * 100, 1) if r.out_ratio is not None else None
+                return rows
+
+            out["by_plan"] = xd_group("IFNULL(pr.master_plan,'')", "MAX(pr.farm)")
+            out["by_activity"] = xd_group("ac.task", "MAX(pr.task_subject)")
+            out["by_block"] = xd_group("ac.block_section", "MAX(ac.farm)")
+            out["by_worker"] = xd_group("ae.employee", "MAX(ae.employee_name)")
+            out["by_week"] = xd_group(WMX_WEEK, "MIN(ae.work_date)")
+            if xd_kind == "worker":
+                xd_sf = wmx_scan_from()
+                xd_args["xsf"] = xd_sf or "2999-01-01"
+                out["days"] = frappe.db.sql("""
+                    SELECT ae.work_date, ac.name actual, ac.task, pr.task_subject subject,
+                           ac.block_section block, ac.farm, ae.actual_quantity qty, pr.uom,
+                           ae.hours, ae.amount, ac.workflow_state,
+                           CASE WHEN ae.work_date < %(xsf)s THEN NULL
+                                WHEN EXISTS (SELECT 1 FROM `tabEmployee Checkin` ec
+                                             WHERE ec.employee = ae.employee
+                                               AND ec.time >= ae.work_date
+                                               AND ec.time < DATE_ADD(ae.work_date, INTERVAL 1 DAY))
+                                THEN 1 ELSE 0 END scanned
+                    """ + WMX_JOIN + xd_sub + """
+                    ORDER BY ae.work_date DESC, ac.name LIMIT 500
+                """, xd_args, as_dict=True)
+            else:
+                out["days"] = frappe.db.sql("""
+                    SELECT ac.name actual, ac.task, MAX(pr.task_subject) subject,
+                           ac.block_section block, ac.farm, ac.from_date, ac.to_date,
+                           ac.workflow_state, COUNT(DISTINCT ae.employee) people,
+                           COALESCE(SUM(ae.actual_quantity),0) qty, MAX(pr.uom) uom,
+                           COALESCE(SUM(ae.amount),0) amount
+                    """ + WMX_JOIN + xd_sub + """
+                    GROUP BY ac.name ORDER BY ac.from_date DESC, ac.name LIMIT 500
+                """, xd_args, as_dict=True)
+            if xd_kind == "block":
+                out["area_ha"] = frappe.utils.flt(frappe.db.get_value("Warehouse", xd_key, "custom_area_ha"))
+        elif xd_kind == "staff":
+            xd_rsql = xd_sql.replace("ac.farm", "pr.farm")
+            xd_args["xu"] = xd_key
+            out["requests"] = frappe.db.sql("""
+                SELECT pr.name, pr.task, pr.task_subject subject, pr.block_section block, pr.farm,
+                       pr.from_date, pr.to_date, pr.quantity, pr.uom, pr.total_cost,
+                       pr.workflow_state, pr.approved_by,
+                       (SELECT COALESCE(SUM(ac.total_payment),0)
+                          FROM `tabWork Management Actuals` ac
+                          INNER JOIN `tabWork Management Assigner` asg ON ac.assignment = asg.name
+                         WHERE asg.planner_request = pr.name AND ac.workflow_state = 'CONFIRMED') delivered
+                FROM `tabWork Management Planner` pr
+                WHERE pr.requested_by = %(xu)s
+                  AND pr.from_date >= %(xf)s AND pr.from_date <= %(xt)s""" + xd_rsql + """
+                ORDER BY pr.from_date DESC LIMIT 500
+            """, xd_args, as_dict=True)
+            out["crews"] = frappe.db.sql("""
+                SELECT asg.name, asg.planner_request, asg.task, asg.block_section block, asg.farm,
+                       asg.from_date, asg.to_date, asg.workflow_state,
+                       (SELECT COUNT(*) FROM `tabWork Assignment Employee` we WHERE we.parent = asg.name
+                          AND IFNULL(we.status,'Active') = 'Active') workers
+                FROM `tabWork Management Assigner` asg
+                WHERE asg.assigned_by = %(xu)s
+                  AND asg.from_date >= %(xf)s AND asg.from_date <= %(xt)s""" + xd_sql.replace("ac.farm", "asg.farm") + """
+                ORDER BY asg.from_date DESC LIMIT 500
+            """, xd_args, as_dict=True)
+            out["actuals"] = frappe.db.sql("""
+                SELECT ac.name, ac.task, ac.block_section block, ac.farm, ac.from_date, ac.to_date,
+                       ac.total_actual_qty qty, ac.total_payment pay, ac.workflow_state
+                FROM `tabWork Management Actuals` ac
+                WHERE ac.entered_by = %(xu)s
+                  AND ac.from_date >= %(xf)s AND ac.from_date <= %(xt)s""" + xd_sql + """
+                ORDER BY ac.from_date DESC LIMIT 500
+            """, xd_args, as_dict=True)
+            out["approvals"] = frappe.db.sql("""
+                SELECT pr.name, pr.task_subject subject, pr.farm, pr.requested_by, pr.total_cost,
+                       pr.custom_submitted_at submitted_at, pr.custom_approved_at approved_at,
+                       TIMESTAMPDIFF(MINUTE, pr.custom_submitted_at, pr.custom_approved_at) minutes
+                FROM `tabWork Management Planner` pr
+                WHERE pr.approved_by = %(xu)s
+                  AND pr.from_date >= %(xf)s AND pr.from_date <= %(xt)s""" + xd_rsql + """
+                ORDER BY pr.custom_approved_at DESC LIMIT 500
+            """, xd_args, as_dict=True)
+        else:
+            out["error"] = "Unknown kind " + str(xd_kind)
+
+    elif action == "ex_series":
+        # LINES OVER TIME. "measures": one subject, several measures. "compare": up to
+        # six subjects of one kind, one measure. A subject is the estate, a master plan,
+        # an activity, an activity within a plan, a worker or a block. Days up to six
+        # weeks of range, Monday weeks beyond.
+        xs_sql, xs_args = wmx_range()
+        xs_mode = frappe.form_dict.get("mode") or "measures"
+        xs_kind = frappe.form_dict.get("kind") or "estate"
+        xs_plan = frappe.form_dict.get("plan") or ""
+        xs_keys = [k for k in (frappe.form_dict.get("keys") or "").split("||") if k][:6]
+        xs_measures = [m for m in (frappe.form_dict.get("measures") or "recorded").split(",") if m]
+        xs_days = frappe.utils.date_diff(xs_args["xt"], xs_args["xf"]) + 1
+        xs_daily = xs_days <= 42
+        xs_bucket = "ae.work_date" if xs_daily else WMX_WEEK
+        if xs_mode == "compare":
+            xs_subjects = [{"key": k, "kind": xs_kind, "plan": xs_plan if xs_kind == "activity" else ""} for k in xs_keys]
+            if xs_kind == "plan":
+                xs_subjects = [{"key": "", "kind": "estate", "plan": k} for k in xs_keys]
+        else:
+            xs_subjects = [{"key": xs_keys[0] if xs_keys else "", "kind": xs_kind, "plan": xs_plan}]
+        xs_out = []
+        for xs_s in xs_subjects:
+            xs_a = dict(xs_args)
+            xs_where = xs_sql + wmx_subject(xs_s["kind"], xs_s["key"], xs_s["plan"], xs_a)
+            xs_series = {}
+            for r in frappe.db.sql("""
+                SELECT """ + xs_bucket + """ b,
+                       COALESCE(SUM(ae.amount),0) recorded, """ + WMX_CONF + """ confirmed,
+                       COALESCE(SUM(CASE WHEN """ + WMX_ISPAID + """ THEN ae.amount ELSE 0 END),0) paid,
+                       """ + WMX_OUT + """ out_ratio, """ + WMX_PAID + """ paid_amt, """ + WMX_RATED + """ rated,
+                       COUNT(*) person_days, COUNT(DISTINCT ae.work_date) worked_days
+                """ + WMX_JOIN_PAID + xs_where + """
+                GROUP BY b ORDER BY b
+            """, xs_a, as_dict=True):
+                xs_b = str(r.b)
+                xs_series.setdefault("recorded", {})[xs_b] = frappe.utils.flt(r.recorded, 2)
+                xs_series.setdefault("confirmed", {})[xs_b] = frappe.utils.flt(r.confirmed, 2)
+                xs_series.setdefault("paid", {})[xs_b] = frappe.utils.flt(r.paid, 2)
+                if r.out_ratio is not None:
+                    xs_series.setdefault("output", {})[xs_b] = frappe.utils.flt(r.out_ratio * 100, 1)
+                if r.rated:
+                    xs_series.setdefault("cost", {})[xs_b] = wmx_pct(r.paid_amt, r.rated)
+                xs_series.setdefault("people", {})[xs_b] = frappe.utils.flt(
+                    frappe.utils.flt(r.person_days) / (r.worked_days or 1), 1)
+            # requested and planned are money spread evenly over the days they cover,
+            # which only plans, activities and the estate have -- a worker or a block
+            # was never planned or requested as such
+            if xs_s["kind"] in ("estate", "activity", "block") and ("requested" in xs_measures or "planned" in xs_measures):
+                xs_ra = dict(xs_args)
+                xs_rw = xs_sql.replace("ac.farm", "pr.farm")
+                if xs_s["plan"]:
+                    xs_rw = xs_rw + wmx_plan_condition(xs_s["plan"], xs_ra, "pr")
+                if xs_s["kind"] == "activity" and xs_s["key"]:
+                    xs_ra["xkey"] = xs_s["key"]
+                    xs_rw = xs_rw + " AND pr.task = %(xkey)s"
+                if xs_s["kind"] == "block" and xs_s["key"]:
+                    xs_ra["xkey"] = xs_s["key"]
+                    xs_rw = xs_rw + " AND pr.block_section = %(xkey)s"
+                xs_spread = []
+                if "requested" in xs_measures:
+                    for r in frappe.db.sql("""
+                        SELECT pr.from_date f, pr.to_date t, pr.total_cost c
+                        FROM `tabWork Management Planner` pr
+                        WHERE IFNULL(pr.workflow_state,'') != 'Rejected'
+                          AND pr.from_date <= %(xt)s AND pr.to_date >= %(xf)s""" + xs_rw + """
+                    """, xs_ra, as_dict=True):
+                        xs_spread.append(("requested", r.f, r.t, frappe.utils.flt(r.c)))
+                if "planned" in xs_measures and xs_s["kind"] != "block":
+                    xs_pa = dict(xs_args)
+                    xs_pw = xs_sql.replace("ac.farm", "mp.farm")
+                    if xs_s["plan"]:
+                        xs_pa["xplan"] = xs_s["plan"]
+                        xs_pw = xs_pw + " AND mp.name = %(xplan)s"
+                    if xs_s["kind"] == "activity" and xs_s["key"]:
+                        xs_pa["xkey"] = xs_s["key"]
+                        xs_pw = xs_pw + " AND ma.task = %(xkey)s"
+                    for r in frappe.db.sql("""
+                        SELECT mp.period_from f, mp.period_to t, COALESCE(SUM(ma.cost),0) c
+                        FROM `tabWork Management Master Plan` mp
+                        INNER JOIN `tabWork Management Master Plan Activity` ma ON ma.parent = mp.name
+                        WHERE IFNULL(mp.workflow_state,'') != 'Rejected'
+                          AND mp.period_from <= %(xt)s AND mp.period_to >= %(xf)s""" + xs_pw + """
+                        GROUP BY mp.name
+                    """, xs_pa, as_dict=True):
+                        xs_spread.append(("planned", r.f, r.t, frappe.utils.flt(r.c)))
+                for xs_m, xs_f, xs_t, xs_c in xs_spread:
+                    xs_n = frappe.utils.date_diff(xs_t, xs_f) + 1
+                    if xs_n <= 0:
+                        continue
+                    xs_d = frappe.utils.getdate(xs_f)
+                    for xs_i in range(xs_n):
+                        xs_day = frappe.utils.add_days(xs_d, xs_i)
+                        if str(xs_day) < str(xs_args["xf"]) or str(xs_day) > str(xs_args["xt"]):
+                            continue
+                        xs_b = str(xs_day) if xs_daily else str(wmx_monday(xs_day))
+                        xs_series.setdefault(xs_m, {})[xs_b] = frappe.utils.flt(
+                            (xs_series.get(xs_m) or {}).get(xs_b, 0) + xs_c / xs_n, 2)
+            xs_keep = {}
+            for xs_m in xs_measures:
+                if xs_m in xs_series:
+                    xs_keep[xs_m] = xs_series[xs_m]
+            xs_out.append({"key": xs_s["key"] or xs_s["plan"] or "", "kind": xs_s["kind"],
+                           "plan": xs_s["plan"], "series": xs_keep})
+        # every bucket in range, so a quiet day or week draws as zero, not a gap
+        xs_buckets = []
+        xs_d = frappe.utils.getdate(xs_args["xf"])
+        xs_end = frappe.utils.getdate(xs_args["xt"])
+        if not xs_daily:
+            xs_d = wmx_monday(xs_d)
+        while xs_d <= xs_end:
+            xs_buckets.append(str(xs_d))
+            xs_d = frappe.utils.add_days(xs_d, 1 if xs_daily else 7)
+        out["granularity"] = "day" if xs_daily else "week"
+        out["buckets"] = xs_buckets
+        out["subjects"] = xs_out
+        out["from_date"] = str(xs_args["xf"])
+        out["to_date"] = str(xs_args["xt"])
 
     elif action == "activity_table":
         # EVERY BUDGET LINE IN A DATE RANGE, ONE ROW EACH. The per-farm cards this

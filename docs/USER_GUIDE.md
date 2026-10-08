@@ -187,12 +187,9 @@ same ⚑ and the affected day-rows are tinted.
   sign-offs, value handled and time taken.
 - **Value flow** — weekly planned / assigned / confirmed value plus a per-plan
   table with farm & date filters showing each plan's accountability chain.
-- **Pipeline performers** — ranking of every plan creator, assigner, actuals
-  enterer and approver by volume and value.
+- **Master plans — progress & money** — a summary per farm (work done, budget used, earned against planned, plans behind now, ended short and over budget), then every plan that starts in the chosen dates with its status read against the share of its days gone by. Open a plan for its money trail (planned → requested → awaiting approval → earned → paid out), its activities, requests, crews, actuals, people and payment runs. A key under the card defines every term.
+- **Activities, people & blocks** — one explorer with a shared filter bar. Highlights pick out what stands out (the activity furthest over its rate, the furthest below target, the top earner, days paid with no check-in scan, confirmed pay not yet paid, the requests delivering least). The Trends chart draws money, performance and people over time for the whole estate, a master plan, an activity, an activity within a plan, a worker or a block, or compares up to six of them. Four lenses list Activities, Workers, Staff and Blocks, each as a list or a heatmap by week; open any row for everything behind it. A key defines every term.
 - **Crew movements** — substitution history (who left, who joined, swaps).
-- **Workers & value per farm** — each farm card shows assigned workers plus
-  the active workforce split: total active employees, task workers and
-  permanent/salaried staff.
 
 ## 6. Time & Attendance integration
 
