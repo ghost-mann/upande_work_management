@@ -337,13 +337,12 @@ def hide_links_to_missing_doctypes():
 #
 # hooks.py add_to_apps_screen names the same file, so the apps screen and the
 # desk's app switcher draw the same picture. It is the animated sibling of
-# upande_crm's envelope and upande_irrigation's tap: a crew of three walks in,
-# lines up, steps into the arrow's diagonal, and the Upande arrow rises through
-# them, coming to rest as exactly the static badge
+# upande_crm's envelope and upande_irrigation's tap: two cogs turn, part, and the
+# Upande arrow rises between them, coming to rest as exactly the static badge
 # (upande-logo.png). Pure CSS inside the SVG, since the desk draws it via <img>.
 # A new picture gets a new file name: browsers cache /assets for a long time,
-# and the cogs this replaced kept showing on the desk under the old name.
-LOGO_URL = "/assets/work_management/images/upande-work-management-crew.svg"
+# so an old picture keeps showing under an old name.
+LOGO_URL = "/assets/work_management/images/upande-work-management-cogs.svg"
 
 
 def desktop_icon_fields(label=None):
