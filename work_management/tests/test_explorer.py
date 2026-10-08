@@ -76,3 +76,10 @@ class TestExplorerScreen(unittest.TestCase):
 		tip = self.js[self.js.index("function exShowTip"):self.js.index("function exHideTip")]
 		self.assertIn("textContent", tip)
 		self.assertNotIn("innerHTML", tip)
+
+
+class TestDetailTilesFit(unittest.TestCase):
+	def test_tiles_wrap_inside_the_table_cell_they_sit_in(self):
+		# the page's table cells keep text on one line, and the detail panel sits
+		# in one: the tiles' notes ran out past their borders
+		self.assertIn('"#wmp .pcd{white-space:normal}"', dashboard_js())

@@ -154,3 +154,42 @@ class TestThePlansValueIsItsLines(unittest.TestCase):
 
 	def test_the_detail_does_too(self):
 		self.assertIn("md_planned = md_planned + frappe.utils.flt(md_a.cost)", action_block("mp_detail"))
+
+
+class TestTrendsSaysWhatItsNumbersAre(unittest.TestCase):
+	def setUp(self):
+		self.block = action_block("charts", 30000)
+		self.js = dashboard_js()
+
+	def test_actuals_are_measured_against_a_target_in_one_unit(self):
+		# output valued at its rate, so trees, hours and kilograms add up
+		self.assertIn("we.actual_quantity * ac.rate", self.block)
+		self.assertIn('w["target"]', self.block)
+		self.assertIn('["out","Actuals vs target"]', self.js)
+
+	def test_work_in_approval_is_shown_not_dropped(self):
+		self.assertIn('w["val_pend"]', self.block)
+		self.assertIn('w["pay_pend"]', self.block)
+
+	def test_no_farm_named_means_the_callers_farms(self):
+		self.assertIn('dconds = dconds + " AND ac.farm IN %s"', self.block)
+		self.assertIn('sc_conds = sc_conds + " AND farm IN %(fs)s"', self.block)
+
+	def test_the_strip_carries_money_and_names_its_waiting_counts(self):
+		self.assertIn('out["stage_money"]', self.block)
+		self.assertIn('["to_paid","payment runs unpaid"]', self.js)
+
+	def test_growth_is_only_claimed_against_a_period_the_records_cover(self):
+		self.assertIn('out["data_from"]', self.block)
+		self.assertIn("pw.from < AN.data.data_from", self.js)
+
+	def test_the_card_has_a_key(self):
+		self.assertIn("bd.innerHTML=rgNote+bd.innerHTML+anKey();", self.js)
+
+	def test_the_farm_picker_fills_without_waiting_for_a_list_never_sent(self):
+		self.assertIn('out["farms"] = list(FARMS) if FARMS else []', self.block)
+		self.assertIn(":FARM_LIST;", self.js)
+
+	def test_a_week_cut_by_the_dates_is_not_compared_as_a_full_week(self):
+		self.assertIn("function anPartial(wstart)", self.js)
+		self.assertIn('out["range"]', self.block)

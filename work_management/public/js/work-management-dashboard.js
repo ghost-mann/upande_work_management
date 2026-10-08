@@ -99,6 +99,23 @@
     done:{label:"Done", cls:"st-ok"},
     short:{label:"Ended short", cls:"st-warn"}
   };
+  (function injectAnCss(){
+    if(document.getElementById("wm-an-css")) return;
+    var st=document.createElement("style");
+    st.id="wm-an-css";
+    st.textContent=
+      "#wmp .ss-sub{margin-top:3px;font-size:10.5px;color:var(--ink);font-weight:600;text-align:center;max-width:120px;line-height:1.3}"+
+      "#wmp .ss-rail{flex-direction:column}"+
+      "#wmp .ss-cap{display:block;margin-top:4px;font-size:9.5px;color:var(--mute);text-align:center;line-height:1.25;white-space:nowrap}"+
+      "#wmp .an-sum{font-size:12px;color:#52514e;margin:2px 0 10px;line-height:1.55}"+
+      "#wmp .an-sum b{color:var(--ink)}#wmp .an-sum b.an-up{color:#006300}#wmp .an-sum b.an-down{color:#b91c1c}"+
+      "#wmp .an-leg{display:flex;gap:14px;flex-wrap:wrap;font-size:10.5px;color:#52514e;margin:0 0 4px}"+
+      "#wmp .an-leg span{display:inline-flex;align-items:center;gap:6px}"+
+      "#wmp .an-leg i{display:inline-block;width:12px;height:10px;border-radius:3px}"+
+      "#wmp .an-leg i.tk{height:0;border-top:2.4px solid #1a1a18;border-radius:2px;width:16px}"+
+      "#wmp .an-leg i.av{height:0;border-top:1.4px dashed #1a1a18;border-radius:0;width:16px;opacity:.6}";
+    document.head.appendChild(st);
+  })();
   (function injectPcCss(){
     if(document.getElementById("wm-pc-css")) return;
     var st=document.createElement("style");
@@ -142,11 +159,14 @@
       "#wmp .pcd{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px}"+
       "#wmp .pcd-h{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:11.5px;color:var(--mute);margin-bottom:12px}"+
       "#wmp .pcd-h b{color:var(--ink)}"+
-      "#wmp .pcd-money{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:12px}"+
-      "#wmp .pcd-m{border:1px solid var(--line);border-radius:8px;padding:8px 10px}"+
-      "#wmp .pcd-m span{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700}"+
+      // the panel sits in a table cell, and the page's cells keep their text on one
+      // line: without this the tiles' notes ran out past their borders
+      "#wmp .pcd{white-space:normal}"+
+      "#wmp .pcd-money{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;margin-bottom:12px}"+
+      "#wmp .pcd-m{border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}"+
+      "#wmp .pcd-m span{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700;line-height:1.35}"+
       "#wmp .pcd-m b{display:block;font-size:15px;margin-top:3px}"+
-      "#wmp .pcd-m i{display:block;font-style:normal;font-size:10px;color:var(--mute);margin-top:2px}"+
+      "#wmp .pcd-m i{display:block;font-style:normal;font-size:10px;color:var(--mute);margin-top:2px;line-height:1.35}"+
       "#wmp .pcd-m.good b{color:var(--green)}#wmp .pcd-m.warn b{color:var(--amber)}#wmp .pcd-m.bad b{color:var(--red)}"+
       "#wmp .pcd-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:8px}"+
       "#wmp .pcd-tabs button{font-family:inherit;font-size:11px;font-weight:600;color:var(--mute);background:none;border:0;border-bottom:2px solid transparent;padding:7px 10px;cursor:pointer}"+
@@ -157,7 +177,10 @@
       "#wmp .pcd-note{font-size:11px;color:var(--mute);margin:8px 2px 0}"+
       "#wmp .pcd-note.warn{color:var(--amber)}"+
       "#wmp .pc-show-sm{display:none}"+
-      "@media(max-width:820px){#wmp .pc-hide-sm{display:none}#wmp .pc-show-sm{display:inline}#wmp .pc-meter{min-width:80px}}";
+      "@media(max-width:820px){#wmp .pc-hide-sm{display:none}#wmp .pc-show-sm{display:inline}#wmp .pc-meter{min-width:80px}#wmp .pcd-money{grid-template-columns:repeat(2,minmax(0,1fr))}"+
+        // on a phone the list scrolls sideways; the opened panel stays the width of
+        // the screen and pinned in view instead of stretching across the whole table
+        "#wmp .pc-det .pcd,#wmp .ex-det .pcd{position:sticky;left:4px;width:calc(100vw - 72px);box-sizing:border-box}}";
     document.head.appendChild(st);
   })();
 
@@ -569,17 +592,21 @@
   // money five take slots 1-5 and the two percentages 6-7: each panel's lines are
   // adjacent slots of a palette validated for adjacent lines (dataviz validator:
   // CVD dE >= 9.1, normal-vision dE >= 19.6 on white).
+  // The dashboard's own chart colours, as "Plans, assignments & actuals over time"
+  // uses them: planned dashed brown, confirmed solid green over a pale fill. Each
+  // panel's set passes the dataviz validator on white (CVD dE >= 8.8, normal-vision
+  // >= 26, contrast >= 3:1), and planned also differs by its dash.
   var EX_MEASURES = [
-    {k:"planned",   label:"Planned",          unit:"kes", color:"#2a78d6", panel:"money"},
-    {k:"requested", label:"Requested",        unit:"kes", color:"#eb6834", panel:"money"},
-    {k:"recorded",  label:"Recorded",         unit:"kes", color:"#1baf7a", panel:"money"},
-    {k:"confirmed", label:"Confirmed",        unit:"kes", color:"#eda100", panel:"money"},
-    {k:"paid",      label:"Paid out",         unit:"kes", color:"#e87ba4", panel:"money"},
-    {k:"output",    label:"Output vs target", unit:"pct", color:"#008300", panel:"perf"},
-    {k:"cost",      label:"Cost/unit vs rate",unit:"pct", color:"#4a3aa7", panel:"perf"},
-    {k:"people",    label:"People per day",   unit:"n",   color:"#e34948", panel:"people"}
+    {k:"planned",   label:"Planned",          unit:"kes", color:"#a16207", panel:"money", dash:1},
+    {k:"requested", label:"Requested",        unit:"kes", color:"#2563eb", panel:"money"},
+    {k:"recorded",  label:"Recorded",         unit:"kes", color:"#d97706", panel:"money"},
+    {k:"confirmed", label:"Confirmed",        unit:"kes", color:"#0a7a43", panel:"money", fill:1},
+    {k:"paid",      label:"Paid out",         unit:"kes", color:"#7c3aed", panel:"money"},
+    {k:"output",    label:"Output vs target", unit:"pct", color:"#0a7a43", panel:"perf", fill:1},
+    {k:"cost",      label:"Cost/unit vs rate",unit:"pct", color:"#7c3aed", panel:"perf"},
+    {k:"people",    label:"People per day",   unit:"n",   color:"#2563eb", panel:"people", fill:1}
   ];
-  var EX_SUBJECT_COLORS = ["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300"];
+  var EX_SUBJECT_COLORS = ["#0a7a43","#2563eb","#a16207","#7c3aed","#d97706","#e11d48"];
   var EX_PANELS = {money:"Money (KES)", perf:"Performance (%)", people:"People per day"};
   function exMeasure(k){ return EX_MEASURES.filter(function(m){ return m.k===k; })[0]; }
 
@@ -610,11 +637,13 @@
       "#wmp .ex-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;background:#eef2ff;color:#3730a3;border-radius:999px;padding:3px 6px 3px 10px}"+
       "#wmp .ex-chip button{border:0;background:none;cursor:pointer;color:#3730a3;font-size:13px;line-height:1;padding:0 2px}"+
       "#wmp .ex-legend{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 4px}"+
-      "#wmp .ex-legend button{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:11px;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer}"+
-      "#wmp .ex-legend button.off{color:var(--mute);opacity:.55}"+
-      "#wmp .ex-legend button i{display:inline-block;width:14px;height:2px;border-radius:1px}"+
+      "#wmp .ex-legend{gap:4px 16px}"+
+      "#wmp .ex-legend button{display:inline-flex;align-items:center;gap:7px;font-family:inherit;font-size:11.5px;color:var(--ink);background:none;border:0;padding:3px 0;cursor:pointer}"+
+      "#wmp .ex-legend button.off{color:#b5b3ad;text-decoration:line-through}"+
+      "#wmp .ex-legend button.off i{opacity:.35}"+
+      "#wmp .ex-legend button i{display:inline-block;width:18px;height:2px;border-radius:1px}"+
       "#wmp .ex-panel{position:relative;margin-top:6px}"+
-      "#wmp .ex-panel h5{margin:4px 0 2px;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:700}"+
+      "#wmp .ex-panel h5{margin:8px 0 0;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#8a8780;font-weight:600}"+
       "#wmp .ex-panel svg{display:block;width:100%;overflow:visible}"+
       "#wmp .ex-panel .grid{stroke:#eceae4;stroke-width:1}"+
       "#wmp .ex-panel .base{stroke:#c3c2b7;stroke-width:1}"+
@@ -1254,7 +1283,8 @@
       h+='<div class="ex-legend">'+EX_MEASURES.map(function(m){
         var na=(m.k==="planned"&&(c.kind==="worker"||c.kind==="block"))||(m.k==="requested"&&c.kind==="worker");
         if(na) return "";
-        return '<button type="button" data-exm="'+m.k+'" class="'+(c.on[m.k]?'':'off')+'"><i style="background:'+m.color+'"></i>'+esc(m.label)+'</button>';
+        return '<button type="button" data-exm="'+m.k+'" class="'+(c.on[m.k]?'':'off')+'" title="'+(c.on[m.k]?'Hide':'Show')+' this line">'+
+          '<i style="'+(m.dash?'background:none;border-top:2px dashed '+m.color+';height:0':'background:'+m.color)+'"></i>'+esc(m.label)+'</button>';
       }).join("")+'</div>';
     }
     h+='<div id="ex-plot"><div class="loading">Drawing&hellip;</div></div>';
@@ -1309,7 +1339,7 @@
       var s0=(d.subjects||[])[0]||{series:{}};
       EX_MEASURES.forEach(function(m){
         if(!c.on[m.k] || !s0.series[m.k]) return;
-        out.push({label:m.label, color:m.color, unit:m.unit, panel:m.panel, values:vals(s0.series, m.k, m.unit)});
+        out.push({label:m.label, color:m.color, unit:m.unit, panel:m.panel, dash:m.dash, fill:m.fill, values:vals(s0.series, m.k, m.unit)});
       });
     }
     return out;
@@ -1332,7 +1362,7 @@
     }
     // one small chart per unit, stacked on the same dates: never two scales on one axis
     var panels=["money","perf","people"].filter(function(p){ return lines.some(function(l){ return l.panel===p; }); });
-    var W=Math.max(320, box.clientWidth||900), L=58, R=150, H=panels.length>1?150:210, T=10, B=22;
+    var W=Math.max(320, box.clientWidth||900), L=52, R=96, H=panels.length>1?170:250, T=12, B=26;
     var iw=W-L-R, ih=H-T-B;
     var xAt=function(i){ return L+(b.length>1?i/(b.length-1)*iw:iw/2); };
     // round tick steps (1, 2, 2.5, 5 x 10^n) aiming at about four gridlines
@@ -1340,6 +1370,7 @@
       var raw=max/4, mag=Math.pow(10, Math.floor(Math.log10(raw||1))), f=raw/mag;
       return (f<=1?1:(f<=2?2:(f<=2.5?2.5:(f<=5?5:10))))*mag;
     };
+    var FONT='font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780"';
     var html='<div class="pcd-note" style="margin:4px 0 0">'+esc(sub)+'</div>';
     panels.forEach(function(p){
       var pl=lines.filter(function(l){ return l.panel===p; });
@@ -1348,37 +1379,38 @@
       max=max||1;
       var step=niceStep(max), nice=Math.ceil(max/step)*step;
       var yAt=function(v){ return T+ih-(v/nice)*ih; };
-      var s='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(EX_PANELS[p])+'">';
+      var s='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="'+esc(EX_PANELS[p])+'">';
       for(var g=0; g<=nice+1e-9; g+=step){
         var y=yAt(g).toFixed(1);
-        s+='<line class="'+(g===0?'base':'grid')+'" x1="'+L+'" x2="'+(L+iw)+'" y1="'+y+'" y2="'+y+'"/>';
-        s+='<text x="'+(L-6)+'" y="'+(+y+3)+'" text-anchor="end">'+(p==="money"?money(g):(p==="perf"?fmt(g,0)+"%":fmt(g,0)))+'</text>';
+        s+='<line x1="'+L+'" y1="'+y+'" x2="'+(L+iw)+'" y2="'+y+'" stroke="rgba(10,10,10,0.06)" stroke-width="1"/>';
+        s+='<text x="'+(L-8)+'" y="'+(+y+3)+'" text-anchor="end" '+FONT+'>'+(p==="money"?money(g):(p==="perf"?fmt(g,0)+"%":fmt(g,0)))+'</text>';
       }
-      if(p==="perf") s+='<line class="ref" x1="'+L+'" x2="'+(L+iw)+'" y1="'+yAt(100).toFixed(1)+'" y2="'+yAt(100).toFixed(1)+'"/>'+
-        '<text x="'+(L+4)+'" y="'+(yAt(100)-4).toFixed(1)+'">target / rate</text>';
+      if(p==="perf") s+='<line x1="'+L+'" x2="'+(L+iw)+'" y1="'+yAt(100).toFixed(1)+'" y2="'+yAt(100).toFixed(1)+'" stroke="#8a8780" stroke-width="1" stroke-dasharray="3 3"/>'+
+        '<text x="'+(L+4)+'" y="'+(yAt(100)-4).toFixed(1)+'" '+FONT+'>target / rate</text>';
       var every=Math.max(1, Math.ceil(b.length/8));
-      b.forEach(function(x,i){ if(i%every===0||i===b.length-1) s+='<text x="'+xAt(i).toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle">'+esc(shortDate(x))+'</text>'; });
+      b.forEach(function(x,i){ if(i%every===0||i===b.length-1) s+='<text x="'+xAt(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" '+FONT+'>'+esc(shortDate(x))+'</text>'; });
       var ends=[];
-      pl.forEach(function(l){
+      // filled series first, so their wash sits under every line
+      pl.slice().sort(function(a,b){ return (b.fill?1:0)-(a.fill?1:0); }).forEach(function(l){
         // a week with no work has no percentage: the line joins the weeks that do,
         // and when they are few each one gets a marker so a lone week still shows
         var pts=[]; l.values.forEach(function(v,i){ if(v!=null) pts.push([xAt(i), yAt(v), v]); });
         if(!pts.length) return;
-        s+='<path d="'+pts.map(function(q,i){ return (i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1); }).join("")+
-          '" fill="none" stroke="'+l.color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+        var d=pts.map(function(q,i){ return (i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1); }).join("");
+        if(l.fill && pts.length>1) s+='<path d="'+d+'L'+pts[pts.length-1][0].toFixed(1)+','+(T+ih).toFixed(1)+'L'+pts[0][0].toFixed(1)+','+(T+ih).toFixed(1)+'Z" fill="'+l.color+'" fill-opacity="0.09"/>';
+        s+='<path d="'+d+'" fill="none" stroke="'+l.color+'" stroke-width="2"'+(l.dash?' stroke-dasharray="6 4"':'')+' stroke-linejoin="round" stroke-linecap="round"/>';
         if(pts.length<b.length && pts.length<=12) pts.forEach(function(q){
-          s+='<circle cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="4" fill="'+l.color+'" stroke="#fff" stroke-width="2"/>'; });
+          s+='<circle cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="3.5" fill="'+l.color+'" stroke="#fff" stroke-width="1.5"/>'; });
         var last=pts[pts.length-1];
         ends.push({x:last[0], y:last[1], l:l, v:last[2]});
       });
-      // labels beside each line's last point, nudged apart where they would touch
+      // the line's name at its end, in its colour, as the timeline does
       ends.sort(function(a,b){ return a.y-b.y; });
       for(var e=1;e<ends.length;e++){ var prev=ends[e-1].ly!=null?ends[e-1].ly:ends[e-1].y; if(ends[e].y-prev<12) ends[e].ly=prev+12; }
       ends.forEach(function(e){
         var ly=e.ly!=null?e.ly:e.y;
-        var name=e.l.label.length>16?e.l.label.slice(0,15)+"…":e.l.label;
-        s+='<circle cx="'+e.x.toFixed(1)+'" cy="'+e.y.toFixed(1)+'" r="3" fill="'+e.l.color+'" stroke="#fff" stroke-width="2"/>';
-        s+='<text class="lbl" x="'+(e.x+8).toFixed(1)+'" y="'+(ly+3).toFixed(1)+'">'+esc(exFmtV(e.v, e.l.unit).replace(" KES",""))+' '+esc(name)+'</text>';
+        var name=e.l.label.length>14?e.l.label.slice(0,13)+"…":e.l.label;
+        s+='<text x="'+(e.x+6).toFixed(1)+'" y="'+(ly+3).toFixed(1)+'" font-family="Poppins,sans-serif" font-size="9.5" font-weight="600" style="fill:'+e.l.color+'">'+esc(name)+'</text>';
       });
       s+='<line class="xh" x1="0" x2="0" y1="'+T+'" y2="'+(T+ih)+'" style="display:none"/>';
       s+='<rect class="hit" x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="transparent"/></svg>';
@@ -1449,7 +1481,7 @@
         '<div class="bd" id="wm-ex"><div class="loading">Reading the work&hellip;</div></div></div>'+
       // ===== trends & analytics tabs =====
       '<div class="sech">Trends &amp; analytics</div>'+
-      '<div class="card"><div class="hd"><h3>What the numbers are doing</h3><div class="cap">confirmed work only &middot; last 12 weeks</div></div>'+
+      '<div class="card"><div class="hd"><h3>What the numbers are doing</h3><div class="cap">confirmed work, with what is still in approval shown paler &middot; last 12 weeks unless dates are set</div></div>'+
         '<div class="bd">'+
           '<div class="pex-filters" id="an-filters">'+
             '<select id="an-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select>'+
@@ -1640,7 +1672,7 @@
   }
   var AN = { data:null, tab:"out", apprFilter:"" };
   function initCharts(){
-    var tabs=[["out","Output by week"],["pay","Pay by week"],["wrk","Workers by week"],["task","Top tasks"]];
+    var tabs=[["out","Actuals vs target"],["pay","Pay vs plan"],["wrk","Workers by week"],["task","Top tasks"]];
     var host=el("wm-an-tabs"); if(!host) return;
     host.innerHTML="";
     tabs.forEach(function(t){
@@ -1667,9 +1699,12 @@
     var a={action:"charts", farm:(el("an-farm")||{}).value||"",
       from_date:(el("an-from")||{}).value||"", to_date:(el("an-to")||{}).value||""};
     call(a).then(function(d){
+      // the farm picker fills from the response's farm list, or the dashboard's
+      // own once it has one; it used to wait for a list this endpoint never sent
       var fsel=el("an-farm");
-      if(fsel && fsel.options.length<=1 && d.farms){
-        d.farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fsel.appendChild(o); });
+      var flist=(d.farms&&d.farms.length&&typeof d.farms[0]==="string")?d.farms:FARM_LIST;
+      if(fsel && fsel.options.length<=1 && flist && flist.length){
+        flist.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fsel.appendChild(o); });
       }
       if(d.error){ var bd=el("wm-an-body"); if(bd) bd.innerHTML='<div style="padding:16px;text-align:center">Could not load charts: '+esc(d.error)+'</div>';
         var pp0=el("wm-appr-people"); if(pp0) pp0.innerHTML='<div style="color:var(--mute)">Ranking unavailable.</div>'; return; }
@@ -1695,33 +1730,101 @@
     var x=new Date(d+"T00:00:00"); if(isNaN(x)) return String(d);
     return x.getDate()+"/"+(x.getMonth()+1);
   }
-  function anBarsV(rows, key, color, valFn, capText, yTitle){
-    if(!rows||!rows.length) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
-    var max=0; rows.forEach(function(r){ var v=Number(r[key])||0; if(v>max) max=v; });
-    if(max<=0) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
-    var n=rows.length;
-    var W=1200,H=380,L=84,R=22,T=30,B=58,iw=W-L-R,ih=H-T-B;
-    var ymax=max*1.12;
-    var slot=iw/n, bw=Math.min(72,slot*0.55);
+  // Weekly bars, in the card's own style, with what makes a bar mean something:
+  //   solid  - the confirmed figure
+  //   pale   - recorded but still in approval, stacked on top (sign-off lags the
+  //            field, so confirmed alone makes the latest weeks look like a stop)
+  //   tick   - the week's target or plan, so a bar is read against something
+  //   avg    - a dashed line at the range average, where there is no target
+  // The week containing today is drawn paler and labelled "in progress".
+  function anBarsV(rows, o){
+    var none='<div style="padding:24px;text-align:center;color:var(--mute)">Nothing recorded in this period yet.</div>';
+    if(!rows||!rows.length) return none;
+    var sv=function(r){ return Number(r[o.solid])||0; };
+    var pv=function(r){ return o.pale?(Number(r[o.pale])||0):0; };
+    var tv=function(r){ return o.tick?(Number(r[o.tick])||0):0; };
+    var max=0; rows.forEach(function(r){ max=Math.max(max, sv(r)+pv(r), tv(r)); });
+    if(max<=0) return none;
+    var n=rows.length, W=1200, H=380, L=84, R=22, T=34, B=58, iw=W-L-R, ih=H-T-B;
+    var ymax=max*1.12, slot=iw/n, bw=Math.min(72,slot*0.55);
     function X(i){ return L+slot*(i+0.5); }
     function Y(v){ return T+ih-(v/ymax)*ih; }
     var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
     for(var gi=0;gi<=5;gi++){ var gv=ymax*gi/5, gy=Y(gv);
       g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,.06)"/>'+
-         '<text x="'+(L-10)+'" y="'+(gy+4).toFixed(1)+'" text-anchor="end" font-size="11" fill="#5a5a52" font-family="Poppins,sans-serif">'+valFn(gv)+'</text>'; }
+         '<text x="'+(L-10)+'" y="'+(gy+4).toFixed(1)+'" text-anchor="end" font-size="11" fill="#5a5a52" font-family="Poppins,sans-serif">'+o.fmt(gv)+'</text>'; }
     g+='<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
     g+='<line x1="'+L+'" y1="'+(T+ih)+'" x2="'+(W-R)+'" y2="'+(T+ih)+'" stroke="#8a8780" stroke-width="1.4"/>';
-    g+='<text transform="rotate(-90)" x="'+(-(T+ih/2))+'" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">'+esc(yTitle||"")+'</text>';
+    g+='<text transform="rotate(-90)" x="'+(-(T+ih/2))+'" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">'+esc(o.yTitle||"")+'</text>';
+    if(o.avg){
+      var full=rows.filter(function(r){ return !anPartial(r.wstart); });
+      var av=full.length?full.reduce(function(t,r){ return t+sv(r); },0)/full.length:0;
+      if(av>0){ var ay=Y(av).toFixed(1);
+        g+='<line x1="'+L+'" y1="'+ay+'" x2="'+(W-R)+'" y2="'+ay+'" stroke="#1a1a18" stroke-width="1.2" stroke-dasharray="5 4" opacity=".55"/>'+
+           '<text x="'+(W-R-4)+'" y="'+(Y(av)-6).toFixed(1)+'" text-anchor="end" font-size="10.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">average '+o.fmt(av)+'</text>'; }
+    }
     rows.forEach(function(r,i){
-      var v=Number(r[key])||0;
-      var y=Y(v);
-      g+='<rect x="'+(X(i)-bw/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(2,T+ih-y).toFixed(1)+'" rx="5" fill="'+color+'"><title>week of '+esc(r.wstart)+' · '+valFn(v)+'</title></rect>';
-      if(v>0) g+='<text x="'+X(i).toFixed(1)+'" y="'+(y-8).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+valFn(v)+'</text>';
+      var s0=sv(r), p0=pv(r), t0=tv(r), cur=anPartial(r.wstart);
+      var ys=Y(s0), yp=Y(s0+p0), x0=(X(i)-bw/2).toFixed(1);
+      var tipTxt="week of "+r.wstart+(cur?" ("+cur+")":"")+" · "+(o.solidLabel||"")+" "+o.fmt(s0)+
+        (p0?" · awaiting approval "+o.fmt(p0):"")+(t0?" · "+(o.tickLabel||"target")+" "+o.fmt(t0):"");
+      g+='<g><title>'+esc(tipTxt)+'</title>';
+      if(p0>0) g+='<rect x="'+x0+'" y="'+yp.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(1,ys-yp).toFixed(1)+'" rx="5" fill="'+o.color+'" opacity=".32"/>';
+      g+='<rect x="'+x0+'" y="'+ys.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(2,T+ih-ys).toFixed(1)+'" rx="5" fill="'+o.color+'"'+(cur?' opacity=".45"':'')+'/>';
+      if(t0>0){ var ty=Y(t0).toFixed(1);
+        g+='<line x1="'+(X(i)-bw/2-6).toFixed(1)+'" y1="'+ty+'" x2="'+(X(i)+bw/2+6).toFixed(1)+'" y2="'+ty+'" stroke="#1a1a18" stroke-width="2.4" stroke-linecap="round"/>'; }
+      g+='</g>';
+      var top=Math.min(yp, t0>0?Y(t0):yp);
+      var lab=o.label?o.label(r):(s0+p0>0?o.fmt(s0+p0):"");
+      if(lab) g+='<text x="'+X(i).toFixed(1)+'" y="'+(top-8).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(lab)+'</text>';
       g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+18)+'" text-anchor="middle" font-size="10.5" fill="#5a5a52" font-family="Poppins,sans-serif">'+wkLabel(r.wstart)+'</text>';
+      if(cur) g+='<text x="'+X(i).toFixed(1)+'" y="'+(T+ih+32)+'" text-anchor="middle" font-size="9.5" font-style="italic" fill="#8a8780" font-family="Poppins,sans-serif">'+cur+'</text>';
     });
-    g+='<text x="'+(L+iw/2)+'" y="'+(H-8)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Week starting</text>';
+    g+='<text x="'+(L+iw/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Week starting</text>';
     g+='</svg>';
-    return g+'<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+capText+' Hover any bar for its exact value.</div>';
+    // a legend for every mark the chart uses, so nothing rests on colour alone
+    var leg='<div class="an-leg"><span><i style="background:'+o.color+'"></i>'+esc(o.solidLabel||"")+'</span>'+
+      (o.pale?'<span><i style="background:'+o.color+';opacity:.32"></i>awaiting approval</span>':'')+
+      (o.tick?'<span><i class="tk"></i>'+esc(o.tickLabel||"target")+'</span>':'')+
+      (o.avg?'<span><i class="av"></i>average of full weeks</span>':'')+
+      '<span><i style="background:'+o.color+';opacity:.45"></i>part week (in progress, or cut by the dates)</span></div>';
+    return leg+g+'<div style="font-size:10.5px;color:var(--mute);margin-top:8px">'+o.cap+' Hover any bar for its exact values.</div>';
+  }
+  function anMonday(iso){
+    if(!iso) return "";
+    var d=new Date(String(iso).slice(0,10)+"T00:00:00"); if(isNaN(d)) return "";
+    d.setDate(d.getDate()-((d.getDay()+6)%7)); return localISO(d);
+  }
+  // One plain sentence above each chart: the last full week, how it compares,
+  // the best week and the total. Numbers without a comparison say nothing.
+  // A week the chart cannot show whole: the one containing today, or one the
+  // chosen dates cut into at either end. Returns its label, or "" for a full week.
+  function anPartial(wstart){
+    var d=AN.data||{}, rg=d.range||{};
+    var mon=new Date(wstart+"T00:00:00"), sun=new Date(mon); sun.setDate(sun.getDate()+6);
+    var end=localISO(sun), today=String(d.today||"").slice(0,10);
+    if(today && wstart<=today && today<=end) return "in progress";
+    if(rg.to && rg.to<end) return "part week";
+    if(rg.from && rg.from>wstart) return "part week";
+    return "";
+  }
+  function anSummary(rows, val, fmtv, noun, ref, refLabel, average){
+    var full=(rows||[]).filter(function(r){ return !anPartial(r.wstart); });
+    if(!full.length) return "";
+    var last=full[full.length-1], lv=val(last);
+    var prev=full.slice(Math.max(0,full.length-5), full.length-1);
+    var pavg=prev.length?prev.reduce(function(t,r){ return t+val(r); },0)/prev.length:0;
+    var best=full.slice().sort(function(a,b){ return val(b)-val(a); })[0];
+    var tot=full.reduce(function(t,r){ return t+val(r); },0);
+    var parts=['Last full week (from '+esc(wkLabel(last.wstart))+'): <b>'+fmtv(lv)+'</b> '+noun];
+    if(ref){ var rv=ref(last); if(rv>0) parts[0]+=' — <b class="'+(lv>=rv*0.95?'an-up':'an-down')+'">'+fmt(lv/rv*100,0)+'% of '+refLabel+'</b>'; }
+    if(pavg>0){ var ch=(lv-pavg)/pavg*100;
+      parts.push('<b class="'+(ch>=0?'an-up':'an-down')+'">'+(ch>=0?'▲ ':'▼ ')+fmt(Math.abs(ch),0)+'%</b> against the 4 weeks before'); }
+    parts.push('best week '+esc(wkLabel(best.wstart))+' ('+fmtv(val(best))+')');
+    // headcounts do not add up across weeks (the same person works many), so
+    // the workers chart gives the typical week instead of a total
+    parts.push(average ? ('typically '+fmtv(tot/full.length)+' a week') : (fmtv(tot)+' across '+full.length+' full week'+(full.length===1?'':'s')));
+    return '<div class="an-sum">'+parts.join(' &middot; ')+'</div>';
   }
   // ── STAGE STRIP ─────────────────────────────────────────────────────────
   // Master Plan -> Planned Tasks -> Worker Assignment -> Actual Done -> Paid Work,
@@ -1730,31 +1833,41 @@
   // The endpoint sends keys and counts; the words live here. Stage names are the
   // app's own vocabulary rather than the site's, so the taxonomy does not rename
   // them -- a farm may rename a block, but "Master Plan" is what this pipeline is.
-  var STAGE_STEPS=[["master_plan","Master Plan","#4f46e5"],
-                   ["planned","Planned Tasks","#2563eb"],
-                   ["assigned","Worker Assignment","#d97706"],
-                   ["actual","Actual Done","#0a7a43"],
-                   ["paid","Paid Work","#7c3aed"]];
-  var STAGE_GAPS=["to_planned","to_assigned","to_actual","to_paid"];
+  var STAGE_STEPS=[["master_plan","Master plans approved","#4f46e5","Approved master plans running in the dates."],
+                   ["planned","Requests approved","#2563eb","Approved requests (work orders raised against a plan) in the dates."],
+                   ["assigned","Crews assigned","#d97706","Assigned crews: a request staffed with named workers."],
+                   ["actual","Actuals confirmed","#0a7a43","Actuals (recorded work) that finished approval."],
+                   ["paid","Payment runs paid","#7c3aed","Payment runs marked Paid. One run is one worker for one pay week, so this counts more than actuals do."]];
+  var STAGE_GAPS=[["to_planned","requests awaiting approval"],["to_assigned","crews awaiting approval"],
+                  ["to_actual","actuals awaiting approval"],["to_paid","payment runs unpaid"]];
   function stageStrip(d){
     var st=(d && d.stages)||{}, wait=(d && d.stage_waiting)||{};
+    var mo=(d && d.stage_money)||{}, wm=(d && d.stage_waiting_money)||{};
+    var sub={master_plan:money(mo.master_plan)+" KES planned", planned:money(mo.planned)+" KES requested",
+      assigned:fmt(mo.assigned_workers)+" workers on them", actual:money(mo.actual)+" KES confirmed",
+      paid:money(mo.paid)+" KES paid out"};
     var h='<div class="stagestrip" role="list">';
     STAGE_STEPS.forEach(function(sp,i){
       var n=Number(st[sp[0]])||0;
-      h+='<div class="ss-node" role="listitem">'+
+      h+='<div class="ss-node" role="listitem" title="'+esc(sp[3])+'">'+
            '<div class="ss-circle"'+(i===0?' data-first="1"':'')+' style="border-color:'+sp[2]+'">'+
              '<span style="color:'+sp[2]+'">'+fmt(n)+'</span></div>'+
            '<div class="ss-label">'+esc(sp[1])+'</div>'+
+           (d && d.stage_money?'<div class="ss-sub">'+esc(sub[sp[0]])+'</div>':'')+
          '</div>';
       if(i<STAGE_GAPS.length){
-        var w=Number(wait[STAGE_GAPS[i]])||0;
-        h+='<div class="ss-rail" title="'+esc(String(w))+' waiting to move on">'+
-             (w>0?'<span class="ss-dot" style="background:'+STAGE_STEPS[i+1][2]+'">'+
-                  '<em>'+fmt(w)+'</em></span>':'')+
+        var gk=STAGE_GAPS[i][0], w=Number(wait[gk])||0, wk=wm[gk];
+        var cap=fmt(w)+' '+STAGE_GAPS[i][1]+(wk?' · '+money(wk)+' KES':'');
+        h+='<div class="ss-rail" title="'+esc(cap)+'">'+
+             (w>0?'<span class="ss-dot" style="background:'+STAGE_STEPS[i+1][2]+'"><em>'+fmt(w)+'</em></span>'+
+                  '<span class="ss-cap">'+esc(STAGE_GAPS[i][1])+(wk?'<br>'+esc(money(wk))+' KES':'')+'</span>':'')+
            '</div>';
       }
     });
-    return h+'</div>';
+    h+='</div>';
+    if(mo.planned>0) h+='<div class="an-sum" style="margin-top:-6px">Of the money requested in these dates, <b>'+fmt(mo.actual/mo.planned*100,0)+
+      '%</b> has been confirmed as done and <b>'+fmt(mo.paid/mo.planned*100,0)+'%</b> paid out.</div>';
+    return h;
   }
 
   function anBarsH(rows, labelKey, color, valFn, subFn, capText){
@@ -1763,7 +1876,7 @@
     rows.forEach(function(r){ var v=Number(r.pay)||0; if(v>max) max=v; total+=v; });
     if(max<=0) return '<div style="padding:24px;text-align:center;color:var(--mute)">Nothing confirmed in this period yet.</div>';
     var n=rows.length;
-    var W=1200,rowH=46,H=n*rowH+52,L=250,R=140,iw=W-L-R;
+    var W=1200,rowH=46,H=n*rowH+52,L=250,R=230,iw=W-L-R;
     function XV(v){ return L+(v/(max*1.06||1))*iw; }
     var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block">';
     for(var gi=1;gi<=4;gi++){ var gx=L+iw*gi/4;
@@ -1778,8 +1891,8 @@
       var w=Math.max(2,XV(v)-L);
       var nm=String(r[labelKey]||"—"); if(nm.length>30) nm=nm.slice(0,29)+"…";
       g+='<text x="'+(L-10)+'" y="'+(y0+17)+'" text-anchor="end" font-size="12" font-weight="600" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(nm)+'</text>';
-      g+='<rect x="'+L+'" y="'+(y0+4)+'" width="'+w.toFixed(1)+'" height="18" rx="9" fill="'+color+'"><title>'+esc(String(r[labelKey]||""))+' · '+valFn(v,pct)+' · '+subFn(r)+'</title></rect>';
-      g+='<text x="'+(L+w+8).toFixed(1)+'" y="'+(y0+17)+'" font-size="11" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+valFn(v,pct)+'</text>';
+      g+='<rect x="'+L+'" y="'+(y0+4)+'" width="'+w.toFixed(1)+'" height="18" rx="9" fill="'+color+'"><title>'+esc(String(r[labelKey]||""))+' · '+esc(valFn(v,pct,r))+' · '+esc(subFn(r))+'</title></rect>';
+      g+='<text x="'+(L+w+8).toFixed(1)+'" y="'+(y0+17)+'" font-size="11" font-weight="700" fill="#1a1a18" font-family="Poppins,sans-serif">'+esc(valFn(v,pct,r))+'</text>';
     });
     g+='<text x="'+(L+iw/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="#5a5a52" font-family="Poppins,sans-serif">Confirmed pay (KES)</text>';
     g+='</svg>';
@@ -1847,25 +1960,73 @@
     if(sb) sb.innerHTML=stageStrip(AN.data||{});
     if(!AN.data){ bd.innerHTML='<div style="padding:16px;color:var(--mute)">Loading charts…</div>'; return; }
     var wk=AN.data.weekly||[];
+    var rg=AN.data.range||{};
+    var rgNote=(rg.from&&rg.to)?'<div class="an-sum" style="color:var(--mute);margin-bottom:4px">Showing '+esc(shortDate(rg.from))+' – '+esc(shortDate(rg.to))+
+      ((el("an-from")||{}).value||(el("an-to")||{}).value?'':' (the last 12 weeks; pick dates above to change it)')+'</div>':'';
     if(AN.tab==="out"){
-      bd.innerHTML=anBarsV(wk,"qty","#0a7a43",function(v){return money(v);},
-        "How much confirmed work got done each week.","Confirmed output (units)");
+      bd.innerHTML=anSummary(wk, function(r){ return (r.val_conf||0)+(r.val_pend||0); }, function(v){ return money(v)+" KES"; },
+          "of work done", function(r){ return r.target||0; }, "target")+
+        anBarsV(wk, {solid:"val_conf", pale:"val_pend", tick:"target", color:"#0a7a43", fmt:function(v){ return money(v); },
+          solidLabel:"actual work, confirmed", tickLabel:"target (requested)", yTitle:"Work valued at its rate (KES)",
+          label:function(r){ var a=(r.val_conf||0)+(r.val_pend||0); return r.target>0?fmt(a/r.target*100,0)+"%":(a?money(a):""); },
+          cap:"Actual output against the target the week's requests set. Both are valued at the task's rate so different units add up; salaried staff's output counts too. The figure over each bar is actual ÷ target."});
     } else if(AN.tab==="pay"){
-      bd.innerHTML=anBarsV(wk,"pay","#7c3aed",function(v){return money(v);},
-        "What that work cost each week in KES.","Confirmed pay (KES)");
+      bd.innerHTML=anSummary(wk, function(r){ return (r.pay||0)+(r.pay_pend||0); }, function(v){ return money(v)+" KES"; },
+          "of pay recorded", function(r){ return r.planned||0; }, "plan")+
+        anBarsV(wk, {solid:"pay", pale:"pay_pend", tick:"planned", color:"#7c3aed", fmt:function(v){ return money(v); },
+          solidLabel:"pay, confirmed", tickLabel:"planned (master plans)", yTitle:"Pay (KES)",
+          label:function(r){ var a=(r.pay||0)+(r.pay_pend||0); return r.planned>0?fmt(a/r.planned*100,0)+"%":(a?money(a):""); },
+          cap:"What the work cost each week against what the master plans budgeted for it. The figure over each bar is pay ÷ plan (the KES alone where no plan covered the week). Pay is below plan where work was not done or was done by salaried staff."});
     } else if(AN.tab==="wrk"){
-      bd.innerHTML=anBarsV(wk,"workers","#2563eb",function(v){return fmt(v);},
-        "How many different people did confirmed work each week.","Workers (count)");
+      bd.innerHTML=anSummary(wk, function(r){ return r.workers||0; }, function(v){ return fmt(v); }, "people", null, null, true)+
+        anBarsV(wk, {solid:"workers", avg:true, color:"#2563eb", fmt:function(v){ return fmt(v); },
+          solidLabel:"people with confirmed work", yTitle:"Workers (count)",
+          cap:"How many different people did confirmed work each week."});
     } else if(AN.tab==="task"){
       // the endpoint sends the docname; taskName() is the one place that knows
       // the map, so resolve here rather than teaching the bar renderer about tasks
+      var pw=AN.data.prev_window;
+      // compare only with a period the records fully cover
+      var pwPartial=pw && AN.data.data_from && pw.from < AN.data.data_from;
+      if(pwPartial) pw=null;
       var anTT=(AN.data.top_tasks||[]).map(function(r){
         var o={}; for(var k in r){ o[k]=r[k]; } o.label=taskName(r.task); return o; });
       bd.innerHTML=anBarsH(anTT,"label","#0a7a43",
-        function(v,pct){ return "KES "+money(v)+" · "+pct+"%"; },
-        function(r){ return money(r.qty)+" units · "+fmt(r.workers)+" people"; },
-        "Your 10 biggest tasks by confirmed pay.");
+        function(v,pct,r){
+          var t="KES "+money(v)+" · "+pct+"%";
+          if(pw && r){ var pp=r.prev_pay||0;
+            t+= pp>0 ? (" · "+(v>=pp?"▲ ":"▼ ")+fmt(Math.abs(v-pp)/pp*100,0)+"%") : " · new"; }
+          return t; },
+        function(r){ return fmt(r.workers)+" people"; },
+        "Your 10 biggest tasks by confirmed pay, each with its share of the total"+(pw?" and its change against the "+wkLabel(pw.from)+"–"+wkLabel(pw.to)+" period of the same length (new = nothing confirmed then).":
+          (pwPartial?". No change is shown: the period of the same length before these dates starts before the first recorded work ("+wkLabel(AN.data.data_from)+")."
+                    :".")));
     }
+    bd.innerHTML=rgNote+bd.innerHTML+anKey();
+  }
+
+  // every term in the card, in one place
+  function anKey(){
+    var dl=function(rows){ return rows.map(function(r){ return r[0]==="#"?'<h6>'+esc(r[1])+'</h6>':'<dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd>'; }).join(""); };
+    return '<details class="ex-key"><summary>Key: what every number means</summary><dl>'+dl([
+      ["#","The pipeline strip"],
+      ["Master plans approved","Approved plans running in the dates, with the money their approved lines budget."],
+      ["Requests approved","Approved requests in the dates and the money they ask for."],
+      ["Crews assigned","Assigned crews in the dates and how many different workers are on them."],
+      ["Actuals confirmed","Recorded work that finished approval, and its pay."],
+      ["Payment runs paid","Payment runs marked Paid. One run is one worker for one pay week, so it counts more than actuals do."],
+      ["Numbers on the rails","What is waiting at that hand-off: requests, crews or actuals awaiting approval, and payment runs not yet paid."],
+      ["#","The weekly charts"],
+      ["Actual work (KES)","Output for the week valued at the task's rate (quantity × rate), so trees, hours and kilograms add up. Includes salaried staff's output."],
+      ["Target","What the week's requests asked for, valued the same way and spread evenly over each request's days."],
+      ["Planned","What the approved master plans budgeted, spread evenly over each plan's days."],
+      ["Solid / pale","Solid is confirmed; the paler part on top is recorded but still in approval."],
+      ["Part week","The week containing today, or a week the chosen dates cut into: drawn paler and left out of the comparisons, since it is not a whole week."],
+      ["▲ / ▼ against the 4 weeks before","The last full week compared with the average of the four full weeks before it."],
+      ["#","Top tasks"],
+      ["Share","The task's part of all confirmed pay in the dates."],
+      ["▲ / ▼","Change against the period of the same length just before; \"new\" when nothing was confirmed then."]
+    ])+'</dl></details>';
   }
 
   function farmTable(rows){

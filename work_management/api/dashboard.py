@@ -1582,6 +1582,10 @@ def wm_dashboard(**kwargs):
         if cfarm:
             dconds = dconds + " AND ac.farm = %s"
             dparams.append(cfarm)
+        elif FARMS:
+            # no farm named means every farm this caller may see, not every farm
+            dconds = dconds + " AND ac.farm IN %s"
+            dparams.append(tuple(FARMS))
         if cfrom:
             dconds = dconds + " AND we.work_date >= %s"
             dparams.append(cfrom)
@@ -1610,6 +1614,112 @@ def wm_dashboard(**kwargs):
             weekly.append({"wstart": str(monday), "qty": frappe.utils.flt(r.qty),
                 "pay": frappe.utils.flt(r.pay), "workers": frappe.utils.cint(r.workers)})
         out["weekly"] = weekly
+        # The same weeks, counting work still in approval beside what is confirmed:
+        # sign-off runs days behind the field, so confirmed alone makes the latest
+        # weeks look like work stopped. Person-days, not output -- output is in each
+        # task's own unit and a week's trees, hours and kilograms cannot be added up.
+        ch_wconds = dconds.replace("ac.workflow_state='CONFIRMED'", "IFNULL(ac.workflow_state,'') != 'Rejected'")
+        ch_wk = {}
+        for r in frappe.db.sql("""
+            SELECT DATE_SUB(we.work_date, INTERVAL WEEKDAY(we.work_date) DAY) wk,
+                   SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN 1 ELSE 0 END) pd_conf,
+                   SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN 0 ELSE 1 END) pd_pend,
+                   COALESCE(SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN 0 ELSE we.amount END),0) pay_pend,
+                   COALESCE(SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN we.actual_quantity * ac.rate ELSE 0 END),0) val_conf,
+                   COALESCE(SUM(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN 0 ELSE we.actual_quantity * ac.rate END),0) val_pend
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE """ + ch_wconds + """
+            GROUP BY wk
+        """, tuple(dparams), as_dict=True):
+            ch_wk[str(r.wk)] = r
+        # planned KES per week: each approved plan's approved lines, spread evenly over
+        # the plan's days, the figure the plans card values a plan by
+        ch_pargs = {"a": cfrom or "1900-01-01", "b": cto or "2999-12-31"}
+        ch_pw = ""
+        if cfarm:
+            ch_pw = " AND mp.farm = %(f)s"
+            ch_pargs["f"] = cfarm
+        elif FARMS:
+            ch_pw = " AND mp.farm IN %(fs)s"
+            ch_pargs["fs"] = tuple(FARMS)
+        ch_planned = {}
+        for r in frappe.db.sql("""
+            SELECT mp.period_from f, mp.period_to t, COALESCE(SUM(ma.cost),0) c
+            FROM `tabWork Management Master Plan` mp
+            INNER JOIN `tabWork Management Master Plan Activity` ma ON ma.parent = mp.name
+            WHERE mp.workflow_state = 'Approved' AND ma.consultant_state = 'OK'
+              AND mp.period_from <= %(b)s AND mp.period_to >= %(a)s""" + ch_pw + """
+            GROUP BY mp.name
+        """, ch_pargs, as_dict=True):
+            ch_n = frappe.utils.date_diff(r.t, r.f) + 1
+            if ch_n <= 0:
+                continue
+            for ch_i in range(ch_n):
+                ch_day = frappe.utils.add_days(r.f, ch_i)
+                if cfrom and str(ch_day) < str(cfrom):
+                    continue
+                if cto and str(ch_day) > str(cto):
+                    continue
+                ch_d = frappe.utils.getdate(ch_day)
+                ch_mon = str(frappe.utils.add_days(ch_d, -ch_d.weekday()))
+                ch_planned[ch_mon] = frappe.utils.flt(ch_planned.get(ch_mon)) + frappe.utils.flt(r.c) / ch_n
+        # the target: what the requests asked for, valued at their rate and spread
+        # evenly over the days each covers. Output is valued the same way (quantity x
+        # rate, salaried output included), so actuals and target meet in one unit.
+        ch_ta = {"a": cfrom or "1900-01-01", "b": cto or "2999-12-31"}
+        ch_tw = ""
+        if cfarm:
+            ch_tw = " AND farm = %(f)s"
+            ch_ta["f"] = cfarm
+        elif FARMS:
+            ch_tw = " AND farm IN %(fs)s"
+            ch_ta["fs"] = tuple(FARMS)
+        ch_target = {}
+        for r in frappe.db.sql("""
+            SELECT from_date f, to_date t, COALESCE(quantity,0) * COALESCE(rate,0) c
+            FROM `tabWork Management Planner`
+            WHERE IFNULL(workflow_state,'') NOT IN ('Rejected','Draft')
+              AND from_date <= %(b)s AND to_date >= %(a)s""" + ch_tw, ch_ta, as_dict=True):
+            ch_n = frappe.utils.date_diff(r.t, r.f) + 1
+            if ch_n <= 0:
+                continue
+            for ch_i in range(ch_n):
+                ch_day = frappe.utils.add_days(r.f, ch_i)
+                if cfrom and str(ch_day) < str(cfrom):
+                    continue
+                if cto and str(ch_day) > str(cto):
+                    continue
+                ch_d = frappe.utils.getdate(ch_day)
+                ch_mon = str(frappe.utils.add_days(ch_d, -ch_d.weekday()))
+                ch_target[ch_mon] = frappe.utils.flt(ch_target.get(ch_mon)) + frappe.utils.flt(r.c) / ch_n
+        ch_seen = {}
+        for w in weekly:
+            ch_r = ch_wk.get(w["wstart"])
+            w["pd_conf"] = frappe.utils.cint(ch_r.pd_conf) if ch_r else 0
+            w["pd_pend"] = frappe.utils.cint(ch_r.pd_pend) if ch_r else 0
+            w["pay_pend"] = frappe.utils.flt(ch_r.pay_pend) if ch_r else 0
+            w["planned"] = frappe.utils.flt(ch_planned.get(w["wstart"]), 2)
+            w["val_conf"] = frappe.utils.flt(ch_r.val_conf, 2) if ch_r else 0
+            w["val_pend"] = frappe.utils.flt(ch_r.val_pend, 2) if ch_r else 0
+            w["target"] = frappe.utils.flt(ch_target.get(w["wstart"]), 2)
+            ch_seen[w["wstart"]] = 1
+        # a week with work recorded but none confirmed yet still belongs on the chart
+        for ch_k in ch_wk:
+            if ch_k not in ch_seen:
+                ch_r = ch_wk[ch_k]
+                weekly.append({"wstart": ch_k, "qty": 0, "pay": 0, "workers": 0,
+                    "pd_conf": frappe.utils.cint(ch_r.pd_conf), "pd_pend": frappe.utils.cint(ch_r.pd_pend),
+                    "pay_pend": frappe.utils.flt(ch_r.pay_pend), "planned": frappe.utils.flt(ch_planned.get(ch_k), 2),
+                    "val_conf": frappe.utils.flt(ch_r.val_conf, 2), "val_pend": frappe.utils.flt(ch_r.val_pend, 2),
+                    "target": frappe.utils.flt(ch_target.get(ch_k), 2)})
+        weekly.sort(key=lambda x: x["wstart"])
+        out["today"] = frappe.utils.today()
+        # the range actually read, so the screen can say what it shows when no dates
+        # were picked, and treat a part week at either end as part of a week
+        out["range"] = {"from": str(cfrom) if cfrom else None, "to": str(cto) if cto else None}
+        # the farm picker's list: the caller's farms
+        out["farms"] = list(FARMS) if FARMS else []
         # top tasks by confirmed pay
         tt = frappe.db.sql("""
             SELECT ac.task label, COALESCE(SUM(we.amount),0) pay,
@@ -1625,6 +1735,36 @@ def wm_dashboard(**kwargs):
         # screen file mentioned `.task` for a name-resolution check to catch.
         out["top_tasks"] = [{"task": r.label, "pay": frappe.utils.flt(r.pay),
             "qty": frappe.utils.flt(r.qty), "workers": frappe.utils.cint(r.workers)} for r in tt]
+        # the period just before, of the same length: is each big task growing or shrinking
+        if cfrom and cto and tt:
+            ch_len = frappe.utils.date_diff(cto, cfrom) + 1
+            ch_pf = frappe.utils.add_days(cfrom, -ch_len)
+            ch_pt = frappe.utils.add_days(cfrom, -1)
+            ch_prev_conds = dconds.replace("we.work_date >= %s", "we.work_date >= %s", 1)
+            ch_prev_params = []
+            for ch_p in dparams:
+                if ch_p == cfrom:
+                    ch_prev_params.append(ch_pf)
+                elif ch_p == cto:
+                    ch_prev_params.append(ch_pt)
+                else:
+                    ch_prev_params.append(ch_p)
+            ch_prev = {}
+            for r in frappe.db.sql("""
+                SELECT ac.task t, COALESCE(SUM(we.amount),0) pay
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+                WHERE """ + dconds + """ AND ac.task IN %s
+                GROUP BY ac.task
+            """, tuple(ch_prev_params + [tuple([x.label for x in tt])]), as_dict=True):
+                ch_prev[r.t] = frappe.utils.flt(r.pay)
+            for x in out["top_tasks"]:
+                x["prev_pay"] = ch_prev.get(x["task"]) or 0
+            out["prev_window"] = {"from": str(ch_pf), "to": str(ch_pt)}
+        # the first day anything was recorded: a comparison period that starts before
+        # it is only partly covered, and its "growth" is the data starting, not work
+        ch_first = frappe.db.sql("SELECT MIN(work_date) FROM `tabWork Actuals Employee`")
+        out["data_from"] = str(ch_first[0][0]) if ch_first and ch_first[0][0] else None
 
         # THE STAGE STRIP -- five stages and the four hand-offs between them.
         #
@@ -1641,21 +1781,25 @@ def wm_dashboard(**kwargs):
         # OVERLAP test rather than one column compared to one date: a plan running
         # 31 Aug to 4 Sep belongs to any window touching those days, and comparing a
         # single column would silently drop everything straddling the edge.
-        def stage_count(sc_table, sc_states, sc_from_col, sc_to_col):
+        def stage_count(sc_table, sc_states, sc_from_col, sc_to_col, sc_expr="COUNT(*)"):
             sc_conds = "workflow_state IN %(st)s"
             sc_vals = {"st": tuple(sc_states)}
             if cfarm:
                 sc_conds = sc_conds + " AND farm = %(f)s"
                 sc_vals["f"] = cfarm
+            elif FARMS:
+                sc_conds = sc_conds + " AND farm IN %(fs)s"
+                sc_vals["fs"] = tuple(FARMS)
             if cfrom:
                 sc_conds = sc_conds + " AND IFNULL(" + sc_to_col + ", '2999-12-31') >= %(a)s"
                 sc_vals["a"] = cfrom
             if cto:
                 sc_conds = sc_conds + " AND IFNULL(" + sc_from_col + ", '1900-01-01') <= %(b)s"
                 sc_vals["b"] = cto
-            return frappe.utils.cint(frappe.db.sql(
-                "SELECT COUNT(*) n FROM `tab" + sc_table + "` WHERE " + sc_conds,
-                sc_vals, as_dict=True)[0].n)
+            sc_v = frappe.db.sql(
+                "SELECT " + sc_expr + " n FROM `tab" + sc_table + "` WHERE " + sc_conds,
+                sc_vals, as_dict=True)[0].n
+            return frappe.utils.cint(sc_v) if sc_expr == "COUNT(*)" else frappe.utils.flt(sc_v, 2)
 
         MP = "Work Management Master Plan"
         PL = "Work Management Planner"
@@ -1678,6 +1822,47 @@ def wm_dashboard(**kwargs):
             "to_assigned": stage_count(AS, WAIT, "from_date", "to_date"),
             "to_actual": stage_count(AC, WAIT, "from_date", "to_date"),
             "to_paid": stage_count(PY_, ("Unpaid",), "period_from", "period_to"),
+        }
+        # The money (or people) behind each count, so the strip says what moved and not
+        # only how many documents did. Plans are valued by their approved lines.
+        ch_mpv = 0.0
+        ch_mpa = {"a": cfrom or "1900-01-01", "b": cto or "2999-12-31"}
+        ch_mpw = ""
+        if cfarm:
+            ch_mpw = " AND mp.farm = %(f)s"
+            ch_mpa["f"] = cfarm
+        elif FARMS:
+            ch_mpw = " AND mp.farm IN %(fs)s"
+            ch_mpa["fs"] = tuple(FARMS)
+        ch_mpv = frappe.utils.flt(frappe.db.sql("""
+            SELECT COALESCE(SUM(ma.cost),0) FROM `tabWork Management Master Plan` mp
+            INNER JOIN `tabWork Management Master Plan Activity` ma ON ma.parent = mp.name
+            WHERE mp.workflow_state = 'Approved' AND ma.consultant_state = 'OK'
+              AND mp.period_to >= %(a)s AND mp.period_from <= %(b)s""" + ch_mpw, ch_mpa)[0][0], 2)
+        ch_aw = {"a": cfrom or "1900-01-01", "b": cto or "2999-12-31"}
+        ch_aww = ""
+        if cfarm:
+            ch_aww = " AND a.farm = %(f)s"
+            ch_aw["f"] = cfarm
+        elif FARMS:
+            ch_aww = " AND a.farm IN %(fs)s"
+            ch_aw["fs"] = tuple(FARMS)
+        ch_workers = frappe.utils.cint(frappe.db.sql("""
+            SELECT COUNT(DISTINCT we.employee) FROM `tabWork Assignment Employee` we
+            INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
+            WHERE a.workflow_state = 'Assigned' AND IFNULL(we.status,'Active') = 'Active'
+              AND IFNULL(a.to_date,'2999-12-31') >= %(a)s AND IFNULL(a.from_date,'1900-01-01') <= %(b)s""" + ch_aww, ch_aw)[0][0])
+        out["stage_money"] = {
+            "master_plan": ch_mpv,
+            "planned": stage_count(PL, ("Approved",), "from_date", "to_date", "COALESCE(SUM(total_cost),0)"),
+            "assigned_workers": ch_workers,
+            "actual": stage_count(AC, ("CONFIRMED",), "from_date", "to_date", "COALESCE(SUM(total_payment),0)"),
+            "paid": stage_count(PY_, ("Paid",), "period_from", "period_to", "COALESCE(SUM(amount),0)"),
+        }
+        out["stage_waiting_money"] = {
+            "to_planned": stage_count(PL, ("Pending Approval",), "from_date", "to_date", "COALESCE(SUM(total_cost),0)"),
+            "to_actual": stage_count(AC, WAIT, "from_date", "to_date", "COALESCE(SUM(total_payment),0)"),
+            "to_paid": stage_count(PY_, ("Unpaid",), "period_from", "period_to", "COALESCE(SUM(amount),0)"),
         }
         # farm share
         fsh = frappe.db.sql("""
