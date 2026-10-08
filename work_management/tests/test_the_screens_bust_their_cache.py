@@ -118,3 +118,13 @@ class TestNoTemplateSilencesItsOwnJinja(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestTheDashboardWearsTheUpandeMark(unittest.TestCase):
+	"""The planner, assigner, actuals and payment headers carry the Upande mark; the
+	dashboard showed a green work-management wordmark instead, the odd one out."""
+
+	def test_the_default_header_logo_is_the_upande_mark(self):
+		from work_management.api import config
+		self.assertEqual(config.DEFAULT_HEADER_LOGO, "/assets/work_management/images/upande-wordmark.png")
+		self.assertTrue(os.path.exists(os.path.join(APP, "public", "images", "upande-wordmark.png")))

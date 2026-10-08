@@ -339,11 +339,13 @@ def get_config():
 	return cfg
 
 
-DEFAULT_HEADER_LOGO = "/assets/work_management/images/work-management-wordmark.svg"
+# The Upande mark with its name beneath, the same image the planner, assigner,
+# actuals and payment screens carry in their headers, so all five match.
+DEFAULT_HEADER_LOGO = "/assets/work_management/images/upande-wordmark.png"
 
 
 def header_logo():
-	"""The logo the work screens show, or the module's own wordmark."""
+	"""The logo the work screens show, or the Upande mark."""
 	try:
 		configured = frappe.db.get_single_value("Work Management Settings", "project_logo")
 	except Exception:

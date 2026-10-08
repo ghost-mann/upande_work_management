@@ -453,3 +453,69 @@ class TestTheAppsScreenOpensTheDesk(unittest.TestCase):
 	def test_app_home_agrees_with_it(self):
 		"""Two doors, one destination."""
 		self.assertEqual(self.app_home, self.entry["route"])
+
+
+class TestSavedDeskLayoutsReachTheIcon(unittest.TestCase):
+	"""Frappe v16 draws the desk grid from a user's saved Desktop Layout, not from
+	the Desktop Icon table, and never adds an app installed after that layout was
+	saved. Anyone who had arranged their desk before this app arrived never saw it.
+	"""
+
+	ENTRY = {"label": "Work Management", "icon_type": "App", "logo_url": "/new.svg",
+		"link": "/app/work-management", "link_type": "External", "hidden": 0}
+
+	def test_a_layout_without_the_icon_gets_it_appended(self):
+		layout = [{"label": "Upande CRM", "icon_type": "App"}]
+		merged, changed = desk.merge_into_layout(layout, self.ENTRY)
+		self.assertTrue(changed)
+		self.assertEqual([i["label"] for i in merged], ["Upande CRM", "Work Management"])
+		self.assertEqual(merged[-1]["logo_url"], "/new.svg")
+		self.assertEqual(merged[-1]["child_icons"], [])
+
+	def test_an_existing_entry_takes_the_apps_fields_but_keeps_the_users_choices(self):
+		layout = [{"label": "Work Management", "logo_url": "/old.png", "hidden": 1,
+			"idx": 7, "parent_icon": "Mine", "link": "/old"}]
+		merged, changed = desk.merge_into_layout(layout, self.ENTRY)
+		self.assertTrue(changed)
+		self.assertEqual(len(merged), 1)
+		self.assertEqual(merged[0]["logo_url"], "/new.svg")
+		self.assertEqual(merged[0]["link"], "/app/work-management")
+		# hiding it, ordering it and filing it in a folder are the user's to decide
+		self.assertEqual((merged[0]["hidden"], merged[0]["idx"], merged[0]["parent_icon"]), (1, 7, "Mine"))
+
+	def test_an_entry_inside_a_folder_is_found_not_duplicated(self):
+		layout = [{"label": "Mine", "icon_type": "Folder",
+			"child_icons": [{"label": "Work Management", "logo_url": "/new.svg",
+				"link": "/app/work-management", "link_type": "External", "icon_type": "App"}]}]
+		merged, changed = desk.merge_into_layout(layout, self.ENTRY)
+		self.assertFalse(changed)
+		self.assertEqual(len(merged), 1)
+
+	def test_an_up_to_date_layout_is_left_alone(self):
+		layout = [dict(self.ENTRY, child_icons=[])]
+		merged, changed = desk.merge_into_layout(layout, self.ENTRY)
+		self.assertFalse(changed)
+
+
+class TestTheAnimatedLogoIsRealSvg(unittest.TestCase):
+	"""The desk loads the logo through <img>, which needs well-formed XML. A "--"
+	inside a comment is enough to break it: inlined in HTML it still draws, so it
+	looked fine in a preview and showed a broken image on the desk."""
+
+	def test_the_logo_parses_as_xml(self):
+		import os
+		import xml.dom.minidom
+
+		here = os.path.dirname(os.path.dirname(os.path.abspath(desk.__file__)))
+		path = os.path.join(here, "work_management",
+			desk.LOGO_URL.replace("/assets/work_management/", "public/"))
+		xml.dom.minidom.parse(path)
+
+	def test_it_rests_on_the_upande_arrow_and_respects_reduced_motion(self):
+		import os
+
+		here = os.path.dirname(os.path.dirname(os.path.abspath(desk.__file__)))
+		src = open(os.path.join(here, "work_management",
+			desk.LOGO_URL.replace("/assets/work_management/", "public/"))).read()
+		self.assertIn("prefers-reduced-motion", src)
+		self.assertIn('class="arrow"', src)

@@ -336,10 +336,11 @@ def hide_links_to_missing_doctypes():
 # required_apps names it, but the icon should not depend on that staying true.
 #
 # hooks.py add_to_apps_screen names the same file, so the apps screen and the
-# desk's app switcher draw the same picture. The app's own wordmark is still the
-# header logo on the five screens (see api/config.DEFAULT_HEADER_LOGO): that is
-# a title inside the app, where naming the app is the point.
-LOGO_URL = "/assets/work_management/images/upande-logo.png"
+# desk's app switcher draw the same picture. It is the animated sibling of
+# upande_crm's envelope and upande_irrigation's tap: two cogs turn, part, and the
+# Upande arrow rises between them, coming to rest as exactly the static badge
+# (upande-logo.png). Pure CSS inside the SVG, since the desk draws it via <img>.
+LOGO_URL = "/assets/work_management/images/upande-work-management-logo.svg"
 
 
 def desktop_icon_fields(label=None):
@@ -404,8 +405,75 @@ def ensure_desktop_icon():
 	doc.update(fields)
 	doc.flags.ignore_permissions = True
 	doc.save()
+	reach_saved_layouts(doc)
 	frappe.db.commit()
 	return WORKSPACE
+
+
+# What the app decides about its tile. Everything else on a saved entry -- hidden,
+# idx, parent_icon -- is the user's arrangement and is never touched.
+LAYOUT_OWNED = ("label", "icon_type", "link_type", "link", "link_to", "logo_url", "app",
+	"standard", "icon", "bg_color")
+
+
+def _find_in_layout(entries, label):
+	for entry in entries or []:
+		if not isinstance(entry, dict):
+			continue
+		if entry.get("label") == label:
+			return entry
+		found = _find_in_layout(entry.get("child_icons"), label)
+		if found is not None:
+			return found
+	return None
+
+
+def merge_into_layout(layout, entry):
+	"""Put this app's tile into one saved desk layout. Returns (layout, changed).
+
+	Frappe v16 draws the desk grid from the user's saved Desktop Layout, not from
+	the Desktop Icon table, and adds nothing to it when an app is installed later.
+	So a user who had arranged their desk before this app arrived never saw its
+	tile at all. An absent tile is appended; a present one -- at the top level or
+	filed in a folder -- takes the app's own fields and keeps the user's choices.
+
+	Pure, so it can be checked without a site.
+	"""
+	layout = list(layout or [])
+	current = _find_in_layout(layout, entry["label"])
+	if current is None:
+		layout.append(dict(entry, parent_icon=None, hidden=0, child_icons=[]))
+		return layout, True
+	changed = False
+	for key in LAYOUT_OWNED:
+		if key in entry and current.get(key) != entry[key]:
+			current[key] = entry[key]
+			changed = True
+	return layout, changed
+
+
+def reach_saved_layouts(icon):
+	"""Bring this app's tile into every saved desk layout on the site."""
+	if not frappe.db.exists("DocType", "Desktop Layout"):
+		return 0
+	entry = {key: icon.get(key) for key in LAYOUT_OWNED}
+	entry.update(name=icon.name, idx=icon.get("idx") or 0, restrict_removal=0, icon_image=None)
+	touched = 0
+	for row in frappe.get_all("Desktop Layout", fields=["name", "layout"]):
+		try:
+			layout = json.loads(row.layout or "[]")
+		except ValueError:
+			continue  # not ours to repair
+		if not isinstance(layout, list):
+			continue
+		merged, changed = merge_into_layout(layout, entry)
+		if changed:
+			frappe.db.set_value("Desktop Layout", row.name, "layout", json.dumps(merged),
+				update_modified=False)
+			frappe.cache.hdel("desktop_icons", row.name)
+			frappe.cache.hdel("bootinfo", row.name)
+			touched += 1
+	return touched
 
 
 def _refresh_desktop_icon():

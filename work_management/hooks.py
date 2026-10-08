@@ -40,7 +40,7 @@ add_to_apps_screen = [
 	{
 		"name": "work_management",
 		# the Upande mark, as every sibling app uses -- see desk.LOGO_URL
-		"logo": "/assets/work_management/images/upande-logo.png",
+		"logo": "/assets/work_management/images/upande-work-management-logo.svg",
 		"title": "Work Management",
 		"route": app_home,
 		"has_permission": "work_management.api.permission.has_app_permission",
