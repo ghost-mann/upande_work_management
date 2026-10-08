@@ -1835,16 +1835,15 @@
   // them -- a farm may rename a block, but "Master Plan" is what this pipeline is.
   var STAGE_STEPS=[["master_plan","Master plans approved","#4f46e5","Approved master plans running in the dates."],
                    ["planned","Requests approved","#2563eb","Approved requests (work orders raised against a plan) in the dates."],
-                   ["assigned","Crews assigned","#d97706","Assigned crews: a request staffed with named workers."],
                    ["actual","Actuals confirmed","#0a7a43","Actuals (recorded work) that finished approval."],
                    ["paid","Payment runs paid","#7c3aed","Payment runs marked Paid. One run is one worker for one pay week, so this counts more than actuals do."]];
-  var STAGE_GAPS=[["to_planned","requests awaiting approval"],["to_assigned","crews awaiting approval"],
+  var STAGE_GAPS=[["to_planned","requests awaiting approval"],
                   ["to_actual","actuals awaiting approval"],["to_paid","payment runs unpaid"]];
   function stageStrip(d){
     var st=(d && d.stages)||{}, wait=(d && d.stage_waiting)||{};
     var mo=(d && d.stage_money)||{}, wm=(d && d.stage_waiting_money)||{};
     var sub={master_plan:money(mo.master_plan)+" KES planned", planned:money(mo.planned)+" KES requested",
-      assigned:fmt(mo.assigned_workers)+" workers on them", actual:money(mo.actual)+" KES confirmed",
+      actual:money(mo.actual)+" KES confirmed",
       paid:money(mo.paid)+" KES paid out"};
     var h='<div class="stagestrip" role="list">';
     STAGE_STEPS.forEach(function(sp,i){
@@ -2012,10 +2011,9 @@
       ["#","The pipeline strip"],
       ["Master plans approved","Approved plans running in the dates, with the money their approved lines budget."],
       ["Requests approved","Approved requests in the dates and the money they ask for."],
-      ["Crews assigned","Assigned crews in the dates and how many different workers are on them."],
       ["Actuals confirmed","Recorded work that finished approval, and its pay."],
       ["Payment runs paid","Payment runs marked Paid. One run is one worker for one pay week, so it counts more than actuals do."],
-      ["Numbers on the rails","What is waiting at that hand-off: requests, crews or actuals awaiting approval, and payment runs not yet paid."],
+      ["Numbers on the rails","What is waiting at that hand-off: requests or actuals awaiting approval, and payment runs not yet paid."],
       ["#","The weekly charts"],
       ["Actual work (KES)","Output for the week valued at the task's rate (quantity × rate), so trees, hours and kilograms add up. Includes salaried staff's output."],
       ["Target","What the week's requests asked for, valued the same way and spread evenly over each request's days."],
