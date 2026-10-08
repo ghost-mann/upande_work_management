@@ -140,3 +140,17 @@ class TestMasterPlanCardScreen(unittest.TestCase):
 
 	def test_dates_are_local_not_utc(self):
 		self.assertIn("function todayISO(){ return localISO(new Date()); }", self.js)
+
+
+class TestThePlansValueIsItsLines(unittest.TestCase):
+	"""The header's total_cost goes stale when lines are edited outside the
+	screen; on four live plans it was a fraction of the lines, and the card
+	flagged them over budget when no line was."""
+
+	def test_the_list_values_a_plan_by_its_approved_lines(self):
+		block = action_block("plan_completion")
+		self.assertIn("pc_wd_cost = pc_wd_cost + frappe.utils.flt(pc_a.cost)", block)
+		self.assertIn("pc_val = frappe.utils.flt(pc_wd_cost, 2) if pc_wd_cost > 0", block)
+
+	def test_the_detail_does_too(self):
+		self.assertIn("md_planned = md_planned + frappe.utils.flt(md_a.cost)", action_block("mp_detail"))

@@ -3694,9 +3694,11 @@ def wm_dashboard(**kwargs):
             pc_wv = 0.0
             pc_wr = 0.0
             pc_wd = 0.0
+            pc_wd_cost = 0.0
             for pc_a in frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": pc.name, "consultant_state": "OK"},
                     fields=["task", "work_qty", "cost"]):
+                pc_wd_cost = pc_wd_cost + frappe.utils.flt(pc_a.cost)
                 pc_bq = frappe.utils.flt(pc_a.work_qty)
                 if pc_bq <= 0:
                     continue
@@ -3725,7 +3727,12 @@ def wm_dashboard(**kwargs):
                 pc_wv = pc_wv + pc_cw * (1 if pc_dqi >= pc_bq else pc_dqi / pc_bq)
                 pc_rqi = frappe.utils.flt(pc_ad.r)
                 pc_wr = pc_wr + pc_cw * (1 if pc_rqi >= pc_bq else pc_rqi / pc_bq)
-            pc_val = frappe.utils.flt(pc.total_cost, 2)
+            # The plan's value is what its approved lines budget, the figure the request
+            # cap enforces. The header's total_cost is not recomputed when lines are
+            # edited outside the screen, and on four live plans it is a fraction of
+            # its lines (WMMP-00042: 141k against 1.55M) -- read from it, those plans
+            # showed as over budget when not one line was.
+            pc_val = frappe.utils.flt(pc_wd_cost, 2) if pc_wd_cost > 0 else frappe.utils.flt(pc.total_cost, 2)
             pc_out.append({
                 "plan": pc.name, "farm": pc.farm, "state": pc.workflow_state,
                 "period_from": str(pc.period_from), "period_to": str(pc.period_to),
@@ -3917,7 +3924,12 @@ def wm_dashboard(**kwargs):
                 if md_p.workflow_state == "Paid":
                     md_paid = md_paid + frappe.utils.flt(md_p.amount)
 
-            md_planned = frappe.utils.flt(md_plan.total_cost, 2)
+            # the approved lines' budget, not the header total (see plan_completion)
+            md_planned = 0.0
+            for md_a in md_acts:
+                if md_a.task in md_ok:
+                    md_planned = md_planned + frappe.utils.flt(md_a.cost)
+            md_planned = frappe.utils.flt(md_planned, 2) if md_planned > 0 else frappe.utils.flt(md_plan.total_cost, 2)
             out["plan"] = md_plan
             out["money"] = {
                 "planned": md_planned,
