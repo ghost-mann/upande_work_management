@@ -341,7 +341,9 @@ def hide_links_to_missing_doctypes():
 # lines up, steps into the arrow's diagonal, and the Upande arrow rises through
 # them, coming to rest as exactly the static badge
 # (upande-logo.png). Pure CSS inside the SVG, since the desk draws it via <img>.
-LOGO_URL = "/assets/work_management/images/upande-work-management-logo.svg"
+# A new picture gets a new file name: browsers cache /assets for a long time,
+# and the cogs this replaced kept showing on the desk under the old name.
+LOGO_URL = "/assets/work_management/images/upande-work-management-crew.svg"
 
 
 def desktop_icon_fields(label=None):
