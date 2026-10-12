@@ -1553,7 +1553,7 @@ def wm_payment(**kwargs):
                     if dto:
                         sconds = sconds + " AND we.work_date <= %s"
                         sparams.append(dto)
-                    agg = frappe.db.sql("""
+                    wm_agg_sql = """
                         SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
                                ac.rate doc_rate, ac.assignment assignment,
                                ac.entered_by entered_by, ac.hr_approved_by hr_approved_by,
@@ -1570,7 +1570,8 @@ def wm_payment(**kwargs):
                         GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.rate, ac.assignment,
                                  ac.entered_by, ac.hr_approved_by, ac.gm_approved_by, we.employee_name
                         ORDER BY MIN(we.work_date)
-                    """, tuple(sparams), as_dict=True)
+                    """
+                    agg = frappe.db.sql(wm_agg_sql, tuple(sparams), as_dict=True)
                     total_owed = 0
                     for g in agg:
                         total_owed = total_owed + frappe.utils.flt(g.owed)
@@ -1633,6 +1634,28 @@ def wm_payment(**kwargs):
                         wm_savepoint = "wmsingle" + frappe.generate_hash(length=10)
                         frappe.db.savepoint(wm_savepoint)
                         try:
+                            # Late work for a week already sent: hrms allows one Additional Salary per
+                            # worker, component and pay date, so instead of a second one the week is
+                            # re-sent whole -- see release_sent_week_for_topup(). Inside the savepoint,
+                            # so a failed re-send restores the earlier run and its Additional Salary.
+                            wm_topup = release_sent_week_for_topup(emp,
+                                frappe.db.get_single_value("Work Management Settings", "salary_component"),
+                                wm_pay_on, dfrom, dto)
+                            if wm_topup.get("block"):
+                                frappe.db.rollback(save_point=wm_savepoint)
+                                out["skipped"].append({
+                                    "employee": emp, "employee_name": ename,
+                                    "week_from": str(dfrom), "week_to": str(dto),
+                                    "pay_date": str(wm_pay_on),
+                                    "amount": frappe.utils.flt(total_owed),
+                                    "reason": wm_topup["block"],
+                                })
+                                continue
+                            if wm_topup.get("released"):
+                                agg = frappe.db.sql(wm_agg_sql, tuple(sparams), as_dict=True)
+                                total_owed = 0
+                                for g in agg:
+                                    total_owed = total_owed + frappe.utils.flt(g.owed)
                             d = frappe.new_doc("Work Management Payment")
                             d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                             d.company = DEFAULT_COMPANY
@@ -1915,7 +1938,7 @@ def wm_payment(**kwargs):
                     if dto:
                         sconds = sconds + " AND we.work_date <= %s"
                         sparams.append(dto)
-                    agg = frappe.db.sql("""
+                    bw_agg_sql = """
                         SELECT ac.name actuals, ac.farm farm, ac.task task, ac.block_section block,
                                ac.rate doc_rate, ac.assignment assignment,
                                ac.entered_by entered_by, ac.hr_approved_by hr_approved_by,
@@ -1932,7 +1955,8 @@ def wm_payment(**kwargs):
                         GROUP BY ac.name, ac.farm, ac.task, ac.block_section, ac.rate, ac.assignment,
                                  ac.entered_by, ac.hr_approved_by, ac.gm_approved_by, we.employee_name
                         ORDER BY MIN(we.work_date)
-                    """, tuple(sparams), as_dict=True)
+                    """
+                    agg = frappe.db.sql(bw_agg_sql, tuple(sparams), as_dict=True)
                     total_owed = 0
                     for g in agg:
                         total_owed = total_owed + frappe.utils.flt(g.owed)
@@ -1990,6 +2014,26 @@ def wm_payment(**kwargs):
                     bw_savepoint = "wmbulk" + frappe.generate_hash(length=10)
                     frappe.db.savepoint(bw_savepoint)
                     try:
+                        # Late work for a week already sent: hrms allows one Additional Salary per
+                        # worker, component and pay date, so instead of a second one the week is
+                        # re-sent whole -- see release_sent_week_for_topup(). Inside the savepoint,
+                        # so a failed re-send restores the earlier run and its Additional Salary.
+                        bw_topup = release_sent_week_for_topup(emp,
+                            frappe.db.get_single_value("Work Management Settings", "salary_component"),
+                            bw_pay_on, dfrom, dto)
+                        if bw_topup.get("block"):
+                            frappe.db.rollback(save_point=bw_savepoint)
+                            results.append({"employee": emp, "employee_name": ename,
+                                            "week_from": str(dfrom), "week_to": str(dto),
+                                            "pay_date": str(bw_pay_on),
+                                            "amount": frappe.utils.flt(total_owed),
+                                            "skipped": 1, "reason": bw_topup["block"]})
+                            continue
+                        if bw_topup.get("released"):
+                            agg = frappe.db.sql(bw_agg_sql, tuple(sparams), as_dict=True)
+                            total_owed = 0
+                            for g in agg:
+                                total_owed = total_owed + frappe.utils.flt(g.owed)
                         d = frappe.new_doc("Work Management Payment")
                         d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                         d.company = DEFAULT_COMPANY
@@ -3470,6 +3514,67 @@ def raise_additional_salary_for_payment(payment_name, employee, employee_name, s
     asal.insert(ignore_permissions=True)
     asal.submit()
     return asal.name
+
+
+def release_sent_week_for_topup(employee, salary_component, payroll_date, week_from, week_to):
+    """Late work for a week that was already sent to payroll.
+
+    hrms allows one Additional Salary per employee, component and payroll date
+    when the component overwrites the structure amount, so actuals confirmed
+    after their week went to payroll could never be sent for that week's own
+    pay date. Instead of a second line, the week is re-sent whole: the earlier
+    run's Additional Salary is cancelled, which (on_additional_salary_cancel)
+    drops the still-Unpaid run and frees its rows, and the caller then sends
+    the freed rows together with the late ones as one payment for the same
+    date.
+
+    Only done while payroll has not consumed it. Returns {"released": [runs]}
+    when the caller should re-read the week, {"block": reason} when the week
+    cannot be reopened, or {} when nothing conflicts. Does not commit: the
+    caller holds a savepoint taken before this call and rolls back to it if
+    the re-send fails, which restores the cancelled Additional Salary and run.
+    """
+    existing = frappe.db.get_all("Additional Salary",
+        filters={"employee": employee, "salary_component": salary_component,
+                 "payroll_date": payroll_date, "docstatus": 1,
+                 "overwrite_salary_structure_amount": 1},
+        fields=["name", "ref_doctype", "ref_docname"])
+    if not existing:
+        return {}
+    released = []
+    for a in existing:
+        if a.ref_doctype != "Work Management Payment" or not a.ref_docname:
+            return {"block": ("Additional Salary " + a.name + " for " + salary_component + " on "
+                              + str(payroll_date) + " was not raised by Work Management; "
+                              "send this work with a later end date")}
+        slip = frappe.db.sql("""
+            SELECT ss.name FROM `tabSalary Detail` sd
+            INNER JOIN `tabSalary Slip` ss ON ss.name = sd.parent
+            WHERE sd.additional_salary = %s AND ss.docstatus = 1 LIMIT 1
+        """, (a.name,), as_dict=True)
+        if slip:
+            return {"block": ("this week was already paid through payroll (Salary Slip "
+                              + slip[0].name + "); send the late work with a later end date")}
+        run = frappe.db.get_value("Work Management Payment", a.ref_docname,
+            ["workflow_state", "period_from", "period_to"], as_dict=True)
+        if not run or run.workflow_state != "Unpaid":
+            return {"block": ("payment " + a.ref_docname + " for this week is "
+                              + ((run.workflow_state if run else None) or "missing")
+                              + "; send the late work with a later end date")}
+        # re-sending frees every row the earlier run held, so they must all fall
+        # inside the window being sent now, or some would be left unsent
+        if ((run.period_from and str(run.period_from) < str(week_from))
+                or (run.period_to and str(run.period_to) > str(week_to))):
+            return {"block": ("payment " + a.ref_docname + " covers " + str(run.period_from)
+                              + " to " + str(run.period_to) + ", wider than "
+                              + str(week_from) + " to " + str(week_to)
+                              + "; send the whole of that range")}
+        released.append(a)
+    for a in released:
+        asal = frappe.get_doc("Additional Salary", a.name)
+        asal.flags.ignore_permissions = True
+        asal.cancel()
+    return {"released": [a.ref_docname for a in released]}
 
 
 def _stamp_actuals_paid_for_payment(payment_name):
