@@ -111,11 +111,15 @@
     for(var i=0;i<lv.length;i++){ if(lv[i]===iso) return true; }
     return false;
   }
+  // A rest day locks its cell only where Settings say so ("Check weekly offs /
+  // holidays", sent as detail.block_off). Off, it is an ordinary day that is
+  // marked as a rest day -- the server accepts the entry, so the grid must too.
+  function offBlocks(){ return !!(ST.detail && Number(ST.detail.block_off)); }
   function cellActive(w, iso){
     var st=(w.status||"Active");
     if(w.start_date && iso < w.start_date) return false;   // replacement not started yet
     if(st==="Left" && w.left_date && iso > w.left_date) return false;  // left worker, after last day
-    if(offDay(w, iso)) return false;   // worker's rest day / holiday
+    if(offDay(w, iso) && offBlocks()) return false;   // worker's rest day / holiday
     if(leaveDay(w, iso)) return false; // approved leave blocks entry
     return true;
   }
@@ -857,8 +861,9 @@
             h+='<td class="dcell closed" title="not active this day"></td>';
           }
         } else {
-          var pendCls = isLeavePend ? " leavepend" : "";
-          var pendTitle = isLeavePend ? ' title="pending leave request — not yet approved"' : '';
+          var pendCls = (isLeavePend ? " leavepend" : "") + (isOff ? " restday" : "");
+          var pendTitle = isLeavePend ? ' title="pending leave request — not yet approved"'
+                        : (isOff ? ' title="rest day / holiday"' : '');
           // presence strip: time in (scan) / P (manual present) / A (absent) / ? (no record)
           var pmark="";
           if(a.today && iso<=a.today){
@@ -1448,7 +1453,7 @@
         if(w.start_date && iso<w.start_date){ stTxt="not started"; stCls="mut"; }
         else if((w.status||"")==="Left" && w.left_date && iso>w.left_date){ stTxt="left"; stCls="bad"; }
         else if(leaveDay(w,iso)){ stTxt="approved leave"; stCls="warn"; }
-        else if(offDay(w,iso)){ stTxt="rest day"; stCls="mut"; }
+        else if(offDay(w,iso)){ stTxt=offBlocks()?"rest day":"rest day · may record"; stCls=offBlocks()?"mut":"ok"; }
         else if(leavePendingDay(w,iso)){ stTxt="pending leave"; stCls="warn"; }
         else { stTxt="available"; stCls="ok"; }
         var q=ST.cells[ck(w.employee,iso)];

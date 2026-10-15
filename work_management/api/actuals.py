@@ -472,6 +472,14 @@ def wm_actuals(**kwargs):
         # and the screen has nothing extra to draw. On, it unlocks and asks for a
         # reason, because the plan is about to be capped at what was done.
         a["allow_short_submit"] = 1 if ALLOW_SHORT_SUBMIT else 0
+        # WHETHER A REST DAY LOCKS ITS CELL. `off_dates` is still sent either way,
+        # because the grid marks a rest day whether or not it may be keyed. The
+        # screen used to lock every one of them regardless, so with "Check weekly
+        # offs / holidays" switched OFF a worker who came in on their Sunday could
+        # not be recorded at all -- act_submit would have accepted the entry, the
+        # grid never let anybody type it.
+        a["block_off"] = frappe.utils.cint(
+            frappe.db.get_single_value("Work Management Settings", "att_block_off"))
         a["standard_day"] = {
             "weekday": frappe.utils.flt(STANDARD_DAY.get("weekday")),
             "saturday": frappe.utils.flt(STANDARD_DAY.get("saturday")),
