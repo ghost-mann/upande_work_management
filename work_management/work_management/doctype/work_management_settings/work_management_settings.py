@@ -10,6 +10,17 @@ from work_management import approvals, desk, taxonomy
 class WorkManagementSettings(Document):
 	def validate(self):
 		approvals.validate_configuration(self)
+		self.validate_pay_month()
+
+	def validate_pay_month(self):
+		"""A pay month opens on a day every month has. The 29th to the 31st do
+		not exist in February, so a month "from the 30th" has no honest answer."""
+		if self.get("pay_frequency") != "Monthly":
+			return
+		day = frappe.utils.cint(self.get("pay_month_start_day"))
+		if day < 1 or day > 28:
+			frappe.throw(frappe._("Month start day must be between 1 and 28 (it is {0}).").format(day),
+				title=frappe._("Pay frequency"))
 
 	def on_update(self):
 		"""Push the approval configuration out to roles and workflows.

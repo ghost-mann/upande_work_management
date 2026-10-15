@@ -1,0 +1,80 @@
+{
+ "allow_rename": 1,
+ "creation": "2026-10-15 00:00:00.000000",
+ "custom": 0,
+ "description": "The off-day bonus a payroll feed paid, or did not, one row per pay week. A pay month carries one row for each pay week that closes inside it, so the bonus on a monthly feed can be reconciled week by week.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "week_from",
+  "week_to",
+  "working_days",
+  "attended",
+  "amount",
+  "note"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "week_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Week From",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "week_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Week To",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "working_days",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Working Days",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "attended",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Attended",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Bonus (KES)",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "description": "Why no bonus was paid, or which earlier feed already paid it.",
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Note",
+   "read_only": 1
+  }
+ ],
+ "idx": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Payment Bonus Week",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

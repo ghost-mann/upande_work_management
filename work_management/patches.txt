@@ -41,6 +41,11 @@ work_management.patches.v1_0.settle_activities_with_no_consultant_step
 # carry, and every rename made first is a row it may not recover. Nothing above
 # depends on it; after_migrate's apply_stage_picker_options() then offers keys.
 work_management.patches.v1_0.key_stage_approvers_by_stage
+# Altura's pay month (Monthly, from the 21st): insert-if-missing, never
+# overwriting a value the site already holds. After the doctype sync, because it
+# needs the two Settings fields to exist; nothing depends on it, and the
+# rescue patch below must stay last.
+work_management.patches.v1_0.seed_monthly_pay_period
 # After key_stage_approvers_by_stage, and last: it writes the catalogue's state
 # and action onto the stage rows, moves documents waiting under the old names
 # and rebuilds the workflows, all in one transaction, before after_migrate. A

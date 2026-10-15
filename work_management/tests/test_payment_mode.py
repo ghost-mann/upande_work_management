@@ -440,7 +440,7 @@ class TestTheCopyThatDescribesTheAccountsPath(unittest.TestCase):
 		block = self.js[at:at + 900]
 		self.assertIn("ST.paysByFeed", block)
 		self.assertIn("This project pays through the payroll feed", block)
-		self.assertIn("feed the week on the Payroll tab", block)
+		self.assertIn("feed the '+periodWord()+' on the Payroll tab", block)
 
 	def test_it_still_has_both_accounts_variants(self):
 		"""Can-send and cannot-send were the two states before; they stay."""
@@ -450,7 +450,7 @@ class TestTheCopyThatDescribesTheAccountsPath(unittest.TestCase):
 		self.assertIn("done by the HR head, accounting or the general manager", block)
 
 	def test_the_build_tab_note_has_one(self):
-		self.assertIn("ST.paysByFeed\n      ? '<div class=\"note\">Unpaid &rarr; feed the week to payroll", self.js)
+		self.assertIn("ST.paysByFeed\n      ? '<div class=\"note\">Unpaid &rarr; feed the '+periodWord()+' to payroll", self.js)
 
 	def test_the_audit_workers_hint_has_one(self):
 		at = self.js.index("function renderAuditWorkers(")
@@ -464,7 +464,7 @@ class TestTheCopyThatDescribesTheAccountsPath(unittest.TestCase):
 		at = self.js.index("function loadIssues(")
 		block = self.js[at:at + 1200]
 		self.assertIn("ST.paysByFeed", block)
-		self.assertIn("when the week is fed", block)
+		self.assertIn('when the "+periodWord()+" is fed', block)
 
 	def test_the_discrepancy_hint_has_one(self):
 		self.assertIn("ST.paysByFeed?'payroll feed':'send to accounts'", self.js)

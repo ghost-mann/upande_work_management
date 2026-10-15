@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import report_access
+from work_management import pay_period, pay_week, report_access
 from work_management.api.config import FEED_KIND, PAYROLL_FEED, chain_states, get_config, sql_in
 
 
@@ -254,8 +254,14 @@ def actuals_earnings(employee, week_from, week_to):
     """, {"e": employee, "a": week_from, "b": week_to}, as_dict=True)
 
 
-def payroll_feed_run(employee, employee_name, week_from, week_to, pay_date, company):
-    """Create one worker's payment run for a fed week: paid, and rows stamped.
+def payroll_feed_run(employee, employee_name, week_from, week_to, pay_date, company,
+                     bonus_weeks=None, excluded_weekly=None):
+    """Create one worker's payment run for a fed period: paid, and rows stamped.
+
+    The period is a pay week or a pay month (work_management/pay_period.py).
+    `bonus_weeks` is the off-day bonus verdict per pay week, written to the run
+    as Work Payment Bonus Week rows so the bonus can be reconciled week by week;
+    `excluded_weekly` is what weekly feeds had already paid inside a pay month.
 
     In payroll-feed mode THE FEED IS THE PAYMENT. There is no accounts step to
     wait for, so the run is created in the terminal state and its day-rows are
@@ -341,6 +347,13 @@ def payroll_feed_run(employee, employee_name, week_from, week_to, pay_date, comp
     doc.amount = total
     doc.total_workers = 1
     doc.total_actuals = len(doc.lines)
+    for week in bonus_weeks or []:
+        doc.append("bonus_weeks", {
+            "week_from": week.get("week_from"), "week_to": week.get("week_to"),
+            "working_days": week.get("working_days"), "attended": week.get("attended"),
+            "amount": week.get("amount"), "note": week.get("note"),
+        })
+    doc.excluded_weekly_amount = frappe.utils.flt(excluded_weekly)
     doc.flags.ignore_permissions = True
     doc.insert(ignore_permissions=True)
     # Terminal on creation. Written directly for the same reason the accounts
@@ -930,6 +943,20 @@ def wm_payment(**kwargs):
             fields=["name","run_title","total_actuals","total_workers","amount","workflow_state","payroll_date","payment_kind"],
             order_by="creation desc", limit=200)
 
+    elif action == "pay_period":
+        # THE PERIOD NAVIGATOR'S ONE SOURCE. The screen asks for a period instead of
+        # computing it: "the latest that has closed", or "the one `step` away from
+        # the period holding `date`". Weekly or monthly is the server's business.
+        pp_shape = pay_period.from_settings()
+        pp_today = frappe.utils.today()
+        pp_date = frappe.form_dict.get("date")
+        pp_step = frappe.utils.cint(frappe.form_dict.get("step"))
+        if frappe.utils.cint(frappe.form_dict.get("latest")) or not pp_date:
+            pp_span = pay_period.previous_complete(pp_today, pp_shape)
+        else:
+            pp_span = pay_period.shift(pp_date, pp_step, pp_shape)
+        out["period"] = pay_period.resolve(pp_span, pp_shape, pp_today)
+
     elif action == "pay_roles":
         rl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         is_acc = ("System Manager" in rl) or any(
@@ -943,18 +970,20 @@ def wm_payment(**kwargs):
         # because a hidden button is a courtesy and not a gate.
         out["payment_mode"] = payment_mode()
         out["pays_by_feed"] = 1 if payment_mode() == PAYROLL_FEED else 0
-        # the page picks pay weeks, not free dates, so it needs the configured
-        # week boundary
-        r_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        r_start = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
-        r_end = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
-        r_pay = frappe.db.get_single_value("Work Management Settings", "pay_day") or r_end
-        r_si = r_names.index(r_start) if r_start in r_names else 6
-        r_ei = r_names.index(r_end) if r_end in r_names else 5
-        out["week_starts_on"] = r_start
-        out["week_ends_on"] = r_end
-        out["pay_day"] = r_pay
-        out["week_days"] = ((r_ei - r_si) % 7) + 1
+        # the page picks pay PERIODS, not free dates. It is told the shape for its
+        # sentences, and the period to open on; every other period it shows it
+        # asks for (pay_period below), so no date maths lives in the browser.
+        r_shape = pay_period.from_settings()
+        r_today = frappe.utils.today()
+        out["week_starts_on"] = pay_week.WEEKDAYS[r_shape["start_wd"]]
+        out["week_ends_on"] = pay_week.WEEKDAYS[r_shape["end_wd"]]
+        out["pay_day"] = pay_week.WEEKDAYS[r_shape["pay_wd"]]
+        out["week_days"] = r_shape["days"]
+        out["pay_frequency"] = r_shape["frequency"]
+        out["period_word"] = pay_period.word(r_shape)
+        out["month_start_day"] = r_shape["month_start_day"]
+        out["period_latest"] = pay_period.resolve(
+            pay_period.previous_complete(r_today, r_shape), r_shape, r_today)
         # whether the page may offer to send a chosen range as one payment, or only
         # pay weeks. The page needs it to label the range picker honestly: sending a
         # range on a site that does not offer them is refused server-side, and
@@ -1910,14 +1939,15 @@ def wm_payment(**kwargs):
             # Start day, end day and pay day are three independent settings. The
             # week length follows from start and end, so a week need not be seven
             # days; the pay day may be the closing day or any day after it.
-            wk_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            wk_start_day = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
-            wk_end_day = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
-            wk_pay_day = frappe.db.get_single_value("Work Management Settings", "pay_day") or wk_end_day
-            wk_start_wd = wk_names.index(wk_start_day) if wk_start_day in wk_names else 6
-            wk_end_idx = wk_names.index(wk_end_day) if wk_end_day in wk_names else 5
-            wk_pay_idx = wk_names.index(wk_pay_day) if wk_pay_day in wk_names else wk_end_idx
-            wk_len = ((wk_end_idx - wk_start_wd) % 7) + 1
+            #
+            # The period itself -- a pay week, or a pay month where Settings say so --
+            # is pay_period's to decide (work_management/pay_period.py), the same
+            # answer the payroll feed and the screen's navigator get.
+            wk_shape = pay_period.from_settings()
+            wk_start_day = pay_week.WEEKDAYS[wk_shape["start_wd"]]
+            wk_end_day = pay_week.WEEKDAYS[wk_shape["end_wd"]]
+            wk_pay_day = pay_week.WEEKDAYS[wk_shape["pay_wd"]]
+            wk_len = wk_shape["days"]
             wconds = ("we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
                       " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
                       " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY
@@ -1944,29 +1974,30 @@ def wm_payment(**kwargs):
             wk_outside = []
             for wr in wk_rows:
                 wdd = frappe.utils.getdate(wr.d)
-                wk_back = (wdd.weekday() - wk_start_wd) % 7
-                wk_span = wk_len
                 if wk_days:
                     # a chosen range: the configured week is not consulted at all,
                     # and the range tiles forward from the first date selected.
                     # Anchoring each date's window on itself would overlap them --
                     # with a range of five the 28th would open 28th-1st and the 29th
                     # 29th-2nd, and both would claim the 30th.
-                    wk_span = wk_days
                     wk_back = 0
                     if wk_days > 1:
                         wk_back = frappe.utils.date_diff(wdd, frappe.utils.getdate(dfrom)) % wk_days
-                elif wk_back >= wk_len:
-                    # the pay week is shorter than seven days and this weekday sits
-                    # in the gap, so it belongs to no week -- reported, never dropped,
-                    # and sendable only as a chosen range
-                    wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
-                    continue
-                wk_s = frappe.utils.add_days(wdd, -wk_back)
-                wk_e = frappe.utils.add_days(wk_s, wk_span - 1)
+                    wk_s = frappe.utils.add_days(wdd, -wk_back)
+                    wk_e = frappe.utils.add_days(wk_s, wk_days - 1)
+                else:
+                    wk_found = pay_period.period_of(wdd, wk_shape)
+                    if not wk_found:
+                        # the pay week is shorter than seven days and this weekday sits
+                        # in the gap, so it belongs to no week -- reported, never dropped,
+                        # and sendable only as a chosen range
+                        wk_outside.append({"date": str(wr.d), "amount": frappe.utils.flt(wr.a)})
+                        continue
+                    wk_s, wk_e = wk_found
                 wk_key = str(wk_s)
                 if wk_key not in wk_map:
                     wk_map[wk_key] = {"week_from": str(wk_s), "week_to": str(wk_e),
+                                      "label": pay_period.label(wk_s, wk_e, wk_shape),
                                       "amount": 0, "days": 0,
                                       "complete": 1 if (frappe.utils.getdate(wk_e) < wk_today or wk_part_ok) else 0}
                 wk_map[wk_key]["amount"] = wk_map[wk_key]["amount"] + frappe.utils.flt(wr.a)
@@ -1981,6 +2012,7 @@ def wm_payment(**kwargs):
             out["week_ends_on"] = wk_end_day
             out["pay_day"] = wk_pay_day
             out["week_days"] = wk_len
+            out["pay_frequency"] = wk_shape["frequency"]
             out["span_days"] = wk_days
             out["outside_any_week"] = wk_outside
             if frappe.utils.cint(frappe.form_dict.get("preview")):
@@ -1988,9 +2020,11 @@ def wm_payment(**kwargs):
                 out["would_create"] = len(wk_ready)
             elif not wk_ready:
                 if wk_held:
-                    out["error"] = ("Nothing to send yet - the only unpaid work is in the week still in "
-                                    "progress (" + wk_held[0]["week_from"] + " to " + wk_held[0]["week_to"] +
-                                    "). It can be sent once that week closes.")
+                    out["error"] = ("Nothing to send yet - the only unpaid work is in the "
+                                    + pay_period.word(wk_shape) + " still in progress ("
+                                    + wk_held[0]["week_from"] + " to " + wk_held[0]["week_to"]
+                                    + "). It can be sent once that " + pay_period.word(wk_shape)
+                                    + " closes.")
                 else:
                     out["error"] = "No unpaid confirmed earnings for this worker in the window"
             else:
@@ -2050,11 +2084,7 @@ def wm_payment(**kwargs):
                         # either: the work stays unpaid and unreferenced, so it is picked up
                         # on the next send once the underlying data is fixed. This keeps the
                         # payment count and the Additional Salary count identical.
-                        wm_pay_on = dto
-                        wm_guard = 0
-                        while frappe.utils.getdate(wm_pay_on).weekday() != wk_pay_idx and wm_guard < 7:
-                            wm_pay_on = frappe.utils.add_days(wm_pay_on, 1)
-                            wm_guard = wm_guard + 1
+                        wm_pay_on = str(pay_period.pay_date(dto, wk_shape))
                         wm_emp = frappe.db.get_value("Employee", emp,
                             ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
                         wm_block = None
@@ -2096,14 +2126,11 @@ def wm_payment(**kwargs):
                         d = frappe.new_doc("Work Management Payment")
                         d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                         d.company = DEFAULT_COMPANY
-                        # payroll date = the first pay day on or after the week ends, so
-                        # setting the pay day to the closing day pays on that day
-                        pd_val = dto
-                        pd_guard = 0
-                        while frappe.utils.getdate(pd_val).weekday() != wk_pay_idx and pd_guard < 7:
-                            pd_val = frappe.utils.add_days(pd_val, 1)
-                            pd_guard = pd_guard + 1
-                        d.payroll_date = pd_val
+                        # payroll date = the first pay day on or after the week ends (so
+                        # setting the pay day to the closing day pays on that day), or the
+                        # day a pay month closes -- pay_period decides, and it is the same
+                        # date the preconditions above were checked against
+                        d.payroll_date = wm_pay_on
                         d.prepared_by = frappe.session.user
                         try:
                             if dfrom:
@@ -2266,14 +2293,9 @@ def wm_payment(**kwargs):
             sent_total = 0
             bw_from = dfrom
             bw_to = dto
-            bw_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            bw_start_day = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
-            bw_end_day = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
-            bw_pay_day = frappe.db.get_single_value("Work Management Settings", "pay_day") or bw_end_day
-            bw_start_wd = bw_names.index(bw_start_day) if bw_start_day in bw_names else 6
-            bw_end_idx = bw_names.index(bw_end_day) if bw_end_day in bw_names else 5
-            bw_pay_idx = bw_names.index(bw_pay_day) if bw_pay_day in bw_names else bw_end_idx
-            bw_len = ((bw_end_idx - bw_start_wd) % 7) + 1
+            # the period -- pay week or pay month -- from the one resolver every
+            # payment path asks (work_management/pay_period.py)
+            bw_shape = pay_period.from_settings()
             bw_today = frappe.utils.getdate(frappe.utils.today())
             bw_part_ok = frappe.utils.cint(frappe.db.get_single_value(
                 "Work Management Settings", "allow_part_week_send"))
@@ -2307,20 +2329,20 @@ def wm_payment(**kwargs):
                 bwk = {}
                 for br in bwk_rows:
                     bdd = frappe.utils.getdate(br.d)
-                    bback = (bdd.weekday() - bw_start_wd) % 7
-                    bspan = bw_len
                     if bw_days:
                         # a chosen range, tiled forward from the first date
                         # selected so two windows never claim the same day
-                        bspan = bw_days
                         bback = 0
                         if bw_days > 1:
                             bback = frappe.utils.date_diff(bdd, frappe.utils.getdate(bw_from)) % bw_days
-                    elif bback >= bw_len:
-                        bw_outside.append({"employee": emp, "date": str(br.d)})
-                        continue
-                    bs = frappe.utils.add_days(bdd, -bback)
-                    be = frappe.utils.add_days(bs, bspan - 1)
+                        bs = frappe.utils.add_days(bdd, -bback)
+                        be = frappe.utils.add_days(bs, bw_days - 1)
+                    else:
+                        bfound = pay_period.period_of(bdd, bw_shape)
+                        if not bfound:
+                            bw_outside.append({"employee": emp, "date": str(br.d)})
+                            continue
+                        bs, be = bfound
                     if frappe.utils.getdate(be) < bw_today or bw_part_ok:
                         bwk[str(bs)] = {"week_from": str(bs), "week_to": str(be)}
                 for wk in sorted(bwk.values(), key=lambda x: x["week_from"]):
@@ -2370,11 +2392,7 @@ def wm_payment(**kwargs):
                     # refuse must not get a payment document either: otherwise the work is
                     # stamped "sent to accounts" with no payroll record behind it, and the
                     # Issues tab cannot show it, because that tab only lists UNSENT work.
-                    bw_pay_on = dto
-                    bw_guard = 0
-                    while frappe.utils.getdate(bw_pay_on).weekday() != bw_pay_idx and bw_guard < 7:
-                        bw_pay_on = frappe.utils.add_days(bw_pay_on, 1)
-                        bw_guard = bw_guard + 1
+                    bw_pay_on = str(pay_period.pay_date(dto, bw_shape))
                     bw_emp = frappe.db.get_value("Employee", emp,
                         ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
                     bw_block = None
@@ -2411,15 +2429,10 @@ def wm_payment(**kwargs):
                     d = frappe.new_doc("Work Management Payment")
                     d.run_title = "Worker payment — " + ename + " — " + frappe.utils.today()
                     d.company = DEFAULT_COMPANY
-                    # payroll date = the day the week closes, which IS the pay day, so a
-                    # week's earnings land on one known date for everyone
-                    # payroll date = the first pay day on or after the week ends
-                    pd_val = dto
-                    pd_guard = 0
-                    while frappe.utils.getdate(pd_val).weekday() != bw_pay_idx and pd_guard < 7:
-                        pd_val = frappe.utils.add_days(pd_val, 1)
-                        pd_guard = pd_guard + 1
-                    d.payroll_date = pd_val
+                    # payroll date = the first pay day on or after the week ends, or
+                    # the day a pay month closes, so a period's earnings land on one
+                    # known date for everyone
+                    d.payroll_date = str(pay_period.pay_date(dto, bw_shape))
                     d.prepared_by = frappe.session.user
                     try:
                         if dfrom:
@@ -3560,14 +3573,10 @@ def wm_payment(**kwargs):
         if not is_from or not is_to:
             out["error"] = "from_date and to_date are required"
         else:
-            is_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            is_startday = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
-            is_endday = frappe.db.get_single_value("Work Management Settings", "pay_week_ends_on") or "Saturday"
-            is_payday = frappe.db.get_single_value("Work Management Settings", "pay_day") or is_endday
-            is_start_wd = is_names.index(is_startday) if is_startday in is_names else 6
-            is_end_idx = is_names.index(is_endday) if is_endday in is_names else 5
-            is_payidx = is_names.index(is_payday) if is_payday in is_names else is_end_idx
-            is_len = ((is_end_idx - is_start_wd) % 7) + 1
+            # each day is placed in its pay period -- week or month -- by the same
+            # resolver the sends use, so this tab blocks exactly what they would
+            is_shape = pay_period.from_settings()
+            is_len = is_shape["days"]
             is_cond = ("ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
                        " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
                        " AND IFNULL(we.payment_ref,'')=''"
@@ -3593,23 +3602,18 @@ def wm_payment(**kwargs):
             is_outside = []
             for dr in is_days:
                 ddate = frappe.utils.getdate(dr.d)
-                dback = (ddate.weekday() - is_start_wd) % 7
-                if dback >= is_len:
+                is_found = pay_period.period_of(ddate, is_shape)
+                if not is_found:
                     # the pay week is shorter than seven days and this weekday sits in
                     # the gap, so no send will ever pick it up -- named, never dropped
                     is_outside.append({"employee": dr.emp, "employee_name": dr.nm,
                                        "farm": dr.farm, "date": str(dr.d),
                                        "amount": frappe.utils.flt(dr.owed)})
                     continue
-                wstart = frappe.utils.add_days(ddate, -dback)
-                wend = frappe.utils.add_days(wstart, is_len - 1)
+                wstart, wend = is_found
                 gkey = str(dr.emp) + "|" + str(wstart)
                 if gkey not in is_groups:
-                    wpay = wend
-                    wguard = 0
-                    while frappe.utils.getdate(wpay).weekday() != is_payidx and wguard < 7:
-                        wpay = frappe.utils.add_days(wpay, 1)
-                        wguard = wguard + 1
+                    wpay = pay_period.pay_date(wend, is_shape)
                     is_groups[gkey] = {"emp": dr.emp, "nm": dr.nm, "farm": dr.farm,
                                        "week_from": str(wstart), "week_to": str(wend),
                                        "pay_date": str(wpay), "owed": 0.0, "days": 0,

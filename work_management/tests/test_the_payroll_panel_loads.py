@@ -116,7 +116,7 @@ class TestTheLoaderReadsAndTheButtonWrites(unittest.TestCase):
 
 	def test_the_write_is_a_post(self):
 		at = self.js.index("function wireFeed(")
-		self.assertIn("feedWeek(true)", self.js[at:at + 900])
+		self.assertIn("feedWeek(true)", self.js[at:self.js.index("\n  function ", at + 10)])
 		at2 = self.js.index("function feedWeek(")
 		self.assertIn("write?true:false", self.js[at2:at2 + 900])
 
@@ -195,7 +195,7 @@ class TestThePanelExplainsItselfWhenItCannotFeed(unittest.TestCase):
 		"""A week that does not exist is an error; a week that cannot be fed yet
 		is not, and conflating them is what made the panel look broken."""
 		self.assertIn("belongs to no pay", self.src)
-		self.assertIn("is not one pay week", self.src)
+		self.assertIn('" is not one pay " + word', self.src)
 
 	def test_the_screen_renders_the_reason(self):
 		at = self.js.index("function renderFeed(")
@@ -211,7 +211,7 @@ class TestThePanelExplainsItselfWhenItCannotFeed(unittest.TestCase):
 	def test_the_button_says_what_it_will_pay(self):
 		at = self.js.index("function renderFeed(")
 		block = self.js[at:at + 2500]
-		self.assertIn("'Feed week to payroll — '+money(d.total)", block)
+		self.assertIn("'Feed '+esc(w)+' to payroll — '+money(d.total)", block)
 
 	def test_the_already_fed_state_is_shown_rather_than_left_blank(self):
 		self.assertIn("already_fed", self.js)

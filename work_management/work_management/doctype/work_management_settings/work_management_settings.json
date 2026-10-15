@@ -96,6 +96,8 @@
   "pay_week_starts_on",
   "pay_week_ends_on",
   "pay_day",
+  "pay_frequency",
+  "pay_month_start_day",
   "allow_part_week_send",
   "allow_day_range",
   "sb_offday_bonus",
@@ -625,6 +627,22 @@
    "description": "The weekday payment is expected. Defaults to the closing day."
   },
   {
+   "default": "Weekly",
+   "description": "How often task workers are paid, and so what the payroll feed, Pay workers, the cards and History cover. Weekly uses the pay week above. Monthly runs from the month start day below to the day before it in the next month.",
+   "fieldname": "pay_frequency",
+   "fieldtype": "Select",
+   "label": "Pay frequency",
+   "options": "Weekly\nMonthly"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.pay_frequency=='Monthly'",
+   "description": "The day a pay month opens, 1 to 28. 21 makes a month run from the 21st to the 20th of the next, named for the month it ends in: \u201cOctober 2026: 21 Sep \u2192 20 Oct\u201d. 1 is the calendar month.",
+   "fieldname": "pay_month_start_day",
+   "fieldtype": "Int",
+   "label": "Month start day"
+  },
+  {
    "fieldname": "allow_day_range",
    "fieldtype": "Check",
    "label": "Also allow sending a chosen range of days",
@@ -812,7 +830,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-15 00:00:00.000000",
+ "modified": "2026-10-15 00:00:01.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",

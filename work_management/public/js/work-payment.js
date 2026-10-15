@@ -111,6 +111,15 @@
       el("ins-to").value=todayISO();
       call({action:"pay_roles"}).then(function(){});
       el("ins-apply").onclick=loadInsights;
+      if(ST.payFrequency==="Monthly"){
+        // a pay month is not the calendar month: open on the one in progress,
+        // as the server draws it (the 21st, not the 1st, on a 21st-to-20th site)
+        call({action:"pay_period", date:todayISO(), step:0}).then(function(r){
+          if(r.period) el("ins-from").value=r.period.from;
+          loadInsights();
+        }).catch(function(){ loadInsights(); });
+        return;
+      }
     }
     loadInsights();
   }
@@ -378,7 +387,7 @@
       // so "sending is done by the HR head" describes a step this project has not
       // got and sends the reader looking for a button that is deliberately absent.
       '<span class="hint" id="bulk-hint">'+(ST.paysByFeed
-        ? 'This project pays through the payroll feed — correct any unpaid rows here, then feed the week on the Payroll tab.'
+        ? 'This project pays through the payroll feed — correct any unpaid rows here, then feed the '+periodWord()+' on the Payroll tab.'
         : (ST.canSend
           ? 'Tick workers to send them to accounts in one go, or open each one for the full check first.'
           : 'You can review and audit here. Sending work to accounts is done by the HR head, accounting or the general manager.'))+'</span></div>';
@@ -420,7 +429,7 @@
        '<th class="n">'+fmt(tq)+'</th><th class="n">'+fmt(te,2)+'</th><th class="n">'+fmt(tp,2)+'</th><th class="n">'+fmt(tu,2)+'</th>'+
        '<th colspan="2"></th></tr></tfoot></table></div></div>';
     h+= ST.paysByFeed
-      ? '<div class="note">Unpaid &rarr; feed the week to payroll &middot; Paid. This project pays through the <b>payroll feed</b>: the weekly feed on the Payroll tab creates each worker\'s payment run already paid and writes their week\'s total to payroll, so there is no send-to-accounts step. Unpaid day-rows can still be corrected inside Review before the week is fed.</div>'
+      ? '<div class="note">Unpaid &rarr; feed the '+periodWord()+' to payroll &middot; Paid. This project pays through the <b>payroll feed</b>: the '+(periodWord()==="month"?"monthly":"weekly")+' feed on the Payroll tab creates each worker\'s payment run already paid and writes their '+periodWord()+'\'s total to payroll, so there is no send-to-accounts step. Unpaid day-rows can still be corrected inside Review before the '+periodWord()+' is fed.</div>'
       : '<div class="note">Unpaid &rarr; review the worker and send to accounts &middot; Sent &rarr; accounts releases &middot; Paid. Each send creates a single-worker payment reference automatically; unpaid day-rows can be corrected inside Review. Bulk: tick the workers and hit <b>Review &amp; send to accounts</b> &mdash; each worker still gets their own payment reference.</div>';
     box.innerHTML=h;
     box.querySelectorAll("[data-review]").forEach(function(a){
@@ -553,24 +562,33 @@
     );
   }
 
-  // ── pay weeks ─────────────────────────────────────────────────────────
-  // Workers are paid by the week, so the Pay workers tab picks a WEEK rather
-  // than two loose dates: a window that straddles weeks cannot be sent as one
-  // payment anyway, so offering free dates only invited windows that split.
-  var PW = { start:null, endsOn:"Sunday", custom:false };
+  // ── pay periods ───────────────────────────────────────────────────────
+  // Workers are paid by the PERIOD -- a pay week, or a pay month where Settings
+  // say Monthly -- so the Pay workers tab picks a period rather than two loose
+  // dates: a window that straddles periods cannot be sent as one payment anyway.
+  //
+  // NO DATE MATHS HERE. Every period this screen shows comes from the server
+  // (wm_payment action=pay_period; pay_roles hands over the first one), which
+  // is the same resolver the feed and the sends use. This file used to work
+  // weeks out for itself, from the closing weekday alone, and so ignored
+  // pay_week_starts_on and assumed every week was seven days.
+  var PW = { period:null, custom:false };
+  function periodWord(){ return ST.periodWord || "week"; }
   function pwSetMode(custom){
     PW.custom=!!custom;
     var wkGrp=el("pw-prev") ? el("pw-prev").parentNode.parentNode : null;
     if(wkGrp) wkGrp.style.display = PW.custom ? "none" : "";
     if(el("pw-custom-grp")) el("pw-custom-grp").style.display = PW.custom ? "" : "none";
-    if(el("pw-mode")) el("pw-mode").textContent = PW.custom ? "Back to pay weeks" : "Custom range";
+    if(el("pw-mode")) el("pw-mode").textContent = PW.custom ? "Back to pay "+periodWord()+"s" : "Custom range";
     pwRangeHint();
     if(PW.custom){
-      // seed the range from the week on screen so nothing jumps
+      // seed the range from the period on screen so nothing jumps
       if(el("pf-from-v") && !el("pf-from-v").value) el("pf-from-v").value=el("pf-from").value||"";
       if(el("pf-to-v") && !el("pf-to-v").value) el("pf-to-v").value=el("pf-to").value||"";
+    } else if(PW.period){
+      pwApply(PW.period);
     } else {
-      pwApply(PW.start||pwLatestCompleteStart());
+      pwLatest();
     }
   }
   function pwApplyRange(){
@@ -581,52 +599,32 @@
     if(el("pw-note")) el("pw-note").textContent="";
     loadPayable();
   }
-  function pwStartWd(){
-    var names=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-    var i=names.indexOf(PW.endsOn); if(i<0) i=6;
-    return (i+1)%7;                       // weekday the pay week begins on
-  }
-  function pwWeekStart(d){
-    var wd=(d.getDay()+6)%7;              // JS Sun=0 → Mon=0 basis
-    var back=((wd - pwStartWd())%7+7)%7;
-    var s=new Date(d.getTime()); s.setDate(s.getDate()-back); s.setHours(0,0,0,0);
-    return s;
-  }
-  function pwISO(d){
-    return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
-  }
-  function pwFmt(d){
-    var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    return d.getDate()+" "+m[d.getMonth()];
-  }
-  function pwLatestCompleteStart(){
-    // the most recent week that has already closed
-    var t=new Date(); t.setHours(0,0,0,0);
-    var cur=pwWeekStart(t);
-    var prev=new Date(cur.getTime()); prev.setDate(prev.getDate()-7);
-    return prev;
-  }
-  function pwApply(start, reload){
-    PW.start=start;
+  // `period` is the server's: {from, to, label, is_complete, word}
+  function pwApply(period, reload){
+    if(!period) return;
+    PW.period=period;
     if(PW.custom) return;
-    var end=new Date(start.getTime()); end.setDate(end.getDate()+6);
-    el("pf-from").value=pwISO(start);
-    el("pf-to").value=pwISO(end);
-    if(el("pw-label")) el("pw-label").textContent=pwFmt(start)+" → "+pwFmt(end)+" "+end.getFullYear();
-    var t=new Date(); t.setHours(0,0,0,0);
-    var open=end.getTime()>=t.getTime();
+    el("pf-from").value=period.from;
+    el("pf-to").value=period.to;
+    if(el("pw-label")) el("pw-label").textContent=period.label;
+    var w=period.word||periodWord();
     if(el("pw-note")){
-      el("pw-note").innerHTML = open
-        ? '<span style="color:var(--warn)">This week is still in progress — it can be sent once it closes.</span>'
-        : 'Completed week. Sending creates one payment per worker for this week.';
+      el("pw-note").innerHTML = !period.is_complete
+        ? '<span style="color:var(--warn)">This '+esc(w)+' is still in progress — it can be sent once it closes.</span>'
+        : 'Completed '+esc(w)+'. Sending creates one payment per worker for this '+esc(w)+'.';
     }
     if(el("pw-next")) el("pw-next").disabled = false;
     if(reload!==false) loadPayable();
   }
+  function pwAsk(args, reload){
+    args.action="pay_period";
+    return call(args).then(function(d){ pwApply(d.period, reload); })
+      .catch(function(e){ toast("Could not load the pay "+periodWord()+": "+(e&&e.message?e.message:e),"bad"); });
+  }
+  function pwLatest(reload){ return pwAsk({ latest:1 }, reload); }
   function pwStep(n){
-    var s=new Date((PW.start||pwLatestCompleteStart()).getTime());
-    s.setDate(s.getDate()+7*n);
-    pwApply(s);
+    if(!PW.period) return pwLatest();
+    return pwAsk({ date:PW.period.from, step:n });
   }
 
   // How many days one payment should cover, or 0 for "group into pay weeks".
@@ -645,7 +643,7 @@
   }
   function spanNote(){
     var n=sendSpanDays();
-    if(!n) return "grouped into pay weeks — one payment per worker per completed week";
+    if(!n) return "grouped into pay "+periodWord()+"s — one payment per worker per completed "+periodWord()+"";
     return "one payment per worker covering the "+n+" day"+(n>1?"s":"")+" you selected";
   }
   function pwRangeHint(){
@@ -653,7 +651,7 @@
     if(!h) return;
     h.textContent = ST.allowRange
       ? "Sending covers exactly the range you pick, as one payment per worker (up to "+(ST.maxSpan||31)+" days)."
-      : "Sending still creates one payment per pay week, whatever range you review.";
+      : "Sending still creates one payment per pay "+periodWord()+", whatever range you review.";
   }
 
   function payWindow(){
@@ -769,7 +767,7 @@
   // day is which, whether the bonus was earned and why not where it was not.
   function feedWeek(write){
     var box=el("feed-week"); if(!box) return;
-    box.innerHTML='<div class="loading">Working out the week&hellip;</div>';
+    box.innerHTML='<div class="loading">Working out the '+esc(periodWord())+'&hellip;</div>';
     // The loader asks `preview`, which reads and never writes; the button asks
     // `feed_week_to_payroll`, which is POST-only and refuses a GET. Loading a
     // panel by calling its write action was the bug: opening the tab attempted
@@ -781,7 +779,7 @@
       ST.feed=d;
       if(d.week_from) ST.feedFrom=d.week_from;
       renderFeed();
-      if(write && !d.error) toast("Fed "+fmt(d.written)+" worker"+(d.written===1?"":"s")+" for "+d.week_stamp);
+      if(write && !d.error) toast("Fed "+fmt(d.written)+" worker"+(d.written===1?"":"s")+" for "+(d.period_label||d.week_stamp));
     }).catch(function(e){
       box.innerHTML='<div class="empty">Could not load: '+esc(e&&e.message?e.message:e)+'</div>';
     });
@@ -797,10 +795,16 @@
     var box=el("feed-week"), d=ST.feed||{};
     if(d.error){ box.innerHTML='<div class="banner warn"><b>'+esc(d.error)+'</b></div>'; return; }
     var rows=d.rows||[], skipped=d.skipped||[], can=!!d.can_feed;
+    var w=d.period_word||periodWord(), monthly=(d.frequency==="Monthly");
     var h='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:8px;align-items:center">'+
-      '<span class="hint" style="font-weight:600;color:var(--ink)">Pay week</span>'+
-      '<input type="date" id="fw-week" value="'+esc(d.week_from||"")+'">'+
-      '<span class="hint">'+esc(d.week_from||"")+' → '+esc(d.week_to||"")+' · paid '+esc(d.pay_date||"")+'</span>'+
+      '<span class="hint" style="font-weight:600;color:var(--ink)">Pay '+esc(w)+'</span>'+
+      '<button type="button" class="btn sm" id="fw-prev" title="Previous '+esc(w)+'" aria-label="Previous '+esc(w)+'">&lsaquo;</button>'+
+      '<b style="font-size:12px">'+esc(d.period_label||((d.week_from||"")+" → "+(d.week_to||"")))+'</b>'+
+      '<button type="button" class="btn sm" id="fw-next" title="Next '+esc(w)+'" aria-label="Next '+esc(w)+'">&rsaquo;</button>'+
+      '<button type="button" class="btn sm" id="fw-latest" style="border-color:var(--line);color:var(--mute)">Latest</button>'+
+      '<input type="date" id="fw-week" value="'+esc(d.week_from||"")+'" title="Any date in the '+esc(w)+' to feed">'+
+      '<span class="hint">'+esc(d.week_from||"")+' → '+esc(d.week_to||"")+' · paid '+esc(d.pay_date||"")+
+        (d.complete?' · <b>Completed '+esc(w)+'</b>':' · <b style="color:var(--warn)">still open — preview only, cannot be fed</b>')+'</span>'+
       '<span style="flex:1"></span>'+
       '<span class="hint">'+(d.bonus_enabled
         ? 'Off-day bonus '+money(d.bonus_amount)+' on full attendance'
@@ -809,14 +813,23 @@
       // when it cannot the REASON is in the tooltip and spelled out below. A
       // greyed button with no explanation is the thing that costs an afternoon.
       '<button type="button" class="btn'+(can?" solid":"")+'" id="fw-write"'+
-        (can?'':' disabled title="'+esc(d.cannot_feed||"Nothing to feed for this week")+'"')+
+        (can?'':' disabled title="'+esc(d.cannot_feed||("Nothing to feed for this "+w))+'"')+
         '>'+(can
-          ? 'Feed week to payroll — '+money(d.total)
-          : 'Feed week to payroll')+'</button></div>';
+          ? 'Feed '+esc(w)+' to payroll — '+money(d.total)
+          : 'Feed '+esc(w)+' to payroll')+'</button></div>';
     // The honest empty state: what stands between this week and being fed, in
     // the server's own words.
     if(d.cannot_feed){
       h+='<div class="banner warn"><b>Not yet:</b> '+esc(d.cannot_feed)+'.</div>';
+    }
+    // THE TRANSITION MONTH: what weekly feeds already paid inside this month is
+    // not in it, and says so, so payroll can reconcile the first monthly figure
+    if(monthly && d.excluded_weekly_total>0){
+      h+='<div class="banner info"><b>'+money(d.excluded_weekly_total)+' already paid by weekly feeds</b> inside '+
+         esc(d.period_label||"")+' ('+fmt((d.excluded_weekly||[]).length)+' worker'+((d.excluded_weekly||[]).length===1?"":"s")+
+         (d.excluded_weekly_bonus>0?', plus '+money(d.excluded_weekly_bonus)+' off-day bonus recorded on them':'')+
+         ') — excluded from this '+esc(w)+', never counted twice. Runs: '+esc((d.excluded_weekly_runs||[]).slice(0,8).join(", "))+
+         ((d.excluded_weekly_runs||[]).length>8?"…":"")+'.</div>';
     }
     if((d.assumed_off_day||[]).length){
       h+='<div class="banner info"><b>'+fmt(d.assumed_off_day.length)+' worker'+
@@ -826,20 +839,22 @@
     }
     if((d.hr_questions||[]).length){
       h+='<div class="banner info"><b>'+fmt(d.hr_questions.length)+' task worker'+
-         (d.hr_questions.length===1?"":"s")+' recorded no confirmed work this week</b> — skipped rather than '+
+         (d.hr_questions.length===1?"":"s")+' recorded no confirmed work this '+esc(w)+'</b> — skipped rather than '+
          'written as zero. For HR: '+esc(d.hr_questions.map(function(r){ return r.employee_name; }).slice(0,6).join(", "))+'.</div>';
     }
     if(!rows.length && !skipped.length){
-      box.innerHTML=h+'<div class="empty"><b>Nothing to feed</b>No confirmed unpaid work for '+esc(d.week_stamp||"this week")+'.</div>';
+      box.innerHTML=h+'<div class="empty"><b>Nothing to feed</b>No confirmed unpaid work for '+esc(d.period_label||d.week_stamp||("this "+w))+'.</div>';
       wireFeed(); return;
     }
     if((d.already_fed||[]).length){
       h+='<div class="banner good"><b>'+fmt(d.already_fed.length)+' worker'+
-         (d.already_fed.length===1?'':'s')+' already fed for '+esc(d.week_stamp||"")+'</b>'+
-         ' — re-feeding the same week does nothing, by design.</div>';
+         (d.already_fed.length===1?'':'s')+' already fed for '+esc(d.period_label||d.week_stamp||"")+'</b>'+
+         ' — re-feeding the same '+esc(w)+' does nothing, by design.</div>';
     }
     h+='<table><thead><tr><th>Worker</th><th class="n">Actuals</th><th class="n">Days</th>'+
-       '<th>Off day</th><th class="n">Attended</th><th>Bonus</th><th class="n">Weekly total</th></tr></thead><tbody>';
+       '<th>Off day</th><th class="n">Attended</th><th>Bonus</th>'+
+       (monthly?'<th class="n">Already paid weekly</th>':'')+
+       '<th class="n">'+(monthly?'Monthly':'Weekly')+' total</th></tr></thead><tbody>';
     rows.concat(skipped).forEach(function(r){
       h+='<tr'+(r.skipped?' style="opacity:.55"':'')+'><td><b>'+esc(r.employee_name)+'</b>'+
          '<div class="hint">'+esc(r.employee)+(r.was_week?(' · last fed '+esc(r.was_week)):'')+'</div></td>'+
@@ -848,6 +863,7 @@
          (r.public_holidays?'<div class="hint">holiday: '+esc(r.public_holidays)+'</div>':'')+'</td>'+
          '<td class="n">'+fmt(r.attended)+' / '+fmt(r.working_days)+'</td>'+
          '<td>'+feedReason(r)+'</td>'+
+         (monthly?'<td class="n">'+(r.excluded_weekly>0?money(r.excluded_weekly)+'<div class="hint">'+esc(r.excluded_runs||"")+'</div>':'—')+'</td>':'')+
          '<td class="n"><b>'+money(r.total)+'</b></td></tr>';
     });
     h+='</tbody></table>';
@@ -857,10 +873,19 @@
 
   function wireFeed(){
     if(el("fw-week")) el("fw-week").onchange=function(){ ST.feedFrom=this.value; feedWeek(false); };
+    // the neighbouring period comes from the server, like every other period
+    function feedStep(args){
+      args.action="pay_period";
+      call(args).then(function(r){ if(r.period){ ST.feedFrom=r.period.from; feedWeek(false); } });
+    }
+    var cur=(ST.feed||{}).week_from;
+    if(el("fw-prev")) el("fw-prev").onclick=function(){ feedStep(cur?{date:cur,step:-1}:{latest:1}); };
+    if(el("fw-next")) el("fw-next").onclick=function(){ feedStep(cur?{date:cur,step:1}:{latest:1}); };
+    if(el("fw-latest")) el("fw-latest").onclick=function(){ ST.feedFrom=null; feedWeek(false); };
     if(el("fw-write")) el("fw-write").onclick=function(){
       var d=ST.feed||{};
       if(!confirm("Feed "+(d.rows||[]).length+" worker total"+((d.rows||[]).length===1?"":"s")+
-                  " ("+money(d.total)+") to payroll for "+d.week_stamp+
+                  " ("+money(d.total)+") to payroll for "+(d.period_label||d.week_stamp)+
                   "?\n\nThis writes Employee.custom_basic_pay on live payroll records.")) return;
       feedWeek(true);
     };
@@ -966,7 +991,7 @@
     var h=accFilterBar();
     // pay weeks: accounts releases a week at a time, so the queue is filtered by week
     h+='<div class="filters" style="margin-bottom:10px;padding:8px 14px;gap:6px;flex-wrap:wrap">'+
-      '<span class="hint" style="font-weight:600;color:var(--ink)">Pay week</span>'+
+      '<span class="hint" style="font-weight:600;color:var(--ink)">Pay '+periodWord()+'</span>'+
       '<button type="button" class="btn sm'+(ST.accWeek?"":" good")+'" data-accwk="">All · '+fmt(ST.accTotal)+'</button>';
     (ST.accWeeks||[]).forEach(function(w){
       h+='<button type="button" class="btn sm'+(ST.accWeek===w.payroll_date?" good":"")+'" data-accwk="'+esc(w.payroll_date)+'">'+
@@ -1175,7 +1200,7 @@
       // block a send to accounts -- Inactive, relieving, joining, no salary
       // structure are facts about the worker. So the tab is mode-neutral and
       // only the sentence naming the path has to change.
-      box.innerHTML='<div class="empty"><b>Pick a date range</b>Choose From and To dates, then Apply, to check for workers who cannot get a payroll record'+(ST.paysByFeed?" when the week is fed":" when they are sent to accounts")+'.</div>';
+      box.innerHTML='<div class="empty"><b>Pick a date range</b>Choose From and To dates, then Apply, to check for workers who cannot get a payroll record'+(ST.paysByFeed?" when the "+periodWord()+" is fed":" when they are sent to accounts")+'.</div>';
       ISQ.data=null;
       updateIssBadge();
       return;
@@ -1365,7 +1390,7 @@
       box.querySelectorAll("[data-cancelfeed]").forEach(function(b){
         b.onclick=function(){
           var nm=b.getAttribute("data-cancelfeed");
-          if(!confirm("Cancel "+b.getAttribute("data-nm")+"?\n\nThe days it paid go back to unpaid and the worker\'s basic pay for that week is cleared, so the week can be fed again."))
+          if(!confirm("Cancel "+b.getAttribute("data-nm")+"?\n\nThe days it paid go back to unpaid and the worker\'s basic pay for that "+periodWord()+" is cleared, so the "+periodWord()+" can be fed again."))
             return;
           b.disabled=true;
           call({ action:"pay_cancel_feed", name:nm }, true).then(function(d){
@@ -1836,7 +1861,7 @@
       '<input type="text" id="auw-q" placeholder="Search worker, ID or task&hellip;" style="min-width:230px;flex:0 1 auto">'+
       '<span class="hint" id="auw-count"></span><span style="flex:1"></span>'+
       '<span class="hint">'+(ST.paysByFeed
-        ? 'Review each person here; the week is paid by feeding payroll on the Payroll tab.'
+        ? 'Review each person here; the '+periodWord()+' is paid by feeding payroll on the Payroll tab.'
         : 'Review each person, then approve &amp; send their pay to accounts &mdash; one at a time.')+'</span></div>'+
       '<div id="auw-body"></div>';
     box.innerHTML=h;
@@ -2088,11 +2113,11 @@
     (runs||[]).forEach(function(r){ if(r.kind==="Payroll Feed" && !feedRun) feedRun=r; });
     if(ST.paysByFeed && feedRun){
       h+='<div class="banner good" style="margin-top:14px"><b>Paid via payroll feed '+
-         esc(feedRun.run)+'.</b> The week was fed to payroll on '+esc(dshort(feedRun.date))+
+         esc(feedRun.run)+'.</b> The '+periodWord()+' was fed to payroll on '+esc(dshort(feedRun.date))+
          ', which created this run already paid and wrote the total to the worker\'s basic pay.</div>';
     } else if(ST.paysByFeed && k.unpaid_amt>0.001){
       h+='<div class="banner info" style="margin-top:14px"><b>Included in the next payroll feed</b> ('+
-         money(k.unpaid_amt)+'). Feeding the week on the Payroll tab pays it and stamps these days.</div>';
+         money(k.unpaid_amt)+'). Feeding the '+periodWord()+' on the Payroll tab pays it and stamps these days.</div>';
     } else if(k.unpaid_amt>0.001){
       h+='<div class="banner info" style="margin-top:14px"><b>Ready to pay.</b> “Approve &amp; send to accounts” below creates a payment run for this worker alone ('+money(k.unpaid_amt)+') and hands it to accounts for release.</div>';
     }
@@ -2310,7 +2335,7 @@
     // refusal legible instead of arriving from an endpoint the user did not know
     // they had called.
     if(ST.paysByFeed){
-      toast("This project pays through the payroll feed — feed the week on the Payroll tab.","bad");
+      toast("This project pays through the payroll feed — feed the "+periodWord()+" on the Payroll tab.","bad");
       return;
     }
     win=win||auditWindow();
@@ -2322,35 +2347,35 @@
         var ready=p.weeks_ready||[], held=p.weeks_held||[];
         if(!ready.length){
           toast(held.length
-            ? ("Nothing to send yet — "+esc(nm)+"’s only unpaid work is in the week still in progress ("+held[0].week_from+" → "+held[0].week_to+")")
-            : ("No completed pay week to send for "+esc(nm)), "bad");
+            ? ("Nothing to send yet — "+esc(nm)+"’s only unpaid work is in the "+periodWord()+" still in progress ("+held[0].week_from+" → "+held[0].week_to+")")
+            : ("No completed pay "+periodWord()+" to send for "+esc(nm)), "bad");
           return;
         }
         var tot=0; ready.forEach(function(w){ tot+=w.amount||0; });
         var body='<p style="margin:0 0 10px">Send <b>'+esc(nm)+'</b>&rsquo;s unpaid confirmed earnings to accounts as <b>'+
-          ready.length+' weekly payment'+(ready.length>1?'s':'')+'</b>, totalling <b>'+money(tot)+'</b>?</p>'+
-          '<table style="width:100%;margin:0 0 10px"><thead><tr><th>Pay week</th><th class="n">Days</th><th class="n">Amount</th></tr></thead><tbody>';
+          ready.length+' '+(periodWord()==="month"?"monthly":"weekly")+' payment'+(ready.length>1?'s':'')+'</b>, totalling <b>'+money(tot)+'</b>?</p>'+
+          '<table style="width:100%;margin:0 0 10px"><thead><tr><th>Pay '+periodWord()+'</th><th class="n">Days</th><th class="n">Amount</th></tr></thead><tbody>';
         ready.forEach(function(w){
-          body+='<tr><td class="m" style="font-size:11px">'+esc(w.week_from)+' → '+esc(w.week_to)+'</td>'+
+          body+='<tr><td class="m" style="font-size:11px">'+esc(w.label||(w.week_from+' → '+w.week_to))+'</td>'+
                 '<td class="n m">'+fmt(w.days)+'</td><td class="n m">'+money(w.amount)+'</td></tr>';
         });
         body+='</tbody></table>';
         if(held.length){
           body+='<p class="note" style="margin:0 0 8px;color:var(--warn)">Held back: '+
             held.map(function(w){ return esc(w.week_from)+' → '+esc(w.week_to)+' ('+money(w.amount)+')'; }).join(", ")+
-            ' — that week is still in progress and can be sent once it closes.</p>';
+            ' — that '+periodWord()+' is still in progress and can be sent once it closes.</p>';
         }
-        body+='<p class="note" style="margin:0">Each week becomes its own payment reference, handed to accounts as <b>Unpaid</b>, '+
-          'so payroll picks up one line per worker per week.</p>';
+        body+='<p class="note" style="margin:0">Each '+periodWord()+' becomes its own payment reference, handed to accounts as <b>Unpaid</b>, '+
+          'so payroll picks up one line per worker per '+periodWord()+'.</p>';
         confirmModal("Approve & send to accounts", body,
-          "Send "+ready.length+" week"+(ready.length>1?"s":""),
+          "Send "+ready.length+" "+periodWord()+(ready.length>1?"s":""),
           function(){
             call({ action:"pay_worker_submit", employee:emp, from_date:win.from||"", to_date:win.to||"" }, true)
               .then(function(d){
                 if(d.error){ toast(d.error,"bad"); return; }
                 var made=d.created||[];
                 toast((made.length&&made[0].employee_name?made[0].employee_name:emp)+" · "+
-                      made.length+" weekly payment"+(made.length>1?"s":"")+" · "+money(tot)+" sent to accounts","good");
+                      made.length+" "+(periodWord()==="month"?"monthly":"weekly")+" payment"+(made.length>1?"s":"")+" · "+money(tot)+" sent to accounts","good");
                 var m=el("pay-detail-modal"); if(m) m.classList.remove("on");
                 if(win.refresh) win.refresh();
               })
@@ -2358,7 +2383,7 @@
           },
           "good");
       })
-      .catch(function(e){ toast("Could not check pay weeks: "+e.message,"bad"); });
+      .catch(function(e){ toast("Could not check pay "+periodWord()+"s: "+e.message,"bad"); });
   }
 
   // ── print: opens a clean, self-contained window with both sheets ──
@@ -2740,8 +2765,8 @@
 
   function init(){
     var names = taskNamesReady();
-    // the pay window is a WEEK; default to the most recent completed one
-    pwApply(pwLatestCompleteStart(), false);
+    // the pay window is a PERIOD (week or month); the most recent completed one
+    // arrives with pay_roles below
 
     // tabs
     document.querySelectorAll("#pay-tabs button").forEach(function(b){
@@ -2752,15 +2777,14 @@
     el("pf-apply").onclick=loadPayable;
     if(el("pw-prev")) el("pw-prev").onclick=function(){ pwStep(-1); };
     if(el("pw-next")) el("pw-next").onclick=function(){ pwStep(1); };
-    if(el("pw-latest")) el("pw-latest").onclick=function(){ pwApply(pwLatestCompleteStart()); };
+    if(el("pw-latest")) el("pw-latest").onclick=function(){ pwLatest(); };
     if(el("pw-mode")) el("pw-mode").onclick=function(){ pwSetMode(!PW.custom); };
     if(el("pw-apply-range")) el("pw-apply-range").onclick=pwApplyRange;
     el("pf-reset").onclick=function(){
-      pwSetMode(false);
-      pwApply(pwLatestCompleteStart(), false);
       el("pf-search").value="";
       ST.activeFarms={};
-      loadPayable();
+      PW.period=null;      // so pwSetMode asks for the latest period, and loads it
+      pwSetMode(false);
     };
     el("pf-search").addEventListener("input", function(){ if(ST.workers.length) renderPayable({}); });
 
@@ -2796,10 +2820,10 @@
       ST.maxSpan=d.max_span_days||31;
       pwRangeHint();
       applyPaymentMode();
-      if(d.week_ends_on && d.week_ends_on!==PW.endsOn){
-        PW.endsOn=d.week_ends_on;                 // re-anchor to the configured boundary
-        pwApply(pwLatestCompleteStart(), false);
-      }
+      ST.periodWord=d.period_word||"week";
+      ST.payFrequency=d.pay_frequency||"Weekly";
+      applyPeriodWords();
+      pwApply(d.period_latest, false);
     }).catch(function(){}).then(function(){
       return names;       // nothing renders a task label until the map is in
     }).then(function(){
@@ -2823,7 +2847,22 @@
       if(cnt) tab.appendChild(cnt);
     }
     var head=el("feed-heading");
-    if(head) head.firstChild.textContent="Feed a week to payroll — this is how workers are paid here ";
+    if(head) head.firstChild.textContent="Feed a "+periodWord()+" to payroll — this is how workers are paid here ";
+  }
+
+  // "week" or "month" wherever the page names the period. The server says which.
+  function applyPeriodWords(){
+    var w=periodWord();
+    if(el("pw-period-lbl")) el("pw-period-lbl").textContent="Pay "+w;
+    if(el("pw-prev")){ el("pw-prev").title="Previous "+w; el("pw-prev").setAttribute("aria-label","Previous "+w); }
+    if(el("pw-next")){ el("pw-next").title="Next "+w; el("pw-next").setAttribute("aria-label","Next "+w); }
+    var head=el("feed-heading");
+    if(head){
+      head.firstChild.textContent="Feed a "+w+" to payroll ";
+      var hint=head.querySelector(".hint");
+      if(hint) hint.textContent="writes each worker\u2019s "+(w==="month"?"monthly":"weekly")+" total to Employee.custom_basic_pay";
+    }
+    if(el("pw-mode") && !PW.custom) el("pw-mode").textContent="Custom range";
   }
 
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", init);

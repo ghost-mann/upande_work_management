@@ -634,7 +634,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
 
     <div class="filters">
       <div class="fgrp">
-        <label class="fl">Pay week</label>
+        <label class="fl" id="pw-period-lbl">Pay week</label>
         <div style="display:flex;align-items:center;gap:6px">
           <button type="button" class="btn sm" id="pw-prev" title="Previous week" aria-label="Previous week">&lsaquo;</button>
           <div id="pw-label" style="min-width:190px;text-align:center;font-weight:600;font-size:12px"></div>
@@ -680,7 +680,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
          because this is the tab that already thinks in closed pay weeks: the
          queue is filtered by one, and this writes one. -->
     <div class="sech" id="feed-heading">Feed a week to payroll <span class="hint">writes each worker&rsquo;s weekly total to Employee.custom_basic_pay</span></div>
-    <div id="feed-week"><div class="loading">Checking the last closed pay week&hellip;</div></div>
+    <div id="feed-week"><div class="loading">Checking the last closed pay period&hellip;</div></div>
     <!-- The release queue belongs to the accounts-release path. On a project
          that pays by feeding payroll there is no release step, so the whole
          block is hidden and the feed panel above is all this tab holds. -->

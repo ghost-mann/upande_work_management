@@ -66,7 +66,9 @@ def feed_block():
 	being taught which half to look in.
 	"""
 	src = read(PAYROLL)
-	helpers = src[src.index("def feed_preview("):src.index("@frappe.whitelist()")]
+	# from week_bonus(): the per-week bonus was lifted out of feed_preview() so a
+	# pay month can ask it once per pay week, and it is still this feature
+	helpers = src[src.index("def week_bonus("):src.index("@frappe.whitelist()")]
 	actions = src[src.index('elif action == "preview":'):
 		src.index('\n    else:\n        out["error"] = "unknown action')]
 	return helpers + "\n" + actions
@@ -171,13 +173,19 @@ class TestThePayWeekIsThePaymentRunsPayWeek(unittest.TestCase):
 		self.assertEqual(len(pay_week.days_in("2026-08-30", "2026-09-05")), 7)
 
 	def test_payment_and_the_feed_derive_the_week_the_same_way(self):
-		"""api/payment.py still has its copy inline. If it stops agreeing with
-		this module, two features disagree about which days a week holds."""
+		"""api/payment.py kept its own inline copy of this arithmetic, three times
+		over, pinned here so it could not drift. It is gone: every send, the Issues
+		check and the feed ask work_management/pay_period.py, which asks this
+		module for a week. One copy cannot disagree with itself."""
 		src = read(PAYMENT)
-		self.assertIn('((wk_end_idx - wk_start_wd) % 7) + 1', src,
-			"payment.py's week length no longer matches pay_week.shape()")
-		self.assertIn("(wdd.weekday() - wk_start_wd) % 7", src,
-			"payment.py's week boundary no longer matches pay_week.week_of()")
+		for gone in ("% 7) + 1", ".weekday() - wk_start_wd", ".weekday() - bw_start_wd",
+				".weekday() - is_start_wd", "weekday() != wk_pay_idx", "weekday() != bw_pay_idx"):
+			with self.subTest(copy=gone):
+				self.assertNotIn(gone, src)
+		for user in ("wk_shape = pay_period.from_settings()", "bw_shape = pay_period.from_settings()",
+				"is_shape = pay_period.from_settings()"):
+			with self.subTest(user=user):
+				self.assertIn(user, src)
 
 
 # --------------------------------------------------------------- what it sums
@@ -364,8 +372,9 @@ class TestNothingIsWrittenUntilSomebodyHasSeenIt(unittest.TestCase):
 
 	def test_the_screen_renders_that_table_before_offering_the_button(self):
 		at = self.js.index("function renderFeed(")
-		block = self.js[at:at + 4000]
-		for header in ("Worker", "Actuals", "Off day", "Bonus", "Weekly total"):
+		block = self.js[at:self.js.index("function wireFeed(")]
+		# the last column is "Weekly total" or "Monthly total" by pay frequency
+		for header in ("Worker", "Actuals", "Off day", "Bonus", "'Weekly'", "' total"):
 			with self.subTest(header=header):
 				self.assertIn(header, block)
 
@@ -460,7 +469,7 @@ class TestWhoIsSkippedAndWhy(unittest.TestCase):
 	def test_a_zero_work_worker_is_skipped_and_not_written_as_zero(self):
 		"""Writing 0 says "this person earned nothing", which is a claim.
 		Not writing says "this feed has nothing to say about them"."""
-		self.assertIn("no confirmed unpaid work in this week", self.block)
+		self.assertIn('"no confirmed unpaid work in this " + word', self.block)
 		self.assertIn('row["hr_question"] = 1', self.block)
 
 	def test_that_is_raised_as_a_question_for_hr(self):
@@ -477,15 +486,16 @@ class TestTheWeekAskedForIsTheWeekFed(unittest.TestCase):
 		self.block = feed_block()
 
 	def test_a_date_in_the_middle_snaps_to_the_whole_week(self):
-		self.assertIn("pay_week.week_of(week_from, shape)", self.block)
+		# a week or, in monthly mode, a pay month: pay_period decides which
+		self.assertIn("pay_period.period_of(week_from, shape)", self.block)
 
 	def test_no_week_asked_for_means_the_last_one_that_closed(self):
-		self.assertIn("pay_week.last_complete_week(today, shape)", self.block)
+		self.assertIn("pay_period.previous_complete(today, shape)", self.block)
 
 	def test_a_range_that_is_not_one_pay_week_is_refused(self):
 		"""Quietly paying the week the start date lands in would pay days the
 		caller never asked about."""
-		self.assertIn("is not one pay week", self.block)
+		self.assertIn('" is not one pay " + word', self.block)
 
 	def test_a_day_belonging_to_no_week_is_refused_by_name(self):
 		self.assertIn("belongs to no pay", self.block)
