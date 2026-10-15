@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, presence, self_approval, stage_pills
+from work_management import bulk, chain, notify, presence, self_approval, stage_pills
 from work_management.api.config import chain_states, get_config, sql_in
 
 
@@ -1467,6 +1467,7 @@ def wm_actuals(**kwargs):
                         frappe.db.set_value("Work Management Actuals", d.name, "workflow_state", STAGE_NEXT["actuals_submit"], update_modified=False)
                         d.workflow_state = STAGE_NEXT["actuals_submit"]
                         self_approval.mark_resubmitted(ACT_DT, d.name, sv_prev_state)
+                        notify.notify_state_change(ACT_DT, d.name, sv_prev_state, d.workflow_state)
                         # ── CAP THE PLAN AT WHAT WAS DONE ────────────────────
                         # Only once the entry has actually gone into the chain:
                         # capping a plan whose submit was then refused would
@@ -1701,6 +1702,7 @@ def wm_actuals(**kwargs):
                     frappe.db.set_value(ACT_DT, nm, ap_on, frappe.utils.today(), update_modified=False)
                 except Exception:
                     pass
+            notify.notify_state_change(ACT_DT, nm, cur.workflow_state, ap_next)
             out["name"] = nm
             out["workflow_state"] = ap_next
             out["step"] = ap_step["key"]
@@ -1846,6 +1848,7 @@ def wm_actuals(**kwargs):
                 frappe.db.set_value("Work Management Planner", asg, "remaining_qty", remaining, update_modified=False)
                 frappe.db.set_value("Work Management Planner", asg, "fulfilment_pct", pct, update_modified=False)
                 frappe.db.set_value("Work Management Planner", asg, "over_target", over, update_modified=False)
+            notify.notify_state_change(ACT_DT, nm, cur.workflow_state, "Rejected")
             out["name"] = nm
             out["workflow_state"] = "Rejected"
 
@@ -2017,6 +2020,7 @@ def wm_actuals(**kwargs):
                 # This also confirms below-target work (the whole point of an early close).
                 frappe.db.set_value("Work Management Actuals", ar.nm, "workflow_state", "CONFIRMED", update_modified=False)
                 frappe.db.set_value("Work Management Actuals", ar.nm, "docstatus", 1, update_modified=False)
+                notify.notify_state_change(ACT_DT, ar.nm, ar.ws, "CONFIRMED")
                 # child rows must carry the same docstatus as the parent submitted doc
                 for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": ar.nm}, pluck="name"):
                     frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 1, update_modified=False)

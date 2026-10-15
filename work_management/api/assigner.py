@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, presence, self_approval, stage_pills
+from work_management import bulk, chain, notify, presence, self_approval, stage_pills
 from work_management.api.config import chain_states, get_config, sql_in
 
 
@@ -893,6 +893,10 @@ def wm_assigner(**kwargs):
                 frappe.db.set_value("Work Management Assigner", d.name, "workflow_state", STAGE_NEXT["assigner_submit"], update_modified=False)
                 d.workflow_state = STAGE_NEXT["assigner_submit"]
                 self_approval.mark_resubmitted(ASG_DT, d.name, sv_prev_state)
+                # inserted as Draft and written on by column: neither fires a
+                # Notification, which is how an assignment created already Assigned
+                # never announced itself
+                notify.notify_state_change(ASG_DT, d.name, sv_prev_state, d.workflow_state)
             # audit trail: an attendance override is always logged on the document
             if att_conflicts and att_override:
                 ov_lines = []
@@ -978,6 +982,7 @@ def wm_assigner(**kwargs):
                 frappe.get_doc(ASG_DT, nm).add_comment(
                     "Comment", str(chain.label_of(ap_step)) + " taken by " +
                     frappe.session.user + " — now " + str(ap_next))
+            notify.notify_state_change(ASG_DT, nm, cur.workflow_state, ap_next)
             out["name"] = nm
             out["workflow_state"] = ap_next
             out["step"] = ap_step["key"]
@@ -1046,6 +1051,7 @@ def wm_assigner(**kwargs):
             if rj_why:
                 frappe.get_doc("Work Management Assigner", nm).add_comment(
                     "Comment", "Rejected by " + frappe.session.user + ": " + rj_why)
+            notify.notify_state_change(ASG_DT, nm, cur_ws, "Rejected")
             out["name"] = nm; out["workflow_state"] = "Rejected"
             out["reason"] = rj_why or None
 

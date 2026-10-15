@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management.api.config import chain_states, get_config, sql_in
-from work_management import audit, bulk, chain, self_approval
+from work_management import audit, bulk, chain, notify, self_approval
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 
@@ -1128,6 +1128,8 @@ def wm_planner(**kwargs):
                 frappe.get_doc("Work Management Planner", nm).add_comment(
                     "Comment", str(ap_step.get("label") or ap_step.get("key")) +
                     " taken by " + frappe.session.user + " — now " + str(ap_next))
+            # a column write fires no Notification; the submit above is a save and does
+            notify.notify_state_change("Work Management Planner", nm, cur_ws, ap_next)
             out["name"] = nm; out["workflow_state"] = ap_next
             out["step"] = ap_step.get("key"); out["step_label"] = ap_step.get("label")
 
@@ -1217,6 +1219,7 @@ def wm_planner(**kwargs):
                 frappe.get_doc("Work Management Planner", nm).add_comment(
                     "Comment", "Rejected by " + frappe.session.user + " at the " +
                     str(rj_step.get("label") or rj_step.get("key")) + " step: " + rj_why)
+            notify.notify_state_change("Work Management Planner", nm, cur_ws, "Rejected")
             out["name"] = nm; out["workflow_state"] = "Rejected"
             out["step"] = rj_step.get("key"); out["step_label"] = rj_step.get("label")
             out["reason"] = rj_why or None

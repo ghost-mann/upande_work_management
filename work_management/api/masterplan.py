@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import audit, chain, consultant, self_approval, stage_pills
+from work_management import audit, chain, consultant, notify, self_approval, stage_pills
 from work_management.api.config import get_config
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
@@ -844,6 +844,10 @@ def wm_masterplan(**kwargs):
             frappe.db.set_value("Work Management Master Plan", sr_name,
                                 "workflow_state", STAGE_NEXT["masterplan_submit"])
             self_approval.mark_resubmitted("Work Management Master Plan", sr_name, sr_state)
+            # every master plan step is a column write, so none of them fires a
+            # Notification by itself -- see work_management/notify.py
+            notify.notify_state_change("Work Management Master Plan", sr_name, sr_state,
+                                       STAGE_NEXT["masterplan_submit"])
             # WITH NO CONSULTANT STEP, the lines settle as the plan enters the
             # chain. Nothing else ever moves them off Pending, and a plan that
             # reaches Approved with every line Pending is a budget the planner
@@ -905,14 +909,18 @@ def wm_masterplan(**kwargs):
                 })
                 dl_pending = len([x for x in dl_rows if x.consultant_state == "Pending"])
                 dl_edit = len([x for x in dl_rows if x.consultant_state == "Edit work"])
+                dl_prev = frappe.db.get_value("Work Management Master Plan", dl.parent, "workflow_state")
                 if dl_edit:
                     # an edited line goes back to the raiser with the whole document
                     frappe.db.set_value("Work Management Master Plan", dl.parent,
                                         "workflow_state", "Draft")
+                    notify.notify_state_change("Work Management Master Plan", dl.parent, dl_prev, "Draft")
                     out["moved_to"] = "Draft"
                 elif not dl_pending:
                     frappe.db.set_value("Work Management Master Plan", dl.parent,
                                         "workflow_state", STAGE_NEXT["masterplan_consultant"])
+                    notify.notify_state_change("Work Management Master Plan", dl.parent, dl_prev,
+                                               STAGE_NEXT["masterplan_consultant"])
                     out["moved_to"] = STAGE_NEXT["masterplan_consultant"]
                 if dl_standin:
                     frappe.get_doc("Work Management Master Plan", dl.parent).add_comment(
@@ -972,9 +980,12 @@ def wm_masterplan(**kwargs):
                 db_edit = len([x for x in db_all if x.consultant_state == "Edit work"])
                 if db_edit:
                     frappe.db.set_value("Work Management Master Plan", db_parent, "workflow_state", "Draft")
+                    notify.notify_state_change("Work Management Master Plan", db_parent, MP_CONSULTANT_STATE, "Draft")
                     out["moved_to"] = "Draft"
                 elif not db_pending:
                     frappe.db.set_value("Work Management Master Plan", db_parent, "workflow_state", STAGE_NEXT["masterplan_consultant"])
+                    notify.notify_state_change("Work Management Master Plan", db_parent, MP_CONSULTANT_STATE,
+                                               STAGE_NEXT["masterplan_consultant"])
                     out["moved_to"] = STAGE_NEXT["masterplan_consultant"]
                 frappe.db.commit()
                 out["decided"] = db_done
@@ -1002,6 +1013,8 @@ def wm_masterplan(**kwargs):
         else:
             frappe.db.set_value("Work Management Master Plan", rc_name,
                                 "workflow_state", STAGE_STATE["masterplan_consultant"])
+            notify.notify_state_change("Work Management Master Plan", rc_name, rc_state,
+                                       STAGE_STATE["masterplan_consultant"])
             frappe.get_doc("Work Management Master Plan", rc_name).add_comment(
                 "Comment", "Sent back to the consultants by " + str(frappe.session.user) + ".")
             frappe.db.commit()
@@ -1066,6 +1079,8 @@ def wm_masterplan(**kwargs):
                                 "workflow_state": STAGE_NEXT["masterplan_gm"],
                                 "gm_approved_by": frappe.session.user,
                                 "gm_approved_on": frappe.utils.now()})
+                            notify.notify_state_change("Work Management Master Plan", pb_n, pb_st,
+                                                       STAGE_NEXT["masterplan_gm"])
                             pb_done.append(pb_n)
                 elif pb_op == "reject":
                     if not (CAN_GM or IS_CONSULTANT):
@@ -1074,6 +1089,7 @@ def wm_masterplan(**kwargs):
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not under review"})
                     else:
                         frappe.db.set_value("Work Management Master Plan", pb_n, "workflow_state", "Rejected")
+                        notify.notify_state_change("Work Management Master Plan", pb_n, pb_st, "Rejected")
                         pb_done.append(pb_n)
                 else:
                     if not (IS_CONSULTANT or CAN_GM):
@@ -1092,6 +1108,8 @@ def wm_masterplan(**kwargs):
                                  "consultant_on": frappe.utils.now()})
                         frappe.db.set_value("Work Management Master Plan", pb_n,
                                             "workflow_state", STAGE_NEXT["masterplan_consultant"])
+                        notify.notify_state_change("Work Management Master Plan", pb_n, pb_st,
+                                                   STAGE_NEXT["masterplan_consultant"])
                         pb_done.append(pb_n)
             frappe.db.commit()
             out["op"] = pb_op
@@ -1147,6 +1165,8 @@ def wm_masterplan(**kwargs):
                         ", ".join(sg_pending))
                 frappe.db.set_value("Work Management Master Plan", sg_name,
                                     "workflow_state", STAGE_NEXT["masterplan_consultant"])
+                notify.notify_state_change("Work Management Master Plan", sg_name, sg_state,
+                                           STAGE_NEXT["masterplan_consultant"])
                 frappe.db.commit()
                 out["name"] = sg_name
                 out["workflow_state"] = STAGE_NEXT["masterplan_consultant"]
@@ -1216,6 +1236,8 @@ def wm_masterplan(**kwargs):
                     "gm_approved_by": frappe.session.user,
                     "gm_approved_on": frappe.utils.now(),
                 })
+                notify.notify_state_change("Work Management Master Plan", ga_name, ga_state,
+                                           STAGE_NEXT["masterplan_gm"])
                 frappe.db.commit()
                 out["name"] = ga_name
                 out["workflow_state"] = STAGE_NEXT["masterplan_gm"]
@@ -1230,6 +1252,7 @@ def wm_masterplan(**kwargs):
             out["error"] = "Only a master plan under review can be rejected (state: " + str(rj_state) + ")"
         else:
             frappe.db.set_value("Work Management Master Plan", rj_name, "workflow_state", "Rejected")
+            notify.notify_state_change("Work Management Master Plan", rj_name, rj_state, "Rejected")
             frappe.db.commit()
             out["name"] = rj_name
             out["workflow_state"] = "Rejected"
