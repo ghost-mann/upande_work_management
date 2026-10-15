@@ -83,15 +83,14 @@
   //  TAB ROUTING
   // ════════════════════════════════════════════════
   function showTab(name){
-    // "audit" is deliberately absent: the Payroll audit tab and its panel were
-    // taken out of the screen. Its code below still loads and its four server
-    // actions still answer, so restoring it is putting the tab back -- but
-    // nothing reaches it from the UI now.
-    ["build","accounts","mine","insights"].forEach(function(n){
-      var p=el("p-"+n); if(p) p.classList.toggle("on", n===name);
-    });
+    // THE PANELS ARE THE BUTTONS' PANELS. A hand-kept list of tab names here
+    // drifted from the buttons twice: Issues and Audit got their buttons back
+    // and stayed display:none, because nothing ever gave #p-issues / #p-audit
+    // the "on" class. One loop over the buttons cannot fall out of step.
     document.querySelectorAll("#pay-tabs button").forEach(function(b){
-      b.setAttribute("aria-selected", b.getAttribute("data-tab")===name);
+      var n=b.getAttribute("data-tab");
+      b.setAttribute("aria-selected", n===name);
+      var p=el("p-"+n); if(p) p.classList.toggle("on", n===name);
     });
     if(name==="build")    loadPayable();
     if(name==="accounts"){ feedWeek(false); if(!ST.paysByFeed) loadAccounts(); }
@@ -1191,6 +1190,7 @@
       renderIssues();
     }).catch(function(e){
       box.innerHTML='<div class="err">Could not load issues: '+esc(e.message)+'</div>';
+      ISQ.data=null; updateIssBadge();
     });
   }
 
@@ -1279,7 +1279,7 @@
     var issues=d.issues||[];
     if(!issues.length){
       var msg = d.considered ? "Every considered worker in this window can be paid cleanly." : "No confirmed, unpaid work in this window to check.";
-      box.innerHTML='<div class="empty"><b>Nothing blocked</b>'+msg+'</div>';
+      box.innerHTML='<div class="empty"><b>No issues</b>'+msg+'</div>';
       return;
     }
     var h='<div class="runlist">';

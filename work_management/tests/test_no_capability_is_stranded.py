@@ -142,6 +142,94 @@ class TestThePaymentScreenServesItsTabs(unittest.TestCase):
 		self.assertIn("initAudit()", self.js[self.js.index("function showTab("):][:1200])
 
 
+class TestEveryTabShowsItsOwnPanel(unittest.TestCase):
+	"""Dispatched is not the same as shown. Issues and Audit each had a button,
+	a panel and a showTab line -- the three things the class above checks -- and
+	clicking either one left a blank screen: showTab gave the "on" class to a
+	hand-kept list of four panels, theirs not among them, and `.panel` is
+	display:none without it. loadIssues() ran and filled a div nobody could see.
+
+	So this runs the real showTab() under node against the real tab buttons and
+	panel ids, and asks which panel is visible after each click."""
+
+	def setUp(self):
+		self.html = read(os.path.join(WWW, "work-payment.html"))
+		self.js = read(os.path.join(JS, "work-payment.js"))
+		bar = self.html[self.html.index('id="pay-tabs"'):]
+		bar = bar[:bar.index("</div>")]
+		self.tabs = re.findall(r'data-tab="([a-z]+)"', bar)
+		self.panels = re.findall(r'id="(p-[a-z]+)"', self.html)
+
+	def show_tab_source(self):
+		at = self.js.index("  function showTab(")
+		return self.js[at:self.js.index("\n  function ", at + 10)]
+
+	def test_the_tab_bar_was_found(self):
+		self.assertGreaterEqual(len(self.tabs), 6, self.tabs)
+
+	def test_every_tab_button_has_a_panel(self):
+		for tab in self.tabs:
+			with self.subTest(tab=tab):
+				self.assertIn("p-" + tab, self.panels)
+
+	def test_no_hand_kept_list_of_panels(self):
+		"""The list is what drifted; the buttons are the list."""
+		self.assertNotRegex(self.show_tab_source(), r'\[\s*"build"\s*,')
+
+	def test_clicking_each_tab_shows_exactly_its_panel(self):
+		import json
+		import shutil
+		import subprocess
+
+		node = shutil.which("node") or shutil.which("nodejs")
+		if not node:
+			self.skipTest("node is not installed")
+		script = """
+var TABS=%s, PANELS=%s, made={};
+PANELS.forEach(function(id){ made[id]={on:false, classList:{toggle:function(c,v){ made[id].on=!!v; }}}; });
+function el(id){ return made[id]||null; }
+var document={querySelectorAll:function(){ return TABS.map(function(t){
+  return {getAttribute:function(){ return t; }, setAttribute:function(){}}; }); }};
+var ST={paysByFeed:1};
+function noop(){}
+var loadPayable=noop, feedWeek=noop, loadAccounts=noop, loadIssues=noop, loadMine=noop,
+    initAudit=noop, initInsights=noop, feedPeriod=noop;
+%s
+var out={};
+TABS.forEach(function(t){ showTab(t); out[t]=PANELS.filter(function(id){ return made[id].on; }); });
+console.log(JSON.stringify(out));
+""" % (json.dumps(self.tabs), json.dumps(self.panels), self.show_tab_source())
+		res = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+		self.assertEqual(res.returncode, 0, res.stderr)
+		shown = json.loads(res.stdout)
+		for tab in self.tabs:
+			with self.subTest(tab=tab):
+				self.assertEqual(shown[tab], ["p-" + tab])
+
+
+class TestTheIssuesTabNeverRendersBlank(unittest.TestCase):
+	"""Nothing to show is a sentence; a failed call is an error. Neither is an
+	empty panel."""
+
+	def setUp(self):
+		js = read(os.path.join(JS, "work-payment.js"))
+		at = js.index("  function loadIssues(")
+		self.load = js[at:js.index("\n  function ", at + 10)]
+		at = js.index("  function renderIssues(")
+		self.render = js[at:js.index("\n  function ", at + 10)]
+
+	def test_an_empty_answer_says_no_issues(self):
+		self.assertIn("<b>No issues</b>", self.render)
+
+	def test_a_refusal_is_shown(self):
+		self.assertIn("if(d.error){", self.load)
+		self.assertIn('class="err"', self.load)
+
+	def test_a_failed_request_is_shown(self):
+		self.assertIn(".catch(", self.load)
+		self.assertIn("Could not load issues", self.load)
+
+
 class TestSendingAChosenRangeReachesTheServer(unittest.TestCase):
 	"""The Setting, the hint and the parameter are three separate things, and
 	the screen had none of them wired."""
