@@ -1508,6 +1508,18 @@
     if(cut>0) t=t.slice(cut+2);
     return '<span class="tag '+c+'" data-state="'+esc(s||"")+'" title="'+esc(s||"")+'">'+esc(t)+'</span>';
   }
+  // THE PERIOD WORKED, NOT THE DAY IT WAS KEYED. Payroll read the entry date as
+  // the work date (work on 7-8 Sep, keyed 23 Sep, listed as 23 Sep), so the date
+  // column is the first -> last day the record covers, with the entry date under it.
+  function workedPeriod(r){
+    var f=isodate(r.work_from), t=isodate(r.work_to);
+    if(!f) return "";
+    return (f===t) ? f : (f+" → "+t);
+  }
+  function workedCell(r){
+    var p=workedPeriod(r), e=isodate(r.entry_date);
+    return esc(p||e||"—")+(p&&e?'<div class="mini" style="color:var(--mute);font-size:10px">entered '+esc(e)+'</div>':'');
+  }
   function loadMine(){
     var b=el("acmine-body"); b.className="loading"; b.innerHTML="Loading…";
     call({action:"act_my"}).then(function(d){
@@ -1518,15 +1530,15 @@
       b.innerHTML='<div class="note" style="margin-bottom:8px">Draft or rejected records are editable — click a row to resume entering day by day.</div>'
         + fbar(rows,{dates:true,statuses:Object.keys(sts).sort(),ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
-        return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.entry_date),
+        return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.work_from||r.entry_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+taskName(r.task)).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>Period worked</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
           var editable = (r.workflow_state==="Draft" || r.workflow_state==="Rejected");
           var editcell = editable ? '<span class="editlink" data-asg="'+esc(r.assignment)+'">Edit →</span>' : '';
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+editcell+'</td></tr>';
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+workedCell(r)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+editcell+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
@@ -1536,7 +1548,7 @@
         wireExpand(body, 9, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
-            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Status",esc(stateLabel(r.workflow_state))]])+
+            rowFigs([["Period worked",esc(workedPeriod(r)||"—")],["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Status",esc(stateLabel(r.workflow_state))]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
       });
@@ -1551,13 +1563,13 @@
       b.innerHTML='<div class="note" style="margin-bottom:8px">These actuals were rejected. Click <b>Edit</b> to adjust the daily quantities and resubmit for approval.</div>'
         + fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
-        return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
+        return {farm:r.farm||"", status:"", date:isodate(r.work_from||r.entry_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+taskName(r.task)).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
+        var h='<table><thead><tr><th>Ref</th><th>Period worked</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r, i){
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td><span class="editlink" data-asg="'+esc(r.assignment)+'">Edit &amp; resubmit →</span></td></tr>';
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+workedCell(r)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td><span class="editlink" data-asg="'+esc(r.assignment)+'">Edit &amp; resubmit →</span></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
@@ -1567,7 +1579,7 @@
         wireExpand(body, 9, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+'</span></div>'+
-            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Status",esc(stateLabel(r.workflow_state))]])+
+            rowFigs([["Period worked",esc(workedPeriod(r)||"—")],["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Status",esc(stateLabel(r.workflow_state))]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
       });
@@ -1736,22 +1748,22 @@
       b.className="";
       b.innerHTML=fbar(rows,{dates:true,ph:"Search ref, "+TX("top_singular","Farm").toLowerCase()+", task, entered by…"}) + bulkBar(rows);
       fwire(b, rows, function(r){
-        return {farm:r.farm||"", status:"", date:isodate(r.entry_date),
+        return {farm:r.farm||"", status:"", date:isodate(r.work_from||r.entry_date),
                 hay:((r.name||"")+" "+(r.farm||"")+" "+(r.block_section||"")+" "+taskName(r.task)+" "+(r.entered_by||"")).toLowerCase()};
       }, function(body, list){
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
-        var h='<table><thead><tr><th class="c" style="width:34px"></th><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>By</th><th>Action</th></tr></thead><tbody>';
+        var h='<table><thead><tr><th class="c" style="width:34px"></th><th>Ref</th><th>Period worked</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>By</th><th>Action</th></tr></thead><tbody>';
         list.forEach(function(r, i){
           h+='<tr data-x="'+i+'">'+
              // stopPropagation on the box keeps a tick from also expanding the row
              '<td class="c"><input type="checkbox" data-bpick="'+esc(r.name)+'"'+(BULK.picked[r.name]?" checked":"")+'></td>'+
-             '<td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">'+esc(verb||"Approve")+'</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+             '<td>'+esc(r.name)+'</td><td>'+workedCell(r)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">'+esc(verb||"Approve")+'</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         wireExpand(body, 10, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+(r.block_section?(' · '+esc(lbl(r.block_section))):'')+'</span></div>'+
-            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Planned people",fmt(r.planned_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Planned cost",fmt(r.planned_cost)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Entered by",esc((r.entered_by||"").split("@")[0])]])+
+            rowFigs([["Period worked",esc(workedPeriod(r)||"—")],["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Planned people",fmt(r.planned_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Planned cost",fmt(r.planned_cost)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Entered by",esc((r.entered_by||"").split("@")[0])]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
         body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act("act_approve", btn.getAttribute("data-app"), bodyId, stageKey, verb); }; });

@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, presence, stage_pills
+from work_management import bulk, chain, presence, self_approval, stage_pills
 from work_management.api.config import chain_states, get_config, sql_in
 
 
@@ -864,7 +864,13 @@ def wm_assigner(**kwargs):
             if not editing:
                 d.assigned_by = frappe.session.user; d.assign_date = frappe.utils.today()
             if editing:
-                if not submit_now and not editing_pending:
+                # A REJECTED assignment stays Rejected while it is fixed: there is no
+                # Rejected -> Draft transition, so writing Draft and saving threw
+                # "Workflow State transition not allowed from Rejected to Draft". The
+                # submit below takes it from Rejected into the chain, which is the
+                # workflow's own Re-submit transition.
+                if (not submit_now and not editing_pending
+                        and d.workflow_state != self_approval.REJECTED):
                     d.workflow_state = "Draft"
                 d.save(ignore_permissions=True)
             else:
@@ -883,8 +889,10 @@ def wm_assigner(**kwargs):
                 # wrong place to refuse from -- it names neither the role required nor
                 # theirs. Who may take this step is checked above, before anything was
                 # written, against STAGE_ROLE["assigner_submit"].
+                sv_prev_state = d.workflow_state
                 frappe.db.set_value("Work Management Assigner", d.name, "workflow_state", STAGE_NEXT["assigner_submit"], update_modified=False)
                 d.workflow_state = STAGE_NEXT["assigner_submit"]
+                self_approval.mark_resubmitted(ASG_DT, d.name, sv_prev_state)
             # audit trail: an attendance override is always logged on the document
             if att_conflicts and att_override:
                 ov_lines = []
@@ -928,6 +936,8 @@ def wm_assigner(**kwargs):
             # the step's own `scoped` flag, not something inferred from its name.
             ap_why = chain.may_take(ap_step, MY_ROLES, farm=cur.farm if cur else None,
                                     farms=ASG_FARMS)
+        if cur and not ap_why:
+            ap_why = self_approval.refusal(ASG_DT, nm)
         if not cur:
             out["error"] = "Record not found"
         elif ap_bad:

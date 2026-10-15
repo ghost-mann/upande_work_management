@@ -20,6 +20,7 @@
   "tab_approvals",
   "sb_approvals",
   "notify_approvers_by_email",
+  "block_self_approval",
   "approval_stages",
   "stage_approvers",
   "tab_taxonomy",
@@ -660,6 +661,13 @@
    "label": "Email approvers when something reaches their step"
   },
   {
+   "default": "0",
+   "description": "When on, nobody may approve a document they raised (the plan's requester, the assignment's assigner, the actuals' enterer, the master plan's raiser), or one they last resubmitted after a rejection. Applies to every approval step, one at a time or in bulk.",
+   "fieldname": "block_self_approval",
+   "fieldtype": "Check",
+   "label": "Block self-approval"
+  },
+  {
    "fieldname": "approval_stages",
    "fieldtype": "Table",
    "label": "Approval Stages",
@@ -804,7 +812,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-22 00:00:00.000000",
+ "modified": "2026-10-15 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",

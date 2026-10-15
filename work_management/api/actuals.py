@@ -11,8 +11,32 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, presence, stage_pills
+from work_management import bulk, chain, presence, self_approval, stage_pills
 from work_management.api.config import chain_states, get_config, sql_in
+
+
+def with_period_worked(rows):
+    """Stamp each actuals row with the first and last day it records.
+
+    The lists showed `entry_date`, the day the record was created, and payroll
+    read it as the day the work was done: work on 7-8 Sep, keyed on 23 Sep,
+    listed as 23 Sep. The period worked is the span of the day rows themselves.
+    """
+    names = [r.name for r in rows]
+    if not names:
+        return rows
+    span = {}
+    for x in frappe.db.sql("""
+            SELECT parent, MIN(work_date) f, MAX(work_date) t
+            FROM `tabWork Actuals Employee`
+            WHERE parent IN %(n)s
+            GROUP BY parent""", {"n": names}, as_dict=True):
+        span[x.parent] = x
+    for r in rows:
+        sp = span.get(r.name)
+        r["work_from"] = str(sp.f) if sp and sp.f else None
+        r["work_to"] = str(sp.t) if sp and sp.t else None
+    return rows
 
 
 @frappe.whitelist()
@@ -1263,7 +1287,13 @@ def wm_actuals(**kwargs):
                 d.payroll_people = len(seen_pay_people)
                 d.total_payment = total_pay
                 d.cost_variance = total_pay - frappe.utils.flt(d.planned_cost)
-                d.entered_by = frappe.session.user
+                # THE AUTHOR IS WHOEVER FIRST ENTERED IT. This was rewritten on every
+                # save, so a rejected entry fixed by somebody else lost its author --
+                # and with "Block self-approval" on, the original enterer could then
+                # approve their own work at the next step. Whoever sends it back is
+                # recorded separately, as `resubmitted_by`.
+                if not d.entered_by:
+                    d.entered_by = frappe.session.user
                 # A DAY LONGER THAN THE DAY IS. Judged per date against that date's
                 # own standard, so two ordinary full days are never read as one long
                 # one. Warned and recorded: a wrong figure here spoils a metric and
@@ -1416,8 +1446,18 @@ def wm_actuals(**kwargs):
                         # keep the current workflow_state (approver edit-in-place)
                         d.save(ignore_permissions=True)
                     else:
-                        d.workflow_state = "Draft"
+                        # A REJECTED ENTRY STAYS REJECTED WHILE IT IS FIXED. The
+                        # workflow has no Rejected -> Draft transition, so writing
+                        # Draft here and saving is what failed live with "Workflow
+                        # State transition not allowed from Rejected to Draft" --
+                        # on every save of a rejected entry, submit or not. The
+                        # Master Plan screen has always kept Rejected through an
+                        # edit; the submit below then takes it on into the chain,
+                        # which is the workflow's own Re-submit transition.
+                        if d.workflow_state != self_approval.REJECTED:
+                            d.workflow_state = "Draft"
                         d.save(ignore_permissions=True)
+                    sv_prev_state = d.workflow_state
                     if submit_now and completed and not editing_pending:
                         # written directly rather than through save(): the workflow's own
                         # transition-role gate would refuse from the bottom of the stack,
@@ -1426,6 +1466,7 @@ def wm_actuals(**kwargs):
                         # STAGE_ROLE["actuals_submit"], before any of this was written.
                         frappe.db.set_value("Work Management Actuals", d.name, "workflow_state", STAGE_NEXT["actuals_submit"], update_modified=False)
                         d.workflow_state = STAGE_NEXT["actuals_submit"]
+                        self_approval.mark_resubmitted(ACT_DT, d.name, sv_prev_state)
                         # ── CAP THE PLAN AT WHAT WAS DONE ────────────────────
                         # Only once the entry has actually gone into the chain:
                         # capping a plan whose submit was then refused would
@@ -1576,11 +1617,12 @@ def wm_actuals(**kwargs):
                             "these cells have no quantity. Enter the quantity, or leave the "
                             "note off. (" + ", ".join(sorted(nd_lost)[:5]) + ")")
     elif action == "act_my":
-        out["actuals"] = frappe.db.get_all("Work Management Actuals",
-            filters={"entered_by":frappe.session.user},
+        # yours: entered by you, or sent back by you after a rejection
+        out["actuals"] = with_period_worked(frappe.db.get_all("Work Management Actuals",
+            or_filters={"entered_by":frappe.session.user, "resubmitted_by":frappe.session.user},
             fields=["name","assignment","farm","task","total_actual_qty","actual_people","payroll_people",
                     "total_payment","cost_variance","workflow_state","entry_date"],
-            order_by="creation desc", limit=200)
+            order_by="creation desc", limit=200))
 
     elif action == "act_pending":
         # WHICH QUEUE, by the key the tab carries. `Pending HR Head` was both the
@@ -1600,11 +1642,11 @@ def wm_actuals(**kwargs):
                 fmbypass = ("System Manager" in MY_ROLES) or ("General Manager" in MY_ROLES)
                 if not fmbypass:
                     fmflt["farm"] = ["in", ACT_FARMS] if ACT_FARMS else ["in", ["__none__"]]
-            out["pending"] = frappe.db.get_all("Work Management Actuals",
+            out["pending"] = with_period_worked(frappe.db.get_all("Work Management Actuals",
                 filters=fmflt,
                 fields=["name","assignment","farm","task","block_section","planned_people","actual_people","payroll_people",
                         "planned_cost","total_payment","cost_variance","total_actual_qty","entered_by","entry_date"],
-                order_by="entry_date desc", limit=200)
+                order_by="entry_date desc", limit=200))
             out["step"] = pd_step["key"]
             out["step_label"] = chain.label_of(pd_step)
 
@@ -1632,6 +1674,7 @@ def wm_actuals(**kwargs):
         if ap_step:
             ap_why = chain.may_take(ap_step, MY_ROLES, farm=cur.farm if cur else None,
                                     farms=ACT_FARMS)
+        ap_self = self_approval.refusal(ACT_DT, nm) if cur else None
         if not cur:
             out["error"] = "Record not found"
         elif ap_bad:
@@ -1643,6 +1686,8 @@ def wm_actuals(**kwargs):
                             " step (state: " + str(cur.workflow_state) + ")")
         elif ap_why:
             out["error"] = ap_why
+        elif ap_self:
+            out["error"] = ap_self
         else:
             ap_next = ap_step["next_state"]
             # direct DB writes, bypassing the get_doc doctype-access gate and the

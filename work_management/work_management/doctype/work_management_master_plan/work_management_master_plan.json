@@ -24,6 +24,7 @@
   "total_cost",
   "sb_mp_audit",
   "raised_by",
+  "resubmitted_by",
   "raised_on",
   "cb_mp_audit",
   "gm_approved_by",
@@ -142,6 +143,14 @@
    "read_only": 1
   },
   {
+   "description": "Who last sent this back into the chain after it was rejected. With \"Block self-approval\" on, they may not approve it either.",
+   "fieldname": "resubmitted_by",
+   "fieldtype": "Link",
+   "label": "Last Resubmitted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
    "fieldname": "raised_on",
    "fieldtype": "Datetime",
    "label": "Raised On",
@@ -181,7 +190,7 @@
  "idx": 0,
  "is_submittable": 0,
  "links": [],
- "modified": "2026-08-06 00:00:00.000000",
+ "modified": "2026-10-15 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Master Plan",

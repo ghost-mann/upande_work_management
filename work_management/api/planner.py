@@ -12,7 +12,7 @@ import json
 import frappe
 
 from work_management.api.config import chain_states, get_config, sql_in
-from work_management import audit, bulk, chain
+from work_management import audit, bulk, chain, self_approval
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 
@@ -788,14 +788,21 @@ def wm_planner(**kwargs):
                 if not editing:
                     d.requested_by = frappe.session.user; d.request_date = frappe.utils.today()
                 if editing:
-                    # keep it a draft unless they explicitly submit; reset a Rejected back to Draft on save
-                    if not submit_now:
+                    # keep it a draft unless they explicitly submit. A REJECTED plan
+                    # stays Rejected while it is fixed: there is no Rejected -> Draft
+                    # transition, so writing Draft and saving threw "Workflow State
+                    # transition not allowed from Rejected to Draft". The submit below
+                    # takes it from Rejected into the chain -- the workflow's own
+                    # Re-submit transition.
+                    if not submit_now and d.workflow_state != self_approval.REJECTED:
                         d.workflow_state = "Draft"
                     d.save(ignore_permissions=True)
                 else:
                     d.insert(ignore_permissions=True)
                 if submit_now:
+                    sv_prev_state = d.workflow_state
                     d.workflow_state = STAGE_NEXT["planner_submit"]; d.save(ignore_permissions=True)
+                    self_approval.mark_resubmitted("Work Management Planner", d.name, sv_prev_state)
                 out["name"] = d.name; out["workflow_state"] = d.workflow_state
                 out["total_cost"] = d.total_cost; out["people_per_day"] = d.people_per_day
                 out["blocks"] = block_list
@@ -1076,6 +1083,9 @@ def wm_planner(**kwargs):
                 ap_why = ("Only " + str(ap_step.get("role") or "a role nobody has configured") +
                           " can take the " + str(ap_step.get("label") or "") +
                           " step. You do not hold it.")
+        if ap_ok and ap_doc:
+            ap_why = self_approval.refusal("Work Management Planner", nm)
+            ap_ok = not ap_why
         if not ap_doc:
             out["error"] = "no such plan: " + str(nm)
         elif ap_stage_bad:

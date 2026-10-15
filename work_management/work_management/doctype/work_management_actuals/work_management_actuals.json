@@ -34,6 +34,7 @@
   "total_payment",
   "sb_audit",
   "entered_by",
+  "resubmitted_by",
   "entry_date",
   "hr_approved_by",
   "hr_approval_date",
@@ -233,6 +234,14 @@
    "read_only": 1
   },
   {
+   "description": "Who last sent this back into the chain after it was rejected. With \"Block self-approval\" on, they may not approve it either.",
+   "fieldname": "resubmitted_by",
+   "fieldtype": "Link",
+   "label": "Last Resubmitted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
    "fieldname": "entry_date",
    "fieldtype": "Date",
    "label": "Entry Date",
@@ -350,7 +359,7 @@
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-07-23 00:00:00.000000",
+ "modified": "2026-10-15 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Actuals",

@@ -381,6 +381,8 @@ class TestCatalogueCompleteness(unittest.TestCase):
 	KEPT_IN_SHIPPED_WORDING = {
 		("Work Management Settings", "att_block_absent"):
 			"'block employees marked Absent' uses block as a verb",
+		("Work Management Settings", "block_self_approval"):
+			"'Block self-approval' uses block as a verb",
 		("Work Management Settings", "tax_bu_enabled"):
 			"names the template field itself; renaming it would be circular",
 		("Work Management Settings", "tax_bu_singular"):

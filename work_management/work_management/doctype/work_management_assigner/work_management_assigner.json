@@ -29,6 +29,7 @@
   "variance",
   "sb_audit",
   "assigned_by",
+  "resubmitted_by",
   "assign_date",
   "cb_audit",
   "approved_by",
@@ -184,6 +185,14 @@
    "read_only": 1
   },
   {
+   "description": "Who last sent this back into the chain after it was rejected. With \"Block self-approval\" on, they may not approve it either.",
+   "fieldname": "resubmitted_by",
+   "fieldtype": "Link",
+   "label": "Last Resubmitted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
    "fieldname": "assign_date",
    "fieldtype": "Date",
    "label": "Assign Date",
@@ -244,7 +253,7 @@
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-07-23 00:00:00.000000",
+ "modified": "2026-10-15 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Assigner",

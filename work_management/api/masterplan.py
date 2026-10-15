@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import audit, chain, consultant, stage_pills
+from work_management import audit, chain, consultant, self_approval, stage_pills
 from work_management.api.config import get_config
 from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
@@ -843,6 +843,7 @@ def wm_masterplan(**kwargs):
         else:
             frappe.db.set_value("Work Management Master Plan", sr_name,
                                 "workflow_state", STAGE_NEXT["masterplan_submit"])
+            self_approval.mark_resubmitted("Work Management Master Plan", sr_name, sr_state)
             # WITH NO CONSULTANT STEP, the lines settle as the plan enters the
             # chain. Nothing else ever moves them off Pending, and a plan that
             # reaches Approved with every line Pending is a budget the planner
@@ -1032,6 +1033,9 @@ def wm_masterplan(**kwargs):
                     elif not (MP_GM_STATE and pb_st == MP_GM_STATE):
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) +
                             ", not at " + str(MP_GM_LABEL)})
+                    elif self_approval.refusal("Work Management Master Plan", pb_n):
+                        pb_failed.append({"name": pb_n,
+                            "why": self_approval.refusal("Work Management Master Plan", pb_n)})
                     else:
                         # same as gm_approve: with no consultant step the lines
                         # have to be settled before they are counted
@@ -1077,6 +1081,9 @@ def wm_masterplan(**kwargs):
                     elif not (MP_CONSULTANT_STATE and pb_st == MP_CONSULTANT_STATE):
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) +
                             ", not at " + str(MP_CONSULTANT_LABEL)})
+                    elif self_approval.refusal("Work Management Master Plan", pb_n):
+                        pb_failed.append({"name": pb_n,
+                            "why": self_approval.refusal("Work Management Master Plan", pb_n)})
                     else:
                         for pb_p in frappe.db.get_all("Work Management Master Plan Activity",
                                 filters={"parent": pb_n, "consultant_state": "Pending"}, pluck="name"):
@@ -1106,6 +1113,8 @@ def wm_masterplan(**kwargs):
         elif not (MP_CONSULTANT_STATE and sg_state == MP_CONSULTANT_STATE):
             out["error"] = ("Only a plan at " + str(MP_CONSULTANT_LABEL) + " can be sent on to "
                             + str(MP_GM_LABEL) + " (state: " + str(sg_state) + ")")
+        elif self_approval.refusal("Work Management Master Plan", sg_name):
+            out["error"] = self_approval.refusal("Work Management Master Plan", sg_name)
         else:
             sg_rows = frappe.db.sql("""
                 SELECT consultant_state, task FROM `tabWork Management Master Plan Activity`
@@ -1157,6 +1166,8 @@ def wm_masterplan(**kwargs):
             out["error"] = "The GM step is switched off for this project."
         elif ga_state != STAGE_STATE["masterplan_gm"]:
             out["error"] = "This master plan is not awaiting GM approval (state: " + str(ga_state) + ")"
+        elif self_approval.refusal("Work Management Master Plan", ga_name):
+            out["error"] = self_approval.refusal("Work Management Master Plan", ga_name)
         else:
             ga_doc = frappe.db.get_value("Work Management Master Plan", ga_name,
                 ["farm", "period_from", "period_to"], as_dict=True)
