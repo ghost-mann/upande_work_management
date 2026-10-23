@@ -49,7 +49,10 @@ add_to_apps_screen = [
 
 doctype_list_js = {
 	"Work Management Payment": "public/js/work_management_payment_list.js",
+	"Payroll Entry": "public/js/payroll_entry_list.js",
 }
+
+doctype_js = {"Payroll Entry": "public/js/payroll_entry.js"}
 
 # The five pages call these bare endpoints (/api/method/wm_planner etc.).
 # Mapping them here keeps the frontend identical to the original Web Pages

@@ -28,7 +28,7 @@ a read-tracking pixel and delivery-status writes back onto it.
 """
 
 import frappe
-from frappe.utils import cint
+from frappe.utils import cint, getdate
 
 from work_management.payroll_pack_book import (
 	attachment_name, build_pack, email_html, farm_recipients, farms_in, filter_farm,
@@ -43,6 +43,10 @@ SETTINGS = "Work Management Settings"
 FM_STAGE = "Actuals: Farm Manager"
 WM_PAYMENT = "Work Management Payment"
 
+# The range download: at most this many days, counted inclusively.
+MAX_RANGE_DAYS = 92
+DEAD_STATES = ("Cancelled", "Rejected")
+
 
 def should_send(company, state_changed, new_state, has_wm, enabled):
 	return bool(company == TASK_PAY_COMPANY and state_changed and new_state == TRIGGER_STATE
@@ -55,13 +59,17 @@ def _enabled():
 
 # --- loading -----------------------------------------------------------------
 
+def _has_workflow_state():
+	"""Sites without the payroll workflow have no workflow_state column."""
+	return frappe.db.has_column("Payroll Entry", "workflow_state")
+
+
 def load_rows(entry_names):
 	"""(entries, lines, slips, days_by_employee, days_by_employee_farm) for build_pack."""
 	names = tuple(entry_names)
 	if not names:
 		return [], [], [], {}, {}
-	state = ("workflow_state" if frappe.db.has_column("Payroll Entry", "workflow_state")
-		else "NULL")
+	state = "workflow_state" if _has_workflow_state() else "NULL"
 	entries = frappe.db.sql(f"""
 		select name, start_date, end_date, {state} as workflow_state
 		from `tabPayroll Entry` where name in %(names)s order by start_date, name
@@ -131,6 +139,46 @@ def has_task_pay(entry_name):
 			and ads.ref_doctype = %(wm)s and ads.docstatus != 2
 		limit 1
 	""", {"entry": entry_name, "wm": WM_PAYMENT}))
+
+
+def entries_in_range(from_date, to_date):
+	"""Submitted, live Kaitet task-pay Payroll Entries overlapping [from_date, to_date]."""
+	state = "and workflow_state not in %(dead)s" if _has_workflow_state() else ""
+	names = frappe.db.sql(f"""
+		select name from `tabPayroll Entry`
+		where company = %(company)s and docstatus = 1 {state}
+			and start_date <= %(to_date)s and end_date >= %(from_date)s
+		order by start_date, name
+	""", {"company": TASK_PAY_COMPANY, "dead": DEAD_STATES,
+		"from_date": from_date, "to_date": to_date})
+	return [r[0] for r in names if has_task_pay(r[0])]
+
+
+@frappe.whitelist(methods=["GET"])
+def download_breakdown(from_date, to_date):
+	"""The task pay breakdown workbook for every task-pay payroll in a date range.
+
+	All or nothing: every entry must be readable by the user before anything is
+	built. GET because the button opens it as a URL.
+	"""
+	# getdate("") is today, so a missing date is caught before it is parsed.
+	start = getdate(from_date) if from_date else None
+	end = getdate(to_date) if to_date else None
+	if not start or not end:
+		frappe.throw("Give both a From and a To date.")
+	if start > end:
+		frappe.throw("From must be on or before To.")
+	if (end - start).days + 1 > MAX_RANGE_DAYS:
+		frappe.throw(f"Pick at most {MAX_RANGE_DAYS} days.")
+	names = entries_in_range(start, end)
+	if not names:
+		frappe.throw("No task-pay payrolls in that range.")
+	for name in names:
+		frappe.has_permission("Payroll Entry", "read", doc=name, throw=True)
+	pack = build_pack(*load_rows(names))
+	frappe.response.filename = attachment_name(start, end)
+	frappe.response.filecontent = workbook_bytes(pack)
+	frappe.response.type = "binary"
 
 
 # --- the hook ----------------------------------------------------------------

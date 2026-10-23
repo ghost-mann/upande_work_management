@@ -7,13 +7,19 @@ frappe calls are mocked; nothing here needs a site or sends mail::
         work_management.tests.test_payroll_pack_send -v
 """
 
+import io
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from work_management import payroll_pack
 from work_management.payroll_pack import should_send
 
 ENTRY = "HR-PRUN-2026-00042"
+
+
+class Refused(Exception):
+	"""What the mocked frappe.throw raises."""
 
 ENTRIES = [{"name": ENTRY, "start_date": "2026-10-12", "end_date": "2026-10-18",
 	"workflow_state": "Pending Accounts"}]
@@ -398,6 +404,117 @@ class TestLoadRows(unittest.TestCase):
 			rows = payroll_pack.load_rows([ENTRY])
 		self.assertEqual(rows[1:], ([], [], {}, {}))
 		self.assertEqual(frappe.db.sql.call_count, 2)
+
+
+class TestRangeDownload(unittest.TestCase):
+	"""The breakdown for a date range: a second way out for pay data."""
+
+	def download(self, from_date, to_date, names=(ENTRY,), denied=()):
+		response = SimpleNamespace()
+		with mock.patch.object(payroll_pack, "frappe") as frappe, \
+				mock.patch.object(payroll_pack, "entries_in_range", return_value=list(names)) as found, \
+				mock.patch.object(payroll_pack, "load_rows", return_value=ROWS) as load:
+			frappe.response = response
+			frappe.throw.side_effect = Refused
+			frappe.PermissionError = PermissionError
+
+			def has_permission(doctype, ptype, doc=None, throw=False):
+				if doc in denied:
+					raise PermissionError(doc)
+				return True
+			frappe.has_permission.side_effect = has_permission
+			try:
+				payroll_pack.download_breakdown(from_date, to_date)
+			finally:
+				self.frappe, self.found, self.load, self.response = frappe, found, load, response
+		return response
+
+	def test_range_longer_than_92_days_is_refused(self):
+		# 92 days counted inclusively is the most; 93 is refused before any query.
+		self.download("2026-07-24", "2026-10-23")
+		with self.assertRaises(Refused):
+			self.download("2026-07-23", "2026-10-23")
+		self.found.assert_not_called()
+		self.assertFalse(hasattr(self.response, "filecontent"))
+
+	def test_from_after_to_is_refused(self):
+		with self.assertRaises(Refused):
+			self.download("2026-10-19", "2026-10-18")
+		self.found.assert_not_called()
+		self.assertFalse(hasattr(self.response, "filecontent"))
+
+	def test_a_missing_date_is_refused_not_read_as_today(self):
+		for args in (("", "2026-10-18"), ("2026-10-12", None)):
+			with self.subTest(args=args), self.assertRaises(Refused):
+				self.download(*args)
+			self.found.assert_not_called()
+
+	def test_empty_range_says_no_payrolls(self):
+		with self.assertRaises(Refused):
+			self.download("2026-10-01", "2026-10-07", names=())
+		self.frappe.throw.assert_called_once_with("No task-pay payrolls in that range.")
+		self.load.assert_not_called()
+		self.assertFalse(hasattr(self.response, "filecontent"))
+
+	def test_range_with_an_unreadable_entry_is_refused(self):
+		with self.assertRaises(PermissionError):
+			self.download("2026-10-01", "2026-10-31", names=(ENTRY, "HR-PRUN-2026-00043"),
+				denied=("HR-PRUN-2026-00043",))
+		self.load.assert_not_called()
+		self.assertFalse(hasattr(self.response, "filecontent"))
+		self.assertFalse(hasattr(self.response, "filename"))
+
+	def test_every_entry_is_checked_with_throw(self):
+		names = (ENTRY, "HR-PRUN-2026-00043")
+		self.download("2026-10-01", "2026-10-31", names=names)
+		self.assertEqual(self.frappe.has_permission.call_args_list,
+			[mock.call("Payroll Entry", "read", doc=n, throw=True) for n in names])
+		self.load.assert_called_once_with(list(names))
+
+	def test_range_download_sets_a_binary_xlsx_response(self):
+		response = self.download("2026-10-12", "2026-10-18")
+		self.found.assert_called_once()
+		self.assertEqual(response.type, "binary")
+		self.assertEqual(response.filename, "Task-pay-2026-10-12-to-2026-10-18.xlsx")
+		self.assertEqual(response.filecontent[:2], b"PK")
+		from openpyxl import load_workbook
+		wb = load_workbook(io.BytesIO(response.filecontent))
+		self.assertEqual(wb.sheetnames[0], "Payrolls")
+
+	def test_download_allows_get(self):
+		# The button opens a URL, so this one method must accept GET.
+		import frappe
+		self.assertIn("GET", frappe.allowed_http_methods_for_whitelisted_func[payroll_pack.download_breakdown])
+		self.assertNotIn(payroll_pack.download_breakdown, frappe.guest_methods)
+
+
+class TestEntriesInRange(unittest.TestCase):
+	def run_query(self, has_state=True, task_pay=("A",)):
+		with mock.patch.object(payroll_pack, "frappe") as frappe, \
+				mock.patch.object(payroll_pack, "has_task_pay", side_effect=lambda n: n in task_pay):
+			frappe.db.has_column.return_value = has_state
+			frappe.db.sql.return_value = [("A",), ("B",)]
+			names = payroll_pack.entries_in_range("2026-10-01", "2026-10-31")
+		query, values = frappe.db.sql.call_args.args
+		return names, " ".join(query.split()), values
+
+	def test_overlap_company_docstatus_and_state_are_parameterised(self):
+		names, query, values = self.run_query()
+		self.assertEqual(names, ["A"])
+		self.assertIn("start_date <= %(to_date)s", query)
+		self.assertIn("end_date >= %(from_date)s", query)
+		self.assertIn("company = %(company)s", query)
+		self.assertIn("docstatus = 1", query)
+		self.assertIn("workflow_state not in %(dead)s", query)
+		self.assertIn("order by start_date", query)
+		self.assertNotIn("2026-10", query)
+		self.assertNotIn("Kaitet", query)
+		self.assertEqual(values["company"], "Kaitet Ltd.")
+		self.assertEqual(set(values["dead"]), {"Cancelled", "Rejected"})
+
+	def test_without_a_workflow_column_the_state_filter_is_left_out(self):
+		_, query, _ = self.run_query(has_state=False)
+		self.assertNotIn("workflow_state", query)
 
 
 if __name__ == "__main__":
