@@ -1,0 +1,270 @@
+"""Send the payroll approval pack when HR sends Kaitet task pay to Accounts.
+
+When a Kaitet Ltd. Payroll Entry that pays Work Management task pay moves to
+"Pending Accounts", the approvers get the whole pack (a short summary and the
+workbook) and each farm manager gets a pack cut down to their own farm. The
+rules for what goes in a pack live in payroll_pack_book; this module loads the
+rows, decides who gets mail, and sends it.
+
+It is pay data, so the recipients are deliberately narrow:
+
+  - the full pack goes only to the Settings list `payroll_pack_to` (Bcc
+    `payroll_pack_bcc`). If that list is empty nothing is sent and an Error
+    Log says so -- it never falls back to a role or anyone else.
+  - a farm pack goes only to that farm's enabled "Actuals: Farm Manager"
+    approvers. A farm with none gets no mail, and the full pack names it.
+  - a test send goes only to the addresses given, never Bcc, never a farm
+    manager, and is not recorded, so it does not make the next real one
+    "Revised".
+
+frappe.sendmail does not create a Communication, so each real send records one
+itself (linked to the mail via `communication=`). That is what the next send
+finds to call itself "Revised", and it leaves a trail on the Payroll Entry of
+who was sent what.
+"""
+
+import frappe
+from frappe.utils import cint
+
+from work_management.payroll_pack_book import (
+	attachment_name, build_pack, email_html, farm_recipients, farms_in, filter_farm,
+	split_addresses, subject, workbook_bytes,
+)
+
+TASK_PAY_COMPANY = "Kaitet Ltd."
+TRIGGER_STATE = "Pending Accounts"
+PACK_SUBJECT_PREFIX = "Task pay for approval"
+
+SETTINGS = "Work Management Settings"
+FM_STAGE = "Actuals: Farm Manager"
+WM_PAYMENT = "Work Management Payment"
+
+
+def should_send(company, state_changed, new_state, has_wm, enabled):
+	return bool(company == TASK_PAY_COMPANY and state_changed and new_state == TRIGGER_STATE
+		and has_wm and enabled)
+
+
+def _enabled():
+	return cint(frappe.db.get_single_value(SETTINGS, "payroll_pack_enabled"))
+
+
+# --- loading -----------------------------------------------------------------
+
+def load_rows(entry_names):
+	"""(entries, lines, slips, days_by_employee, days_by_employee_farm) for build_pack."""
+	names = tuple(entry_names)
+	if not names:
+		return [], [], [], {}, {}
+	state = ("workflow_state" if frappe.db.has_column("Payroll Entry", "workflow_state")
+		else "NULL")
+	entries = frappe.db.sql(f"""
+		select name, start_date, end_date, {state} as workflow_state
+		from `tabPayroll Entry` where name in %(names)s order by start_date, name
+	""", {"names": names}, as_dict=True)
+
+	# One row per (slip, WM Additional Salary); a slip with none still appears,
+	# with wmpay NULL, so a person paid with no work behind it is seen.
+	slips = frappe.db.sql("""
+		select ss.payroll_entry as entry, ss.name as slip, ss.employee, ss.employee_name,
+			ads.ref_docname as wmpay, sd.amount as wm_amount
+		from `tabSalary Slip` ss
+		left join (`tabSalary Detail` sd
+			join `tabAdditional Salary` ads
+				on ads.name = sd.additional_salary
+				and ads.ref_doctype = %(wm)s
+				and ads.docstatus != 2)
+			on sd.parent = ss.name and sd.parenttype = 'Salary Slip' and sd.parentfield = 'earnings'
+		where ss.payroll_entry in %(names)s and ss.docstatus != 2
+		order by ss.name
+	""", {"names": names, "wm": WM_PAYMENT}, as_dict=True)
+	for row in slips:
+		row["wm_amount"] = float(row.get("wm_amount") or 0)
+
+	wmpays = tuple(sorted({r["wmpay"] for r in slips if r.get("wmpay")}))
+	if not wmpays:
+		return entries, [], slips, {}, {}
+
+	lines = frappe.db.sql("""
+		select parent as wmpay, employee, employee_name, farm, task, block, work_from, work_to,
+			days, qty, rate, amount, entered_by, fm_approved_by, hr_approved_by, gm_approved_by
+		from `tabWork Payment Line`
+		where parent in %(wmpays)s
+		order by parent, idx
+	""", {"wmpays": wmpays}, as_dict=True)
+
+	days = frappe.db.sql("""
+		select wae.employee, count(distinct wae.work_date) as days
+		from `tabWork Actuals Employee` wae
+		where wae.payment_ref in %(wmpays)s and wae.count_in_payroll = 1
+		group by wae.employee
+	""", {"wmpays": wmpays}, as_dict=True)
+
+	days_farm = frappe.db.sql("""
+		select wae.employee, wma.farm, count(distinct wae.work_date) as days
+		from `tabWork Actuals Employee` wae
+		join `tabWork Management Actuals` wma on wma.name = wae.parent
+		where wae.payment_ref in %(wmpays)s and wae.count_in_payroll = 1
+		group by wae.employee, wma.farm
+	""", {"wmpays": wmpays}, as_dict=True)
+
+	return (entries, lines, slips,
+		{r["employee"]: cint(r["days"]) for r in days},
+		{(r["employee"], r["farm"]): cint(r["days"]) for r in days_farm})
+
+
+def has_task_pay(entry_name):
+	"""Does any live slip on this entry carry a Work Management Additional Salary?"""
+	return bool(frappe.db.sql("""
+		select 1
+		from `tabSalary Slip` ss
+		join `tabSalary Detail` sd on sd.parent = ss.name and sd.parenttype = 'Salary Slip'
+		join `tabAdditional Salary` ads on ads.name = sd.additional_salary
+		where ss.payroll_entry = %(entry)s and ss.docstatus != 2
+			and ads.ref_doctype = %(wm)s and ads.docstatus != 2
+		limit 1
+	""", {"entry": entry_name, "wm": WM_PAYMENT}))
+
+
+# --- the hook ----------------------------------------------------------------
+
+def on_payroll_entry_update(doc, method=None):
+	"""Payroll Entry on_update_after_submit: queue the pack on the move to Pending Accounts.
+
+	The cheap checks run first so an ordinary save never touches the slips.
+	"""
+	changed = doc.has_value_changed("workflow_state")
+	enabled = _enabled()
+	if not should_send(doc.company, changed, doc.workflow_state, True, enabled):
+		return
+	if not should_send(doc.company, changed, doc.workflow_state, has_task_pay(doc.name), enabled):
+		return
+	frappe.enqueue("work_management.payroll_pack.send_pack", queue="long",
+		enqueue_after_commit=True, entry_name=doc.name)
+
+
+# --- sending -----------------------------------------------------------------
+
+def _stage_rows():
+	settings = frappe.get_cached_doc(SETTINGS)
+	return [{"stage_label": r.stage_label, "scope": r.scope, "user": r.user}
+		for r in (settings.get("stage_approvers") or [])]
+
+
+def _enabled_users(users):
+	if not users:
+		return []
+	return frappe.get_all("User", filters={"name": ["in", list(users)], "enabled": 1}, pluck="name")
+
+
+def _already_sent(entry_name):
+	return bool(frappe.db.exists("Communication", [
+		["reference_doctype", "=", "Payroll Entry"],
+		["reference_name", "=", entry_name],
+		["subject", "like", f"%{PACK_SUBJECT_PREFIX}%"],
+		["subject", "not like", "TEST:%"],
+		["communication_type", "=", "Communication"],
+	]))
+
+
+def _record(entry_name, sender, recipients, bcc, subj, html):
+	"""A Communication for one real send, so the Payroll Entry shows it and the
+	next send knows it is a revision. The workbook is not stored with it."""
+	comm = frappe.get_doc({
+		"doctype": "Communication",
+		"communication_type": "Communication",
+		"communication_medium": "Email",
+		"sent_or_received": "Sent",
+		"subject": subj,
+		"content": html,
+		"sender": sender,
+		"recipients": ", ".join(recipients),
+		"bcc": ", ".join(bcc) if bcc else None,
+		"reference_doctype": "Payroll Entry",
+		"reference_name": entry_name,
+	})
+	comm.insert(ignore_permissions=True)
+	return comm.name
+
+
+def _mail(result, entry_name, sender, recipients, bcc, subj, html, fname, content, test):
+	kwargs = dict(recipients=list(recipients), bcc=list(bcc) if bcc else None, sender=sender,
+		subject=subj, message=html, attachments=[{"fname": fname, "fcontent": content}],
+		reference_doctype="Payroll Entry", reference_name=entry_name)
+	if not test:
+		kwargs["communication"] = _record(entry_name, sender, recipients, bcc, subj, html)
+	frappe.sendmail(**kwargs)
+	result["sent"].append({"to": list(recipients), "subject": subj})
+
+
+def send_pack(entry_name, test_recipients=None):
+	"""Send the full pack and the farm packs for one Payroll Entry.
+
+	With `test_recipients` (even an empty list) everything goes only to those
+	addresses, marked TEST, and errors are raised as well as logged.
+	"""
+	result = {"sent": [], "skipped": []}
+	try:
+		_send(entry_name, test_recipients, result)
+	except Exception:
+		frappe.log_error(title="Payroll approval pack failed", message=frappe.get_traceback())
+		if test_recipients is not None:
+			raise
+	return result
+
+
+def _send(entry_name, test_recipients, result):
+	test = test_recipients is not None
+	entries, lines, slips, days, days_farm = load_rows([entry_name])
+	if not entries:
+		result["skipped"].append(f"{entry_name}: no such Payroll Entry")
+		return
+	pack = build_pack(entries, lines, slips, days, days_farm)
+	start, end = entries[0]["start_date"], entries[0]["end_date"]
+	url = frappe.utils.get_url_to_form("Payroll Entry", entry_name)
+	sender = frappe.db.get_single_value(SETTINGS, "payroll_pack_sender") or None
+
+	rows = _stage_rows()
+	fms = farm_recipients(rows, set(_enabled_users({r["user"] for r in rows if r.get("user")})))
+	farms = farms_in(pack)
+	without = [f for f in farms if f not in fms]
+	revised = _already_sent(entry_name)
+
+	if test:
+		to, bcc = list(test_recipients), []
+	else:
+		to = split_addresses(frappe.db.get_single_value(SETTINGS, "payroll_pack_to"))
+		bcc = split_addresses(frappe.db.get_single_value(SETTINGS, "payroll_pack_bcc"))
+	if not to:
+		result["skipped"].append(f"{entry_name}: no recipients for the full pack")
+		if not test:
+			frappe.log_error(title="Payroll approval pack has no recipients",
+				message=f"Work Management Settings has no 'payroll_pack_to' address; "
+					f"the approval pack for {entry_name} was not sent to approvers.")
+		else:
+			return
+	else:
+		_mail(result, entry_name, sender, to, bcc,
+			subject(entry_name, pack["totals"]["slip_total"], revised=revised, test=test),
+			email_html(pack, entry_name, url, farms_without_fm=without),
+			attachment_name(start, end), workbook_bytes(pack), test)
+
+	for farm in farms:
+		if farm not in fms:
+			result["skipped"].append(f"{farm}: no farm manager")
+			continue
+		farm_pack = filter_farm(pack, farm)
+		_mail(result, entry_name, sender, list(test_recipients) if test else fms[farm], [],
+			subject(entry_name, farm_pack["totals"]["slip_total"], revised=revised, farm=farm, test=test),
+			email_html(farm_pack, entry_name, url, farm=farm),
+			attachment_name(start, end, farm), workbook_bytes(farm_pack), test)
+
+
+@frappe.whitelist()
+def send_test_pack(entry_name, recipients):
+	"""Send the whole pack, farm packs included, only to `recipients` (comma separated)."""
+	frappe.only_for("System Manager")
+	addresses = split_addresses(recipients)
+	if not addresses:
+		frappe.throw("Give at least one address to send the test pack to.")
+	return send_pack(entry_name, addresses)
