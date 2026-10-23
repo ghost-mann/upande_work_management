@@ -92,6 +92,11 @@
   "pay_day",
   "allow_part_week_send",
   "allow_day_range",
+  "sb_payroll_pack",
+  "payroll_pack_enabled",
+  "payroll_pack_sender",
+  "payroll_pack_to",
+  "payroll_pack_bcc",
   "sb_whopays",
   "tw_employment_type_rows",
   "tw_designation_rows",
@@ -517,6 +522,37 @@
    "description": "Earning component the Additional Salary is raised against. Leave empty to stop Additional Salary records being created."
   },
   {
+   "fieldname": "sb_payroll_pack",
+   "fieldtype": "Section Break",
+   "label": "Payroll approval pack"
+  },
+  {
+   "fieldname": "payroll_pack_enabled",
+   "fieldtype": "Check",
+   "label": "Email the payroll approval pack",
+   "default": "1",
+   "description": "Email the pack when a task-pay Payroll Entry goes to Accounts."
+  },
+  {
+   "fieldname": "payroll_pack_sender",
+   "fieldtype": "Data",
+   "options": "Email",
+   "label": "Sender",
+   "description": "Address the pack is sent from."
+  },
+  {
+   "fieldname": "payroll_pack_to",
+   "fieldtype": "Small Text",
+   "label": "To",
+   "description": "One address per line. Farm managers come from the \"Actuals: Farm Manager\" approvers."
+  },
+  {
+   "fieldname": "payroll_pack_bcc",
+   "fieldtype": "Small Text",
+   "label": "Bcc",
+   "description": "One address per line."
+  },
+  {
    "fieldname": "sb_whopays",
    "fieldtype": "Section Break",
    "label": "Who this system pays",
@@ -708,7 +744,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-23 00:00:00.000000",
+ "modified": "2026-10-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",
