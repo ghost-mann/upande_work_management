@@ -345,3 +345,44 @@ class TestRecipients(unittest.TestCase):
 	def test_split_addresses(self):
 		self.assertEqual(split_addresses("a@x\n b@x, a@x\n\n"), ["a@x", "b@x"])
 		self.assertEqual(split_addresses(None), [])
+
+
+class TestTaskNamesAndIds(unittest.TestCase):
+	"""Lines carry the Task's name in `task` and its ID in `task_id`. Two tasks
+	can share a name, so grouping goes by ID and the name is what is shown."""
+
+	LINES_WITH_IDS = [
+		dict(line("P1", "E1", "Alice", "Vale", "Weeding", 2, 20, 10, 200), task_id="TASK-1"),
+		dict(line("P1", "E2", "Bob", "Vale", "Weeding", 3, 30, 10, 300), task_id="TASK-2"),
+		dict(line("P1", "E2", "Bob", "Vale", "Weeding", 1, 10, 10, 100), task_id="TASK-2"),
+	]
+	SLIPS_WITH_IDS = [slip("PE1", "S1", "E1", "Alice", "P1", 200), slip("PE1", "S2", "E2", "Bob", "P1", 400)]
+
+	def p(self):
+		return pack(lines=self.LINES_WITH_IDS, slips=self.SLIPS_WITH_IDS)
+
+	def test_by_task_groups_by_task_id_and_shows_the_name(self):
+		rows = self.p()["by_task"]
+		self.assertEqual([(r["task_id"], r["task"], r["amount"]) for r in rows],
+			[("TASK-1", "Weeding", 200.0), ("TASK-2", "Weeding", 400.0)])
+
+	def test_worker_task_count_goes_by_id(self):
+		lines = self.LINES_WITH_IDS[:2] + [dict(self.LINES_WITH_IDS[2], task_id="TASK-3")]
+		p = pack(lines=lines, slips=self.SLIPS_WITH_IDS)
+		self.assertEqual(by_emp(p["workers"])["E2"]["tasks"], 2)
+		self.assertEqual(by_emp(filter_farm(p, "Vale")["workers"])["E2"]["tasks"], 2)
+
+	def test_by_task_falls_back_to_the_task_when_there_is_no_id(self):
+		rows = {(r["farm"], r["task"]): r for r in pack()["by_task"]}
+		self.assertEqual(rows[("Vale", "Weeding")]["task_id"], "Weeding")
+
+	def test_detail_sheet_has_task_id_right_after_task(self):
+		rows = sheet_rows(load(self.p()), "Detail")
+		head = rows[0]
+		self.assertEqual(head.index("Task ID"), head.index("Task") + 1)
+		self.assertEqual(rows[1][head.index("Task ID")], "TASK-1")
+		self.assertEqual(rows[1][head.index("Task")], "Weeding")
+
+	def test_farm_pack_by_task_also_goes_by_id(self):
+		self.assertEqual(len(filter_farm(self.p(), "Vale")["by_task"]), 2)
+		self.assertEqual(by_emp(filter_farm(pack(), "Vale")["workers"])["E1"]["tasks"], 1)

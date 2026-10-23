@@ -50,12 +50,15 @@ ENABLED = ["fm.vale@kaitet.com", "fm.endebess@kaitet.com"]
 class Sending:
 	"""Patches every frappe call send_pack makes, and records the mail."""
 
-	def __init__(self, settings=None, stage_rows=STAGE_ROWS, enabled=ENABLED, already_sent=False, rows=ROWS):
+	def __init__(self, settings=None, stage_rows=STAGE_ROWS, enabled=ENABLED, already_sent=False, rows=ROWS,
+			sent_subjects=None):
 		self.settings = dict(SETTINGS, **(settings or {}))
 		self.stage_rows = stage_rows
 		self.enabled = enabled
 		self.already_sent = already_sent
 		self.rows = rows
+		# Subjects of earlier recorded sends; already_sent=True means every audience.
+		self.sent_subjects = sent_subjects
 
 	def __enter__(self):
 		self.patches = [
@@ -68,7 +71,11 @@ class Sending:
 		mocks = [p.start() for p in self.patches]
 		self.record, self.frappe = mocks[3], mocks[4]
 		self.frappe.db.get_single_value.side_effect = lambda doctype, field: self.settings.get(field)
-		self.frappe.db.exists.return_value = "COMM-0" if self.already_sent else None
+		def exists(doctype, filters):
+			if self.already_sent:
+				return "COMM-0"
+			return "COMM-0" if filters.get("subject") in (self.sent_subjects or ()) else None
+		self.frappe.db.exists.side_effect = exists
 		self.frappe.utils.get_url_to_form.return_value = "https://x/app/payroll-entry/" + ENTRY
 		self.frappe.get_traceback.return_value = "trace"
 		return self
@@ -127,6 +134,23 @@ class TestHook(unittest.TestCase):
 				payroll_pack.on_payroll_entry_update(doc)
 			frappe.enqueue.assert_not_called()
 
+	def test_hook_does_not_query_slips_unless_the_rest_holds(self):
+		with mock.patch.object(payroll_pack, "frappe") as frappe, \
+				mock.patch.object(payroll_pack, "has_task_pay", return_value=True) as has, \
+				mock.patch.object(payroll_pack, "should_send", wraps=payroll_pack.should_send) as decide:
+			frappe.db.get_single_value.return_value = 1
+			payroll_pack.on_payroll_entry_update(self.doc(state="Pending GM"))
+		has.assert_not_called()
+		decide.assert_called_once()
+		with mock.patch.object(payroll_pack, "frappe") as frappe, \
+				mock.patch.object(payroll_pack, "has_task_pay", return_value=True) as has, \
+				mock.patch.object(payroll_pack, "should_send", wraps=payroll_pack.should_send) as decide:
+			frappe.db.get_single_value.return_value = 1
+			payroll_pack.on_payroll_entry_update(self.doc())
+		has.assert_called_once_with(ENTRY)
+		decide.assert_called_once()
+		frappe.enqueue.assert_called_once()
+
 	def test_hook_does_nothing_without_task_pay(self):
 		with mock.patch.object(payroll_pack, "frappe") as frappe, \
 				mock.patch.object(payroll_pack, "has_task_pay", return_value=False):
@@ -154,12 +178,17 @@ class TestSendPack(unittest.TestCase):
 			payroll_pack.send_pack(ENTRY)
 		self.assertTrue(all(m["subject"].startswith("Revised: Task pay for approval") for m in s.mails))
 		# The check is the brief's: same entry, the pack's subject, and not a test.
-		filters = s.frappe.db.exists.call_args.args[1]
-		self.assertIn(["reference_doctype", "=", "Payroll Entry"], filters)
-		self.assertIn(["reference_name", "=", ENTRY], filters)
-		self.assertIn(["subject", "like", "%Task pay for approval%"], filters)
-		self.assertIn(["subject", "not like", "TEST:%"], filters)
-		self.assertIn(["communication_type", "=", "Communication"], filters)
+		# Exact stored subjects, no LIKE: names come from the database.
+		subjects = [c.args[1]["subject"] for c in s.frappe.db.exists.call_args_list]
+		self.assertEqual(subjects, [f"Task pay for approval \u2014 {ENTRY}",
+			f"Task pay for approval \u2014 {ENTRY} \u2014 Endebess",
+			f"Task pay for approval \u2014 {ENTRY} \u2014 Vale"])
+		for c in s.frappe.db.exists.call_args_list:
+			self.assertEqual(c.args[0], "Communication")
+			self.assertEqual(c.args[1]["reference_doctype"], "Payroll Entry")
+			self.assertEqual(c.args[1]["reference_name"], ENTRY)
+			self.assertEqual(c.args[1]["communication_type"], "Communication")
+			self.assertNotIn("like", str(c.args[1]))
 
 	def test_each_farm_manager_gets_only_their_farm(self):
 		with Sending() as s:
@@ -178,11 +207,48 @@ class TestSendPack(unittest.TestCase):
 		self.assertEqual(len(s.mails), 3)
 		self.assertEqual(len(result["sent"]), 3)
 
-	def test_real_sends_are_recorded_so_the_next_one_is_revised(self):
+	def test_revised_is_decided_per_audience(self):
+		# Only Vale's pack went before: Vale's is revised, the full pack and Endebess are not.
+		with Sending(sent_subjects={f"Task pay for approval \u2014 {ENTRY} \u2014 Vale"}) as s:
+			payroll_pack.send_pack(ENTRY)
+		revised = {m["recipients"][0]: m["subject"].startswith("Revised: ") for m in s.mails}
+		self.assertEqual(revised, {"gm@kaitet.com": False, "fm.vale@kaitet.com": True,
+			"fm.endebess@kaitet.com": False})
+		# A farm record never makes the full pack revised, and vice versa.
+		with Sending(sent_subjects={f"Task pay for approval \u2014 {ENTRY}"}) as s:
+			payroll_pack.send_pack(ENTRY)
+		revised = {m["recipients"][0]: m["subject"].startswith("Revised: ") for m in s.mails}
+		self.assertEqual(revised, {"gm@kaitet.com": True, "fm.vale@kaitet.com": False,
+			"fm.endebess@kaitet.com": False})
+
+	def test_real_sends_are_recorded_per_audience(self):
 		with Sending() as s:
 			payroll_pack.send_pack(ENTRY)
-		self.assertEqual(s.record.call_count, 3)
-		self.assertTrue(all(m["communication"] == "COMM-1" for m in s.mails))
+		self.assertEqual([c.args for c in s.record.call_args_list], [
+			(ENTRY, None, ["gm@kaitet.com", "fd@kaitet.com"]),
+			(ENTRY, "Endebess", ["fm.endebess@kaitet.com"]),
+			(ENTRY, "Vale", ["fm.vale@kaitet.com"]),
+		])
+		for m in s.mails:
+			# Not linked: a linked Communication would put the pay in the timeline.
+			self.assertNotIn("communication", m)
+			# An approver who unsubscribed from some other mail must still get this.
+			self.assertEqual(m["add_unsubscribe_link"], 0)
+
+	def test_blank_sender_sends_nothing_and_logs(self):
+		with Sending(settings={"payroll_pack_sender": ""}) as s:
+			result = payroll_pack.send_pack(ENTRY)
+		s.frappe.sendmail.assert_not_called()
+		s.record.assert_not_called()
+		s.frappe.log_error.assert_called()
+		self.assertTrue(result["skipped"])
+
+	def test_blank_sender_on_a_test_send_raises(self):
+		with Sending(settings={"payroll_pack_sender": None}) as s:
+			s.frappe.throw.side_effect = ValueError("no sender")
+			with self.assertRaises(ValueError):
+				payroll_pack.send_pack(ENTRY, ["austin@upande.com"])
+		s.frappe.sendmail.assert_not_called()
 
 	def test_test_send_goes_only_to_test_recipients(self):
 		test = ["hro@endebesscoffee.com", "austin@upande.com"]
@@ -238,6 +304,41 @@ class TestSendPack(unittest.TestCase):
 		s.frappe.log_error.assert_called_with(title="Payroll approval pack failed", message="trace")
 
 
+class TestRecord(unittest.TestCase):
+	"""The Communication left on the Payroll Entry for each real send."""
+
+	def record(self, farm):
+		with mock.patch.object(payroll_pack, "frappe") as frappe:
+			frappe.get_doc.return_value.name = "COMM-9"
+			name = payroll_pack._record(ENTRY, farm, ["gm@kaitet.com", "fd@kaitet.com"])
+		self.assertEqual(name, "COMM-9")
+		frappe.get_doc.return_value.insert.assert_called_once_with(ignore_permissions=True)
+		return frappe.get_doc.call_args.args[0]
+
+	def test_record_is_not_email_so_it_gets_no_timeline_links(self):
+		# communication_medium "Email" makes Communication.validate link every
+		# address to its Contact (and on to Leads...), whose timelines would then
+		# show this record to anyone who can read that Contact.
+		for farm in (None, "Vale"):
+			doc = self.record(farm)
+			self.assertNotEqual(doc["communication_medium"], "Email")
+			self.assertEqual(doc["communication_medium"], "Other")
+			self.assertNotIn("timeline_links", doc)
+			self.assertNotIn("bcc", doc)
+			self.assertNotIn("cc", doc)
+			self.assertEqual((doc["reference_doctype"], doc["reference_name"]), ("Payroll Entry", ENTRY))
+
+	def test_record_holds_no_figures(self):
+		full, farm = self.record(None), self.record("Vale")
+		self.assertEqual(full["subject"], f"Task pay for approval \u2014 {ENTRY}")
+		self.assertEqual(farm["subject"], f"Task pay for approval \u2014 {ENTRY} \u2014 Vale")
+		for doc in (full, farm):
+			text = str(doc)
+			self.assertNotIn("KES", text)
+			self.assertNotRegex(doc["content"], r"\d")
+			self.assertNotIn("<", doc["content"])
+
+
 class TestSendTestPack(unittest.TestCase):
 	def test_only_system_managers_and_addresses_are_split(self):
 		with mock.patch.object(payroll_pack, "frappe") as frappe, \
@@ -282,6 +383,9 @@ class TestLoadRows(unittest.TestCase):
 		self.assertEqual(slips[1]["wm_amount"], 0)
 		self.assertEqual(days, {"E1": 2})
 		self.assertEqual(days_farm, {("E1", "Vale"): 2})
+		line_query = " ".join(next(q for q, _ in calls if "`tabWork Payment Line`" in q).split())
+		self.assertIn("left join `tabTask` t on t.name = wpl.task", line_query)
+		self.assertIn("wpl.task as task_id", line_query)
 		for query, values in calls:
 			self.assertNotIn(ENTRY, query)
 			self.assertNotIn("WMPAY-1", query)

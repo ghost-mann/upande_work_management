@@ -33,6 +33,12 @@ def _money(value):
 	return round(float(value or 0), 2)
 
 
+def _task_key(row):
+	"""A task is told apart by its ID; two tasks may share a name. Rows with no
+	ID (older callers) fall back to the task itself."""
+	return row.get("task_id") or row.get("task")
+
+
 def _farm_key(worker):
 	"""Workers with no farm (paid with no work behind it) sort last."""
 	farms = worker["farms"]
@@ -90,7 +96,7 @@ def build_pack(entries, lines, slips, days_by_employee, days_by_employee_farm=No
 			"employee": emp, "employee_name": name,
 			"farms": sorted({r["farm"] for r in own if r.get("farm")}),
 			"days_worked": days_by_employee.get(emp, 0),
-			"tasks": len({(r.get("farm"), r.get("task")) for r in own}),
+			"tasks": len({(r.get("farm"), _task_key(r)) for r in own}),
 			"wm_amount": wm, "slip_amount": paid, "difference": diff,
 			"flag": ", ".join(kind for kind, _ in worker_checks),
 		})
@@ -98,16 +104,17 @@ def build_pack(entries, lines, slips, days_by_employee, days_by_employee_farm=No
 
 	by_task = {}
 	for row in lines:
-		g = by_task.setdefault((row.get("farm"), row.get("task")),
-			{"farm": row.get("farm"), "task": row.get("task"), "_w": set(), "days": 0, "qty": 0, "amount": 0})
+		g = by_task.setdefault((row.get("farm"), _task_key(row)),
+			{"farm": row.get("farm"), "task": row.get("task"), "task_id": _task_key(row),
+			"_w": set(), "days": 0, "qty": 0, "amount": 0})
 		g["_w"].add(row["employee"])
 		g["days"] += row.get("days") or 0
 		g["qty"] += row.get("qty") or 0
 		g["amount"] += row.get("amount") or 0
 	task_rows = []
-	for key in sorted(by_task, key=lambda k: (k[0] or "", k[1] or "")):
+	for key in sorted(by_task, key=lambda k: (k[0] or "", by_task[k]["task"] or "", k[1] or "")):
 		g = by_task[key]
-		task_rows.append({"farm": g["farm"], "task": g["task"], "workers": len(g["_w"]),
+		task_rows.append({"farm": g["farm"], "task": g["task"], "task_id": g["task_id"], "workers": len(g["_w"]),
 			"days": g["days"], "qty": g["qty"], "amount": _money(g["amount"])})
 
 	entry_rows = []
@@ -166,7 +173,7 @@ def filter_farm(pack, farm):
 			row = dict(w)
 			row["days_worked"] = per_farm_days.get((w["employee"], farm), whole_days.get(w["employee"], w["days_worked"]))
 		else:
-			row = {**w, "farms": [farm], "tasks": len({r.get("task") for r in own}),
+			row = {**w, "farms": [farm], "tasks": len({_task_key(r) for r in own}),
 				"wm_amount": _money(sum(r.get("amount") or 0 for r in own)),
 				"days_worked": per_farm_days.get((w["employee"], farm)),
 				"slip_amount": None, "difference": None, "flag": None}
@@ -212,7 +219,7 @@ _SHEETS = [
 	("Detail", "detail", [
 		("Employee ID", lambda r: r["employee"], None), ("Name", lambda r: r["employee_name"], None),
 		("Farm", lambda r: r.get("farm"), None), ("Task", lambda r: r.get("task"), None),
-		("Block", lambda r: r.get("block"), None), ("Work from", lambda r: r.get("work_from"), "date"),
+		("Task ID", lambda r: r.get("task_id"), None), ("Block", lambda r: r.get("block"), None), ("Work from", lambda r: r.get("work_from"), "date"),
 		("Work to", lambda r: r.get("work_to"), "date"), ("Days", lambda r: r.get("days"), None),
 		("Qty", lambda r: r.get("qty"), None), ("Rate", lambda r: r.get("rate"), "money"),
 		("Amount", lambda r: r.get("amount"), "money"), ("Entered by", lambda r: r.get("entered_by"), None),

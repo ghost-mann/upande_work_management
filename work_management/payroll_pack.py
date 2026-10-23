@@ -18,9 +18,13 @@ It is pay data, so the recipients are deliberately narrow:
     "Revised".
 
 frappe.sendmail does not create a Communication, so each real send records one
-itself (linked to the mail via `communication=`). That is what the next send
-finds to call itself "Revised", and it leaves a trail on the Payroll Entry of
-who was sent what.
+itself: one per audience (the full pack, and each farm), found again by its exact
+subject so the next send to that audience is marked "Revised". The record is
+medium "Other", not "Email" -- an Email Communication links every address to its
+Contact (and on to Leads and the like), and its content would then show on those
+timelines to anyone who can read them. It carries no figures for the same
+reason, and it is not linked to the mail (`communication=`), which would only add
+a read-tracking pixel and delivery-status writes back onto it.
 """
 
 import frappe
@@ -86,11 +90,14 @@ def load_rows(entry_names):
 		return entries, [], slips, {}, {}
 
 	lines = frappe.db.sql("""
-		select parent as wmpay, employee, employee_name, farm, task, block, work_from, work_to,
-			days, qty, rate, amount, entered_by, fm_approved_by, hr_approved_by, gm_approved_by
-		from `tabWork Payment Line`
-		where parent in %(wmpays)s
-		order by parent, idx
+		select wpl.parent as wmpay, wpl.employee, wpl.employee_name, wpl.farm,
+			coalesce(nullif(t.subject, ''), wpl.task) as task, wpl.task as task_id,
+			wpl.block, wpl.work_from, wpl.work_to, wpl.days, wpl.qty, wpl.rate, wpl.amount,
+			wpl.entered_by, wpl.fm_approved_by, wpl.hr_approved_by, wpl.gm_approved_by
+		from `tabWork Payment Line` wpl
+		left join `tabTask` t on t.name = wpl.task
+		where wpl.parent in %(wmpays)s
+		order by wpl.parent, wpl.idx
 	""", {"wmpays": wmpays}, as_dict=True)
 
 	days = frappe.db.sql("""
@@ -135,9 +142,10 @@ def on_payroll_entry_update(doc, method=None):
 	"""
 	changed = doc.has_value_changed("workflow_state")
 	enabled = _enabled()
-	if not should_send(doc.company, changed, doc.workflow_state, True, enabled):
-		return
-	if not should_send(doc.company, changed, doc.workflow_state, has_task_pay(doc.name), enabled):
+	worth_a_look = (doc.company == TASK_PAY_COMPANY and doc.workflow_state == TRIGGER_STATE
+		and changed and enabled)
+	if not should_send(doc.company, changed, doc.workflow_state,
+			worth_a_look and has_task_pay(doc.name), enabled):
 		return
 	frappe.enqueue("work_management.payroll_pack.send_pack", queue="long",
 		enqueue_after_commit=True, entry_name=doc.name)
@@ -157,29 +165,39 @@ def _enabled_users(users):
 	return frappe.get_all("User", filters={"name": ["in", list(users)], "enabled": 1}, pluck="name")
 
 
-def _already_sent(entry_name):
-	return bool(frappe.db.exists("Communication", [
-		["reference_doctype", "=", "Payroll Entry"],
-		["reference_name", "=", entry_name],
-		["subject", "like", f"%{PACK_SUBJECT_PREFIX}%"],
-		["subject", "not like", "TEST:%"],
-		["communication_type", "=", "Communication"],
-	]))
+def _record_subject(entry_name, farm=None):
+	"""What a send to one audience is recorded as: no figures, no TEST."""
+	return " \u2014 ".join([PACK_SUBJECT_PREFIX, entry_name] + ([farm] if farm else []))
 
 
-def _record(entry_name, sender, recipients, bcc, subj, html):
-	"""A Communication for one real send, so the Payroll Entry shows it and the
-	next send knows it is a revision. The workbook is not stored with it."""
+def _already_sent(entry_name, farm=None):
+	"""Has this audience (the full pack, or one farm's) had this entry's pack?
+
+	An exact match on the recorded subject, not LIKE: entry and farm names come
+	from the database and may hold % or _."""
+	return bool(frappe.db.exists("Communication", {
+		"reference_doctype": "Payroll Entry",
+		"reference_name": entry_name,
+		"communication_type": "Communication",
+		"communication_medium": "Other",
+		"subject": _record_subject(entry_name, farm),
+	}))
+
+
+def _record(entry_name, farm, recipients):
+	"""A Communication for one real send: who got which pack, and nothing else.
+
+	Medium "Other" so Communication.validate adds no timeline links; no bcc, no
+	figures, no email body -- see the module docstring."""
 	comm = frappe.get_doc({
 		"doctype": "Communication",
 		"communication_type": "Communication",
-		"communication_medium": "Email",
+		"communication_medium": "Other",
 		"sent_or_received": "Sent",
-		"subject": subj,
-		"content": html,
-		"sender": sender,
+		"subject": _record_subject(entry_name, farm),
+		"content": ("Farm pack for " + farm if farm else "Payroll approval pack")
+			+ " emailed to " + ", ".join(recipients) + ".",
 		"recipients": ", ".join(recipients),
-		"bcc": ", ".join(bcc) if bcc else None,
 		"reference_doctype": "Payroll Entry",
 		"reference_name": entry_name,
 	})
@@ -187,13 +205,12 @@ def _record(entry_name, sender, recipients, bcc, subj, html):
 	return comm.name
 
 
-def _mail(result, entry_name, sender, recipients, bcc, subj, html, fname, content, test):
-	kwargs = dict(recipients=list(recipients), bcc=list(bcc) if bcc else None, sender=sender,
+def _mail(result, entry_name, farm, sender, recipients, bcc, subj, html, fname, content, test):
+	frappe.sendmail(recipients=list(recipients), bcc=list(bcc) if bcc else None, sender=sender,
 		subject=subj, message=html, attachments=[{"fname": fname, "fcontent": content}],
-		reference_doctype="Payroll Entry", reference_name=entry_name)
+		reference_doctype="Payroll Entry", reference_name=entry_name, add_unsubscribe_link=0)
 	if not test:
-		kwargs["communication"] = _record(entry_name, sender, recipients, bcc, subj, html)
-	frappe.sendmail(**kwargs)
+		_record(entry_name, farm, recipients)
 	result["sent"].append({"to": list(recipients), "subject": subj})
 
 
@@ -222,13 +239,21 @@ def _send(entry_name, test_recipients, result):
 	pack = build_pack(entries, lines, slips, days, days_farm)
 	start, end = entries[0]["start_date"], entries[0]["end_date"]
 	url = frappe.utils.get_url_to_form("Payroll Entry", entry_name)
-	sender = frappe.db.get_single_value(SETTINGS, "payroll_pack_sender") or None
+	sender = (frappe.db.get_single_value(SETTINGS, "payroll_pack_sender") or "").strip()
+	if not sender:
+		# Never fall back to the default outgoing account for pay data.
+		if test:
+			frappe.throw("Set the payroll pack sender in Work Management Settings first.")
+		result["skipped"].append(f"{entry_name}: no sender set")
+		frappe.log_error(title="Payroll approval pack has no sender",
+			message=f"Work Management Settings has no 'payroll_pack_sender'; "
+				f"the approval pack for {entry_name} was not sent to anyone.")
+		return
 
 	rows = _stage_rows()
 	fms = farm_recipients(rows, set(_enabled_users({r["user"] for r in rows if r.get("user")})))
 	farms = farms_in(pack)
 	without = [f for f in farms if f not in fms]
-	revised = _already_sent(entry_name)
 
 	if test:
 		to, bcc = list(test_recipients), []
@@ -244,8 +269,8 @@ def _send(entry_name, test_recipients, result):
 		else:
 			return
 	else:
-		_mail(result, entry_name, sender, to, bcc,
-			subject(entry_name, pack["totals"]["slip_total"], revised=revised, test=test),
+		_mail(result, entry_name, None, sender, to, bcc,
+			subject(entry_name, pack["totals"]["slip_total"], revised=_already_sent(entry_name), test=test),
 			email_html(pack, entry_name, url, farms_without_fm=without),
 			attachment_name(start, end), workbook_bytes(pack), test)
 
@@ -254,8 +279,9 @@ def _send(entry_name, test_recipients, result):
 			result["skipped"].append(f"{farm}: no farm manager")
 			continue
 		farm_pack = filter_farm(pack, farm)
-		_mail(result, entry_name, sender, list(test_recipients) if test else fms[farm], [],
-			subject(entry_name, farm_pack["totals"]["slip_total"], revised=revised, farm=farm, test=test),
+		_mail(result, entry_name, farm, sender, list(test_recipients) if test else fms[farm], [],
+			subject(entry_name, farm_pack["totals"]["slip_total"], revised=_already_sent(entry_name, farm),
+				farm=farm, test=test),
 			email_html(farm_pack, entry_name, url, farm=farm),
 			attachment_name(start, end, farm), workbook_bytes(farm_pack), test)
 
