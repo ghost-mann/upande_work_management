@@ -200,10 +200,6 @@ class TestByTask(unittest.TestCase):
 		self.assertEqual(rows[("Vale", "Weeding")]["workers"], 2)
 
 
-if __name__ == "__main__":
-	unittest.main()
-
-
 def sheet_rows(wb, name):
 	return [list(r) for r in wb[name].iter_rows(values_only=True)]
 
@@ -267,6 +263,41 @@ class TestWorkbook(unittest.TestCase):
 		for r in rows:
 			self.assertNotIn("None", [c for c in r if isinstance(c, str)])
 
+	def test_flag_column_shows_human_labels(self):
+		rows = sheet_rows(load(pack()), "Workers")
+		flag = {r[0]: r[rows[0].index("Flag")] for r in rows[1:]}
+		self.assertEqual(flag["E2"], "Slip and work amounts differ")
+		self.assertEqual(flag["E3"], "On more than one slip")
+		self.assertEqual(flag["E9"], "Paid with no work behind it")
+		self.assertIn(flag["E1"], (None, ""))
+		# Two checks on one worker are comma-joined labels. E3 paid 600 for 550 here.
+		slips = [dict(s, wm_amount=600) if s["slip"] == "S4" else s for s in SLIPS]
+		rows = sheet_rows(load(pack(slips=slips)), "Workers")
+		flag = {r[0]: r[rows[0].index("Flag")] for r in rows[1:]}
+		self.assertEqual(flag["E3"], "Slip and work amounts differ, On more than one slip")
+
+	def test_text_that_looks_like_a_formula_is_stored_as_text(self):
+		# A name or task typed as "=HYPERLINK(...)" must not run in an approver's Excel.
+		evil = ["=HYPERLINK(\"http://x.test\",\"Click\")", "+1+1", "-2+3", "@SUM(A1)"]
+		lines = [dict(LINES[0], task=t, block=t) for t in evil]
+		p = pack(lines=lines, slips=[SLIPS[0]])
+		ws = load(p)["Detail"]
+		head = [c.value for c in ws[1]]
+		cells = [ws.cell(i + 2, head.index("Task") + 1) for i in range(len(evil))]
+		self.assertEqual([c.value for c in cells], evil)
+		for c in cells:
+			self.assertEqual(c.data_type, "s", c.value)
+		# Numbers stay numbers, negative ones included.
+		self.assertEqual(ws.cell(2, head.index("Amount") + 1).data_type, "n")
+
+	def test_control_characters_are_dropped_not_fatal(self):
+		lines = [dict(LINES[0], task="Pick\x0bing\x00", employee_name="Al\x1bice")]
+		p = pack(lines=lines, slips=[dict(SLIPS[0], employee_name="Al\x1bice")])
+		wb = load(p)
+		rows = sheet_rows(wb, "Detail")
+		self.assertEqual(rows[1][rows[0].index("Task")], "Picking")
+		self.assertEqual(rows[1][rows[0].index("Name")], "Alice")
+
 	def test_internal_keys_are_never_written(self):
 		wb = load(pack(days_farm={("E1", "Vale"): 2}))
 		self.assertEqual(len(wb.sheetnames), 5)
@@ -325,6 +356,19 @@ class TestEmailBody(unittest.TestCase):
 		self.assertIn("see the Checks sheet", self.body())
 		agree = pack(lines=[LINES[0]], slips=[SLIPS[0]])
 		self.assertIn("No problems found", self.body(agree))
+
+	def test_farm_body_says_its_checks_cover_only_sole_farm_workers(self):
+		p = filter_farm(pack(), "Vale")
+		self.assertEqual(len(p["checks"]), 1)
+		html = self.body(p, farm="Vale")
+		self.assertIn("1 problem found among workers only on this farm</b> \u2014 see the Checks sheet.", html)
+		two = filter_farm(pack(lines=LINES + [line("P6", "E9", "Zed", "Vale", "Weeding", 1, 1, 10, 10)]), "Vale")
+		self.assertEqual(len(two["checks"]), 2)
+		self.assertIn("2 problems found among workers only on this farm</b>", self.body(two, farm="Vale"))
+		clean = filter_farm(pack(lines=[LINES[0]], slips=[SLIPS[0]]), "Endebess")
+		self.assertIn("No problems found among workers only on this farm.", self.body(clean, farm="Endebess"))
+		# The full pack keeps its wording.
+		self.assertNotIn("only on this farm", self.body())
 
 	def test_body_has_link_period_and_per_farm_table(self):
 		html = self.body()
@@ -400,3 +444,7 @@ class TestTaskNamesAndIds(unittest.TestCase):
 	def test_farm_pack_by_task_also_goes_by_id(self):
 		self.assertEqual(len(filter_farm(self.p(), "Vale")["by_task"]), 2)
 		self.assertEqual(by_emp(filter_farm(pack(), "Vale")["workers"])["E1"]["tasks"], 1)
+
+
+if __name__ == "__main__":
+	unittest.main()

@@ -28,6 +28,7 @@ a read-tracking pixel and delivery-status writes back onto it.
 """
 
 import frappe
+from frappe import _
 from frappe.utils import cint, getdate
 
 from work_management.payroll_pack_book import (
@@ -143,7 +144,9 @@ def has_task_pay(entry_name):
 
 def entries_in_range(from_date, to_date):
 	"""Submitted, live Kaitet task-pay Payroll Entries overlapping [from_date, to_date]."""
-	state = "and workflow_state not in %(dead)s" if _has_workflow_state() else ""
+	# An entry with no state (made before the workflow) is not a dead one.
+	state = ("and (workflow_state is null or workflow_state not in %(dead)s)"
+		if _has_workflow_state() else "")
 	names = frappe.db.sql(f"""
 		select name from `tabPayroll Entry`
 		where company = %(company)s and docstatus = 1 {state}
@@ -161,24 +164,43 @@ def download_breakdown(from_date, to_date):
 	All or nothing: every entry must be readable by the user before anything is
 	built. GET because the button opens it as a URL.
 	"""
+	# Before any query: without read on Payroll Entry at all, a user must not
+	# learn even whether payrolls exist in a range.
+	frappe.has_permission("Payroll Entry", "read", throw=True)
 	# getdate("") is today, so a missing date is caught before it is parsed.
 	start = getdate(from_date) if from_date else None
 	end = getdate(to_date) if to_date else None
 	if not start or not end:
-		frappe.throw("Give both a From and a To date.")
+		frappe.throw(_("Give both a From and a To date."))
 	if start > end:
-		frappe.throw("From must be on or before To.")
+		frappe.throw(_("From must be on or before To."))
 	if (end - start).days + 1 > MAX_RANGE_DAYS:
-		frappe.throw(f"Pick at most {MAX_RANGE_DAYS} days.")
-	names = entries_in_range(start, end)
-	if not names:
-		frappe.throw("No task-pay payrolls in that range.")
-	for name in names:
-		frappe.has_permission("Payroll Entry", "read", doc=name, throw=True)
-	pack = build_pack(*load_rows(names))
+		frappe.throw(_("Pick at most {0} days.").format(MAX_RANGE_DAYS))
+	try:
+		names = entries_in_range(start, end)
+		if not names:
+			frappe.throw(_("No task-pay payrolls in that range."))
+		for name in names:
+			frappe.has_permission("Payroll Entry", "read", doc=name, throw=True)
+		pack = build_pack(*load_rows(names))
+		content = workbook_bytes(pack)
+	except (frappe.ValidationError, frappe.PermissionError):
+		raise
+	except Exception:
+		frappe.log_error(title="Payroll pay breakdown download failed", message=frappe.get_traceback())
+		_generic_failure()
 	frappe.response.filename = attachment_name(start, end)
-	frappe.response.filecontent = workbook_bytes(pack)
+	frappe.response.filecontent = content
 	frappe.response.type = "binary"
+
+
+def _generic_failure():
+	"""Report a failure without its local variables.
+
+	Left to escape a whitelisted call, an unexpected error is logged by the
+	request handler with a snapshot of every frame's locals -- here, pay
+	figures. The caller logs the plain traceback and raises this instead."""
+	frappe.throw(_("Could not build the pay breakdown. The error has been logged."))
 
 
 # --- the hook ----------------------------------------------------------------
@@ -187,12 +209,14 @@ def on_payroll_entry_update(doc, method=None):
 	"""Payroll Entry on_update_after_submit: queue the pack on the move to Pending Accounts.
 
 	The cheap checks run first so an ordinary save never touches the slips.
+	A site with no Payroll Entry workflow has no workflow_state at all, hence
+	doc.get: an AttributeError here would break every after-submit save.
 	"""
+	company, state = doc.get("company"), doc.get("workflow_state")
 	changed = doc.has_value_changed("workflow_state")
 	enabled = _enabled()
-	worth_a_look = (doc.company == TASK_PAY_COMPANY and doc.workflow_state == TRIGGER_STATE
-		and changed and enabled)
-	if not should_send(doc.company, changed, doc.workflow_state,
+	worth_a_look = company == TASK_PAY_COMPANY and state == TRIGGER_STATE and changed and enabled
+	if not should_send(company, changed, state,
 			worth_a_look and has_task_pay(doc.name), enabled):
 		return
 	frappe.enqueue("work_management.payroll_pack.send_pack", queue="long",
@@ -278,8 +302,20 @@ def send_pack(entry_name, test_recipients=None):
 	return result
 
 
+def _not_sent(result, entry_name, reason):
+	result["skipped"].append(f"{entry_name}: {reason}")
+	frappe.log_error(title="Payroll approval pack not sent",
+		message=f"The approval pack for {entry_name} was not sent to anyone: {reason}.")
+
+
 def _send(entry_name, test_recipients, result):
 	test = test_recipients is not None
+	if not test:
+		# Queued at the move to Pending Accounts; things may have changed since.
+		if not _enabled():
+			return _not_sent(result, entry_name, "the payroll pack was switched off after it was queued")
+		if not has_task_pay(entry_name):
+			return _not_sent(result, entry_name, "it no longer has any Work Management task pay")
 	entries, lines, slips, days, days_farm = load_rows([entry_name])
 	if not entries:
 		result["skipped"].append(f"{entry_name}: no such Payroll Entry")
@@ -291,11 +327,21 @@ def _send(entry_name, test_recipients, result):
 	if not sender:
 		# Never fall back to the default outgoing account for pay data.
 		if test:
-			frappe.throw("Set the payroll pack sender in Work Management Settings first.")
+			frappe.throw(_("Set the payroll pack sender in Work Management Settings first."))
 		result["skipped"].append(f"{entry_name}: no sender set")
 		frappe.log_error(title="Payroll approval pack has no sender",
 			message=f"Work Management Settings has no 'payroll_pack_sender'; "
 				f"the approval pack for {entry_name} was not sent to anyone.")
+		return
+	if not frappe.db.exists("Email Account", {"email_id": sender, "enable_outgoing": 1}):
+		# frappe.sendmail would quietly use the default outgoing account instead.
+		if test:
+			frappe.throw(_("The payroll pack sender {0} has no enabled outgoing Email Account. "
+				"Set one up, or change the sender in Work Management Settings.").format(sender))
+		result["skipped"].append(f"{entry_name}: sender {sender} has no enabled outgoing Email Account")
+		frappe.log_error(title="Payroll approval pack sender has no outgoing account",
+			message=f"No enabled outgoing Email Account has the address {sender} "
+				f"('payroll_pack_sender'); the approval pack for {entry_name} was not sent to anyone.")
 		return
 
 	rows = _stage_rows()
@@ -340,5 +386,11 @@ def send_test_pack(entry_name, recipients):
 	frappe.only_for("System Manager")
 	addresses = split_addresses(recipients)
 	if not addresses:
-		frappe.throw("Give at least one address to send the test pack to.")
-	return send_pack(entry_name, addresses)
+		frappe.throw(_("Give at least one address to send the test pack to."))
+	try:
+		return send_pack(entry_name, addresses)
+	except (frappe.ValidationError, frappe.PermissionError):
+		raise
+	except Exception:
+		# send_pack has already logged the traceback (without locals).
+		_generic_failure()

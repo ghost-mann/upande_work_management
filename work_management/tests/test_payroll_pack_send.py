@@ -19,7 +19,19 @@ ENTRY = "HR-PRUN-2026-00042"
 
 
 class Refused(Exception):
-	"""What the mocked frappe.throw raises."""
+	"""What the mocked frappe.throw raises (frappe.ValidationError's stand-in)."""
+
+
+# frappe._ needs a site; the module's own `_` is swapped for the identity.
+_translate = mock.patch.object(payroll_pack, "_", lambda text: text, create=True)
+
+
+def setUpModule():
+	_translate.start()
+
+
+def tearDownModule():
+	_translate.stop()
 
 ENTRIES = [{"name": ENTRY, "start_date": "2026-10-12", "end_date": "2026-10-18",
 	"workflow_state": "Pending Accounts"}]
@@ -57,7 +69,7 @@ class Sending:
 	"""Patches every frappe call send_pack makes, and records the mail."""
 
 	def __init__(self, settings=None, stage_rows=STAGE_ROWS, enabled=ENABLED, already_sent=False, rows=ROWS,
-			sent_subjects=None):
+			sent_subjects=None, sender_account=True, task_pay=True):
 		self.settings = dict(SETTINGS, **(settings or {}))
 		self.stage_rows = stage_rows
 		self.enabled = enabled
@@ -65,6 +77,9 @@ class Sending:
 		self.rows = rows
 		# Subjects of earlier recorded sends; already_sent=True means every audience.
 		self.sent_subjects = sent_subjects
+		# Is there an enabled outgoing Email Account for the sender's address?
+		self.sender_account = sender_account
+		self.task_pay = task_pay
 
 	def __enter__(self):
 		self.patches = [
@@ -73,11 +88,15 @@ class Sending:
 			mock.patch.object(payroll_pack, "_enabled_users", side_effect=lambda users: [u for u in users if u in self.enabled]),
 			mock.patch.object(payroll_pack, "_record", return_value="COMM-1"),
 			mock.patch.object(payroll_pack, "frappe"),
+			mock.patch.object(payroll_pack, "has_task_pay", side_effect=lambda name: self.task_pay),
 		]
 		mocks = [p.start() for p in self.patches]
-		self.record, self.frappe = mocks[3], mocks[4]
+		self.record, self.frappe, self.has_task_pay = mocks[3], mocks[4], mocks[5]
+		self.frappe.throw.side_effect = Refused
 		self.frappe.db.get_single_value.side_effect = lambda doctype, field: self.settings.get(field)
 		def exists(doctype, filters):
+			if doctype == "Email Account":
+				return "Notifications" if self.sender_account else None
 			if self.already_sent:
 				return "COMM-0"
 			return "COMM-0" if filters.get("subject") in (self.sent_subjects or ()) else None
@@ -111,12 +130,35 @@ class TestShouldSend(unittest.TestCase):
 				self.assertFalse(should_send(*args))
 
 
+class FakeDoc:
+	"""Like a Document: fields are attributes, and .get() is None for a missing one."""
+
+	def __init__(self, changed=True, **fields):
+		self.__dict__.update(fields)
+		self._changed = changed
+
+	def get(self, key, default=None):
+		return self.__dict__.get(key, default)
+
+	def has_value_changed(self, fieldname):
+		return self._changed
+
+
 class TestHook(unittest.TestCase):
 	def doc(self, company="Kaitet Ltd.", state="Pending Accounts", changed=True):
-		doc = mock.Mock(company=company, workflow_state=state)
-		doc.name = ENTRY
-		doc.has_value_changed.return_value = changed
-		return doc
+		return FakeDoc(changed=changed, name=ENTRY, company=company, workflow_state=state)
+
+	def test_a_site_without_the_workflow_saves_normally(self):
+		# No Payroll Entry workflow means no workflow_state attribute at all; an
+		# AttributeError here would break every after-submit save.
+		doc = FakeDoc(name=ENTRY, company="Kaitet Ltd.")
+		self.assertRaises(AttributeError, getattr, doc, "workflow_state")
+		with mock.patch.object(payroll_pack, "frappe") as frappe, \
+				mock.patch.object(payroll_pack, "has_task_pay", return_value=True) as has:
+			frappe.db.get_single_value.return_value = 1
+			payroll_pack.on_payroll_entry_update(doc)
+		frappe.enqueue.assert_not_called()
+		has.assert_not_called()
 
 	def test_hook_enqueues_after_commit(self):
 		with mock.patch.object(payroll_pack, "frappe") as frappe, \
@@ -185,12 +227,12 @@ class TestSendPack(unittest.TestCase):
 		self.assertTrue(all(m["subject"].startswith("Revised: Task pay for approval") for m in s.mails))
 		# The check is the brief's: same entry, the pack's subject, and not a test.
 		# Exact stored subjects, no LIKE: names come from the database.
-		subjects = [c.args[1]["subject"] for c in s.frappe.db.exists.call_args_list]
+		comms = [c for c in s.frappe.db.exists.call_args_list if c.args[0] == "Communication"]
+		subjects = [c.args[1]["subject"] for c in comms]
 		self.assertEqual(subjects, [f"Task pay for approval \u2014 {ENTRY}",
 			f"Task pay for approval \u2014 {ENTRY} \u2014 Endebess",
 			f"Task pay for approval \u2014 {ENTRY} \u2014 Vale"])
-		for c in s.frappe.db.exists.call_args_list:
-			self.assertEqual(c.args[0], "Communication")
+		for c in comms:
 			self.assertEqual(c.args[1]["reference_doctype"], "Payroll Entry")
 			self.assertEqual(c.args[1]["reference_name"], ENTRY)
 			self.assertEqual(c.args[1]["communication_type"], "Communication")
@@ -248,6 +290,51 @@ class TestSendPack(unittest.TestCase):
 		s.record.assert_not_called()
 		s.frappe.log_error.assert_called()
 		self.assertTrue(result["skipped"])
+
+	def test_a_sender_with_no_outgoing_account_sends_nothing_and_logs(self):
+		# frappe would fall back to the default outgoing account -- never for pay data.
+		with Sending(sender_account=False) as s:
+			result = payroll_pack.send_pack(ENTRY)
+		s.frappe.sendmail.assert_not_called()
+		s.record.assert_not_called()
+		s.frappe.db.exists.assert_any_call("Email Account",
+			{"email_id": "notifications@karenroses.com", "enable_outgoing": 1})
+		self.assertEqual(s.frappe.log_error.call_args.kwargs["title"],
+			"Payroll approval pack sender has no outgoing account")
+		self.assertTrue(any("outgoing" in x for x in result["skipped"]))
+
+	def test_a_sender_with_no_outgoing_account_refuses_a_test_send(self):
+		with Sending(sender_account=False) as s:
+			with self.assertRaises(Refused):
+				payroll_pack.send_pack(ENTRY, ["austin@upande.com"])
+		s.frappe.sendmail.assert_not_called()
+		self.assertIn("notifications@karenroses.com", s.frappe.throw.call_args.args[0])
+		self.assertIn("outgoing Email Account", s.frappe.throw.call_args.args[0])
+
+	def test_switched_off_after_queueing_sends_nothing(self):
+		with Sending(settings={"payroll_pack_enabled": 0}) as s:
+			result = payroll_pack.send_pack(ENTRY)
+		s.frappe.sendmail.assert_not_called()
+		s.record.assert_not_called()
+		s.frappe.log_error.assert_called_once()
+		self.assertEqual(s.frappe.log_error.call_args.kwargs["title"], "Payroll approval pack not sent")
+		self.assertTrue(result["skipped"])
+
+	def test_task_pay_gone_after_queueing_sends_nothing(self):
+		# The slips were redone without task pay: a "KES 0" pack must not go out.
+		with Sending(task_pay=False) as s:
+			result = payroll_pack.send_pack(ENTRY)
+		s.has_task_pay.assert_called_once_with(ENTRY)
+		s.frappe.sendmail.assert_not_called()
+		s.record.assert_not_called()
+		s.frappe.log_error.assert_called_once()
+		self.assertTrue(result["skipped"])
+
+	def test_a_test_send_does_not_need_the_switch_or_task_pay_rechecked(self):
+		with Sending(settings={"payroll_pack_enabled": 0}, task_pay=False) as s:
+			payroll_pack.send_pack(ENTRY, ["austin@upande.com"])
+		self.assertEqual(len(s.mails), 3)
+		s.has_task_pay.assert_not_called()
 
 	def test_blank_sender_on_a_test_send_raises(self):
 		with Sending(settings={"payroll_pack_sender": None}) as s:
@@ -361,6 +448,31 @@ class TestSendTestPack(unittest.TestCase):
 				payroll_pack.send_test_pack(ENTRY, " , ")
 		send.assert_not_called()
 
+	def run_failing(self, error):
+		with mock.patch.object(payroll_pack, "frappe") as frappe, \
+				mock.patch.object(payroll_pack, "send_pack", side_effect=error):
+			frappe.ValidationError, frappe.PermissionError = Refused, PermissionError
+			frappe.throw.side_effect = Refused
+			try:
+				payroll_pack.send_test_pack(ENTRY, "a@x.com")
+			finally:
+				self.frappe = frappe
+
+	def test_an_unexpected_error_becomes_a_generic_message(self):
+		# Uncaught, frappe's request handler would snapshot the local variables
+		# (pay figures) into an Error Log. send_pack has already logged the traceback.
+		with self.assertRaises(Refused):
+			self.run_failing(KeyError("slip_total"))
+		self.frappe.throw.assert_called_once_with(
+			"Could not build the pay breakdown. The error has been logged.")
+
+	def test_validation_and_permission_errors_pass_through(self):
+		for error in (Refused("Set the sender"), PermissionError("no")):
+			with self.subTest(error=error), self.assertRaises(type(error)) as caught:
+				self.run_failing(error)
+			self.assertIs(caught.exception, error)
+			self.frappe.throw.assert_not_called()
+
 
 class TestLoadRows(unittest.TestCase):
 	def test_queries_are_parameterised_and_shapes_match_the_builder(self):
@@ -409,7 +521,7 @@ class TestLoadRows(unittest.TestCase):
 class TestRangeDownload(unittest.TestCase):
 	"""The breakdown for a date range: a second way out for pay data."""
 
-	def download(self, from_date, to_date, names=(ENTRY,), denied=()):
+	def download(self, from_date, to_date, names=(ENTRY,), denied=(), build_error=None):
 		response = SimpleNamespace()
 		with mock.patch.object(payroll_pack, "frappe") as frappe, \
 				mock.patch.object(payroll_pack, "entries_in_range", return_value=list(names)) as found, \
@@ -417,9 +529,13 @@ class TestRangeDownload(unittest.TestCase):
 			frappe.response = response
 			frappe.throw.side_effect = Refused
 			frappe.PermissionError = PermissionError
+			frappe.ValidationError = Refused
+			frappe.get_traceback.return_value = "trace"
+			if build_error:
+				load.side_effect = build_error
 
 			def has_permission(doctype, ptype, doc=None, throw=False):
-				if doc in denied:
+				if doc in denied or (doc is None and None in denied):
 					raise PermissionError(doc)
 				return True
 			frappe.has_permission.side_effect = has_permission
@@ -468,8 +584,35 @@ class TestRangeDownload(unittest.TestCase):
 		names = (ENTRY, "HR-PRUN-2026-00043")
 		self.download("2026-10-01", "2026-10-31", names=names)
 		self.assertEqual(self.frappe.has_permission.call_args_list,
-			[mock.call("Payroll Entry", "read", doc=n, throw=True) for n in names])
+			[mock.call("Payroll Entry", "read", throw=True)]
+			+ [mock.call("Payroll Entry", "read", doc=n, throw=True) for n in names])
 		self.load.assert_called_once_with(list(names))
+
+	def test_no_payroll_access_is_refused_before_any_query(self):
+		# Otherwise "No task-pay payrolls in that range" tells anyone whether payrolls exist.
+		with self.assertRaises(PermissionError):
+			self.download("2026-10-01", "2026-10-31", denied=(None,))
+		self.assertEqual(self.frappe.has_permission.call_args_list[0],
+			mock.call("Payroll Entry", "read", throw=True))
+		self.found.assert_not_called()
+		self.frappe.db.sql.assert_not_called()
+		self.frappe.throw.assert_not_called()
+
+	def test_an_unexpected_error_is_logged_without_locals_and_reported_generically(self):
+		with self.assertRaises(Refused):
+			self.download("2026-10-12", "2026-10-18", build_error=KeyError("slip_total"))
+		self.frappe.log_error.assert_called_once_with(
+			title="Payroll pay breakdown download failed", message="trace")
+		self.frappe.throw.assert_called_once_with(
+			"Could not build the pay breakdown. The error has been logged.")
+		self.assertFalse(hasattr(self.response, "filecontent"))
+
+	def test_validation_errors_in_the_build_pass_through(self):
+		error = Refused("from inside")
+		with self.assertRaises(Refused) as caught:
+			self.download("2026-10-12", "2026-10-18", build_error=error)
+		self.assertIs(caught.exception, error)
+		self.frappe.log_error.assert_not_called()
 
 	def test_range_download_sets_a_binary_xlsx_response(self):
 		response = self.download("2026-10-12", "2026-10-18")
@@ -505,7 +648,8 @@ class TestEntriesInRange(unittest.TestCase):
 		self.assertIn("end_date >= %(from_date)s", query)
 		self.assertIn("company = %(company)s", query)
 		self.assertIn("docstatus = 1", query)
-		self.assertIn("workflow_state not in %(dead)s", query)
+		# A NULL state (an entry from before the workflow) is not a dead one.
+		self.assertIn("(workflow_state is null or workflow_state not in %(dead)s)", query)
 		self.assertIn("order by start_date", query)
 		self.assertNotIn("2026-10", query)
 		self.assertNotIn("Kaitet", query)

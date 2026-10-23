@@ -21,6 +21,7 @@ import io
 from html import escape
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
@@ -221,7 +222,7 @@ _SHEETS = [
 		("Farm(s)", lambda r: ", ".join(r["farms"]), None), ("Days worked", lambda r: r["days_worked"], None),
 		("Tasks", lambda r: r["tasks"], None), ("WM amount", lambda r: r["wm_amount"], "money"),
 		("Slip amount", lambda r: r["slip_amount"], "money"), ("Difference", lambda r: r["difference"], "money"),
-		("Flag", lambda r: r["flag"], None)]),
+		("Flag", lambda r: _flag_labels(r["flag"]), None)]),
 	("Detail", "detail", [
 		("Employee ID", lambda r: r["employee"], None), ("Name", lambda r: r["employee_name"], None),
 		("Farm", lambda r: r.get("farm"), None), ("Task", lambda r: r.get("task"), None),
@@ -240,6 +241,36 @@ _SHEETS = [
 		("Employee ID", lambda r: r["employee"], None), ("Name", lambda r: r["employee_name"], None),
 		("Check", lambda r: CHECK_LABELS.get(r["kind"], r["kind"]), None), ("Detail", lambda r: r["detail"], None)]),
 ]
+
+
+def _flag_labels(flag):
+	"""The worker's check codes ("amount_mismatch, two_slips") as the Checks sheet's words.
+	None (a farm pack hiding it) and "" (nothing to flag) stay as they are."""
+	if not flag:
+		return flag
+	return ", ".join(CHECK_LABELS.get(code, code) for code in flag.split(", "))
+
+
+# Text an approver's spreadsheet might take as a formula. openpyxl itself only
+# treats "=" so; the rest are forced to text as well, never left to chance.
+_FORMULA_START = ("=", "+", "-", "@")
+
+
+def _clean(value):
+	"""Strip characters openpyxl refuses (a stray \\x0b in a name would otherwise
+	abort the whole pack). Non-text values pass through untouched."""
+	if isinstance(value, str):
+		return ILLEGAL_CHARACTERS_RE.sub("", value)
+	return value
+
+
+def _put(ws, row, col, value):
+	"""Write one cell. Text is always stored as text: names and tasks are typed
+	by people, and "=HYPERLINK(...)" must not become a live formula in Excel."""
+	cell = ws.cell(row=row, column=col, value=_clean(value))
+	if isinstance(cell.value, str) and cell.value.startswith(_FORMULA_START):
+		cell.data_type = "s"
+	return cell
 
 
 def _as_date(value):
@@ -262,8 +293,9 @@ def workbook_bytes(pack):
 		ws.append([name for name, _, _ in columns])
 		for cell in ws[1]:
 			cell.font = Font(bold=True)
-		for row in pack[key]:
-			ws.append([_as_date(get(row)) if kind == "date" else get(row) for _, get, kind in columns])
+		for r, row in enumerate(pack[key], 2):
+			for c, (_, get, kind) in enumerate(columns, 1):
+				_put(ws, r, c, _as_date(get(row)) if kind == "date" else get(row))
 		for i, (name, _, kind) in enumerate(columns, 1):
 			ws.column_dimensions[get_column_letter(i)].width = max(12, len(name) + 4)
 			if kind:
@@ -304,12 +336,15 @@ def email_html(pack, entry_name, entry_url, farm=None, farms_without_fm=()):
 	if abs(t["slip_total"] - t["line_total"]) >= CENT:
 		out.append(f'<p style="margin:8px 0 0;">Work lines add up to KES {t["line_total"]:,.0f}; '
 			f'difference KES {t["slip_total"] - t["line_total"]:,.0f}.</p>')
+	# A farm pack only checks workers who are on this farm alone (the others'
+	# checks quote figures from other farms), so it says so.
+	scope = " among workers only on this farm" if farm else ""
 	n = len(pack["checks"])
 	if n:
-		out.append(f'<p style="color:#b00020;"><b>{n} problem{"s" if n != 1 else ""} found</b> '
+		out.append(f'<p style="color:#b00020;"><b>{n} problem{"s" if n != 1 else ""} found{scope}</b> '
 			"\u2014 see the Checks sheet.</p>")
 	else:
-		out.append("<p>No problems found.</p>")
+		out.append(f"<p>No problems found{scope}.</p>")
 	if not farm and t["by_farm"]:
 		out.append('<table style="border-collapse:collapse;margin:8px 0;">'
 			f'<tr><th align="left" style="{cell}">Farm</th><th align="right" style="{cell}">Workers</th>'
