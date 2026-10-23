@@ -6,9 +6,16 @@ Pure: rows in, a pack out. No site::
 """
 
 import copy
+import datetime
+import io
 import unittest
 
-from work_management.payroll_pack_book import build_pack, farms_in, filter_farm
+import openpyxl
+
+from work_management.payroll_pack_book import (
+	attachment_name, build_pack, email_html, farm_recipients, farms_in, filter_farm,
+	split_addresses, subject, workbook_bytes,
+)
 
 
 def line(wmpay, employee, name, farm, task, days, qty, rate, amount):
@@ -181,3 +188,160 @@ class TestByTask(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+def sheet_rows(wb, name):
+	return [list(r) for r in wb[name].iter_rows(values_only=True)]
+
+
+def load(p):
+	return openpyxl.load_workbook(io.BytesIO(workbook_bytes(p)))
+
+
+class TestWorkbook(unittest.TestCase):
+
+	def test_workbook_has_the_five_sheets_in_order(self):
+		self.assertEqual(load(pack()).sheetnames, ["Payrolls", "Workers", "Detail", "By task", "Checks"])
+
+	def test_workbook_workers_total_matches_the_pack(self):
+		p = pack()
+		rows = sheet_rows(load(p), "Workers")
+		col = rows[0].index("Slip amount")
+		self.assertEqual(sum(r[col] for r in rows[1:]), p["totals"]["slip_total"])
+
+	def test_empty_checks_sheet_says_no_problems(self):
+		p = pack(lines=[l for l in LINES if l["employee"] in ("E1",)],
+			slips=[s for s in SLIPS if s["employee"] == "E1"])
+		self.assertEqual(p["checks"], [])
+		self.assertEqual(load(p)["Checks"]["A2"].value, "No problems found.")
+
+	def test_checks_use_human_labels(self):
+		rows = sheet_rows(load(pack()), "Checks")
+		labels = {r[2] for r in rows[1:]}
+		self.assertEqual(labels, {"Paid with no work behind it", "Slip and work amounts differ",
+			"On more than one slip"})
+
+	def test_headers_are_bold_frozen_and_filtered_on_every_sheet(self):
+		wb = load(pack())
+		for ws in wb:
+			self.assertTrue(ws["A1"].font.bold, ws.title)
+			self.assertEqual(ws.freeze_panes, "A2", ws.title)
+			self.assertIsNotNone(ws.auto_filter.ref, ws.title)
+
+	def test_money_columns_are_formatted_and_dates_are_real_dates(self):
+		wb = load(pack())
+		rows = sheet_rows(wb, "Detail")
+		head = rows[0]
+		amount = wb["Detail"].cell(2, head.index("Amount") + 1)
+		self.assertEqual(amount.number_format, "#,##0.00")
+		frm = wb["Detail"].cell(2, head.index("Work from") + 1)
+		self.assertEqual(frm.value, datetime.datetime(2026, 10, 12))
+		self.assertEqual(frm.number_format, "yyyy-mm-dd")
+		self.assertEqual(wb["Payrolls"]["B2"].value, datetime.datetime(2026, 10, 12))
+
+	def test_farms_are_comma_joined_in_the_workers_sheet(self):
+		rows = sheet_rows(load(pack()), "Workers")
+		self.assertEqual(rows[1][2], "Endebess, Vale")
+
+	def test_farm_pack_renders_none_as_empty_cells(self):
+		p = filter_farm(pack(days_farm={("E1", "Vale"): 2}), "Vale")
+		rows = sheet_rows(load(p), "Workers")
+		alice = next(r for r in rows if r[0] == "E1")
+		self.assertEqual(alice[rows[0].index("Slip amount")], None)
+		self.assertEqual(alice[rows[0].index("Flag")], None)
+		self.assertEqual(alice[rows[0].index("WM amount")], 200)
+		for r in rows:
+			self.assertNotIn("None", [c for c in r if isinstance(c, str)])
+
+	def test_internal_keys_are_never_written(self):
+		wb = load(pack(days_farm={("E1", "Vale"): 2}))
+		self.assertEqual(len(wb.sheetnames), 5)
+		text = " ".join(str(c) for ws in wb for row in ws.iter_rows(values_only=True) for c in row)
+		self.assertNotIn("days_by_employee", text)
+		self.assertNotIn("wmpay_entry", text)
+
+
+class TestSubjectAndName(unittest.TestCase):
+
+	def test_subject_formats(self):
+		self.assertEqual(subject("Kaitet Task pay 28th sept", 711428.9),
+			"Task pay for approval \u2014 Kaitet Task pay 28th sept \u2014 KES 711,429")
+		self.assertTrue(subject("X", 1, revised=True, test=True).startswith("TEST: Revised: "))
+		self.assertIn("\u2014 Vale \u2014 KES", subject("X", 1, farm="Vale"))
+
+	def test_attachment_name(self):
+		self.assertEqual(attachment_name("2026-09-28", "2026-10-04", "Vale"),
+			"Task-pay-2026-09-28-to-2026-10-04-Vale.xlsx")
+		self.assertEqual(attachment_name(datetime.date(2026, 9, 28), datetime.date(2026, 10, 4)),
+			"Task-pay-2026-09-28-to-2026-10-04.xlsx")
+
+
+class TestEmailBody(unittest.TestCase):
+
+	def body(self, p=None, **kw):
+		return email_html(p or pack(), "PE1", "https://x.test/app/payroll-entry/PE1", **kw)
+
+	def test_names_are_escaped_in_the_body(self):
+		lines = [dict(LINES[0], task="Pruning & <weeding>", farm="Vale & <Co>")]
+		p = pack(lines=lines, slips=[SLIPS[0]])
+		html = self.body(p, farms_without_fm=["Odd <farm>"])
+		self.assertNotIn("<weeding>", html)
+		self.assertNotIn("<Co>", html)
+		self.assertNotIn("<farm>", html)
+		self.assertIn("Vale &amp; &lt;Co&gt;", html)
+
+	def test_body_for_a_full_payroll_stays_under_100kb(self):
+		lines, slips = [], []
+		for i in range(400):
+			for j in range(4):
+				lines.append(line(f"P{i}-{j}", f"E{i}", f"Worker {i}", f"Farm{j}", "Picking", 1, 1, 10, 10))
+			slips.append(slip("PE1", f"S{i}", f"E{i}", f"Worker {i}", f"P{i}-0", 40))
+		html = self.body(pack(lines=lines, slips=slips, days={}))
+		self.assertLess(len(html.encode()), 100 * 1024)
+
+	def test_body_shows_line_total_only_when_it_differs(self):
+		self.assertIn("1,900", self.body())
+		agree = pack(lines=[LINES[0]], slips=[SLIPS[0]])
+		html = self.body(agree)
+		self.assertNotIn("Work lines add up to", html)
+		self.assertIn("Work lines add up to", self.body())
+
+	def test_body_counts_problems_or_says_none(self):
+		self.assertIn("3 problems found", self.body())
+		self.assertIn("see the Checks sheet", self.body())
+		agree = pack(lines=[LINES[0]], slips=[SLIPS[0]])
+		self.assertIn("No problems found", self.body(agree))
+
+	def test_body_has_link_period_and_per_farm_table(self):
+		html = self.body()
+		self.assertIn('href="https://x.test/app/payroll-entry/PE1"', html)
+		self.assertIn("Open the Payroll Entry", html)
+		self.assertIn("2026-10-12", html)
+		self.assertIn("2026-10-25", html)
+		self.assertIn("Endebess", html)
+
+	def test_farm_body_has_no_farm_table_or_other_farms(self):
+		html = self.body(filter_farm(pack(), "Vale"), farm="Vale")
+		self.assertNotIn("Endebess", html)
+
+	def test_farms_without_a_manager_are_listed(self):
+		self.assertIn("Saboti", self.body(farms_without_fm=["Saboti"]))
+		self.assertNotIn("no farm manager", self.body().lower())
+
+
+class TestRecipients(unittest.TestCase):
+
+	def test_farm_recipients_skip_scopeless_and_disabled_and_other_stages(self):
+		rows = [{"stage_label": "Actuals: Farm Manager", "scope": "Vale", "user": "kibett@x"},
+			{"stage_label": "Actuals: Farm Manager", "scope": None, "user": "koskey@x"},
+			{"stage_label": "Planner: Farm Approval", "scope": "Vale", "user": "tarus@x"},
+			{"stage_label": "Actuals: Farm Manager", "scope": "Saboti", "user": "gone@x"}]
+		self.assertEqual(farm_recipients(rows, {"kibett@x", "koskey@x", "tarus@x"}), {"Vale": ["kibett@x"]})
+
+	def test_farm_recipients_do_not_repeat_a_user(self):
+		rows = [{"stage_label": "Actuals: Farm Manager", "scope": "Vale", "user": "k@x"}] * 2
+		self.assertEqual(farm_recipients(rows, {"k@x"}), {"Vale": ["k@x"]})
+
+	def test_split_addresses(self):
+		self.assertEqual(split_addresses("a@x\n b@x, a@x\n\n"), ["a@x", "b@x"])
+		self.assertEqual(split_addresses(None), [])

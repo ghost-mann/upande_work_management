@@ -16,7 +16,17 @@ Two figures are kept apart on purpose. `slip_amount` is what payroll will pay;
 not something to quietly pick between.
 """
 
+import datetime
+import io
+from html import escape
+
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
+
 CENT = 0.01
+MONEY = "#,##0.00"
+DATE = "yyyy-mm-dd"
 
 
 def _money(value):
@@ -179,3 +189,148 @@ def filter_farm(pack, farm):
 
 def farms_in(pack):
 	return sorted({r["farm"] for r in pack["detail"] if r.get("farm")})
+
+
+CHECK_LABELS = {
+	"no_work": "Paid with no work behind it",
+	"amount_mismatch": "Slip and work amounts differ",
+	"two_slips": "On more than one slip",
+}
+
+# (heading, getter, kind) where kind is "money", "date" or None.
+_SHEETS = [
+	("Payrolls", "entries", [
+		("Payroll Entry", lambda r: r["name"], None), ("From", lambda r: r["start_date"], "date"),
+		("To", lambda r: r["end_date"], "date"), ("State", lambda r: r.get("workflow_state"), None),
+		("Workers", lambda r: r["workers"], None), ("KES", lambda r: r["amount"], "money")]),
+	("Workers", "workers", [
+		("Employee ID", lambda r: r["employee"], None), ("Name", lambda r: r["employee_name"], None),
+		("Farm(s)", lambda r: ", ".join(r["farms"]), None), ("Days worked", lambda r: r["days_worked"], None),
+		("Tasks", lambda r: r["tasks"], None), ("WM amount", lambda r: r["wm_amount"], "money"),
+		("Slip amount", lambda r: r["slip_amount"], "money"), ("Difference", lambda r: r["difference"], "money"),
+		("Flag", lambda r: r["flag"], None)]),
+	("Detail", "detail", [
+		("Employee ID", lambda r: r["employee"], None), ("Name", lambda r: r["employee_name"], None),
+		("Farm", lambda r: r.get("farm"), None), ("Task", lambda r: r.get("task"), None),
+		("Block", lambda r: r.get("block"), None), ("Work from", lambda r: r.get("work_from"), "date"),
+		("Work to", lambda r: r.get("work_to"), "date"), ("Days", lambda r: r.get("days"), None),
+		("Qty", lambda r: r.get("qty"), None), ("Rate", lambda r: r.get("rate"), "money"),
+		("Amount", lambda r: r.get("amount"), "money"), ("Entered by", lambda r: r.get("entered_by"), None),
+		("FM approved by", lambda r: r.get("fm_approved_by"), None),
+		("HR approved by", lambda r: r.get("hr_approved_by"), None),
+		("GM approved by", lambda r: r.get("gm_approved_by"), None), ("WMPAY", lambda r: r.get("wmpay"), None)]),
+	("By task", "by_task", [
+		("Farm", lambda r: r["farm"], None), ("Task", lambda r: r["task"], None),
+		("Workers", lambda r: r["workers"], None), ("Days", lambda r: r["days"], None),
+		("Qty", lambda r: r["qty"], None), ("KES", lambda r: r["amount"], "money")]),
+	("Checks", "checks", [
+		("Employee ID", lambda r: r["employee"], None), ("Name", lambda r: r["employee_name"], None),
+		("Check", lambda r: CHECK_LABELS.get(r["kind"], r["kind"]), None), ("Detail", lambda r: r["detail"], None)]),
+]
+
+
+def _as_date(value):
+	if isinstance(value, str):
+		try:
+			return datetime.date.fromisoformat(value[:10])
+		except ValueError:
+			return value
+	return value
+
+
+def workbook_bytes(pack):
+	"""The pack as an Excel file. Only the five named sheets are written, so the
+	pack's internal keys (days_by_employee and friends) can never leak into it.
+	None is left as an empty cell: in a farm pack it means "not shown", not zero."""
+	wb = Workbook()
+	wb.remove(wb.active)
+	for title, key, columns in _SHEETS:
+		ws = wb.create_sheet(title)
+		ws.append([name for name, _, _ in columns])
+		for cell in ws[1]:
+			cell.font = Font(bold=True)
+		for row in pack[key]:
+			ws.append([_as_date(get(row)) if kind == "date" else get(row) for _, get, kind in columns])
+		for i, (name, _, kind) in enumerate(columns, 1):
+			ws.column_dimensions[get_column_letter(i)].width = max(12, len(name) + 4)
+			if kind:
+				for (cell,) in ws.iter_rows(min_row=2, min_col=i, max_col=i):
+					cell.number_format = MONEY if kind == "money" else DATE
+		if key == "checks" and not pack[key]:
+			ws["A2"] = "No problems found."
+		ws.freeze_panes = "A2"
+		ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{max(ws.max_row, 2)}"
+	out = io.BytesIO()
+	wb.save(out)
+	return out.getvalue()
+
+
+def attachment_name(start, end, farm=None):
+	name = f"Task-pay-{start}-to-{end}"
+	return f"{name}-{farm}.xlsx" if farm else f"{name}.xlsx"
+
+
+def subject(entry_name, total, revised=False, farm=None, test=False):
+	parts = ["Task pay for approval", entry_name] + ([farm] if farm else []) + [f"KES {total:,.0f}"]
+	return ("TEST: " if test else "") + ("Revised: " if revised else "") + " \u2014 ".join(parts)
+
+
+def email_html(pack, entry_name, entry_url, farm=None, farms_without_fm=()):
+	"""A short summary, never a per-worker table: Gmail clips mail at about
+	100KB and the detail is in the attachment. Every value is escaped."""
+	e = escape
+	t = pack["totals"]
+	starts = [str(x["start_date"]) for x in pack["entries"]]
+	ends = [str(x["end_date"]) for x in pack["entries"]]
+	period = f"{min(starts)} to {max(ends)}" if starts else ""
+	cell = "padding:2px 12px 2px 0;"
+	out = ['<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;">']
+	out.append(f"<p>{e(entry_name)}{' \u2014 ' + e(farm) if farm else ''}<br>Period: {e(period)}</p>")
+	out.append(f'<p style="margin:0;">Workers: <b>{t["workers"]:,}</b><br>'
+		f'Man-days: <b>{t["man_days"]:,}</b><br>Total: <b>KES {t["slip_total"]:,.0f}</b></p>')
+	if abs(t["slip_total"] - t["line_total"]) >= CENT:
+		out.append(f'<p style="margin:8px 0 0;">Work lines add up to KES {t["line_total"]:,.0f}; '
+			f'difference KES {t["slip_total"] - t["line_total"]:,.0f}.</p>')
+	n = len(pack["checks"])
+	if n:
+		out.append(f'<p style="color:#b00020;"><b>{n} problem{"s" if n != 1 else ""} found</b> '
+			"\u2014 see the Checks sheet.</p>")
+	else:
+		out.append("<p>No problems found.</p>")
+	if not farm and t["by_farm"]:
+		out.append('<table style="border-collapse:collapse;margin:8px 0;">'
+			f'<tr><th align="left" style="{cell}">Farm</th><th align="right" style="{cell}">Workers</th>'
+			f'<th align="right" style="{cell}">Days</th><th align="right" style="{cell}">KES</th></tr>')
+		for name in sorted(t["by_farm"], key=lambda k: k or ""):
+			g = t["by_farm"][name]
+			out.append(f'<tr><td style="{cell}">{e(name or "(no farm)")}</td>'
+				f'<td align="right" style="{cell}">{g["workers"]:,}</td>'
+				f'<td align="right" style="{cell}">{g["days"]:,.0f}</td>'
+				f'<td align="right" style="{cell}">{g["amount"]:,.0f}</td></tr>')
+		out.append("</table>")
+	if farms_without_fm:
+		out.append("<p>No farm manager is set up for: " + ", ".join(e(f) for f in farms_without_fm)
+			+ ". They did not get a farm pack.</p>")
+	out.append(f'<p><a href="{e(entry_url, quote=True)}">Open the Payroll Entry</a></p></div>')
+	return "".join(out)
+
+
+def farm_recipients(stage_rows, enabled):
+	"""Farm managers by farm. A row with no scope would mean every farm, so it is
+	skipped, as are other stages and users who are no longer enabled."""
+	out = {}
+	for row in stage_rows:
+		if row["stage_label"] != "Actuals: Farm Manager" or not row.get("scope"):
+			continue
+		if row["user"] in enabled and row["user"] not in out.setdefault(row["scope"], []):
+			out[row["scope"]].append(row["user"])
+	return {farm: users for farm, users in out.items() if users}
+
+
+def split_addresses(text):
+	seen = []
+	for part in (text or "").replace("\n", ",").split(","):
+		part = part.strip()
+		if part and part not in seen:
+			seen.append(part)
+	return seen
