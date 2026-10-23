@@ -15,6 +15,19 @@ window.work_management_pay_breakdown =
 			],
 			primary_action_label: __("Download"),
 			primary_action(values) {
+				// The same rules as the server, checked here so a bad range shows
+				// a message instead of opening a tab with an error page.
+				const problem = !values.from_date || !values.to_date
+					? __("Give both a From and a To date.")
+					: values.from_date > values.to_date
+						? __("From must be on or before To.")
+						: frappe.datetime.get_day_diff(values.to_date, values.from_date) + 1 > 92
+							? __("Pick at most {0} days.", [92])
+							: null;
+				if (problem) {
+					frappe.msgprint({ title: __("Check the dates"), message: problem, indicator: "red" });
+					return;
+				}
 				window.open(
 					"/api/method/work_management.payroll_pack.download_breakdown?" + $.param(values)
 				);
