@@ -29,8 +29,13 @@ def _farm_key(worker):
 	return (not farms, farms[0] if farms else "", worker["employee_name"] or "", worker["employee"])
 
 
-def build_pack(entries, lines, slips, days_by_employee):
-	"""Everything an approver needs, from the rows behind a payroll entry."""
+def build_pack(entries, lines, slips, days_by_employee, days_by_employee_farm=None):
+	"""Everything an approver needs, from the rows behind a payroll entry.
+
+	`days_by_employee_farm` ({(employee, farm): distinct work days on that farm})
+	is optional; it only matters to filter_farm, which must not show a farm
+	manager a person's days or pay on another farm.
+	"""
 	names = {}
 	for row in list(lines) + list(slips):
 		if row.get("employee_name") and row["employee"] not in names:
@@ -103,7 +108,10 @@ def build_pack(entries, lines, slips, days_by_employee):
 
 	return {"entries": entry_rows, "workers": workers, "detail": [dict(r) for r in lines],
 		"by_task": task_rows, "checks": checks,
-		"totals": _totals(workers, lines, _money(sum(slip_amount.values())))}
+		"totals": _totals(workers, lines, _money(sum(slip_amount.values()))),
+		"days_by_employee": dict(days_by_employee),
+		"days_by_employee_farm": dict(days_by_employee_farm or {}),
+		"wmpay_entry": {r["wmpay"]: r["entry"] for r in slips if r.get("wmpay")}}
 
 
 def _totals(workers, lines, slip_total):
@@ -115,7 +123,7 @@ def _totals(workers, lines, slip_total):
 		g["amount"] += row.get("amount") or 0
 	return {
 		"workers": len(workers),
-		"man_days": sum(w["days_worked"] for w in workers),
+		"man_days": sum(w["days_worked"] or 0 for w in workers),
 		"slip_total": slip_total,
 		"line_total": _money(sum(r.get("amount") or 0 for r in lines)),
 		"by_farm": {farm: {"workers": len(g["_w"]), "days": g["days"], "amount": _money(g["amount"])}
@@ -126,18 +134,47 @@ def _totals(workers, lines, slip_total):
 def filter_farm(pack, farm):
 	"""The same pack cut down to one farm, for that farm's manager.
 
-	A worker on two farms appears in both packs, but only that farm's lines are
-	shown. The headline here is the farm's own line total -- the slip total is
-	per person, not per farm, so it cannot be split.
+	Nothing about another farm may be readable here, because a manager could
+	subtract it from a whole-person figure. A worker on two farms therefore gets
+	a row rebuilt from this farm's lines alone, with the slip figures (which are
+	per person, not per farm) left None, and no checks, which quote those figures.
+	The headline is the farm's own line total.
 	"""
-	detail = [r for r in pack["detail"] if r["farm"] == farm]
-	staff = {r["employee"] for r in detail}
-	workers = [w for w in pack["workers"] if w["employee"] in staff]
+	detail = [r for r in pack["detail"] if r.get("farm") == farm]
+	mine = {}
+	for r in detail:
+		mine.setdefault(r["employee"], []).append(r)
+	per_farm_days = pack.get("days_by_employee_farm") or {}
+	whole_days = pack.get("days_by_employee") or {}
+	workers, sole = [], set()
+	for w in pack["workers"]:
+		own = mine.get(w["employee"])
+		if not own:
+			continue
+		if w["farms"] == [farm]:
+			sole.add(w["employee"])
+			row = dict(w)
+			row["days_worked"] = per_farm_days.get((w["employee"], farm), whole_days.get(w["employee"], w["days_worked"]))
+		else:
+			row = {**w, "farms": [farm], "tasks": len({r.get("task") for r in own}),
+				"wm_amount": _money(sum(r.get("amount") or 0 for r in own)),
+				"days_worked": per_farm_days.get((w["employee"], farm)),
+				"slip_amount": None, "difference": None, "flag": None}
+		workers.append(row)
 	totals = _totals(workers, detail, 0)
+	totals["man_days"] = sum(w["days_worked"] for w in workers if w["days_worked"] is not None)
 	totals["slip_total"] = totals["line_total"]
-	return {"entries": pack["entries"], "workers": workers, "detail": detail,
+	wmpay_entry = pack.get("wmpay_entry") or {}
+	entries = []
+	for e in pack["entries"]:
+		rows = [r for r in detail if wmpay_entry.get(r.get("wmpay")) == e["name"]]
+		if rows:
+			entries.append({k: v for k, v in e.items() if k not in ("workers", "amount")}
+				| {"workers": len({r["employee"] for r in rows}),
+				"amount": _money(sum(r.get("amount") or 0 for r in rows))})
+	return {"entries": entries, "workers": workers, "detail": detail,
 		"by_task": [r for r in pack["by_task"] if r["farm"] == farm],
-		"checks": [c for c in pack["checks"] if c["employee"] in staff], "totals": totals}
+		"checks": [c for c in pack["checks"] if c["employee"] in sole], "totals": totals}
 
 
 def farms_in(pack):

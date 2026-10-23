@@ -47,9 +47,9 @@ SLIPS = [
 DAYS = {"E1": 4, "E2": 4, "E3": 5, "E9": 1}
 
 
-def pack(lines=None, slips=None, days=None):
+def pack(lines=None, slips=None, days=None, days_farm=None):
 	return build_pack(copy.deepcopy(ENTRIES), copy.deepcopy(LINES if lines is None else lines),
-		copy.deepcopy(SLIPS if slips is None else slips), DAYS if days is None else days)
+		copy.deepcopy(SLIPS if slips is None else slips), DAYS if days is None else days, days_farm)
 
 
 def by_emp(rows):
@@ -117,7 +117,7 @@ class TestFarmPacks(unittest.TestCase):
 		self.assertIn("E1", by_emp(v["workers"]))
 		self.assertIn("E1", by_emp(e["workers"]))
 		self.assertTrue(all(r["farm"] == "Vale" for r in v["detail"]))
-		self.assertEqual(by_emp(v["workers"])["E1"]["farms"], ["Endebess", "Vale"])
+		self.assertEqual(by_emp(v["workers"])["E1"]["farms"], ["Vale"])
 
 	def test_farm_pack_total_is_that_farms_line_total(self):
 		p = pack()
@@ -128,6 +128,41 @@ class TestFarmPacks(unittest.TestCase):
 		v = filter_farm(pack(), "Vale")
 		self.assertEqual({c["employee"] for c in v["checks"]}, {"E3"})
 		self.assertNotIn("E9", by_emp(v["workers"]))
+
+	def test_a_farm_pack_never_shows_another_farms_amounts(self):
+		v = filter_farm(pack(days_farm={("E1", "Vale"): 2, ("E1", "Endebess"): 2}), "Vale")
+		w = by_emp(v["workers"])["E1"]
+		self.assertEqual((w["wm_amount"], w["slip_amount"], w["difference"], w["flag"], w["tasks"]),
+			(200.0, None, None, None, 1))
+		self.assertNotIn("E1", {c["employee"] for c in v["checks"]})
+		e = {r["name"]: r for r in v["entries"]}
+		self.assertEqual((e["PE1"]["workers"], e["PE1"]["amount"]), (2, 600.0))
+		self.assertEqual(v["totals"]["by_farm"], {"Vale": {"workers": 2, "days": 7, "amount": 1150.0}})
+
+		def walk(x):
+			if isinstance(x, dict):
+				for k, val in x.items():
+					yield from walk(k)
+					yield from walk(val)
+			elif isinstance(x, (list, tuple)):
+				for val in x:
+					yield from walk(val)
+			else:
+				yield x
+		seen = list(walk(v))
+		self.assertNotIn("Endebess", seen)
+		for secret in (500, 500.0, 300.0, 450.0, 750.0, 1400.0, 1900.0, 1950.0):
+			self.assertNotIn(secret, seen)
+
+	def test_farm_days_come_from_days_by_employee_farm(self):
+		w = by_emp(filter_farm(pack(days_farm={("E1", "Vale"): 2}), "Vale")["workers"])
+		self.assertEqual(w["E1"]["days_worked"], 2)
+		self.assertEqual(w["E3"]["days_worked"], 5)  # all on Vale: falls back to whole-person days
+
+	def test_a_two_farm_workers_farm_days_are_none_when_unknown(self):
+		w = by_emp(filter_farm(pack(), "Vale")["workers"])
+		self.assertIsNone(w["E1"]["days_worked"])
+		self.assertEqual(filter_farm(pack(), "Vale")["totals"]["man_days"], 5)
 
 	def test_farms_are_listed_sorted(self):
 		self.assertEqual(farms_in(pack()), ["Endebess", "Vale"])
