@@ -7,8 +7,10 @@ the fields blank, so it does nothing unless Company "Kaitet Ltd." exists.
 Two rules from earlier patches apply:
 
 * A list somebody already set is never overwritten -- only blank fields are filled.
-* `payroll_pack_enabled` is always set to 1. A new Check added to a saved Single
-  reads 0 whatever its default says (see switch_on_the_new_discrepancy_checks).
+* `payroll_pack_enabled` is set to 0, explicitly. The pack arrives switched off:
+  nothing mails pay until someone has seen a test send (send_test_pack) and ticks
+  the box. Written out rather than left to the field, because a new Check on a
+  saved Single reads 0 only by accident (see switch_on_the_new_discrepancy_checks).
 """
 
 SENDER = "notifications@karenroses.com"
@@ -31,7 +33,7 @@ def seed_values(company_exists, current):
 	"""Return the values to write, or None when this is not Kaitet's site."""
 	if not company_exists:
 		return None
-	values = {"payroll_pack_enabled": 1}
+	values = {"payroll_pack_enabled": 0}
 	for field, value in FIELDS.items():
 		if not (current.get(field) or "").strip():
 			values[field] = value

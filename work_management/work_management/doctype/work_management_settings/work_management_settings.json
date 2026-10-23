@@ -530,8 +530,8 @@
    "fieldname": "payroll_pack_enabled",
    "fieldtype": "Check",
    "label": "Email the payroll approval pack",
-   "default": "1",
-   "description": "Email the pack when a task-pay Payroll Entry goes to Accounts."
+   "default": "0",
+   "description": "Email the pack when a task-pay Payroll Entry goes to Accounts. Arrives off: send a test first (send_test_pack), then tick this."
   },
   {
    "fieldname": "payroll_pack_sender",

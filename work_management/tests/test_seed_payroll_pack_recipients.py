@@ -15,7 +15,7 @@ class TestSeedPayrollPackRecipients(unittest.TestCase):
 		self.assertEqual(
 			seed_values(True, dict(BLANK)),
 			{
-				"payroll_pack_enabled": 1,
+				"payroll_pack_enabled": 0,
 				"payroll_pack_sender": "notifications@karenroses.com",
 				"payroll_pack_to": "bob@karenroses.com\nhro@endebesscoffee.com\npeter@endebesscoffee.com\npkanda@endebesscoffee.com\nkoskey@lokitelaorchards.com\nibett@karenroses.com",
 				"payroll_pack_bcc": "austin@upande.com\njeniffer@upande.com\nteresia@upande.com",
@@ -28,6 +28,7 @@ class TestSeedPayrollPackRecipients(unittest.TestCase):
 		self.assertNotIn("payroll_pack_to", result)
 		self.assertIn("payroll_pack_bcc", result)
 
-	def test_enabled_always_set(self):
-		current = dict(BLANK, payroll_pack_to="a@b.c", payroll_pack_sender="x@y.z", payroll_pack_bcc="q@r.s")
-		self.assertEqual(seed_values(True, current), {"payroll_pack_enabled": 1})
+	def test_the_pack_arrives_switched_off(self):
+		"""Nothing mails pay until someone has seen a test send and ticks the box."""
+		current = dict(BLANK, payroll_pack_enabled=1, payroll_pack_to="a@b.c", payroll_pack_sender="x@y.z", payroll_pack_bcc="q@r.s")
+		self.assertEqual(seed_values(True, current), {"payroll_pack_enabled": 0})
