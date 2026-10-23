@@ -136,13 +136,29 @@ per-calendar-day grid is **out of scope** (it would need joining to actuals).
 
 ## The button
 
-- On the Payroll Entry form (`doctype_js` in hooks.py), shown when company is
-  Kaitet Ltd. and docstatus = 1. Label: "Download pay breakdown".
-- Calls a whitelisted method that builds the **same workbook from current
-  data** (full pack) and downloads it. No email is sent.
-- Permission: the caller must have read permission on that Payroll Entry
-  (`frappe.has_permission("Payroll Entry", "read", doc)`). The method never
-  returns other farms' data selectively. It is the full pack or nothing.
+The user's decision (2026-10-23, at approval): **the button downloads the Excel
+for a selected date range**, not just one entry.
+
+- **"Download pay breakdown"** opens a dialog with From / To dates and
+  downloads the workbook for that range. It appears in two places:
+  - on the Payroll Entry form (company Kaitet Ltd., docstatus 1), with the
+    dialog defaulting to that entry's start_date–end_date;
+  - in the Payroll Entry list view's menu, defaulting to the last 4 weeks.
+- **What "the range" selects** *(my call)*: every Kaitet Ltd. task-pay Payroll
+  Entry (docstatus 1, `workflow_state` not Cancelled/Rejected) whose pay period
+  **overlaps** From–To. Whole entries are included, never part-weeks, so the
+  slip checks stay meaningful. The workbook gets a first sheet **Payrolls**
+  listing the entries included (name, period, state, workers, KES), so the
+  reader sees exactly what was covered. A range that matches no entry
+  downloads nothing and shows "No task-pay payrolls in that range."
+- The workbook is built from current data with the same four sheets as the
+  email. The emailed pack carries the Payrolls sheet too, with one row.
+- Permission: the caller must have read permission on **every** entry in the
+  range (`frappe.has_permission("Payroll Entry", "read", doc)`), otherwise a
+  PermissionError names the first unreadable entry. It is the full pack or
+  nothing, never a silently filtered subset.
+- From > To, or a range over 92 days, is refused with a message. *(My call: it
+  bounds the query; a quarter is the longest useful approval view.)*
 
 ## Code placement
 
