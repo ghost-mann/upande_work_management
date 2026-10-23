@@ -71,6 +71,16 @@ def kinds(p):
 
 class TestHeadlineFigures(unittest.TestCase):
 
+	def test_farm_days_count_calendar_days_on_that_farm(self):
+		"""Carol's two Vale tasks share a day: 5 line days, 4 calendar days. The full
+		email's per-farm Days must agree with the farm pack's man-days."""
+		days_farm = {("E1", "Vale"): 2, ("E1", "Endebess"): 2, ("E3", "Vale"): 4}
+		p = pack(days_farm=days_farm)
+		self.assertEqual(p["totals"]["by_farm"]["Vale"]["days"], 6)
+		self.assertEqual(filter_farm(p, "Vale")["totals"]["man_days"], 6)
+		# Bob has no per-farm count, so his line days stand in.
+		self.assertEqual(p["totals"]["by_farm"]["Endebess"]["days"], 6)
+
 	def test_days_worked_counts_calendar_days_not_line_days(self):
 		"""E1's lines add to 5 days but they worked 4 calendar days."""
 		self.assertEqual(by_emp(pack()["workers"])["E1"]["days_worked"], 4)

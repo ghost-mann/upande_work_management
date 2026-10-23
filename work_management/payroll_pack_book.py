@@ -132,19 +132,28 @@ def build_pack(entries, lines, slips, days_by_employee, days_by_employee_farm=No
 
 	return {"entries": entry_rows, "workers": workers, "detail": [dict(r) for r in lines],
 		"by_task": task_rows, "checks": checks,
-		"totals": _totals(workers, lines, _money(sum(slip_amount.values()))),
+		"totals": _totals(workers, lines, _money(sum(slip_amount.values())), days_by_employee_farm),
 		"days_by_employee": dict(days_by_employee),
 		"days_by_employee_farm": dict(days_by_employee_farm or {}),
 		"wmpay_entry": {r["wmpay"]: r["entry"] for r in slips if r.get("wmpay")}}
 
 
-def _totals(workers, lines, slip_total):
-	by_farm = {}
+def _totals(workers, lines, slip_total, days_by_employee_farm=None):
+	"""A farm's days are each worker's calendar days on it, the same count a farm
+	manager's pack shows. A worker with no per-farm count falls back to their
+	line days, which overstate only when two tasks share a day."""
+	per_farm_days = days_by_employee_farm or {}
+	by_farm, line_days = {}, {}
 	for row in lines:
-		g = by_farm.setdefault(row.get("farm"), {"_w": set(), "days": 0, "amount": 0})
+		g = by_farm.setdefault(row.get("farm"), {"_w": set(), "amount": 0})
 		g["_w"].add(row["employee"])
-		g["days"] += row.get("days") or 0
 		g["amount"] += row.get("amount") or 0
+		key = (row["employee"], row.get("farm"))
+		line_days[key] = line_days.get(key, 0) + (row.get("days") or 0)
+	for g in by_farm.values():
+		g["days"] = 0
+	for (emp, farm), days in line_days.items():
+		by_farm[farm]["days"] += per_farm_days.get((emp, farm), days)
 	return {
 		"workers": len(workers),
 		"man_days": sum(w["days_worked"] or 0 for w in workers),
@@ -185,7 +194,7 @@ def filter_farm(pack, farm):
 				"days_worked": per_farm_days.get((w["employee"], farm)),
 				"slip_amount": None, "difference": None, "flag": None}
 		workers.append(row)
-	totals = _totals(workers, detail, 0)
+	totals = _totals(workers, detail, 0, per_farm_days)
 	totals["man_days"] = sum(w["days_worked"] for w in workers if w["days_worked"] is not None)
 	totals["slip_total"] = totals["line_total"]
 	wmpay_entry = pack.get("wmpay_entry") or {}
