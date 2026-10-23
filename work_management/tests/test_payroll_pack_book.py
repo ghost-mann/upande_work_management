@@ -35,7 +35,8 @@ ENTRIES = [
 	{"name": "PE2", "start_date": "2026-10-19", "end_date": "2026-10-25", "workflow_state": "Accounts"},
 ]
 
-# E1 works two farms; E2 is paid 500 for 450 of work; E3 is on two slips; E9 has no work.
+# E1 works two farms; E2 is paid 500 for 450 of work; E3 is on two slips in PE1 (and a
+# third in PE2, which is just next week's pay); E9 has no work.
 LINES = [
 	line("P1", "E1", "Alice", "Endebess", "Picking", 3, 30, 10, 300),
 	line("P2", "E1", "Alice", "Vale", "Weeding", 2, 20, 10, 200),
@@ -48,6 +49,7 @@ SLIPS = [
 	slip("PE1", "S1", "E1", "Alice", "P2", 200),
 	slip("PE1", "S2", "E2", "Bob", "P3", 500),
 	slip("PE1", "S3", "E3", "Carol", "P4", 400),
+	slip("PE1", "S5", "E3", "Carol", None, 0),
 	slip("PE2", "S4", "E3", "Carol", "P5", 550),
 	slip("PE1", "S9", "E9", "Zed", None, 0),
 ]
@@ -106,8 +108,20 @@ class TestChecks(unittest.TestCase):
 		self.assertIn(("E2", "amount_mismatch"), kinds(p))
 		self.assertEqual(w["flag"], "amount_mismatch")
 
-	def test_a_worker_on_two_slips_is_a_check(self):
-		self.assertIn(("E3", "two_slips"), kinds(pack()))
+	def test_a_worker_on_two_slips_in_one_entry_is_a_check(self):
+		p = pack()
+		self.assertIn(("E3", "two_slips"), kinds(p))
+		detail = next(c["detail"] for c in p["checks"] if c["kind"] == "two_slips")
+		self.assertEqual(detail, "On salary slips S3, S5")
+
+	def test_a_worker_paid_in_two_entries_is_not_a_check(self):
+		# A range download spans several weekly entries; one slip a week is normal.
+		p = pack(lines=[line("P1", "E1", "Alice", "Vale", "Picking", 1, 1, 100, 100.0),
+				line("P2", "E1", "Alice", "Vale", "Picking", 1, 1, 100, 100.0)],
+			slips=[slip("PE1", "S1", "E1", "Alice", "P1", 100.0), slip("PE2", "S2", "E1", "Alice", "P2", 100.0)],
+			days={"E1": 2})
+		self.assertEqual(p["checks"], [])
+		self.assertEqual(by_emp(p["workers"])["E1"]["flag"], "")
 
 	def test_agreeing_amounts_within_a_cent_are_not_flagged(self):
 		p = pack(lines=[line("P1", "E1", "Alice", "Vale", "Picking", 1, 1, 100, 100.0)],

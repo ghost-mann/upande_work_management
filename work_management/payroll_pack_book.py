@@ -68,7 +68,9 @@ def build_pack(entries, lines, slips, days_by_employee, days_by_employee_farm=No
 			employees.append(emp)
 			slip_names[emp] = set()
 		slip_amount[emp] = slip_amount.get(emp, 0) + (row.get("wm_amount") or 0)
-		slip_names[emp].add(row["slip"])
+		# Per entry: a range download spans several weekly entries, and one
+		# slip a week is normal; two slips in the same entry is the problem.
+		slip_names[emp].add((row["entry"], row["slip"]))
 	# Anyone with lines but no slip in this pack is still worth showing.
 	for emp in by_line:
 		if emp not in slip_amount:
@@ -87,8 +89,12 @@ def build_pack(entries, lines, slips, days_by_employee, days_by_employee_farm=No
 			worker_checks.append(("no_work", "Paid on a salary slip with no Work Management work behind it"))
 		elif abs(paid - wm) >= CENT:
 			worker_checks.append(("amount_mismatch", f"Slip {paid:,.2f} against work {wm:,.2f}"))
-		if len(slip_names[emp]) > 1:
-			worker_checks.append(("two_slips", "On salary slips " + ", ".join(sorted(slip_names[emp]))))
+		by_entry = {}
+		for entry, slip_name in slip_names[emp]:
+			by_entry.setdefault(entry, set()).add(slip_name)
+		doubled = sorted(n for names_ in by_entry.values() if len(names_) > 1 for n in names_)
+		if doubled:
+			worker_checks.append(("two_slips", "On salary slips " + ", ".join(doubled)))
 		name = names.get(emp, "")
 		for kind, detail in worker_checks:
 			checks.append({"employee": emp, "employee_name": name, "kind": kind, "detail": detail})
