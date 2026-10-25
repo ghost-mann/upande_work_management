@@ -23,6 +23,9 @@ app_license = "mit"
 # dependency works where it was built and fails obscurely everywhere else.
 required_apps = ["upande_core", "hrms"]
 
+# Animated logos play only on hover -- see the file.
+app_include_js = "/assets/work_management/js/hover_logos.js"
+
 # The apps screen entry. Routed at the dashboard rather than the desk
 # workspace, because the dashboard is the front door people are sent to.
 # Which workspace the app opens on. Without this, boot.load_desktop_data falls
