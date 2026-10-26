@@ -322,8 +322,9 @@ def sections():
 			  "workers keep all recorded work and pay — release only stops new quantities."),
 
 		("h2", "Dashboard"),
-		("b", "Delivery timeline — planned vs staffed vs delivered per day, with farm and date "
-			  "filters and quantity/KES toggle."),
+		("b", "Delivery timeline (top of the dashboard) — planned vs staffed vs delivered per "
+			  "day, with farm and date filters and quantity/KES toggle. Its Graph dropdown "
+			  "swaps in the cost and efficiency graphs."),
 		("b", "Field intelligence (beside the timeline) — two tabs: Efficiency (Ha per man-day "
 			  "and Cost per Ha, per farm and per task) and Available workers (the number and "
 			  "list of employees free to work on any chosen date, filterable by farm). "

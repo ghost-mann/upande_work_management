@@ -1497,6 +1497,52 @@
 
   function render(D){
     el("wm-body").innerHTML=
+      // ===== delivery timeline, first: its Graph dropdown carries the cost graphs =====
+      '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered &middot; field intelligence</div>'+
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch">'+
+      '<div class="card" style="flex:3;min-width:480px;margin-bottom:0"><div class="hd"><h3 id="wm-tl-h3">Plans, assignments &amp; actuals over time</h3><div class="cap" id="wm-tl-cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
+        '<div class="bd">'+
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">'+
+            '<div><div class="tl-lab">Graph</div><select id="wm-tl-view" class="tl-in">'+
+              TL_VIEWS.map(function(v){ return '<option value="'+v.k+'">'+esc(v.label)+'</option>'; }).join("")+
+            '</select></div>'+
+            '<div><div class="tl-lab">'+esc(TX("top_singular","Farm"))+'</div><select id="wm-tl-farm" class="tl-in"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div>'+
+            '<div><div class="tl-lab">From</div><input type="date" id="wm-tl-from" class="tl-in"></div>'+
+            '<div><div class="tl-lab">To</div><input type="date" id="wm-tl-to" class="tl-in"></div>'+
+            '<button type="button" class="refresh" id="wm-tl-apply" style="margin-bottom:1px">Apply</button>'+
+            '<span style="flex:1"></span>'+
+            '<div id="wm-tl-measure" style="display:inline-flex;gap:2px;background:var(--wash);border:1px solid var(--line);border-radius:999px;padding:3px">'+
+              '<button type="button" data-m="qty" class="on">Quantity</button>'+
+              '<button type="button" data-m="val">KES</button>'+
+            '</div>'+
+          '</div>'+
+          '<div id="wm-tl-chart" style="min-height:240px"><div class="empty">Loading timeline&hellip;</div></div>'+
+        '</div></div>'+
+      '<div class="card" style="flex:2;min-width:380px;margin-bottom:0"><div class="hd"><h3>Field intelligence</h3><div class="cap">efficiency per '+esc(TX("top_singular","Farm")).toLowerCase()+' &middot; who is free to work, any day</div></div>'+
+        '<div class="bd">'+
+          '<div class="subtabs" id="wm-fi-tabs" style="margin-bottom:10px">'+
+            '<button type="button" class="subtab on" data-fi="eff">Efficiency</button>'+
+            '<button type="button" class="subtab" data-fi="avail">Available workers</button>'+
+          '</div>'+
+          '<div id="wm-fi-eff">'+
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
+              '<div><div class="tl-lab">From</div><input type="date" id="wm-fi-from" class="tl-in"></div>'+
+              '<div><div class="tl-lab">To</div><input type="date" id="wm-fi-to" class="tl-in"></div>'+
+              '<button type="button" class="refresh" id="wm-fi-apply" style="margin-bottom:1px">Apply</button>'+
+            '</div>'+
+            '<div id="wm-fi-eff-body"><div class="empty">Loading&hellip;</div></div>'+
+          '</div>'+
+          '<div id="wm-fi-avail" style="display:none">'+
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
+              '<div><div class="tl-lab">Date</div><input type="date" id="wm-fi-date" class="tl-in"></div>'+
+              '<div><div class="tl-lab">'+esc(TX("top_singular","Farm"))+'</div><select id="wm-fi-farm" class="tl-in"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div>'+
+              '<button type="button" class="refresh" id="wm-fi-avapply" style="margin-bottom:1px">Apply</button>'+
+              '<input type="text" id="wm-fi-search" class="tl-in" placeholder="Search name…" style="flex:1;min-width:120px">'+
+            '</div>'+
+            '<div id="wm-fi-avail-body"><div class="empty">Loading&hellip;</div></div>'+
+          '</div>'+
+        '</div></div>'+
+      '</div>'+
       // ===== how much of each plan actually happened =====
       '<div class="sech">Master plans &mdash; progress &amp; money</div>'+
       '<div class="card"><div class="hd"><h3>How each master plan is going</h3>'+
@@ -1567,51 +1613,6 @@
         '</div></div>'+
       '<div class="sech">Crew movements &mdash; who left, who joined, who swapped</div>'+
       '<div class="card"><div class="hd"><h3>Substitution history</h3><div class="cap">every mid-period movement &middot; a leaver keeps pay for days worked; Days/Qty/Pay are what that row&rsquo;s worker did on the plan</div></div><div class="bd"><div class="pex-filters" id="subs-filters"><select id="subs-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div><div id="wm-subs" style="max-height:360px;overflow:auto">Loading&hellip;</div></div></div>'+
-      '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered &middot; field intelligence</div>'+
-      '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch">'+
-      '<div class="card" style="flex:3;min-width:480px;margin-bottom:0"><div class="hd"><h3 id="wm-tl-h3">Plans, assignments &amp; actuals over time</h3><div class="cap" id="wm-tl-cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
-        '<div class="bd">'+
-          '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">'+
-            '<div><div class="tl-lab">Graph</div><select id="wm-tl-view" class="tl-in">'+
-              TL_VIEWS.map(function(v){ return '<option value="'+v.k+'">'+esc(v.label)+'</option>'; }).join("")+
-            '</select></div>'+
-            '<div><div class="tl-lab">'+esc(TX("top_singular","Farm"))+'</div><select id="wm-tl-farm" class="tl-in"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div>'+
-            '<div><div class="tl-lab">From</div><input type="date" id="wm-tl-from" class="tl-in"></div>'+
-            '<div><div class="tl-lab">To</div><input type="date" id="wm-tl-to" class="tl-in"></div>'+
-            '<button type="button" class="refresh" id="wm-tl-apply" style="margin-bottom:1px">Apply</button>'+
-            '<span style="flex:1"></span>'+
-            '<div id="wm-tl-measure" style="display:inline-flex;gap:2px;background:var(--wash);border:1px solid var(--line);border-radius:999px;padding:3px">'+
-              '<button type="button" data-m="qty" class="on">Quantity</button>'+
-              '<button type="button" data-m="val">KES</button>'+
-            '</div>'+
-          '</div>'+
-          '<div id="wm-tl-chart" style="min-height:240px"><div class="empty">Loading timeline&hellip;</div></div>'+
-        '</div></div>'+
-      '<div class="card" style="flex:2;min-width:380px;margin-bottom:0"><div class="hd"><h3>Field intelligence</h3><div class="cap">efficiency per '+esc(TX("top_singular","Farm")).toLowerCase()+' &middot; who is free to work, any day</div></div>'+
-        '<div class="bd">'+
-          '<div class="subtabs" id="wm-fi-tabs" style="margin-bottom:10px">'+
-            '<button type="button" class="subtab on" data-fi="eff">Efficiency</button>'+
-            '<button type="button" class="subtab" data-fi="avail">Available workers</button>'+
-          '</div>'+
-          '<div id="wm-fi-eff">'+
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
-              '<div><div class="tl-lab">From</div><input type="date" id="wm-fi-from" class="tl-in"></div>'+
-              '<div><div class="tl-lab">To</div><input type="date" id="wm-fi-to" class="tl-in"></div>'+
-              '<button type="button" class="refresh" id="wm-fi-apply" style="margin-bottom:1px">Apply</button>'+
-            '</div>'+
-            '<div id="wm-fi-eff-body"><div class="empty">Loading&hellip;</div></div>'+
-          '</div>'+
-          '<div id="wm-fi-avail" style="display:none">'+
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
-              '<div><div class="tl-lab">Date</div><input type="date" id="wm-fi-date" class="tl-in"></div>'+
-              '<div><div class="tl-lab">'+esc(TX("top_singular","Farm"))+'</div><select id="wm-fi-farm" class="tl-in"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div>'+
-              '<button type="button" class="refresh" id="wm-fi-avapply" style="margin-bottom:1px">Apply</button>'+
-              '<input type="text" id="wm-fi-search" class="tl-in" placeholder="Search name…" style="flex:1;min-width:120px">'+
-            '</div>'+
-            '<div id="wm-fi-avail-body"><div class="empty">Loading&hellip;</div></div>'+
-          '</div>'+
-        '</div></div>'+
-      '</div>'+
       '<div class="sech">Action queues</div>'+
       '<div class="card"><div class="hd"><h3>Everything waiting on someone</h3><div class="cap">one queue at a time &middot; full-width</div></div>'+
         '<div class="bd">'+
