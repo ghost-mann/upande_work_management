@@ -1,5 +1,9 @@
 The Field intelligence card sits beside the Delivery timeline on the dashboard. It answers two everyday management questions: 'what does our work actually cost per hectare, and how much ground does a worker-day cover?' and 'who is free to work today (or any day I pick)?'
 
+## Graphs in the Delivery timeline card
+
+The Delivery timeline card has a Graph dropdown. Besides the default planned vs staffed vs delivered timeline it can show, for the card's own farm and date window: cost per hectare of the farm (confirmed pay that week ÷ the farm's Area); cost per hectare, farm vs worked area (solid = per hectare of the whole farm, dashed = per hectare of the blocks actually worked that week, each block once); weekly cost in KES; Ha per man-day; and cost per hectare by task. The weekly graphs put Monday-start weeks along the bottom and the measure up the side. A week with no confirmed work is a gap in the line, not a zero; where a farm's blocks have no Area (HA) the dashed line is not drawn and the graph says so. Hover to read each farm's value for a week; the first and last week can be part-weeks, and the hover says how many of their days fall in the window.
+
 ## Efficiency tab
 
 Pick a date window (default: the last 30 days) and press Apply. The table shows, per farm and in total:

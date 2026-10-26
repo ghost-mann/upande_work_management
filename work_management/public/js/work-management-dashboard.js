@@ -1569,9 +1569,12 @@
       '<div class="card"><div class="hd"><h3>Substitution history</h3><div class="cap">every mid-period movement &middot; a leaver keeps pay for days worked; Days/Qty/Pay are what that row&rsquo;s worker did on the plan</div></div><div class="bd"><div class="pex-filters" id="subs-filters"><select id="subs-farm"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div><div id="wm-subs" style="max-height:360px;overflow:auto">Loading&hellip;</div></div></div>'+
       '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered &middot; field intelligence</div>'+
       '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch">'+
-      '<div class="card" style="flex:3;min-width:480px;margin-bottom:0"><div class="hd"><h3>Plans, assignments &amp; actuals over time</h3><div class="cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
+      '<div class="card" style="flex:3;min-width:480px;margin-bottom:0"><div class="hd"><h3 id="wm-tl-h3">Plans, assignments &amp; actuals over time</h3><div class="cap" id="wm-tl-cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
         '<div class="bd">'+
           '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">'+
+            '<div><div class="tl-lab">Graph</div><select id="wm-tl-view" class="tl-in">'+
+              TL_VIEWS.map(function(v){ return '<option value="'+v.k+'">'+esc(v.label)+'</option>'; }).join("")+
+            '</select></div>'+
             '<div><div class="tl-lab">'+esc(TX("top_singular","Farm"))+'</div><select id="wm-tl-farm" class="tl-in"><option value="">All '+esc(TX("top_plural","Farms")).toLowerCase()+'</option></select></div>'+
             '<div><div class="tl-lab">From</div><input type="date" id="wm-tl-from" class="tl-in"></div>'+
             '<div><div class="tl-lab">To</div><input type="date" id="wm-tl-to" class="tl-in"></div>'+
@@ -3262,7 +3265,7 @@
   }
 
   // ============ DELIVERY TIMELINE (plans vs assignments vs actuals) ============
-  var TL={measure:"qty", data:null};
+  var TL={measure:"qty", data:null, view:"tl", fi:null, fiKey:""};
   function initTimeline(){
     var ap=el("wm-tl-apply"); if(!ap) return;
     if(!el("wm-tl-from").value){
@@ -3272,6 +3275,7 @@
     if(!el("wm-tl-to").value) el("wm-tl-to").value=new Date().toISOString().slice(0,10);
     ap.onclick=loadTimeline;
     el("wm-tl-farm").onchange=loadTimeline;
+    el("wm-tl-view").onchange=function(){ TL.view=el("wm-tl-view").value; loadTimeline(); };
     el("wm-tl-measure").querySelectorAll("button").forEach(function(b){
       b.onclick=function(){
         TL.measure=b.getAttribute("data-m");
@@ -3283,6 +3287,11 @@
   }
   function loadTimeline(){
     var box=el("wm-tl-chart"); if(!box) return;
+    var vw=tlView();
+    el("wm-tl-h3").innerHTML=esc(vw.title);
+    el("wm-tl-cap").innerHTML=vw.cap;
+    el("wm-tl-measure").style.display=(vw.k==="tl")?"":"none";
+    if(vw.k!=="tl"){ loadFiGraph(); return; }
     box.innerHTML='<div class="empty">Loading timeline…</div>';
     call({action:"timeline", farm:el("wm-tl-farm").value||"",
           from_date:el("wm-tl-from").value||"", to_date:el("wm-tl-to").value||""})
@@ -3436,6 +3445,170 @@
         renderFiAvail();
       })
       .catch(function(e){ el("wm-fi-eff-body").innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+  // ---- the timeline card's other graphs: cost and efficiency, weekly ----
+  // The Graph dropdown swaps the timeline for one of these, drawn from
+  // field_intel over the card's own window and farm. Weeks start on Monday and
+  // run along the bottom, the measure goes up the side, both axes titled. A
+  // week with no confirmed work is a gap, never a zero.
+  var TL_VIEWS=[
+    {k:"tl",   label:"Planned vs staffed vs delivered", title:"Plans, assignments & actuals over time",
+     cap:"daily &middot; planned share of approved plans, the staffed share, and confirmed output"},
+    {k:"cph",  label:"Cost per Ha of farm", title:"Cost per hectare of farm",
+     cap:"weekly &middot; confirmed pay ÷ the farm's Area &middot; rising means the farm is costing more for its size"},
+    {k:"both", label:"Cost per Ha: farm vs worked area", title:"Cost per hectare: whole farm vs ground worked",
+     cap:"weekly &middot; solid per Ha of the whole farm, dashed per Ha of the blocks worked that week"},
+    {k:"cost", label:"Weekly cost (KES)", title:"Weekly cost",
+     cap:"weekly &middot; confirmed pay &middot; the spend behind the cost per hectare"},
+    {k:"hpm",  label:"Ha per man-day", title:"Hectares per man-day",
+     cap:"weekly &middot; the farm's Area ÷ man-days &middot; higher means each worker-day covers more ground"},
+    {k:"task", label:"Cost per Ha by task", title:"Cost per hectare by task",
+     cap:"the window &middot; pay ÷ hectares of the blocks each task worked, busiest tasks by man-days"}
+  ];
+  function tlView(){
+    for(var i=0;i<TL_VIEWS.length;i++) if(TL_VIEWS[i].k===TL.view) return TL_VIEWS[i];
+    return TL_VIEWS[0];
+  }
+  function loadFiGraph(){
+    var box=el("wm-tl-chart");
+    var f=el("wm-tl-from").value||"", t=el("wm-tl-to").value||"", key=f+"|"+t;
+    if(TL.fi&&TL.fiKey===key){ renderFiGraph(); return; }
+    box.innerHTML='<div class="empty">Loading&hellip;</div>';
+    call({action:"field_intel", from_date:f, to_date:t})
+      .then(function(d){
+        if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+        TL.fi=d; TL.fiKey=key;
+        var fs=el("wm-tl-farm");
+        if(fs && fs.options.length<=1){
+          ((d.weekly||{}).farms||[]).forEach(function(x){ var o=document.createElement("option"); o.value=x.farm; o.textContent=x.farm; fs.appendChild(o); });
+        }
+        renderFiGraph();
+      })
+      .catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+  function fiNice(v){
+    if(!(v>0)) return 1;
+    var e=Math.pow(10,Math.floor(Math.log(v)/Math.LN10)), f=v/e;
+    return (f<=1?1:f<=2?2:f<=5?5:10)*e;
+  }
+  var FI_AX='font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780"';
+  var FI_TITLE='font-family="Poppins,sans-serif" font-size="10" font-weight="600" fill="#5b5953"';
+  function fiLegend(series){
+    return '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink);margin:2px 0 8px">'+
+      series.map(function(sr){ return '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:16px;height:0;border-top:2px '+(sr.dash?"dashed":"solid")+' '+sr.color+'"></i>'+esc(sr.name)+'</span>'; }).join("")+'</div>';
+  }
+  function fiLine(box, ylab, dp, series, note){
+    var wk=TL.fi.weekly||{}, weeks=wk.weeks||[];
+    var max=0;
+    series.forEach(function(sr){ sr.vals.forEach(function(v){ if(v!=null&&v>max) max=v; }); });
+    var foot=note?'<div class="fi-gn">'+note+'</div>':'';
+    if(!weeks.length||max<=0){ box.innerHTML='<div class="empty">Nothing to draw for this window.</div>'+foot; return; }
+    var W=Math.max(560, box.clientWidth||860), H=280, L=60, R=16, T=12, B=42, iw=W-L-R, ih=H-T-B;
+    var step=fiNice(max/4), ymax=step*Math.ceil(max/step);
+    function X(i){ return L+(weeks.length===1?iw/2:(i/(weeks.length-1))*iw); }
+    function Y(v){ return T+ih-(v/ymax)*ih; }
+    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="'+esc(tlView().title)+'">';
+    for(var gv=0;gv<=ymax+step/1000;gv+=step){
+      g+='<line x1="'+L+'" y1="'+Y(gv).toFixed(1)+'" x2="'+(W-R)+'" y2="'+Y(gv).toFixed(1)+'" stroke="rgba(10,10,10,'+(gv===0?'0.25':'0.06')+')" stroke-width="1"/>';
+      g+='<text x="'+(L-8)+'" y="'+(Y(gv)+3).toFixed(1)+'" text-anchor="end" '+FI_AX+'>'+tlNum(gv)+'</text>';
+    }
+    var xs=Math.max(1,Math.ceil(weeks.length/8));
+    for(var xi=0;xi<weeks.length;xi+=xs){
+      g+='<text x="'+X(xi).toFixed(1)+'" y="'+(T+ih+15)+'" text-anchor="middle" '+FI_AX+'>'+tlShort(weeks[xi])+'</text>';
+    }
+    g+='<text x="'+(L+iw/2)+'" y="'+(H-5)+'" text-anchor="middle" '+FI_TITLE+'>Week starting (Monday)</text>';
+    g+='<text transform="translate(13,'+(T+ih/2)+') rotate(-90)" text-anchor="middle" '+FI_TITLE+'>'+esc(ylab)+'</text>';
+    series.forEach(function(sr){
+      var d="", pen="M";
+      sr.vals.forEach(function(v,i){
+        if(v==null){ pen="M"; return; }
+        d+=pen+X(i).toFixed(1)+","+Y(v).toFixed(1); pen="L";
+      });
+      g+='<path d="'+d+'" fill="none" stroke="'+sr.color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"'+(sr.dash?' stroke-dasharray="6 5"':'')+'/>';
+      sr.vals.forEach(function(v,i){
+        // a lone week between gaps has no line, so it gets a dot to be seen at all
+        var lone=v!=null&&(i===0||sr.vals[i-1]==null)&&(i===sr.vals.length-1||sr.vals[i+1]==null);
+        if(lone) g+='<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="2.5" fill="'+sr.color+'"/>';
+      });
+    });
+    g+='<line class="fi-x" x1="0" y1="'+T+'" x2="0" y2="'+(T+ih)+'" stroke="rgba(10,10,10,0.35)" stroke-width="1" style="display:none"/>';
+    g+='<rect class="fi-hv" x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="transparent"/>';
+    g+='</svg>';
+    box.innerHTML=fiLegend(series)+'<div style="position:relative">'+g+'<div class="fi-tip"></div></div>'+foot;
+    var c={series:series, weeks:weeks, days:wk.days||[], W:W, L:L, iw:iw, X:X, dp:dp, unit:ylab};
+    var svg=box.querySelector("svg"), hv=box.querySelector(".fi-hv"), cross=box.querySelector(".fi-x"), tip=box.querySelector(".fi-tip");
+    hv.addEventListener("mousemove",function(evt){
+      var r=svg.getBoundingClientRect(), mx=(evt.clientX-r.left)*(c.W/r.width);
+      var i=c.weeks.length===1?0:Math.round((mx-c.L)/c.iw*(c.weeks.length-1));
+      i=Math.max(0,Math.min(c.weeks.length-1,i));
+      var cx=c.X(i);
+      cross.setAttribute("x1",cx); cross.setAttribute("x2",cx); cross.style.display="";
+      var lines=c.series.map(function(sr){
+        var v=sr.vals[i];
+        var miss=(v!=null&&sr.missing&&sr.missing[i])?' <span style="opacity:.6">('+fmt(sr.missing[i])+' without area)</span>':'';
+        return '<span style="color:'+sr.color+';filter:brightness(1.6)">●</span> '+esc(sr.name)+': <b>'+(v==null?(sr.why?sr.why[i]:'no work'):fmt(v,c.dp))+'</b>'+miss;
+      });
+      var dn=c.days[i];
+      tip.innerHTML='<b>Week of '+tlShort(c.weeks[i])+'</b>'+(dn&&dn<7?' <span style="opacity:.6">(only '+dn+' day'+(dn===1?'':'s')+' in window)</span>':'')+'<br>'+lines.join("<br>")+'<br><span style="opacity:.6">'+esc(c.unit)+'</span>';
+      tip.style.display="block";
+      var px=(cx/c.W)*r.width;
+      tip.style.left=(px>r.width/2? Math.max(0,px-tip.offsetWidth-14) : px+14)+"px";
+      tip.style.top="18px";
+    });
+    hv.addEventListener("mouseleave",function(){ cross.style.display="none"; tip.style.display="none"; });
+  }
+  function fiBars(box, tasks){
+    var blocks=esc(TX("unit_plural","Blocks")).toLowerCase();
+    var withArea=tasks.filter(function(x){ return x.cost_per_ha>0; });
+    var rows=withArea.slice().sort(function(a,b){ return b.cost_per_ha-a.cost_per_ha; }).slice(0,10);
+    var left=tasks.length-withArea.length;
+    var note='<div class="fi-gn">Across all '+esc(TX("top_plural","Farms")).toLowerCase()+' in the window.'+
+      (left?' '+fmt(left)+' of the busiest task'+(left===1?' is':'s are')+' left out: '+(left===1?'its':'their')+' '+blocks+' have no area recorded.':'')+'</div>';
+    if(!rows.length){ box.innerHTML='<div class="empty">No task in this window has '+blocks+' with an area recorded.</div>'+note; return; }
+    var W=Math.max(560, box.clientWidth||860), rh=24, T=6, B=36, L=200, R=60, H=T+B+rh*rows.length, iw=W-L-R;
+    var step=fiNice(rows[0].cost_per_ha/4), xmax=step*Math.ceil(rows[0].cost_per_ha/step);
+    function X(v){ return L+(v/xmax)*iw; }
+    var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="Cost per hectare by task">';
+    for(var gv=0;gv<=xmax+step/1000;gv+=step){
+      g+='<line x1="'+X(gv).toFixed(1)+'" y1="'+T+'" x2="'+X(gv).toFixed(1)+'" y2="'+(H-B)+'" stroke="rgba(10,10,10,'+(gv===0?'0.25':'0.06')+')"/>';
+      g+='<text x="'+X(gv).toFixed(1)+'" y="'+(H-B+14)+'" text-anchor="middle" '+FI_AX+'>'+tlNum(gv)+'</text>';
+    }
+    rows.forEach(function(x,i){
+      var y=T+i*rh, full=taskName(x.task), nm=full.length>32?full.slice(0,31)+"…":full;
+      g+='<text x="'+(L-8)+'" y="'+(y+rh/2+3)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="10" fill="#3a3833"><title>'+esc(full)+'</title>'+esc(nm)+'</text>';
+      g+='<rect x="'+L+'" y="'+(y+4)+'" width="'+Math.max(1,X(x.cost_per_ha)-L).toFixed(1)+'" height="'+(rh-8)+'" rx="2" fill="#0a7a43"><title>'+esc(full)+': '+fmt(x.cost_per_ha,0)+' KES/Ha · '+fmt(x.area,1)+' Ha · '+fmt(x.cost,0)+' KES</title></rect>';
+      g+='<text x="'+(X(x.cost_per_ha)+5).toFixed(1)+'" y="'+(y+rh/2+3)+'" '+FI_AX+'>'+fmt(x.cost_per_ha,0)+'</text>';
+    });
+    g+='<text x="'+(L+iw/2)+'" y="'+(H-5)+'" text-anchor="middle" '+FI_TITLE+'>KES per hectare worked</text>';
+    box.innerHTML=g+'</svg>'+note;
+  }
+  function renderFiGraph(){
+    var box=el("wm-tl-chart"); if(!box||!TL.fi) return;
+    var vw=tlView().k, farm=el("wm-tl-farm").value||"";
+    if(vw==="task"){ fiBars(box, TL.fi.tasks||[]); return; }
+    var top=esc(TX("top_singular","Farm")).toLowerCase(), blocks=esc(TX("unit_plural","Blocks")).toLowerCase();
+    var farms=((TL.fi.weekly||{}).farms||[]).filter(function(f){ return !farm||f.farm===farm; });
+    function per(fn){ return farms.map(function(f){ return {farm:f.farm, name:f.farm, color:ccFarmColor(f.farm), vals:f.cost.map(function(c,i){ return fn(f,c,i); })}; }); }
+    var noArea=farms.filter(function(f){ return !(f.area>0); }).map(function(f){ return esc(f.farm); });
+    var areaNote=noArea.length?'No Area set on: '+noArea.join(", ")+' &mdash; fill <b>Area</b> on the '+top+' record to draw '+(noArea.length===1?'it':'them')+'.':'';
+    if(vw==="cph"){
+      fiLine(box,"KES / Ha of "+top,0,per(function(f,c){ return (c!=null&&f.area>0)?c/f.area:null; }),areaNote);
+    } else if(vw==="both"){
+      var both=[], noWorked=[];
+      farms.forEach(function(f){
+        var w=f.cost.map(function(c,i){ var a=f.worked_ha[i]; return (c!=null&&a>0)?c/a:null; });
+        if(f.area>0) both.push({farm:f.farm, name:f.farm+" · whole "+top, color:ccFarmColor(f.farm), vals:f.cost.map(function(c){ return c!=null?c/f.area:null; })});
+        if(w.some(function(v){ return v!=null; })) both.push({farm:f.farm, name:f.farm+" · worked", color:ccFarmColor(f.farm), dash:1, vals:w, missing:f.missing_blocks,
+          why:f.cost.map(function(c){ return c==null?'no work':'area not recorded'; })});
+        else noWorked.push(esc(f.farm));
+      });
+      fiLine(box,"KES / Ha",0,both,
+        (noWorked.length?'Worked area not recorded for: '+noWorked.join(", ")+' &mdash; fill <b>Area (Ha)</b> on their '+blocks+' to draw it. ':'')+areaNote);
+    } else if(vw==="cost"){
+      fiLine(box,"KES confirmed pay",0,per(function(f,c){ return c; }),"");
+    } else {
+      fiLine(box,esc(TX("top_singular","Farm"))+" Ha / man-day",2,per(function(f,c,i){ var m=f.mandays[i]; return (m>0&&f.area>0)?f.area/m:null; }),areaNote);
+    }
   }
   function renderFiEff(){
     var box=el("wm-fi-eff-body"); if(!box||!FI.data) return;

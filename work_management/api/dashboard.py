@@ -3156,8 +3156,13 @@ def wm_dashboard(**kwargs):
         # at all. Zero IS the absent state here. The second NULLIF does a different
         # job: it keeps a site that says a day is zero hours long from dividing by
         # nothing. DAYOFWEEK is 1=Sunday .. 7=Saturday in MariaDB.
-        plan_rows = frappe.db.sql("""
+        #
+        # Read per plan AND per week, then rolled up per plan below: the table wants
+        # the plan totals, the graphs want the weeks, and one query keeps the two
+        # from ever disagreeing about what a man-day is.
+        fi_week_rows = frappe.db.sql("""
             SELECT a2.planner_request pr, ac.farm farm,
+                   DATE_SUB(we.work_date, INTERVAL WEEKDAY(we.work_date) DAY) wk,
                    COALESCE(SUM(
                      COALESCE(NULLIF(we.hours, 0), CASE DAYOFWEEK(we.work_date)
                         WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END)
@@ -3179,12 +3184,23 @@ def wm_dashboard(**kwargs):
             LEFT JOIN `tabWork Management Planner` p2 ON a2.planner_request = p2.name
             WHERE ac.workflow_state = 'CONFIRMED'
               AND we.work_date BETWEEN %(f)s AND %(t)s AND we.actual_quantity > 0
-            GROUP BY a2.planner_request, ac.farm
+            GROUP BY a2.planner_request, ac.farm, wk
         """, {"f": fifrom, "t": fito,
               "wk": frappe.utils.flt(STANDARD_DAY.get("weekday")),
               "sat": frappe.utils.flt(STANDARD_DAY.get("saturday")),
               "sun": frappe.utils.flt(STANDARD_DAY.get("sunday"))}, as_dict=True)
-        prs = [r.pr for r in plan_rows if r.pr]
+        plan_rows = []
+        plan_row_at = {}
+        for r in fi_week_rows:
+            pk = (r.pr or "") + "|" + (r.farm or "")
+            pr_row = plan_row_at.get(pk)
+            if pr_row is None:
+                pr_row = {"pr": r.pr, "farm": r.farm, "mandays": 0, "pay": 0}
+                plan_row_at[pk] = pr_row
+                plan_rows.append(pr_row)
+            pr_row["mandays"] = pr_row["mandays"] + frappe.utils.flt(r.mandays)
+            pr_row["pay"] = pr_row["pay"] + frappe.utils.flt(r.pay)
+        prs = [r["pr"] for r in plan_rows if r["pr"]]
         plan_info = {}
         plan_blocks = {}
         if prs:
@@ -3221,28 +3237,28 @@ def wm_dashboard(**kwargs):
         task_eff = {}
         for r in plan_rows:
             parea = 0
-            for b in plan_blocks.get(r.pr, {}):
+            for b in plan_blocks.get(r["pr"], {}):
                 parea = parea + all_blocks.get(b, 0)
-            fe = farm_eff.get(r.farm)
+            fe = farm_eff.get(r["farm"])
             if fe is None:
-                fe = {"farm": r.farm, "area": 0, "mandays": 0, "cost": 0, "plans": 0}
-                farm_eff[r.farm] = fe
+                fe = {"farm": r["farm"], "area": 0, "mandays": 0, "cost": 0, "plans": 0}
+                farm_eff[r["farm"]] = fe
             # NOT fe["area"] + parea. Area was summed once per plan, so a block
             # planned twice counted its hectares twice -- inflating the area and
             # deflating cost per hectare by however often the ground was worked.
             # A farm's area is a property of the farm, so it is read from the farm,
             # once, below.
-            fe["mandays"] = fe["mandays"] + frappe.utils.cint(r.mandays)
-            fe["cost"] = fe["cost"] + frappe.utils.flt(r.pay)
+            fe["mandays"] = fe["mandays"] + frappe.utils.cint(frappe.utils.flt(r["mandays"], 6))
+            fe["cost"] = fe["cost"] + frappe.utils.flt(r["pay"])
             fe["plans"] = fe["plans"] + 1
-            tname = (plan_info.get(r.pr) or {}).get("task") or "—"
+            tname = (plan_info.get(r["pr"]) or {}).get("task") or "—"
             te = task_eff.get(tname)
             if te is None:
                 te = {"task": tname, "area": 0, "mandays": 0, "cost": 0}
                 task_eff[tname] = te
             te["area"] = te["area"] + parea
-            te["mandays"] = te["mandays"] + frappe.utils.cint(r.mandays)
-            te["cost"] = te["cost"] + frappe.utils.flt(r.pay)
+            te["mandays"] = te["mandays"] + frappe.utils.cint(frappe.utils.flt(r["mandays"], 6))
+            te["cost"] = te["cost"] + frappe.utils.flt(r["pay"])
         # The area of each farm, in hectares. A farm's area is a property of the farm,
         # so it is read from the farm -- but which column holds it differs by site.
         # Upande Core's `Farm` calls it `area`; the retired Work Management Farm called
@@ -3323,8 +3339,77 @@ def wm_dashboard(**kwargs):
         for te in tasks_out:
             te["ha_per_manday"] = (te["area"] / te["mandays"]) if te["mandays"] else 0
             te["cost_per_ha"] = (te["cost"] / te["area"]) if te["area"] else 0
+        # ── weekly series for the Field intelligence graphs ──
+        # Monday-start weeks covering the window. Per farm and week: confirmed pay,
+        # man-days, and the hectares of the blocks worked that week -- each block
+        # once a week however many plans touched it. A week with no confirmed work
+        # is None, not 0: a gap in the line, not a week that cost nothing.
+        #
+        # Worked hectares are None when none of the week's blocks has an area, and
+        # `missing` says how many blocks had none, so the screen can say "not
+        # recorded" instead of drawing a cost per hectare off part of the ground.
+        wk_first = frappe.utils.getdate(fifrom)
+        wk_first = frappe.utils.add_days(wk_first, -wk_first.weekday())
+        wk_last = frappe.utils.getdate(fito)
+        fi_weeks = []
+        wk_days = []
+        wk_at = {}
+        wk_cur = wk_first
+        while wk_cur <= wk_last and len(fi_weeks) < 260:
+            wk_in = 0
+            for dn in range(7):
+                dd = frappe.utils.add_days(wk_cur, dn)
+                if dd >= frappe.utils.getdate(fifrom) and dd <= wk_last:
+                    wk_in = wk_in + 1
+            wk_at[str(wk_cur)] = len(fi_weeks)
+            fi_weeks.append(str(wk_cur))
+            wk_days.append(wk_in)
+            wk_cur = frappe.utils.add_days(wk_cur, 7)
+        wk_farm = {}
+        for r in fi_week_rows:
+            wi = wk_at.get(str(r.wk))
+            if wi is None or not r.farm:
+                continue
+            wf = wk_farm.get(r.farm)
+            if wf is None:
+                wf = {"cost": [None] * len(fi_weeks), "mandays": [None] * len(fi_weeks),
+                      "blocks": [None] * len(fi_weeks)}
+                wk_farm[r.farm] = wf
+            wf["cost"][wi] = frappe.utils.flt(wf["cost"][wi]) + frappe.utils.flt(r.pay)
+            wf["mandays"][wi] = frappe.utils.flt(wf["mandays"][wi]) + frappe.utils.flt(r.mandays)
+            if wf["blocks"][wi] is None:
+                wf["blocks"][wi] = {}
+            for b in plan_blocks.get(r.pr, {}):
+                wf["blocks"][wi][b] = 1
+        fi_weekly_farms = []
+        for fe in farms_out:
+            wf = wk_farm.get(fe["farm"])
+            if not wf:
+                continue
+            worked = []
+            missing = []
+            for wb in wf["blocks"]:
+                if wb is None:
+                    worked.append(None)
+                    missing.append(0)
+                    continue
+                wha = 0
+                wmiss = 0
+                for b in wb:
+                    if all_blocks.get(b, 0) > 0:
+                        wha = wha + all_blocks.get(b, 0)
+                    else:
+                        wmiss = wmiss + 1
+                worked.append(wha if wha > 0 else None)
+                missing.append(wmiss)
+            fi_weekly_farms.append({"farm": fe["farm"], "area": fe["area"],
+                                    "cost": wf["cost"], "mandays": wf["mandays"],
+                                    "worked_ha": worked, "missing_blocks": missing})
+        fi_weekly = {"weeks": fi_weeks, "days": wk_days, "farms": fi_weekly_farms}
+        # ── end weekly series ──
         out["window"] = {"from": fifrom, "to": fito}
         out["farms"] = farms_out
+        out["weekly"] = fi_weekly
         out["tasks"] = tasks_out
         # ── availability on a chosen date: active employees NOT on a live
         # assignment covering that day (start/left dates respected) ──
