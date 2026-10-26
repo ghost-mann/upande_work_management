@@ -3125,7 +3125,7 @@ def wm_dashboard(**kwargs):
         out["series"] = flat
 
     elif action == "field_intel":
-        # FIELD INTELLIGENCE: efficiency (Ha per man-day, cost per Ha) computed
+        # FIELD INTELLIGENCE: efficiency (man-days per Ha, cost per Ha) computed
         # from confirmed work, and date-wise worker availability.
         fifrom = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -30))
         fito = frappe.form_dict.get("to_date") or str(frappe.utils.today())
@@ -3295,7 +3295,7 @@ def wm_dashboard(**kwargs):
                 if fa.get("farm") not in farm_area and frappe.utils.flt(fa.get("area_ha")) > 0:
                     farm_area[fa.get("farm")] = frappe.utils.flt(fa.get("area_ha"))
         # Nobody has entered an area yet on most sites, and a blank area would take
-        # Ha/man-day and Cost/Ha down with it. So fall back to the farm's own blocks,
+        # Man-days/Ha and Cost/Ha down with it. So fall back to the farm's own blocks,
         # each counted ONCE -- which is the number the old code was reaching for
         # before it summed the same block again for every plan that touched it. An
         # area entered against the farm always wins over this.
@@ -3332,12 +3332,12 @@ def wm_dashboard(**kwargs):
             fe["area_source"] = ("farm" if f in farm_area
                 else ("blocks" if f in fallback_area else "unset"))
             fe["cum_pay"] = cum_pay.get(f, 0)
-            fe["ha_per_manday"] = (fe["area"] / fe["mandays"]) if fe["mandays"] else 0
+            fe["mandays_per_ha"] = (fe["mandays"] / fe["area"]) if fe["area"] else 0
             fe["cost_per_ha"] = (fe["cost"] / fe["area"]) if fe["area"] else 0
             farms_out.append(fe)
         tasks_out = sorted(task_eff.values(), key=lambda x: -x["mandays"])[:12]
         for te in tasks_out:
-            te["ha_per_manday"] = (te["area"] / te["mandays"]) if te["mandays"] else 0
+            te["mandays_per_ha"] = (te["mandays"] / te["area"]) if te["area"] else 0
             te["cost_per_ha"] = (te["cost"] / te["area"]) if te["area"] else 0
         # ── weekly series for the Field intelligence graphs ──
         # Monday-start weeks covering the window. Per farm and week: confirmed pay,

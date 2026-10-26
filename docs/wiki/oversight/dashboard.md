@@ -1,5 +1,5 @@
 - Delivery timeline (top of the dashboard) — planned vs staffed vs delivered per day, with farm and date filters and quantity/KES toggle. Its Graph dropdown swaps in the cost and efficiency graphs.
-- Field intelligence (beside the timeline) — two tabs: Efficiency (Ha per man-day and Cost per Ha, per farm and per task) and Available workers (the number and list of employees free to work on any chosen date, filterable by farm). Explained in full in the next section.
+- Field intelligence (beside the timeline) — two tabs: Efficiency (man-days per Ha and Cost per Ha, per farm and per task) and Available workers (the number and list of employees free to work on any chosen date, filterable by farm). Explained in full in the next section.
 - Action queues — everything waiting on someone, one queue at a time.
 - Value flow — weekly planned/assigned/confirmed value and a per-plan table with each plan's accountability chain.
 - Cost centres — running labour cost per block, beside the GL cost-centre actuals posted against it, as a treemap sized by spend and a table below it. A Group toggle reads the same money by section instead of by block; either way, click a row for the tasks, workers, weekly trend and GL accounts behind it.

@@ -177,7 +177,7 @@ same ⚑ and the affected day-rows are tinted.
 
 - **Delivery timeline** — planned vs assigned vs actual value per day.
 - **Field intelligence** (beside the timeline) — *Efficiency* tab: area (Ha),
-  man-days, **Ha per man-day** and **Cost per Ha**, per farm and per task
+  man-days, **Man-days per Ha** and **Cost per Ha**, per farm and per task
   (blocks need Area (Ha) captured on the block records to compute).
   *Available workers* tab: pick any date to see the **number and list** of
   active employees with no live assignment that day, per farm, with a P

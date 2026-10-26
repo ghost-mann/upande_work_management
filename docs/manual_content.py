@@ -325,7 +325,7 @@ def sections():
 		("b", "Delivery timeline (top of the dashboard) — planned vs staffed vs delivered per "
 			  "day, with farm and date filters and quantity/KES toggle. Its Graph dropdown "
 			  "swaps in the cost and efficiency graphs."),
-		("b", "Field intelligence (beside the timeline) — two tabs: Efficiency (Ha per man-day "
+		("b", "Field intelligence (beside the timeline) — two tabs: Efficiency (man-days per Ha "
 			  "and Cost per Ha, per farm and per task) and Available workers (the number and "
 			  "list of employees free to work on any chosen date, filterable by farm). "
 			  "Explained in full in the next section."),
@@ -349,7 +349,7 @@ def sections():
 			  "window: cost per hectare of the farm (confirmed pay that week ÷ the farm's "
 			  "Area); cost per hectare, farm vs worked area (solid = per hectare of the whole "
 			  "farm, dashed = per hectare of the blocks actually worked that week, each block "
-			  "once); weekly cost in KES; Ha per man-day; and cost per hectare by task. The "
+			  "once); weekly cost in KES; man-days per Ha; and cost per hectare by task. The "
 			  "weekly graphs put Monday-start weeks along the bottom and the measure up the "
 			  "side. A week with no confirmed work is a gap in the line, not a zero; where a "
 			  "farm's blocks have no Area (HA) the dashed line is not drawn and the graph says "
@@ -365,18 +365,18 @@ def sections():
 			  "fix is data entry on the block records, not a system fault."),
 		("b", "Man-days — one worker working one day is one man-day, counted from confirmed "
 			  "actuals (a worker on two tasks the same day is still one man-day)."),
-		("b", "Ha / man-day — Area ÷ man-days: how much ground one worker-day covers. Higher is "
+		("b", "Man-days / Ha — man-days ÷ Area: how many worker-days one hectare takes. Lower is "
 			  "leaner. Compare farms with care: the task mix matters (a farm doing slow "
-			  "detailed tasks like handling will always cover fewer hectares per man-day than "
+			  "detailed tasks like handling will always need more man-days per hectare than "
 			  "one doing slashing)."),
 		("b", "Cost KES — the confirmed pay for that work in the window."),
 		("b", "Cost / Ha — Cost ÷ Area: what a hectare of work cost. This is the number to "
 			  "watch over time per farm and per task."),
 		("p", "When Cost/Ha rises on the same task mix, each hectare is consuming more paid "
-			  "work than before. Read it together with Ha/man-day: if Cost/Ha rises while "
-			  "Ha/man-day falls, workers are covering less ground per day — productivity "
+			  "work than before. Read it together with Man-days/Ha: if Cost/Ha rises while "
+			  "Man-days/Ha rises too, workers are covering less ground per day — productivity "
 			  "dropped (denser weeds, harder terrain, crop stage slowing the task, or "
-			  "quantities recorded that don't match ground actually covered). If Ha/man-day is "
+			  "quantities recorded that don't match ground actually covered). If Man-days/Ha is "
 			  "steady while Cost/Ha rises, the change is in the rates — check the task list."),
 		("p", "Below the farm table, the same metrics appear per task (top tasks by man-days), "
 			  "which is where differences usually explain themselves — compare the same task "
@@ -524,8 +524,8 @@ def sections():
 		("h2", "Definitions"),
 		("b", "Man-day — one worker working one day (a worker on two tasks the same day is one "
 			  "man-day)."),
-		("b", "Ha / man-day — area of the blocks whose plans were worked, divided by the "
-			  "man-days spent on them: how much ground one worker-day covers."),
+		("b", "Man-days / Ha — the man-days spent, divided by the area of the blocks whose "
+			  "plans were worked: how many worker-days one hectare takes."),
 		("b", "Cost / Ha — confirmed pay divided by the area worked: what a hectare of work "
 			  "costs."),
 		("b", "Available worker — an active employee with no live assignment covering the "

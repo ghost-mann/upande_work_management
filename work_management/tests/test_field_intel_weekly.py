@@ -1,7 +1,7 @@
 """Field intelligence's weekly series: the numbers behind its graphs.
 
 The Efficiency tab draws cost per hectare (of the farm, and of the ground worked),
-weekly cost and Ha per man-day as lines over Monday-start weeks. The series come
+weekly cost and man-days per Ha as lines over Monday-start weeks. The series come
 from one block in `field_intel`, and three of its rules are easy to break:
 
 - a week with no confirmed work is None -- a gap in the line, not a week that

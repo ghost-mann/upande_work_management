@@ -3328,10 +3328,10 @@
     var max=0;
     days.forEach(function(r){ S.forEach(function(sr){ var v=Number(r[sr.key])||0; if(v>max) max=v; }); });
     if(!days.length||max<=0){ box.innerHTML='<div class="empty">No plans or confirmed work in this window.</div>'; return; }
-    var W=Math.max(560, box.clientWidth||860), H=280;
-    var L=52,R=16,T=14,B=30;
+    var W=Math.max(560, box.clientWidth||860), H=320;
+    var L=78,R=20,T=14,B=48;
     var iw=W-L-R, ih=H-T-B;
-    var ymax=max*1.1;
+    var yt=fiTicks(max), ymax=yt.top;
     function X(i){ return L + (days.length===1?iw/2:(i/(days.length-1))*iw); }
     function Y(v){ return T + ih - (v/ymax)*ih; }
     function path(key){
@@ -3340,17 +3340,18 @@
       return pth;
     }
     var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="Daily planned, assigned and actual '+(m==="qty"?"quantity":"value")+'">';
-    // gridlines + y labels
-    for(var gi=0;gi<=4;gi++){
-      var gv=ymax*gi/4, gy=Y(gv);
-      g+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+gy.toFixed(1)+'" stroke="rgba(10,10,10,0.06)" stroke-width="1"/>';
-      g+='<text x="'+(L-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780">'+tlNum(gv)+'</text>';
-    }
-    // x ticks (~6)
-    var step=Math.max(1,Math.round(days.length/6));
-    for(var xi=0;xi<days.length;xi+=step){
-      g+='<text x="'+X(xi).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780">'+tlShort(days[xi].d)+'</text>';
-    }
+    // axes: a tick on every day, a labelled one on each Monday (every few
+    // Mondays once the window is long), round-number values up the side
+    var mondays=[], minor=[];
+    days.forEach(function(r,i){
+      var dd=new Date(r.d+"T00:00:00");
+      if(dd.getDay()===1) mondays.push(i); else minor.push(X(i));
+    });
+    if(!mondays.length) mondays=[0];
+    var every=fiEvery(mondays.length, iw, 58);
+    var major=mondays.map(function(i,k){ return {x:X(i), label:(k%every===0)?tlShort(days[i].d):""}; });
+    g+=fiAxes({W:W,H:H,L:L,R:R,T:T,B:B, y:yt, yTitle:(m==="qty"?"Quantity (task units)":"Value (KES)"),
+               xTitle:"Date (ticks on Mondays)", xMajor:major, xMinor:days.length<=120?minor:[]});
     // actual area fill
     var area="M"+X(0).toFixed(1)+","+Y(0).toFixed(1);
     days.forEach(function(r,i){ area+="L"+X(i).toFixed(1)+","+Y(Number(r["actual_"+m])||0).toFixed(1); });
@@ -3359,11 +3360,6 @@
     // lines
     S.forEach(function(sr){
       g+='<path d="'+path(sr.key)+'" fill="none" stroke="'+sr.color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"'+(sr.dash?' stroke-dasharray="'+sr.dash+'"':'')+'/>';
-    });
-    // direct labels at line ends
-    S.forEach(function(sr,si){
-      var lv=Number(days[days.length-1][sr.key])||0;
-      g+='<text x="'+(W-R)+'" y="'+(Y(lv)+(si===0?-6:si===1?-6:12)).toFixed(1)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="9.5" font-weight="600" fill="'+sr.color+'">'+sr.name+'</text>';
     });
     // hover layer
     g+='<line id="wm-tl-cross" x1="0" y1="'+T+'" x2="0" y2="'+(T+ih)+'" stroke="rgba(10,10,10,0.35)" stroke-width="1" style="display:none"/>';
@@ -3461,8 +3457,8 @@
      cap:"weekly &middot; solid per Ha of the whole farm, dashed per Ha of the blocks worked that week"},
     {k:"cost", label:"Weekly cost (KES)", title:"Weekly cost",
      cap:"weekly &middot; confirmed pay &middot; the spend behind the cost per hectare"},
-    {k:"hpm",  label:"Ha per man-day", title:"Hectares per man-day",
-     cap:"weekly &middot; the farm's Area ÷ man-days &middot; higher means each worker-day covers more ground"},
+    {k:"mdph", label:"Man-days per Ha", title:"Man-days per hectare",
+     cap:"weekly &middot; man-days ÷ the farm's Area &middot; lower is leaner: fewer worker-days for each hectare"},
     {k:"task", label:"Cost per Ha by task", title:"Cost per hectare by task",
      cap:"the window &middot; pay ÷ hectares of the blocks each task worked, busiest tasks by man-days"}
   ];
@@ -3487,16 +3483,61 @@
       })
       .catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
   }
+  // ---- one set of axes for every graph in the timeline card ----
+  // Round-number ticks from zero, solid axis lines with tick marks, every value
+  // labelled in full, and both axes titled -- so a reading can be taken off
+  // the graph with a ruler, not guessed from a shape.
   function fiNice(v){
     if(!(v>0)) return 1;
     var e=Math.pow(10,Math.floor(Math.log(v)/Math.LN10)), f=v/e;
     return (f<=1?1:f<=2?2:f<=5?5:10)*e;
   }
-  var FI_AX='font-family="Poppins,sans-serif" font-size="9.5" fill="#8a8780"';
-  var FI_TITLE='font-family="Poppins,sans-serif" font-size="10" font-weight="600" fill="#5b5953"';
+  // ticks 0..top at a round step, five to seven of them, the top above the data
+  function fiTicks(max){
+    var step=fiNice(max/6), top=step*Math.ceil(max/step), out=[];
+    if(top<=max) top+=step;
+    for(var v=0;v<=top+step/1e6;v+=step) out.push(Math.round(v*1e6)/1e6);
+    return {step:step, top:top, ticks:out, dp:step<0.01?3:step<0.1?2:step<1?1:0};
+  }
+  var FI_INK="#3a3833", FI_AXIS="#55524b", FI_GRID="rgba(10,10,10,0.08)";
+  var FI_AX='font-family="Poppins,sans-serif" font-size="10.5" fill="'+FI_INK+'"';
+  var FI_TITLE='font-family="Poppins,sans-serif" font-size="11" font-weight="600" fill="#1f1e1b"';
+  // o: {W,H,L,R,T,B, y:fiTicks(), yTitle, xTitle, xMajor:[{x,label}], xMinor:[x], horizontal}
+  // horizontal: the value scale runs along the bottom (bar charts)
+  function fiAxes(o){
+    var iw=o.W-o.L-o.R, ih=o.H-o.T-o.B, x0=o.L, y0=o.T+ih, g="";
+    if(!o.horizontal){
+      o.y.ticks.forEach(function(v){
+        var y=(o.T+ih-(v/o.y.top)*ih).toFixed(1);
+        if(v>0) g+='<line x1="'+x0+'" y1="'+y+'" x2="'+(o.W-o.R)+'" y2="'+y+'" stroke="'+FI_GRID+'" stroke-width="1"/>';
+        g+='<line x1="'+(x0-5)+'" y1="'+y+'" x2="'+x0+'" y2="'+y+'" stroke="'+FI_AXIS+'" stroke-width="1"/>';
+        g+='<text x="'+(x0-8)+'" y="'+(Number(y)+3.5)+'" text-anchor="end" '+FI_AX+'>'+fmt(v,o.y.dp)+'</text>';
+      });
+      (o.xMinor||[]).forEach(function(x){ g+='<line x1="'+x.toFixed(1)+'" y1="'+y0+'" x2="'+x.toFixed(1)+'" y2="'+(y0+3)+'" stroke="'+FI_AXIS+'" stroke-width="1"/>'; });
+      (o.xMajor||[]).forEach(function(t){
+        g+='<line x1="'+t.x.toFixed(1)+'" y1="'+y0+'" x2="'+t.x.toFixed(1)+'" y2="'+(y0+6)+'" stroke="'+FI_AXIS+'" stroke-width="1"/>';
+        if(t.label) g+='<text x="'+t.x.toFixed(1)+'" y="'+(y0+18)+'" text-anchor="middle" '+FI_AX+'>'+esc(t.label)+'</text>';
+      });
+    } else {
+      o.y.ticks.forEach(function(v){
+        var x=(o.L+(v/o.y.top)*iw).toFixed(1);
+        if(v>0) g+='<line x1="'+x+'" y1="'+o.T+'" x2="'+x+'" y2="'+y0+'" stroke="'+FI_GRID+'" stroke-width="1"/>';
+        g+='<line x1="'+x+'" y1="'+y0+'" x2="'+x+'" y2="'+(y0+6)+'" stroke="'+FI_AXIS+'" stroke-width="1"/>';
+        g+='<text x="'+x+'" y="'+(y0+18)+'" text-anchor="middle" '+FI_AX+'>'+fmt(v,o.y.dp)+'</text>';
+      });
+    }
+    g+='<line x1="'+x0+'" y1="'+o.T+'" x2="'+x0+'" y2="'+y0+'" stroke="'+FI_AXIS+'" stroke-width="1.2"/>';
+    g+='<line x1="'+x0+'" y1="'+y0+'" x2="'+(o.W-o.R)+'" y2="'+y0+'" stroke="'+FI_AXIS+'" stroke-width="1.2"/>';
+    if(o.xTitle) g+='<text x="'+(o.L+iw/2)+'" y="'+(o.H-6)+'" text-anchor="middle" '+FI_TITLE+'>'+esc(o.xTitle)+'</text>';
+    if(o.yTitle) g+='<text transform="translate(14,'+(o.T+ih/2)+') rotate(-90)" text-anchor="middle" '+FI_TITLE+'>'+esc(o.yTitle)+'</text>';
+    return g;
+  }
+  // label every nth of n evenly spaced ticks, so labels never collide
+  function fiEvery(n, iw, px){ return Math.max(1, Math.ceil(n/Math.max(1, Math.floor(iw/px)))); }
   function fiLegend(series){
+    // a series with nothing to draw stays out of the key: the note says why
     return '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink);margin:2px 0 8px">'+
-      series.map(function(sr){ return '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:16px;height:0;border-top:2px '+(sr.dash?"dashed":"solid")+' '+sr.color+'"></i>'+esc(sr.name)+'</span>'; }).join("")+'</div>';
+      series.filter(function(sr){ return sr.vals.some(function(v){ return v!=null; }); }).map(function(sr){ return '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:16px;height:0;border-top:2px '+(sr.dash?"dashed":"solid")+' '+sr.color+'"></i>'+esc(sr.name)+'</span>'; }).join("")+'</div>';
   }
   function fiLine(box, ylab, dp, series, note){
     var wk=TL.fi.weekly||{}, weeks=wk.weeks||[];
@@ -3504,21 +3545,14 @@
     series.forEach(function(sr){ sr.vals.forEach(function(v){ if(v!=null&&v>max) max=v; }); });
     var foot=note?'<div class="fi-gn">'+note+'</div>':'';
     if(!weeks.length||max<=0){ box.innerHTML='<div class="empty">Nothing to draw for this window.</div>'+foot; return; }
-    var W=Math.max(560, box.clientWidth||860), H=280, L=60, R=16, T=12, B=42, iw=W-L-R, ih=H-T-B;
-    var step=fiNice(max/4), ymax=step*Math.ceil(max/step);
-    function X(i){ return L+(weeks.length===1?iw/2:(i/(weeks.length-1))*iw); }
+    var W=Math.max(560, box.clientWidth||860), H=320, L=78, R=20, T=14, B=48, iw=W-L-R, ih=H-T-B;
+    var yt=fiTicks(max), ymax=yt.top, pad=Math.min(24, iw/(weeks.length*2));
+    function X(i){ return L+pad+(weeks.length===1?(iw-2*pad)/2:(i/(weeks.length-1))*(iw-2*pad)); }
     function Y(v){ return T+ih-(v/ymax)*ih; }
+    var every=fiEvery(weeks.length, iw, 58), major=[];
+    weeks.forEach(function(w,i){ major.push({x:X(i), label:(i%every===0)?tlShort(w):""}); });
     var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="'+esc(tlView().title)+'">';
-    for(var gv=0;gv<=ymax+step/1000;gv+=step){
-      g+='<line x1="'+L+'" y1="'+Y(gv).toFixed(1)+'" x2="'+(W-R)+'" y2="'+Y(gv).toFixed(1)+'" stroke="rgba(10,10,10,'+(gv===0?'0.25':'0.06')+')" stroke-width="1"/>';
-      g+='<text x="'+(L-8)+'" y="'+(Y(gv)+3).toFixed(1)+'" text-anchor="end" '+FI_AX+'>'+tlNum(gv)+'</text>';
-    }
-    var xs=Math.max(1,Math.ceil(weeks.length/8));
-    for(var xi=0;xi<weeks.length;xi+=xs){
-      g+='<text x="'+X(xi).toFixed(1)+'" y="'+(T+ih+15)+'" text-anchor="middle" '+FI_AX+'>'+tlShort(weeks[xi])+'</text>';
-    }
-    g+='<text x="'+(L+iw/2)+'" y="'+(H-5)+'" text-anchor="middle" '+FI_TITLE+'>Week starting (Monday)</text>';
-    g+='<text transform="translate(13,'+(T+ih/2)+') rotate(-90)" text-anchor="middle" '+FI_TITLE+'>'+esc(ylab)+'</text>';
+    g+=fiAxes({W:W,H:H,L:L,R:R,T:T,B:B, y:yt, yTitle:ylab, xTitle:"Week starting (Monday)", xMajor:major});
     series.forEach(function(sr){
       var d="", pen="M";
       sr.vals.forEach(function(v,i){
@@ -3526,17 +3560,19 @@
         d+=pen+X(i).toFixed(1)+","+Y(v).toFixed(1); pen="L";
       });
       g+='<path d="'+d+'" fill="none" stroke="'+sr.color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"'+(sr.dash?' stroke-dasharray="6 5"':'')+'/>';
+      // a marker on every week that has a value: each one is a reading
       sr.vals.forEach(function(v,i){
-        // a lone week between gaps has no line, so it gets a dot to be seen at all
-        var lone=v!=null&&(i===0||sr.vals[i-1]==null)&&(i===sr.vals.length-1||sr.vals[i+1]==null);
-        if(lone) g+='<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="2.5" fill="'+sr.color+'"/>';
+        if(v==null) return;
+        g+=sr.dash
+          ? '<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="3.2" fill="#fff" stroke="'+sr.color+'" stroke-width="1.6"/>'
+          : '<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="3.2" fill="'+sr.color+'" stroke="#fff" stroke-width="1.2"/>';
       });
     });
     g+='<line class="fi-x" x1="0" y1="'+T+'" x2="0" y2="'+(T+ih)+'" stroke="rgba(10,10,10,0.35)" stroke-width="1" style="display:none"/>';
     g+='<rect class="fi-hv" x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="transparent"/>';
     g+='</svg>';
     box.innerHTML=fiLegend(series)+'<div style="position:relative">'+g+'<div class="fi-tip"></div></div>'+foot;
-    var c={series:series, weeks:weeks, days:wk.days||[], W:W, L:L, iw:iw, X:X, dp:dp, unit:ylab};
+    var c={series:series, weeks:weeks, days:wk.days||[], W:W, L:L+pad, iw:iw-2*pad, X:X, dp:dp, unit:ylab};
     var svg=box.querySelector("svg"), hv=box.querySelector(".fi-hv"), cross=box.querySelector(".fi-x"), tip=box.querySelector(".fi-tip");
     hv.addEventListener("mousemove",function(evt){
       var r=svg.getBoundingClientRect(), mx=(evt.clientX-r.left)*(c.W/r.width);
@@ -3566,21 +3602,18 @@
     var note='<div class="fi-gn">Across all '+esc(TX("top_plural","Farms")).toLowerCase()+' in the window.'+
       (left?' '+fmt(left)+' of the busiest task'+(left===1?' is':'s are')+' left out: '+(left===1?'its':'their')+' '+blocks+' have no area recorded.':'')+'</div>';
     if(!rows.length){ box.innerHTML='<div class="empty">No task in this window has '+blocks+' with an area recorded.</div>'+note; return; }
-    var W=Math.max(560, box.clientWidth||860), rh=24, T=6, B=36, L=200, R=60, H=T+B+rh*rows.length, iw=W-L-R;
-    var step=fiNice(rows[0].cost_per_ha/4), xmax=step*Math.ceil(rows[0].cost_per_ha/step);
+    var W=Math.max(560, box.clientWidth||860), rh=28, T=10, B=46, L=210, R=64, H=T+B+rh*rows.length, iw=W-L-R;
+    var xt=fiTicks(rows[0].cost_per_ha), xmax=xt.top;
     function X(v){ return L+(v/xmax)*iw; }
     var g='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="Cost per hectare by task">';
-    for(var gv=0;gv<=xmax+step/1000;gv+=step){
-      g+='<line x1="'+X(gv).toFixed(1)+'" y1="'+T+'" x2="'+X(gv).toFixed(1)+'" y2="'+(H-B)+'" stroke="rgba(10,10,10,'+(gv===0?'0.25':'0.06')+')"/>';
-      g+='<text x="'+X(gv).toFixed(1)+'" y="'+(H-B+14)+'" text-anchor="middle" '+FI_AX+'>'+tlNum(gv)+'</text>';
-    }
+    g+=fiAxes({W:W,H:H,L:L,R:R,T:T,B:B, y:xt, horizontal:1, xTitle:"KES per hectare worked"});
     rows.forEach(function(x,i){
       var y=T+i*rh, full=taskName(x.task), nm=full.length>32?full.slice(0,31)+"…":full;
-      g+='<text x="'+(L-8)+'" y="'+(y+rh/2+3)+'" text-anchor="end" font-family="Poppins,sans-serif" font-size="10" fill="#3a3833"><title>'+esc(full)+'</title>'+esc(nm)+'</text>';
-      g+='<rect x="'+L+'" y="'+(y+4)+'" width="'+Math.max(1,X(x.cost_per_ha)-L).toFixed(1)+'" height="'+(rh-8)+'" rx="2" fill="#0a7a43"><title>'+esc(full)+': '+fmt(x.cost_per_ha,0)+' KES/Ha · '+fmt(x.area,1)+' Ha · '+fmt(x.cost,0)+' KES</title></rect>';
-      g+='<text x="'+(X(x.cost_per_ha)+5).toFixed(1)+'" y="'+(y+rh/2+3)+'" '+FI_AX+'>'+fmt(x.cost_per_ha,0)+'</text>';
+      g+='<line x1="'+(L-5)+'" y1="'+(y+rh/2)+'" x2="'+L+'" y2="'+(y+rh/2)+'" stroke="'+FI_AXIS+'" stroke-width="1"/>';
+      g+='<text x="'+(L-9)+'" y="'+(y+rh/2+3.5)+'" text-anchor="end" '+FI_AX+'><title>'+esc(full)+'</title>'+esc(nm)+'</text>';
+      g+='<rect x="'+(L+0.6)+'" y="'+(y+5)+'" width="'+Math.max(1,X(x.cost_per_ha)-L).toFixed(1)+'" height="'+(rh-10)+'" rx="2" fill="#0a7a43"><title>'+esc(full)+': '+fmt(x.cost_per_ha,0)+' KES/Ha · '+fmt(x.area,1)+' Ha · '+fmt(x.cost,0)+' KES</title></rect>';
+      g+='<text x="'+(X(x.cost_per_ha)+6).toFixed(1)+'" y="'+(y+rh/2+3.5)+'" '+FI_AX+' font-weight="600">'+fmt(x.cost_per_ha,0)+'</text>';
     });
-    g+='<text x="'+(L+iw/2)+'" y="'+(H-5)+'" text-anchor="middle" '+FI_TITLE+'>KES per hectare worked</text>';
     box.innerHTML=g+'</svg>'+note;
   }
   function renderFiGraph(){
@@ -3608,16 +3641,16 @@
     } else if(vw==="cost"){
       fiLine(box,"KES confirmed pay",0,per(function(f,c){ return c; }),"");
     } else {
-      fiLine(box,esc(TX("top_singular","Farm"))+" Ha / man-day",2,per(function(f,c,i){ var m=f.mandays[i]; return (m>0&&f.area>0)?f.area/m:null; }),areaNote);
+      fiLine(box,"Man-days / Ha of "+top,2,per(function(f,c,i){ var m=f.mandays[i]; return (m>0&&f.area>0)?m/f.area:null; }),areaNote);
     }
   }
   function renderFiEff(){
     var box=el("wm-fi-eff-body"); if(!box||!FI.data) return;
     var farms=FI.data.farms||[], tasks=FI.data.tasks||[];
     if(!farms.length){ box.innerHTML='<div class="empty">No confirmed work in this window.</div>'; return; }
-    function hpm(v){ return v>0? fmt(v,3) : "—"; }
+    function mdph(v){ return v>0? fmt(v,2) : "—"; }
     function cph(v){ return v>0? fmt(v,0) : "—"; }
-    var h='<div class="tablewrap"><table><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Area Ha</th><th class="n">Man-days</th><th class="n">Ha / man-day</th><th class="n">Cost KES</th><th class="n">Cost / Ha</th><th class="n">All-time KES</th></tr></thead><tbody>';
+    var h='<div class="tablewrap"><table><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Area Ha</th><th class="n">Man-days</th><th class="n" title="Man-days ÷ Area: worker-days one hectare takes. Lower is leaner.">Man-days / Ha</th><th class="n">Cost KES</th><th class="n">Cost / Ha</th><th class="n">All-time KES</th></tr></thead><tbody>';
     var ta=0,tm=0,tc=0;
     farms.forEach(function(f){
       ta+=f.area; tm+=f.mandays; tc+=f.cost;
@@ -3631,18 +3664,18 @@
             : '')
         : '<span title="No area on this '+esc(TX("top_singular","Farm")).toLowerCase()+' and none on its '+esc(TX("unit_plural","Blocks")).toLowerCase()+'" style="color:#b45309">not set</span>';
       h+='<tr><td><b>'+esc(f.farm)+'</b></td><td class="n m">'+areaCell+'</td><td class="n m">'+fmt(f.mandays)+'</td>'+
-         '<td class="n m">'+hpm(f.ha_per_manday)+'</td><td class="n m">'+fmt(f.cost,0)+'</td><td class="n m">'+cph(f.cost_per_ha)+'</td>'+
+         '<td class="n m">'+mdph(f.mandays_per_ha)+'</td><td class="n m">'+fmt(f.cost,0)+'</td><td class="n m">'+cph(f.cost_per_ha)+'</td>'+
          '<td class="n m" title="Everything confirmed to date, ignoring the date filter">'+fmt(f.cum_pay||0,0)+'</td></tr>';
     });
     var tcum=0; farms.forEach(function(f){ tcum+=(f.cum_pay||0); });
     h+='</tbody><tfoot><tr><th>TOTAL</th><th class="n">'+(ta>0?fmt(ta,1):"—")+'</th><th class="n">'+fmt(tm)+'</th>'+
-       '<th class="n">'+(ta>0&&tm>0?fmt(ta/tm,3):"—")+'</th><th class="n">'+fmt(tc,0)+'</th><th class="n">'+(ta>0?fmt(tc/ta,0):"—")+'</th>'+
+       '<th class="n">'+(ta>0&&tm>0?fmt(tm/ta,2):"—")+'</th><th class="n">'+fmt(tc,0)+'</th><th class="n">'+(ta>0?fmt(tc/ta,0):"—")+'</th>'+
        '<th class="n">'+fmt(tcum,0)+'</th></tr></tfoot></table></div>';
     if(tasks.length){
       h+='<div class="sech" style="margin-top:12px;font-size:10px">By task &middot; top by man-days</div>'+
-        '<div class="tablewrap" style="max-height:220px;overflow-y:auto"><table><thead><tr><th>Task</th><th class="n">Man-days</th><th class="n">Ha/md</th><th class="n">Cost/Ha</th></tr></thead><tbody>';
+        '<div class="tablewrap" style="max-height:220px;overflow-y:auto"><table><thead><tr><th>Task</th><th class="n">Man-days</th><th class="n">Md/Ha</th><th class="n">Cost/Ha</th></tr></thead><tbody>';
       tasks.forEach(function(x){
-        h+='<tr><td>'+esc(taskName(x.task))+taskStdSub(x.task)+'</td><td class="n m">'+fmt(x.mandays)+'</td><td class="n m">'+hpm(x.ha_per_manday)+'</td><td class="n m">'+cph(x.cost_per_ha)+'</td></tr>';
+        h+='<tr><td>'+esc(taskName(x.task))+taskStdSub(x.task)+'</td><td class="n m">'+fmt(x.mandays)+'</td><td class="n m">'+mdph(x.mandays_per_ha)+'</td><td class="n m">'+cph(x.cost_per_ha)+'</td></tr>';
       });
       h+='</tbody></table></div>';
     }

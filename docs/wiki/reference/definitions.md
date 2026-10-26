@@ -1,5 +1,5 @@
 - Man-day — one worker working one day (a worker on two tasks the same day is one man-day).
-- Ha / man-day — area of the blocks whose plans were worked, divided by the man-days spent on them: how much ground one worker-day covers.
+- Man-days / Ha — the man-days spent, divided by the area of the blocks whose plans were worked: how many worker-days one hectare takes.
 - Cost / Ha — confirmed pay divided by the area worked: what a hectare of work costs.
 - Available worker — an active employee with no live assignment covering the chosen date.
 - Standard — the plan's daily expectation, e.g. 150 Meter/day @ KES 2.2667.
