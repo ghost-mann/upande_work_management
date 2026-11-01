@@ -32,7 +32,7 @@
   function call(args, method){
     var ep = "/api/method/" + (method || "wm_planner");
     var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1,
-                  save:1, submit_for_review:1, decide_line:1, gm_approve:1};
+                  save:1, submit_for_review:1, decide_line:1, gm_approve:1, set_leaders:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
@@ -490,12 +490,16 @@
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
-                edited_lines:d.edited_lines, ok_lines:d.ok_lines};
+                edited_lines:d.edited_lines, ok_lines:d.ok_lines,
+                leader_options:d.leader_options||[], stand_ins:d.stand_ins||[],
+                can_set_leaders:d.can_set_leaders};
       }).catch(function(){ return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:[],
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
-                edited_lines:d.edited_lines, ok_lines:d.ok_lines}; });
+                edited_lines:d.edited_lines, ok_lines:d.ok_lines,
+                leader_options:d.leader_options||[], stand_ins:d.stand_ins||[],
+                can_set_leaders:d.can_set_leaders}; });
     }).then(function(res){
       if(!res) return;
       var p=res.p, acts=res.acts;
@@ -609,18 +613,38 @@
         h+='</ul></div>';
       }
       h+='<div class="note" style="margin-bottom:8px">Click an activity to trace it the whole way down — requested, crewed, recorded, confirmed and paid — including stale drafts still holding the line.</div>';
-      var mpColspan = 11;
-      h+='<div class="mpf-tablewrap"><table><thead><tr><th>Activity</th><th class="n">Man days</th><th class="n">Days</th>'+
+      var mpColspan = 12;
+      // TEAM LEADERS. Who runs each activity; changed here at any stage of the
+      // plan through set_leaders, which never touches the budget.
+      var tlOpts = res.leader_options||[];
+      var tlName = {};
+      tlOpts.forEach(function(o){ tlName[o.user]=o.full_name||o.user; });
+      function tlLabel(u){ return u ? (tlName[u]||String(u).split("@")[0]) : ""; }
+      function tlSelect(cls, attrs, cur, blank){
+        var s='<select class="'+cls+'" '+attrs+'><option value="">'+esc(blank||"— none —")+'</option>';
+        var seen=false;
+        tlOpts.forEach(function(o){
+          if(o.user===cur) seen=true;
+          s+='<option value="'+esc(o.user)+'"'+(o.user===cur?' selected':'')+'>'+esc(o.full_name||o.user)+
+             (o.on_farm?'':' (other farm)')+'</option>';
+        });
+        if(cur && !seen) s+='<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option>';
+        return s+'</select>';
+      }
+      h+='<div class="mpf-tablewrap"><table><thead><tr><th>Activity</th><th>Team leader</th><th class="n">Man days</th><th class="n">Days</th>'+
          '<th class="n">Work</th><th>Unit</th><th class="n">Rate</th><th class="n">Cost</th>'+
          '<th class="n">Planned</th><th class="n">Left</th><th>Progress</th><th>Remarks</th></tr></thead><tbody>';
       acts.forEach(function(a,i){
         var exhausted = (a.remaining_qty!=null && a.remaining_qty<=0.005) ||
                         (a.remaining_cost!=null && a.remaining_cost<=0.005);
-        h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(taskName(a.task))+'</td><td class="n m">'+fmt(a.man_days)+'</td>'+
+        h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(taskName(a.task))+'</td>'+
+           '<td>'+(res.can_set_leaders ? tlSelect("mp-tl", 'data-ti="'+i+'"', a.team_leader)
+                                       : (a.team_leader ? esc(tlLabel(a.team_leader)) : '<span class="hint">—</span>'))+'</td>'+
+           '<td class="n m">'+fmt(a.man_days)+'</td>'+
            '<td class="n m">'+fmt(a.days)+'</td><td class="n m">'+fmt(a.work_qty)+'</td>'+
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
            '<td class="n m">'+fmt(a.cost,2)+'</td><td class="n m">'+fmt(a.planned_qty)+'</td>'+
-           '<td class="n m">'+fmt(a.remaining_qty)+
+           '<td class="n m" style="white-space:nowrap">'+fmt(a.remaining_qty)+
            (exhausted?' <span class="mpd-used">fully planned</span>':'')+'</td>'+
            // the bar answers "how is this going", not "can more be planned" -- the
            // Planned and Left columns beside it already answer that one
@@ -639,8 +663,65 @@
            '<div class="mp-consumers" data-panel="'+i+'"></div></td></tr>';
       });
       h+='</tbody></table></div>';
+      // STAND-INS: while a team leader is away their activities on this plan pass
+      // to someone else for those dates, and that work counts to the stand-in
+      var sis = (res.stand_ins||[]).slice();
+      h+='<div class="mp-tlpanel" style="margin-top:14px"><div class="sech" style="font-weight:600;margin-bottom:6px">Team leader stand-ins</div>'+
+         '<div class="note" style="margin-bottom:6px">While a team leader is away, the stand-in runs their activities on this plan '+
+         'between the dates, and that work counts toward the stand-in’s KPIs.</div>'+
+         '<div class="mpf-tablewrap"><table><thead><tr><th>Team leader</th><th>Stand-in</th><th>From</th><th>To</th><th>Note</th>'+
+         (res.can_set_leaders?'<th></th>':'')+'</tr></thead><tbody id="mp-si-body"></tbody></table></div>';
+      if(res.can_set_leaders){
+        h+='<div class="btns" style="margin-top:8px"><button type="button" class="btn sm" id="mp-si-add">+ Add stand-in</button>'+
+           '<button type="button" class="btn sm solid" id="mp-tl-save">Save team leaders</button></div>';
+      }
+      h+='</div>';
       box.innerHTML=h;
       ggPaint(box);
+      function siRender(){
+        var b=el("mp-si-body"); if(!b) return;
+        if(!sis.length){ b.innerHTML='<tr><td colspan="6" class="hint">No stand-ins.</td></tr>'; return; }
+        var r='';
+        sis.forEach(function(s,k){
+          if(res.can_set_leaders){
+            r+='<tr data-si="'+k+'"><td>'+tlSelect("mp-si-tl", 'data-k="'+k+'"', s.team_leader, "— pick —")+'</td>'+
+               '<td>'+tlSelect("mp-si-si", 'data-k="'+k+'"', s.stand_in, "— pick —")+'</td>'+
+               '<td><input type="date" class="mp-si-fd" data-k="'+k+'" value="'+esc(s.from_date||"")+'"></td>'+
+               '<td><input type="date" class="mp-si-td" data-k="'+k+'" value="'+esc(s.to_date||"")+'"></td>'+
+               '<td><input type="text" class="mp-si-nt" data-k="'+k+'" value="'+esc(s.note||"")+'" placeholder="e.g. annual leave"></td>'+
+               '<td><button type="button" class="btn sm mp-si-del" data-k="'+k+'">Remove</button></td></tr>';
+          } else {
+            r+='<tr><td>'+esc(tlLabel(s.team_leader))+'</td><td>'+esc(tlLabel(s.stand_in))+'</td><td class="m">'+esc(s.from_date)+
+               '</td><td class="m">'+esc(s.to_date)+'</td><td>'+esc(s.note||"")+'</td></tr>';
+          }
+        });
+        b.innerHTML=r;
+        b.querySelectorAll("select,input").forEach(function(x){
+          x.onchange=function(){
+            var k=parseInt(x.getAttribute("data-k"),10), c=x.className;
+            var f = c==="mp-si-tl"?"team_leader": c==="mp-si-si"?"stand_in": c==="mp-si-fd"?"from_date": c==="mp-si-td"?"to_date":"note";
+            sis[k][f]=x.value;
+          };
+        });
+        b.querySelectorAll(".mp-si-del").forEach(function(x){
+          x.onclick=function(){ sis.splice(parseInt(x.getAttribute("data-k"),10),1); siRender(); };
+        });
+      }
+      siRender();
+      var siAdd=el("mp-si-add");
+      if(siAdd) siAdd.onclick=function(){ sis.push({team_leader:"",stand_in:"",from_date:"",to_date:"",note:""}); siRender(); };
+      var tlSave=el("mp-tl-save");
+      if(tlSave) tlSave.onclick=function(){
+        var leaders={};
+        box.querySelectorAll("select.mp-tl").forEach(function(x){ leaders[acts[parseInt(x.getAttribute("data-ti"),10)].task]=x.value||""; });
+        tlSave.disabled=true;
+        call({action:"set_leaders", name:p.name, leaders:JSON.stringify(leaders),
+              stand_ins:JSON.stringify(sis)}, "wm_masterplan").then(function(d2){
+          if(d2.error){ toast(d2.error); tlSave.disabled=false; return; }
+          toast("Team leaders saved"+(d2.restamped?(" — "+d2.restamped+" weekly plan"+(d2.restamped===1?"":"s")+" moved"):""));
+          openMasterPlan(p.name);
+        }).catch(function(e){ toast("Could not save: "+e.message); tlSave.disabled=false; });
+      };
       var mpBack=el("mp-back");
       if(mpBack) mpBack.onclick=loadMasterPlans;
       var mpSendGm=el("mp-sendgm");
@@ -1156,14 +1237,34 @@
       ST.blocked = d.blocked_reason || null;
       ST.ggFor=undefined;   // figures are new, so the panel is rebuilt not patched
       var keep=sel.value;
+      // TEAM LEADERS: a team leader picks from the activities they run (or stand
+      // in for) on these dates. Everyone else -- clerks, supervisors -- still
+      // sees every activity, each naming who leads it.
+      var anyMine = ST.tasks.some(function(x){ return x.mine; });
+      var mineBox = el("f-mine-wrap");
+      if(!mineBox){
+        mineBox=document.createElement("label");
+        mineBox.id="f-mine-wrap";
+        mineBox.style.cssText="display:none;font-size:11px;margin-top:4px;gap:5px;align-items:center";
+        mineBox.innerHTML='<input type="checkbox" id="f-mine"> Only activities I lead';
+        sel.parentNode.insertBefore(mineBox, sel.nextSibling);
+        el("f-mine").onchange=function(){ ST.mineOnly=el("f-mine").checked; loadPlannableTasks(); };
+      }
+      mineBox.style.display = anyMine ? "flex" : "none";
+      if(ST.mineOnly===undefined && anyMine) ST.mineOnly=true;
+      if(el("f-mine")) el("f-mine").checked = !!(anyMine && ST.mineOnly);
+      if(anyMine && ST.mineOnly){
+        ST.tasks = ST.tasks.filter(function(x){ return x.mine || x.name===keep; });
+      }
       sel.innerHTML='<option value="">'+
         (d.blocked_reason ? "— nothing can be planned for these dates —" : "— select task —")+
         '</option>';
       ST.tasks.forEach(function(x){
         var o=document.createElement("option");
         o.value=x.name;
-        o.textContent=x.subject+" · "+fmt(x.remaining_qty)+" "+(x.uom||"")+" / KES "+fmt(x.remaining_cost,0)+" left";
-        if(x.exhausted){ o.disabled=true; o.textContent=x.subject+" · fully planned"; }
+        var who = x.mine ? " · yours" : (x.acting_leader ? " · "+(x.acting_name||String(x.acting_leader).split("@")[0]) : "");
+        o.textContent=x.subject+" · "+fmt(x.remaining_qty)+" "+(x.uom||"")+" / KES "+fmt(x.remaining_cost,0)+" left"+who;
+        if(x.exhausted){ o.disabled=true; o.textContent=x.subject+" · fully planned"+who; }
         sel.appendChild(o);
       });
       if(keep) sel.value=keep;

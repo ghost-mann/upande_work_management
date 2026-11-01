@@ -242,9 +242,26 @@ def wm_planner(**kwargs):
             out["period_from"] = str(tkm.period_from)
             out["period_to"] = str(tkm.period_to)
             out["blocked_reason"] = None
+            # who runs each activity on the request's first day: the master plan's
+            # team leader, or their stand-in over that date (resolve_leader in
+            # work_management/team_leaders.py, inlined -- keep in step)
+            tk_stand = frappe.db.get_all("Work Management Team Leader Stand In",
+                filters={"parent": tkm.name, "parenttype": "Work Management Master Plan"},
+                fields=["team_leader", "stand_in", "from_date", "to_date"]) \
+                if frappe.db.exists("DocType", "Work Management Team Leader Stand In") else []
+            out["me"] = frappe.session.user
             for ta in frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": tkm.name, "consultant_state": "OK"},
-                    fields=["name", "task", "uom", "rate", "work_qty", "cost"], order_by="idx"):
+                    fields=["name", "task", "uom", "rate", "work_qty", "cost", "team_leader"], order_by="idx"):
+                tk_lead = ta.team_leader or None
+                tk_best = None
+                if tk_lead:
+                    for tk_s in tk_stand:
+                        if (tk_s.team_leader == tk_lead and
+                                str(tk_s.from_date) <= str(tk_from) <= str(tk_s.to_date)):
+                            if tk_best is None or str(tk_s.from_date) >= str(tk_best.from_date):
+                                tk_best = tk_s
+                tk_acting = tk_best.stand_in if tk_best else tk_lead
                 tk_used = frappe.db.sql("""
                     SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
                     FROM `tabWork Management Planner`
@@ -265,7 +282,11 @@ def wm_planner(**kwargs):
                               "work_qty": frappe.utils.flt(ta.work_qty),
                               "budget_cost": frappe.utils.flt(ta.cost),
                               "remaining_qty": tk_rq, "remaining_cost": tk_rc,
-                              "exhausted": 1 if (tk_rq <= 0.005 or tk_rc <= 0.005) else 0})
+                              "exhausted": 1 if (tk_rq <= 0.005 or tk_rc <= 0.005) else 0,
+                              "team_leader": tk_lead, "acting_leader": tk_acting,
+                              "acting_name": (frappe.db.get_value("User", tk_acting, "full_name")
+                                              if tk_acting else None),
+                              "mine": 1 if (tk_acting and tk_acting == frappe.session.user) else 0})
         out["tasks"] = tasks
 
     elif action == "budgets":
@@ -368,11 +389,13 @@ def wm_planner(**kwargs):
             pr["budget_remaining_cost"] = frappe.utils.flt(frappe.utils.flt(pb_line.cost) - pb_dc, 2)
 
     elif action == "my_requests":
+        # what this person raised, and what they lead -- a team leader sees the
+        # weeks a clerk raised for them as theirs
         out["requests"] = frappe.db.get_all("Work Management Planner",
-            filters={"requested_by":frappe.session.user},
+            or_filters={"requested_by":frappe.session.user, "team_leader":frappe.session.user},
             fields=["name","farm","block_section","task","quantity","people_per_day","person_days",
                     "total_hours","total_cost","from_date","to_date","workflow_state","request_date",
-                    "approved_by","approval_date","uom","daily_target","rate","working_days"],
+                    "approved_by","approval_date","uom","daily_target","rate","working_days","team_leader"],
             order_by="creation desc", limit=200)
 
     elif action == "planner_blocks":
@@ -573,6 +596,21 @@ def wm_planner(**kwargs):
                 # The budget this request draws against, recorded rather than inferred.
                 # Once two plans can cover one period the dates no longer identify one.
                 d.master_plan = cap_pick
+                # Who runs this week's work, fixed when it is raised: the activity's
+                # team leader on that plan, or their stand-in over from_date. KPIs are
+                # counted against this name. resolve_leader(), inlined.
+                sb_lead = frappe.db.get_value("Work Management Master Plan Activity",
+                    {"parent": cap_pick, "task": task}, "team_leader") if cap_pick else None
+                sb_best = None
+                if sb_lead and frappe.db.exists("DocType", "Work Management Team Leader Stand In"):
+                    for sb_s in frappe.db.get_all("Work Management Team Leader Stand In",
+                            filters={"parent": cap_pick, "parenttype": "Work Management Master Plan",
+                                     "team_leader": sb_lead},
+                            fields=["stand_in", "from_date", "to_date"]):
+                        if str(sb_s.from_date) <= str(from_date) <= str(sb_s.to_date):
+                            if sb_best is None or str(sb_s.from_date) >= str(sb_best.from_date):
+                                sb_best = sb_s
+                d.team_leader = sb_best.stand_in if sb_best else sb_lead
                 i = 0
                 for b in block_list:
                     if i > 0:

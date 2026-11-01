@@ -1145,9 +1145,10 @@ def wm_actuals(**kwargs):
                     out["balance_qty"] = d.custom_balance_qty
     elif action == "act_my":
         out["actuals"] = frappe.db.get_all("Work Management Actuals",
-            filters={"entered_by":frappe.session.user},
+            or_filters={"entered_by":frappe.session.user, "team_leader":frappe.session.user},
             fields=["name","assignment","farm","task","total_actual_qty","actual_people","payroll_people",
-                    "total_payment","cost_variance","workflow_state","entry_date"],
+                    "total_payment","cost_variance","workflow_state","entry_date",
+                    "team_leader","quality_score","quality_note"],
             order_by="creation desc", limit=200)
 
     elif action == "act_pending":
@@ -1164,11 +1165,20 @@ def wm_actuals(**kwargs):
         out["pending"] = frappe.db.get_all("Work Management Actuals",
             filters=fmflt,
             fields=["name","assignment","farm","task","block_section","planned_people","actual_people","payroll_people",
-                    "planned_cost","total_payment","cost_variance","total_actual_qty","entered_by","entry_date"],
+                    "planned_cost","total_payment","cost_variance","total_actual_qty","entered_by","entry_date",
+                    "team_leader","quality_score","quality_note","fm_approved_by"],
             order_by="entry_date desc", limit=200)
 
     elif action == "act_fm_approve":
         nm = frappe.form_dict.get("name")
+        # QUALITY. The Farm Manager scores the work while approving it: 1 Good,
+        # 2 Fair, 3 Rework. Rework flags work to be redone; it does not stop the
+        # approval or the pay. The team leader's quality KPI is counted from this.
+        fm_q = (frappe.form_dict.get("quality_score") or "").strip()
+        fm_qmap = {"1": "1 - Good", "2": "2 - Fair", "3": "3 - Rework",
+                   "1 - Good": "1 - Good", "2 - Fair": "2 - Fair", "3 - Rework": "3 - Rework"}
+        fm_qv = fm_qmap.get(fm_q)
+        fm_qnote = (frappe.form_dict.get("quality_note") or "").strip()
         cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","farm"], as_dict=True)
         fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         fmallowed = []
@@ -1190,14 +1200,20 @@ def wm_actuals(**kwargs):
                 out["error"] = "You have no farm assigned for approvals. Ask an admin to grant you a farm-specific Farm Manager role."
             else:
                 out["error"] = "You can only approve records for your farm(s): " + ", ".join(fmallowed) + ". This record is for " + str(cur.farm) + "."
+        elif not fm_qv:
+            out["error"] = "Score the quality of this work before approving it: 1 Good, 2 Fair or 3 Rework."
+        elif fm_qv == "3 - Rework" and not fm_qnote:
+            out["error"] = "Say what has to be redone. The team leader sees this note."
         else:
-            frappe.db.set_value("Work Management Actuals", nm, "workflow_state", STAGE_NEXT["actuals_farm_manager"], update_modified=False)
-            try:
-                frappe.db.set_value("Work Management Actuals", nm, "fm_approved_by", frappe.session.user, update_modified=False)
-                frappe.db.set_value("Work Management Actuals", nm, "fm_approval_date", frappe.utils.today(), update_modified=False)
-            except Exception:
-                pass
+            frappe.db.set_value("Work Management Actuals", nm, {
+                "workflow_state": STAGE_NEXT["actuals_farm_manager"],
+                "quality_score": fm_qv, "quality_note": fm_qnote or None,
+                "fm_approved_by": frappe.session.user,
+                "fm_approval_date": frappe.utils.today()}, update_modified=False)
+            frappe.get_doc("Work Management Actuals", nm).add_comment(
+                "Comment", "Farm Manager approved. Quality: " + fm_qv + (" -- " + fm_qnote if fm_qnote else ""))
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["actuals_farm_manager"]
+            out["quality_score"] = fm_qv
 
     elif action == "act_hr_approve":
         nm = frappe.form_dict.get("name")
@@ -1752,6 +1768,11 @@ def wm_actuals(**kwargs):
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
         out["is_farm_manager"] = ("Farm Manager" in rl) or any(_r_ in rl for _r_ in FARM_APPROVER_ROLE.values())
+        # act_fm_approve lets System Manager and the GM take this step on any farm,
+        # so the screen must offer them the queue -- otherwise the step, and the
+        # quality score it asks for, is reachable by them but invisible
+        if ("System Manager" in rl) or ("General Manager" in rl):
+            out["is_farm_manager"] = True
 
     # ===== ACTUALS (act_) =====
     elif action == "a_sub_candidates":

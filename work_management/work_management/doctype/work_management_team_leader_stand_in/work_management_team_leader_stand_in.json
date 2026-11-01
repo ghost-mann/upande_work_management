@@ -1,0 +1,82 @@
+{
+ "creation": "2026-11-01 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "module": "Work Management",
+ "name": "Work Management Team Leader Stand In",
+ "owner": "Administrator",
+ "modified": "2026-11-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "field_order": [
+  "team_leader",
+  "stand_in",
+  "from_date",
+  "to_date",
+  "note",
+  "set_by",
+  "set_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "team_leader",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Team Leader",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "stand_in",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Stand-in",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "label": "From",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "To",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Data",
+   "label": "Note",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "set_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Set By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "set_on",
+   "fieldtype": "Datetime",
+   "label": "Set On",
+   "read_only": 1
+  }
+ ],
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

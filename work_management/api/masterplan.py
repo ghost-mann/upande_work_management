@@ -302,7 +302,7 @@ def wm_masterplan(**kwargs):
                 out["plan"] = mp
                 out["activities"] = frappe.db.get_all("Work Management Master Plan Activity",
                     filters={"parent": mp_name},
-                    fields=["name", "idx", "task", "man_days", "days", "work_qty", "uom", "rate", "cost",
+                    fields=["name", "idx", "task", "team_leader", "man_days", "days", "work_qty", "uom", "rate", "cost",
                             "consultant_state", "consultant_by", "consultant_on",
                             "original_qty", "original_cost",
                             "planned_qty", "planned_cost", "remaining_qty", "remaining_cost", "remarks"],
@@ -341,6 +341,41 @@ def wm_masterplan(**kwargs):
                                    "cost_at_live_rate": frappe.utils.flt(
                                        frappe.utils.flt(da.get("work_qty")) * dr_r, 2)})
                 out["rate_drift"] = dr
+                # TEAM LEADERS. Who runs each activity, and who stands in for them
+                # while they are away. Changed with set_leaders at any stage of the
+                # plan -- naming who does the work is not a change to the budget.
+                out["stand_ins"] = frappe.db.get_all("Work Management Team Leader Stand In",
+                    filters={"parent": mp_name, "parenttype": "Work Management Master Plan"},
+                    fields=["team_leader", "stand_in", "from_date", "to_date", "note", "set_by", "set_on"],
+                    order_by="from_date") if frappe.db.exists("DocType", "Work Management Team Leader Stand In") else []
+                # who can be picked: people working this farm who have a login, then
+                # everyone already named on the plan even if they have moved farms
+                gl_opts = []
+                gl_seen = {}
+                for gl_e in frappe.db.sql("""
+                    SELECT e.user_id user, e.employee_name full_name
+                    FROM `tabEmployee` e INNER JOIN `tabUser` u ON u.name = e.user_id
+                    WHERE e.custom_farm = %(f)s AND e.status = 'Active'
+                      AND IFNULL(e.user_id, '') != '' AND u.enabled = 1
+                    ORDER BY e.employee_name
+                """, {"f": mp.farm}, as_dict=True):
+                    if not gl_seen.get(gl_e.user):
+                        gl_seen[gl_e.user] = 1
+                        gl_opts.append({"user": gl_e.user, "full_name": gl_e.full_name, "on_farm": 1})
+                gl_named = []
+                for gl_a in out["activities"]:
+                    if gl_a.get("team_leader"):
+                        gl_named.append(gl_a.get("team_leader"))
+                for gl_s in out["stand_ins"]:
+                    gl_named.append(gl_s.get("team_leader"))
+                    gl_named.append(gl_s.get("stand_in"))
+                for gl_u in gl_named:
+                    if gl_u and not gl_seen.get(gl_u):
+                        gl_seen[gl_u] = 1
+                        gl_opts.append({"user": gl_u, "on_farm": 0,
+                            "full_name": frappe.db.get_value("User", gl_u, "full_name") or gl_u})
+                out["leader_options"] = gl_opts
+                out["can_set_leaders"] = 1 if (CAN_EDIT and mp.workflow_state != "Rejected") else 0
                 # an approved plan is editable only by the accounts named in Settings,
                 # and the correction runs down the same in-place path a reviewer uses
                 out["edit_after_approval"] = 1 if (
@@ -492,7 +527,7 @@ def wm_masterplan(**kwargs):
                     # rebuilt from scratch below
                     for sx in frappe.db.get_all("Work Management Master Plan Activity",
                             filters={"parent": sv_name},
-                            fields=["task", "original_qty", "original_cost", "remarks",
+                            fields=["task", "team_leader", "original_qty", "original_cost", "remarks",
                                     "work_qty", "cost", "consultant_state",
                                     "consultant_by", "consultant_on"]):
                         sv_snap[sx.task] = sx
@@ -555,6 +590,12 @@ def wm_masterplan(**kwargs):
                     sv_qty = frappe.utils.flt(sr.get("work_qty"))
                     row = d.append("activities", {})
                     row.task = sr.get("task")
+                    # the team leader rides along with the line; a screen that does not
+                    # send one keeps whoever was named before the rebuild
+                    if "team_leader" in sr:
+                        row.team_leader = sr.get("team_leader") or None
+                    elif sv_snap.get(sr.get("task")):
+                        row.team_leader = sv_snap.get(sr.get("task")).team_leader
                     row.man_days = frappe.utils.flt(sr.get("man_days"))
                     row.days = frappe.utils.cint(sr.get("days"))
                     row.work_qty = sv_qty
@@ -683,6 +724,125 @@ def wm_masterplan(**kwargs):
                     out["changed"] = sv_changed
                     out["totals"] = {"activities": d.total_activities,
                                      "man_days": d.total_man_days, "cost": d.total_cost}
+
+    elif action == "set_leaders":
+        # TEAM LEADERS AND STAND-INS, at any stage of the plan. Naming who runs an
+        # activity changes nobody's budget, so it needs no review and does not send
+        # an approved plan back. The weekly plans already raised against this plan
+        # are re-stamped with whoever now runs them -- unless the Farm Manager has
+        # already approved the work, which keeps the name it was approved under.
+        # Mirrors work_management/team_leaders.py (resolve_leader, stand_in_errors);
+        # keep in step.
+        sl_name = frappe.form_dict.get("name")
+        sl_leaders = json.loads(frappe.form_dict.get("leaders") or "{}")
+        sl_stand = json.loads(frappe.form_dict.get("stand_ins") or "[]")
+        sl_mp = frappe.db.get_value("Work Management Master Plan", sl_name,
+            ["name", "farm", "workflow_state"], as_dict=True) if sl_name else None
+        sl_err = None
+        if not CAN_EDIT:
+            sl_err = "Only a farm manager, the HR head or the general manager can name team leaders."
+        elif not sl_mp:
+            sl_err = "no such master plan: " + str(sl_name)
+        elif sl_mp.workflow_state == "Rejected":
+            sl_err = "This plan was rejected. Edit and resubmit it first."
+        sl_rows = []
+        if not sl_err:
+            sl_rows = frappe.db.get_all("Work Management Master Plan Activity",
+                filters={"parent": sl_name}, fields=["name", "task", "team_leader"])
+            sl_owner = {}
+            for sl_r in sl_rows:
+                sl_v = sl_leaders.get(sl_r.task) if sl_r.task in sl_leaders else sl_r.team_leader
+                sl_owner[sl_r.task] = sl_v or None
+            for sl_u in sl_owner.values():
+                if sl_u and not frappe.db.get_value("User", sl_u, "enabled"):
+                    sl_err = str(sl_u) + " is not an active user."
+                    break
+            sl_named = {}
+            for sl_u in sl_owner.values():
+                if sl_u:
+                    sl_named[sl_u] = 1
+            sl_i = 0
+            for sl_s in sl_stand:
+                sl_i = sl_i + 1
+                if sl_err:
+                    break
+                sl_tl = sl_s.get("team_leader")
+                sl_si = sl_s.get("stand_in")
+                sl_fd = sl_s.get("from_date")
+                sl_td = sl_s.get("to_date")
+                if not (sl_tl and sl_si and sl_fd and sl_td):
+                    sl_err = "Stand-in row " + str(sl_i) + " needs a team leader, a stand-in and both dates."
+                elif sl_tl == sl_si:
+                    sl_err = "Stand-in row " + str(sl_i) + ": " + str(sl_tl) + " cannot stand in for themselves."
+                elif str(sl_td) < str(sl_fd):
+                    sl_err = "Stand-in row " + str(sl_i) + ": the To date is before the From date."
+                elif not sl_named.get(sl_tl):
+                    sl_err = "Stand-in row " + str(sl_i) + ": " + str(sl_tl) + " leads no activity on this plan."
+                elif not frappe.db.get_value("User", sl_si, "enabled"):
+                    sl_err = "Stand-in row " + str(sl_i) + ": " + str(sl_si) + " is not an active user."
+        if sl_err:
+            out["error"] = sl_err
+        else:
+            for sl_r in sl_rows:
+                if (sl_r.team_leader or None) != sl_owner.get(sl_r.task):
+                    frappe.db.set_value("Work Management Master Plan Activity", sl_r.name,
+                        "team_leader", sl_owner.get(sl_r.task), update_modified=False)
+            sl_doc = frappe.get_doc("Work Management Master Plan", sl_name)
+            sl_prev = {}
+            for sl_p in sl_doc.get("stand_ins") or []:
+                sl_prev[str(sl_p.team_leader) + "|" + str(sl_p.stand_in) + "|" +
+                        str(sl_p.from_date) + "|" + str(sl_p.to_date)] = sl_p
+            sl_doc.set("stand_ins", [])
+            for sl_s in sl_stand:
+                sl_k = (str(sl_s.get("team_leader")) + "|" + str(sl_s.get("stand_in")) + "|" +
+                        str(sl_s.get("from_date")) + "|" + str(sl_s.get("to_date")))
+                sl_old = sl_prev.get(sl_k)
+                sl_new = sl_doc.append("stand_ins", {})
+                sl_new.team_leader = sl_s.get("team_leader")
+                sl_new.stand_in = sl_s.get("stand_in")
+                sl_new.from_date = sl_s.get("from_date")
+                sl_new.to_date = sl_s.get("to_date")
+                sl_new.note = sl_s.get("note")
+                sl_new.set_by = sl_old.set_by if sl_old else frappe.session.user
+                sl_new.set_on = sl_old.set_on if sl_old else frappe.utils.now()
+            sl_doc.flags.ignore_permissions = True
+            sl_doc.flags.ignore_validate_update_after_submit = True
+            sl_doc.save(ignore_permissions=True)
+            # re-stamp the weekly plans whose work is not yet past the Farm Manager
+            sl_moved = 0
+            for sl_p in frappe.db.sql("""
+                SELECT p.name, p.task, p.from_date, p.team_leader
+                FROM `tabWork Management Planner` p
+                WHERE p.master_plan = %(mp)s AND IFNULL(p.workflow_state,'') != 'Rejected'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM `tabWork Management Actuals` ac
+                    INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                    WHERE a2.planner_request = p.name
+                      AND (IFNULL(ac.quality_score,'') != ''
+                           OR ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')))
+            """, {"mp": sl_name}, as_dict=True):
+                sl_who = sl_owner.get(sl_p.task)
+                if sl_who:
+                    sl_best = None
+                    for sl_s in sl_stand:
+                        if (sl_s.get("team_leader") == sl_who and
+                                str(sl_s.get("from_date")) <= str(sl_p.from_date) <= str(sl_s.get("to_date"))):
+                            if sl_best is None or str(sl_s.get("from_date")) >= str(sl_best.get("from_date")):
+                                sl_best = sl_s
+                    if sl_best:
+                        sl_who = sl_best.get("stand_in")
+                if (sl_p.team_leader or None) != (sl_who or None):
+                    frappe.db.set_value("Work Management Planner", sl_p.name, "team_leader",
+                                        sl_who, update_modified=False)
+                    frappe.db.sql("""
+                        UPDATE `tabWork Management Actuals` ac
+                        INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                        SET ac.team_leader = %(w)s WHERE a2.planner_request = %(p)s
+                    """, {"w": sl_who, "p": sl_p.name})
+                    sl_moved = sl_moved + 1
+            frappe.db.commit()
+            out["name"] = sl_name
+            out["restamped"] = sl_moved
 
     elif action == "submit_for_review":
         sr_name = frappe.form_dict.get("name")

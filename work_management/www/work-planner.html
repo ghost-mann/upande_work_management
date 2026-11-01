@@ -188,6 +188,9 @@
   border-radius:var(--r);background:#fff;box-shadow:var(--sh);overflow:hidden;margin-bottom:14px}
 #wpp .mpp-st{flex:1;min-width:132px;padding:12px 14px;border-right:1px solid var(--faint);position:relative}
 #wpp .mpp-st:last-child{border-right:none}
+/* the five parts of a stage are spans: stacked, or label, figure, unit and bar run
+   together on one line and the bar's height and margin are ignored */
+#wpp .mpp-st > span{display:block}
 #wpp .mpp-st::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--sc)}
 #wpp .mpp-st .sk{font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:700}
 #wpp .mpp-st .sv{font-size:17px;font-weight:700;letter-spacing:-.02em;margin-top:5px;

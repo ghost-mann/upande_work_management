@@ -17,6 +17,8 @@
   "company",
   "sb_mp_act",
   "activities",
+  "sb_stand_ins",
+  "stand_ins",
   "sb_mp_tot",
   "total_activities",
   "total_man_days",
@@ -176,12 +178,25 @@
    "fieldtype": "Datetime",
    "label": "Last Post-Approval Edit On",
    "read_only": 1
+  },
+  {
+   "fieldname": "sb_stand_ins",
+   "fieldtype": "Section Break",
+   "label": "Team Leader Stand-ins",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "stand_ins",
+   "fieldtype": "Table",
+   "options": "Work Management Team Leader Stand In",
+   "label": "Stand-ins",
+   "description": "While a team leader is away, their activities on this plan pass to the stand-in for those dates, and the work counts toward the stand-in's KPIs."
   }
  ],
  "idx": 0,
  "is_submittable": 0,
  "links": [],
- "modified": "2026-08-06 00:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Master Plan",

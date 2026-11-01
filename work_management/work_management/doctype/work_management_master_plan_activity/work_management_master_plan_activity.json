@@ -7,6 +7,7 @@
  "field_order": [
   "task",
   "task_subject",
+  "team_leader",
   "man_days",
   "days",
   "work_qty",
@@ -162,12 +163,21 @@
    "fieldname": "remarks",
    "fieldtype": "Small Text",
    "label": "Remarks"
+  },
+  {
+   "fieldname": "team_leader",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Team Leader",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Who runs this activity: raises its weekly plans, assigns its crew and enters its actuals. Their KPIs are counted from the work they run."
   }
  ],
  "idx": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-08-06 00:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Master Plan Activity",

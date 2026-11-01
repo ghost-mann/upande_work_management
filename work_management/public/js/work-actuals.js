@@ -1248,7 +1248,7 @@
         list.forEach(function(r, i){
           var editable = (r.workflow_state==="Draft" || r.workflow_state==="Rejected");
           var editcell = editable ? '<span class="editlink" data-asg="'+esc(r.assignment)+'">Edit →</span>' : '';
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+editcell+'</td></tr>';
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+qualityTag(r)+'</td><td>'+editcell+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
@@ -1409,17 +1409,48 @@
         wireExpand(body, 9, function(i){
           var r=list[i];
           return '<div class="dv-h"><b>'+esc(r.name)+'</b><span>'+esc(r.farm||"")+' · '+esc(taskName(r.task))+(r.block_section?(' · '+esc(lbl(r.block_section))):'')+'</span></div>'+
-            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Planned people",fmt(r.planned_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Planned cost",fmt(r.planned_cost)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Entered by",esc((r.entered_by||"").split("@")[0])]])+
+            rowFigs([["Entry date",esc(isodate(r.entry_date))],["Quantity",fmt(r.total_actual_qty)],["People (all)",fmt(r.actual_people)],["Planned people",fmt(r.planned_people)],["Paid workers",fmt(r.payroll_people)],["Payment KES",fmt(r.total_payment)],["Planned cost",fmt(r.planned_cost)],["Cost variance",r.cost_variance!=null?fmt(r.cost_variance):""],["Entered by",esc((r.entered_by||"").split("@")[0])],["Team leader",esc((r.team_leader||"").split("@")[0])]])+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'+deskA("Open actuals doc","work-management-actuals",r.name)+deskA("Open assignment","work-management-assigner",r.assignment)+'</div>';
         });
-        body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(){ act(approveAction, btn.getAttribute("data-app"), bodyId, stage, approveAction); }; });
+        body.querySelectorAll("[data-app]").forEach(function(btn){ btn.onclick=function(ev){
+          if(ev) ev.stopPropagation();
+          var nm=btn.getAttribute("data-app");
+          if(approveAction!=="act_fm_approve"){ act(approveAction, nm, bodyId, stage, approveAction); return; }
+          // QUALITY: this approval scores the work. 3 - Rework flags it to be
+          // redone (and needs a note); it does not hold up the approval or the pay.
+          var ib=btn.parentNode;
+          ib.innerHTML='<select class="q-sc" title="Quality of this work"><option value="">Quality…</option>'+
+            '<option value="1">1 – Good</option><option value="2">2 – Fair</option><option value="3">3 – Rework</option></select>'+
+            '<input class="q-nt" type="text" placeholder="Note (needed for rework)" style="width:150px">'+
+            '<button class="btn solid q-ok">Approve</button><button class="btn q-no">Cancel</button>';
+          ib.onclick=function(e2){ e2.stopPropagation(); };
+          ib.querySelector(".q-no").onclick=function(){ loadStage(bodyId, stage, approveAction); };
+          ib.querySelector(".q-ok").onclick=function(){
+            var sc=ib.querySelector(".q-sc").value, nt=(ib.querySelector(".q-nt").value||"").trim();
+            if(!sc){ toast("Pick a quality score first"); return; }
+            if(sc==="3" && !nt){ toast("Say what has to be redone"); return; }
+            ib.querySelector(".q-ok").disabled=true;
+            act(approveAction, nm, bodyId, stage, approveAction, {quality_score:sc, quality_note:nt});
+          };
+        }; });
         body.querySelectorAll("[data-rej]").forEach(function(btn){ btn.onclick=function(){ act("act_reject", btn.getAttribute("data-rej"), bodyId, stage, approveAction); }; });
         body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ var asg=btn.getAttribute("data-edit"); if(!asg){ toast("No assignment link on this record"); return; } openActualForEdit(asg, btn.getAttribute("data-doc"), stage); }; });
       });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load.</div>'; });
   }
-  function act(which,name,bodyId,stage,approveAction){
-    call({action:which,name:name}).then(function(d){
+  // the approver's quality score, where one was given: 3 - Rework carries the
+  // note saying what has to be redone
+  function qualityTag(r){
+    if(!r.quality_score) return "";
+    var k=String(r.quality_score).charAt(0);
+    var c=k==="1"?"#0a7a43":k==="2"?"#a06000":"#b91c1c";
+    return ' <span title="'+esc(r.quality_note||"")+'" style="font-size:10px;font-weight:600;color:'+c+'">'+
+           esc(String(r.quality_score).replace(/^\d - /,""))+'</span>';
+  }
+  function act(which,name,bodyId,stage,approveAction,extra){
+    var args={action:which,name:name};
+    if(extra){ for(var k in extra){ args[k]=extra[k]; } }
+    call(args).then(function(d){
       if(d.error){ toast("Error: "+d.error); return; }
       toast(name+" → "+d.workflow_state);
       loadStage(bodyId, stage, approveAction);

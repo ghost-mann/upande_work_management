@@ -9,6 +9,7 @@
  "field_order": [
   "farm",
   "master_plan",
+  "team_leader",
   "company",
   "status",
   "cb_dates",
@@ -419,12 +420,21 @@
    "fieldtype": "Datetime",
    "label": "Submitted At",
    "read_only": 1
+  },
+  {
+   "fieldname": "team_leader",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Team Leader",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "description": "Who runs this week's work: the activity's team leader on the master plan, or their stand-in for these dates. KPIs are counted against this person."
   }
  ],
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-07-23 00:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Planner",

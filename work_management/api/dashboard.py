@@ -3868,6 +3868,224 @@ def wm_dashboard(**kwargs):
         out["person"] = kpwho
         out["window"] = {"from": kpfrom, "to": kpto}
 
+    elif action == "tl_kpis":
+        # TEAM LEADER KPIs. A team leader is named per activity on the master plan
+        # and each weekly plan carries whoever ran it (the leader, or their stand-in
+        # over those dates). Four numbers per person, over weekly plans starting in
+        # the range:
+        #   completion  earned man-days / planned man-days (actual qty at the plan's
+        #               daily target -- units differ across activities, man-days don't)
+        #   efficiency  earned man-days / worker-days actually recorded
+        #   backlog     what is left of the master plan activities they own
+        #   quality     Good / Fair / Rework shares of the Farm Manager's scores
+        # Master plan progress and backlog belong to the activity's owner on the
+        # plan; weekly figures and quality to whoever ran the week. The arithmetic
+        # is work_management/team_leaders.py, inlined -- keep in step.
+        # Farm managers, HR heads, the GM and System Managers see every leader on
+        # their farms; anyone else sees only themselves.
+        tl_rl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        tl_all = 0
+        for tl_r in tl_rl:
+            if (tl_r in ("System Manager", "General Manager", "HOD HR", "HR Manager Kaitet")
+                    or tl_r.startswith("Farm Manager")):
+                tl_all = 1
+        tl_from = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -55))
+        tl_to = frappe.form_dict.get("to_date") or frappe.utils.today()
+        tl_farm = frappe.form_dict.get("farm") or ""
+        tl_who = frappe.form_dict.get("team_leader") or ""
+        if not tl_all:
+            tl_who = frappe.session.user
+        tl_args = {"a": tl_from, "b": tl_to, "fms": tuple(FARMS) if FARMS else ("__none__",)}
+        tl_w = " AND p.farm IN %(fms)s"
+        if tl_farm:
+            tl_w = " AND p.farm = %(fm)s"
+            tl_args["fm"] = tl_farm
+        if tl_who:
+            tl_w = tl_w + " AND p.team_leader = %(tl)s"
+            tl_args["tl"] = tl_who
+        tl_ok = "('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')"
+        tl_plans = frappe.db.sql("""
+            SELECT p.name, p.team_leader, p.farm, p.task, p.from_date, p.to_date,
+                   p.quantity, p.person_days, p.total_cost, p.daily_target, p.uom,
+                   p.workflow_state, p.master_plan,
+                   DATE_SUB(p.from_date, INTERVAL WEEKDAY(p.from_date) DAY) wk
+            FROM `tabWork Management Planner` p
+            WHERE IFNULL(p.team_leader,'') != ''
+              AND IFNULL(p.workflow_state,'') NOT IN ('Rejected','Draft')
+              AND p.from_date >= %(a)s AND p.from_date <= %(b)s""" + tl_w + """
+            ORDER BY p.from_date DESC
+        """, tl_args, as_dict=True)
+        tl_pn = tuple([x.name for x in tl_plans]) or ("__none__",)
+        tl_act = {}
+        for tl_x in frappe.db.sql("""
+            SELECT a2.planner_request p, COALESCE(SUM(ac.total_actual_qty),0) aq,
+                   COALESCE(SUM(ac.total_payment),0) pay
+            FROM `tabWork Management Actuals` ac
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            WHERE ac.workflow_state IN """ + tl_ok + """ AND a2.planner_request IN %(ps)s
+            GROUP BY a2.planner_request
+        """, {"ps": tl_pn}, as_dict=True):
+            tl_act[tl_x.p] = {"aq": frappe.utils.flt(tl_x.aq), "pay": frappe.utils.flt(tl_x.pay), "wd": 0}
+        for tl_x in frappe.db.sql("""
+            SELECT a2.planner_request p,
+                   COUNT(DISTINCT CONCAT(we.employee,'|',we.work_date)) wd
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            WHERE ac.workflow_state IN """ + tl_ok + """ AND a2.planner_request IN %(ps)s
+              AND (IFNULL(we.actual_quantity,0) > 0 OR IFNULL(we.amount,0) > 0)
+            GROUP BY a2.planner_request
+        """, {"ps": tl_pn}, as_dict=True):
+            if tl_x.p in tl_act:
+                tl_act[tl_x.p]["wd"] = frappe.utils.cint(tl_x.wd)
+        tl_q = {}
+        for tl_x in frappe.db.sql("""
+            SELECT a2.planner_request p, ac.name, ac.quality_score, ac.quality_note,
+                   ac.fm_approved_by, ac.fm_approval_date
+            FROM `tabWork Management Actuals` ac
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            WHERE ac.workflow_state != 'Rejected' AND IFNULL(ac.quality_score,'') != ''
+              AND a2.planner_request IN %(ps)s
+            ORDER BY ac.creation
+        """, {"ps": tl_pn}, as_dict=True):
+            tl_q[tl_x.p] = tl_x
+        tl_people = {}
+        tl_weeks = {}
+        tl_rows = []
+        for tl_p in tl_plans:
+            tl_a = tl_act.get(tl_p.name) or {"aq": 0, "pay": 0, "wd": 0}
+            tl_pq = frappe.utils.flt(tl_p.quantity)
+            tl_pmd = frappe.utils.flt(tl_p.person_days)
+            tl_pc = frappe.utils.flt(tl_p.total_cost)
+            if frappe.utils.flt(tl_p.daily_target) > 0:
+                tl_emd = tl_a["aq"] / frappe.utils.flt(tl_p.daily_target)
+            else:
+                tl_emd = (tl_a["aq"] / tl_pq * tl_pmd) if tl_pq else 0
+            tl_ec = (tl_a["aq"] / tl_pq * tl_pc) if tl_pq else 0
+            tl_qs = tl_q.get(tl_p.name)
+            tl_score = tl_qs.quality_score if tl_qs else None
+            for tl_bucket_key in [("p", tl_p.team_leader), ("w", str(tl_p.wk))]:
+                tl_store = tl_people if tl_bucket_key[0] == "p" else tl_weeks
+                tl_b = tl_store.get(tl_bucket_key[1])
+                if tl_b is None:
+                    tl_b = {"plans": 0, "pmd": 0.0, "emd": 0.0, "amd": 0.0, "pc": 0.0, "ec": 0.0,
+                            "ac": 0.0, "good": 0, "fair": 0, "rework": 0}
+                    tl_store[tl_bucket_key[1]] = tl_b
+                tl_b["plans"] = tl_b["plans"] + 1
+                tl_b["pmd"] = tl_b["pmd"] + tl_pmd
+                tl_b["emd"] = tl_b["emd"] + tl_emd
+                tl_b["amd"] = tl_b["amd"] + tl_a["wd"]
+                tl_b["pc"] = tl_b["pc"] + tl_pc
+                tl_b["ec"] = tl_b["ec"] + tl_ec
+                tl_b["ac"] = tl_b["ac"] + tl_a["pay"]
+                if tl_score:
+                    tl_k = {"1": "good", "2": "fair", "3": "rework"}.get(str(tl_score)[:1])
+                    if tl_k:
+                        tl_b[tl_k] = tl_b[tl_k] + 1
+            if tl_who:
+                tl_rows.append({"plan": tl_p.name, "farm": tl_p.farm, "task": tl_p.task,
+                    "subject": frappe.db.get_value("Task", tl_p.task, "subject") or tl_p.task,
+                    "from_date": str(tl_p.from_date), "to_date": str(tl_p.to_date),
+                    "uom": tl_p.uom, "planned_qty": tl_pq, "actual_qty": tl_a["aq"],
+                    "planned_md": round(tl_pmd, 2), "worked_md": tl_a["wd"],
+                    "completion": round(tl_a["aq"] / tl_pq * 100, 1) if tl_pq else None,
+                    "quality": tl_score, "quality_note": tl_qs.quality_note if tl_qs else None,
+                    "actuals": tl_qs.name if tl_qs else None, "state": tl_p.workflow_state})
+        # the master plan side: activities each person owns on approved plans that
+        # overlap the range, how much of each is done, and what is left
+        tl_mw = " AND mp.farm IN %(fms)s"
+        if tl_farm:
+            tl_mw = " AND mp.farm = %(fm)s"
+        if tl_who:
+            tl_mw = tl_mw + " AND a.team_leader = %(tl)s"
+        tl_mp = {}
+        tl_mp_rows = []
+        for tl_m in frappe.db.sql("""
+            SELECT mp.name plan, mp.plan_name, mp.farm, a.task, a.team_leader, a.work_qty, a.man_days,
+                   a.rate, a.cost, a.uom
+            FROM `tabWork Management Master Plan Activity` a
+            INNER JOIN `tabWork Management Master Plan` mp ON a.parent = mp.name
+            WHERE mp.workflow_state = 'Approved' AND a.consultant_state = 'OK'
+              AND IFNULL(a.team_leader,'') != ''
+              AND mp.period_from <= %(b)s AND mp.period_to >= %(a)s""" + tl_mw + """
+        """, tl_args, as_dict=True):
+            tl_d = frappe.db.sql("""
+                SELECT COALESCE(SUM(ac.total_actual_qty),0) dq, COALESCE(SUM(ac.total_payment),0) pay
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                INNER JOIN `tabWork Management Planner` p ON a2.planner_request = p.name
+                WHERE ac.workflow_state IN """ + tl_ok + """
+                  AND p.master_plan = %(mp)s AND p.task = %(t)s
+            """, {"mp": tl_m.plan, "t": tl_m.task}, as_dict=True)[0]
+            tl_tq = frappe.utils.flt(tl_m.work_qty)
+            tl_dq = frappe.utils.flt(tl_d.dq)
+            tl_left = tl_tq - tl_dq
+            if tl_left < 0:
+                tl_left = 0
+            tl_mdu = (frappe.utils.flt(tl_m.man_days) / tl_tq) if tl_tq else 0
+            tl_b = tl_mp.get(tl_m.team_leader)
+            if tl_b is None:
+                tl_b = {"activities": 0, "target_cost": 0.0, "done_cost": 0.0,
+                        "backlog_md": 0.0, "backlog_cost": 0.0}
+                tl_mp[tl_m.team_leader] = tl_b
+            tl_b["activities"] = tl_b["activities"] + 1
+            tl_b["target_cost"] = tl_b["target_cost"] + frappe.utils.flt(tl_m.cost)
+            tl_b["done_cost"] = tl_b["done_cost"] + min(tl_dq, tl_tq) * frappe.utils.flt(tl_m.rate)
+            tl_b["backlog_md"] = tl_b["backlog_md"] + tl_left * tl_mdu
+            tl_b["backlog_cost"] = tl_b["backlog_cost"] + tl_left * frappe.utils.flt(tl_m.rate)
+            if tl_who:
+                tl_mp_rows.append({"plan": tl_m.plan, "plan_name": tl_m.plan_name, "farm": tl_m.farm,
+                    "task": tl_m.task,
+                    "subject": frappe.db.get_value("Task", tl_m.task, "subject") or tl_m.task,
+                    "uom": tl_m.uom, "target_qty": tl_tq, "done_qty": tl_dq,
+                    "progress": round(tl_dq / tl_tq * 100, 1) if tl_tq else None,
+                    "backlog_qty": round(tl_left, 2), "backlog_md": round(tl_left * tl_mdu, 2),
+                    "backlog_cost": round(tl_left * frappe.utils.flt(tl_m.rate), 2)})
+        tl_out = []
+        tl_names = {}
+        for tl_u in list(tl_people.keys()) + list(tl_mp.keys()):
+            if tl_names.get(tl_u):
+                continue
+            tl_names[tl_u] = frappe.db.get_value("User", tl_u, "full_name") or tl_u
+            tl_b = tl_people.get(tl_u) or {"plans": 0, "pmd": 0.0, "emd": 0.0, "amd": 0.0, "pc": 0.0,
+                                           "ec": 0.0, "ac": 0.0, "good": 0, "fair": 0, "rework": 0}
+            tl_m = tl_mp.get(tl_u) or {"activities": 0, "target_cost": 0.0, "done_cost": 0.0,
+                                       "backlog_md": 0.0, "backlog_cost": 0.0}
+            tl_sc = tl_b["good"] + tl_b["fair"] + tl_b["rework"]
+            tl_out.append({"user": tl_u, "full_name": tl_names[tl_u], "plans": tl_b["plans"],
+                "planned_md": round(tl_b["pmd"], 2), "earned_md": round(tl_b["emd"], 2),
+                "worked_md": round(tl_b["amd"], 2),
+                "completion": round(tl_b["emd"] / tl_b["pmd"] * 100, 1) if tl_b["pmd"] > 0 else None,
+                "efficiency": round(tl_b["emd"] / tl_b["amd"] * 100, 1) if tl_b["amd"] > 0 else None,
+                "cost_efficiency": round(tl_b["ec"] / tl_b["ac"] * 100, 1) if tl_b["ac"] > 0 else None,
+                "planned_cost": round(tl_b["pc"], 2), "actual_cost": round(tl_b["ac"], 2),
+                "mp_activities": tl_m["activities"],
+                "mp_progress": round(tl_m["done_cost"] / tl_m["target_cost"] * 100, 1) if tl_m["target_cost"] > 0 else None,
+                "backlog_md": round(tl_m["backlog_md"], 2), "backlog_cost": round(tl_m["backlog_cost"], 2),
+                "scored": tl_sc,
+                "good": round(tl_b["good"] * 100.0 / tl_sc, 1) if tl_sc else None,
+                "fair": round(tl_b["fair"] * 100.0 / tl_sc, 1) if tl_sc else None,
+                "rework": round(tl_b["rework"] * 100.0 / tl_sc, 1) if tl_sc else None})
+        out["leaders"] = sorted(tl_out, key=lambda r: (-(r["completion"] or -1), r["full_name"]))
+        out["can_see_all"] = tl_all
+        out["me"] = frappe.session.user
+        out["window"] = {"from": tl_from, "to": tl_to}
+        if tl_who:
+            out["team_leader"] = tl_who
+            out["full_name"] = frappe.db.get_value("User", tl_who, "full_name") or tl_who
+            tl_series = []
+            for tl_wk in sorted(tl_weeks.keys()):
+                tl_b = tl_weeks[tl_wk]
+                tl_sc = tl_b["good"] + tl_b["fair"] + tl_b["rework"]
+                tl_series.append({"week": tl_wk,
+                    "completion": round(tl_b["emd"] / tl_b["pmd"] * 100, 1) if tl_b["pmd"] > 0 else None,
+                    "efficiency": round(tl_b["emd"] / tl_b["amd"] * 100, 1) if tl_b["amd"] > 0 else None,
+                    "rework": round(tl_b["rework"] * 100.0 / tl_sc, 1) if tl_sc else None,
+                    "scored": tl_sc})
+            out["weeks"] = tl_series
+            out["plans"] = tl_rows
+            out["mp_rows"] = tl_mp_rows
+
     elif action == "plan_completion":
         # EVERY MASTER PLAN IN A DATE RANGE, AND HOW MUCH OF IT ACTUALLY HAPPENED.
         # Three numbers describe a plan and they are routinely confused: what was

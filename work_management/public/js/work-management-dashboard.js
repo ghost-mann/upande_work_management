@@ -235,6 +235,178 @@
       '</s><b>'+pctTxt(pct)+'</b></span>';
   }
 
+  // ============ TEAM LEADERS ============
+  // League table of team leaders (farm managers, HR head, GM) and one leader's
+  // scorecard. A team leader who is none of those sees only their own card --
+  // the server decides that, the screen just draws what comes back.
+  //   Completion  earned man-days / planned man-days on their weekly plans
+  //   Efficiency  earned man-days / worker-days actually recorded
+  //   Master plan progress & backlog on the activities they own
+  //   Quality     Good / Fair / Rework shares of the approver's scores
+  var TLK={from:null, to:null, farm:"", who:"", seq:0, d:null};
+  function tlDefaults(){
+    if(!TLK.to){ var t=new Date(); TLK.to=t.toISOString().slice(0,10);
+      var f=new Date(t.getTime()-55*86400000); TLK.from=f.toISOString().slice(0,10); }
+  }
+  function tlPct(v){ return v==null ? '<span class="hint">—</span>' : fmt(v,0)+'%'; }
+  function tlTone(v, good, warn){
+    if(v==null) return "";
+    return v>=good ? "color:#0a7a43" : v>=warn ? "color:#a06000" : "color:#b91c1c";
+  }
+  function tlQual(r){
+    if(!r.scored) return '<span class="hint">not scored</span>';
+    var g=r.good||0, f=r.fair||0, w=r.rework||0;
+    return '<span title="'+fmt(r.scored)+' scored" style="display:inline-flex;align-items:center;gap:6px">'+
+      '<span style="display:inline-flex;width:70px;height:7px;border-radius:4px;overflow:hidden;background:#eee">'+
+        '<i style="width:'+g+'%;background:#16a34a"></i><i style="width:'+f+'%;background:#f59e0b"></i><i style="width:'+w+'%;background:#dc2626"></i></span>'+
+      '<span style="font-size:10.5px">G '+fmt(g,0)+'% · F '+fmt(f,0)+'% · R '+fmt(w,0)+'%</span></span>';
+  }
+  function tlSpark(pts, key, color){
+    var vals=pts.map(function(p){ return p[key]; });
+    var have=vals.filter(function(v){ return v!=null; });
+    if(have.length<2) return '<div class="hint" style="font-size:10px">'+(have.length?"one week so far":"no weeks yet")+'</div>';
+    var W=150, H=34, mx=Math.max(100, Math.max.apply(null, have)), n=vals.length;
+    var d="", started=false;
+    vals.forEach(function(v,i){
+      if(v==null){ started=false; return; }
+      var x=(n===1?W/2:i*(W-4)/(n-1)+2), y=H-2-(v/mx)*(H-4);
+      d+=(started?"L":"M")+x.toFixed(1)+" "+y.toFixed(1)+" "; started=true;
+    });
+    var y100=H-2-(100/mx)*(H-4);
+    return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" style="display:block">'+
+      '<line x1="0" x2="'+W+'" y1="'+y100.toFixed(1)+'" y2="'+y100.toFixed(1)+'" stroke="#ccc" stroke-dasharray="2 2"/>'+
+      '<path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="1.6"/></svg>';
+  }
+  // plain-language help for the team leader table and scorecard, folded away
+  // under a <details> so it costs nothing until someone asks
+  var TL_HELP={
+    plans:"How many weekly plans this team leader ran in these dates. A stand-in's weeks count to the stand-in.",
+    completion:"How much of the planned work was done. Units differ (trees, hectares, hours), so the work is first put into man-days. 100% = everything planned was done. Green 95%+, amber 80–95%, red below 80%. Weeks still running pull it down until their actuals are entered.",
+    efficiency:"Work done (in man-days at the daily target) against the worker-days actually recorded. 100% = each worker-day produced one day's target; below 100% = more people or days were used than the work needed.",
+    cost:"What the work done should have cost at the planned rates, against what was paid. Over 100% = cheaper than planned; under 100% = dearer.",
+    mp:"Progress on the master plan activities this team leader owns, weighted by budget. Completion is the week-by-week view; this is the season view.",
+    backlog:"Work still to do on the master plan activities they own, in man-days (md): 229 md ≈ 229 worker-days of work left.",
+    quality:"How the approver scored their work when approving actuals: G = Good, F = Fair, R = Rework. ‘Not scored’ = nothing approved with a score in these dates yet."
+  };
+  function tlHelp(kind){
+    var li=function(k,t){ return '<li style="margin:3px 0"><b>'+k+'</b> — '+esc(t)+'</li>'; };
+    var body;
+    if(kind==="table"){
+      body='<ul style="margin:6px 0 0 16px;padding:0">'+
+        li("Weekly plans",TL_HELP.plans)+li("Completion",TL_HELP.completion)+li("Efficiency",TL_HELP.efficiency)+
+        li("Cost eff.",TL_HELP.cost)+li("Master plan",TL_HELP.mp)+li("Backlog",TL_HELP.backlog)+li("Quality",TL_HELP.quality)+
+        '</ul><div style="margin-top:6px">Weekly figures count to whoever ran the week (stand-ins included); '+
+        'master plan progress and backlog to the activity’s owner. Team leaders see only their own scorecard.</div>';
+    } else {
+      body='<ul style="margin:6px 0 0 16px;padding:0">'+
+        li("Completion","Share of the work in their weekly plans that has been done and recorded. ‘master plan’ is progress on the activities they own across the whole plan. A low figure often just means the week is still running.")+
+        li("Efficiency","Work done against worker-days used, e.g. ‘14.0 earned of 14.0 worker-days’ = exactly a day's target for every day recorded. Below 100% = more worker-days used than the work needed; above = the crew beat the target.")+
+        li("Backlog","Man-days of owned master plan work still to do, with its value in KES and how many activities it covers. Falls as work is done and confirmed.")+
+        li("Rework","Share of their scored work marked Rework, with the full Good · Fair · Rework split. With only a few records scored, one result moves it a lot. Hover a score in ‘Weekly plans run’ for the note on what to redo.")+
+        '</ul><div style="margin-top:6px">The small line under each figure is its weekly trend; the dashed line is 100%. ‘One week so far’ means it needs a second week to draw.</div>';
+    }
+    return '<details style="margin-top:8px;font-size:11px;color:var(--ink2,#444)"><summary style="cursor:pointer;font-weight:600">'+
+      (kind==="table"?"What do these columns mean?":"How to read this scorecard")+'</summary>'+body+'</details>';
+  }
+  function tlControls(){
+    return '<div class="pex-filters" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
+      '<input type="date" id="tlk-from" value="'+esc(TLK.from)+'"> → <input type="date" id="tlk-to" value="'+esc(TLK.to)+'">'+
+      ((TLK.d && TLK.d.can_see_all) ? '<select id="tlk-farm">'+farmOptions(TLK.farm)+'</select>' : '')+
+      (TLK.who && TLK.d && TLK.d.can_see_all ? '<button type="button" class="btn sm" id="tlk-back">← All team leaders</button>' : '')+
+      '</div>';
+  }
+  function tlWire(box){
+    var f=el("tlk-from"), t=el("tlk-to"), fm=el("tlk-farm"), bk=el("tlk-back");
+    if(f) f.onchange=function(){ TLK.from=f.value; tlLoad(); };
+    if(t) t.onchange=function(){ TLK.to=t.value; tlLoad(); };
+    if(fm) fm.onchange=function(){ TLK.farm=fm.value; tlLoad(); };
+    if(bk) bk.onclick=function(){ TLK.who=""; tlLoad(); };
+    box.querySelectorAll("[data-tl]").forEach(function(tr){
+      tr.style.cursor="pointer";
+      tr.onclick=function(){ TLK.who=tr.getAttribute("data-tl"); tlLoad(); };
+    });
+  }
+  function tlLoad(){
+    var box=el("wm-tlk"); if(!box) return;
+    tlDefaults();
+    var args={action:"tl_kpis", from_date:TLK.from, to_date:TLK.to};
+    if(TLK.farm) args.farm=TLK.farm;
+    if(TLK.who) args.team_leader=TLK.who;
+    var seq=++TLK.seq;
+    call(args).then(function(d){
+      if(seq!==TLK.seq) return;
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      TLK.d=d;
+      if(!d.can_see_all) TLK.who=d.team_leader||d.me;
+      box.innerHTML = TLK.who ? tlCard(d) : tlTable(d);
+      tlWire(box);
+    }).catch(function(){ if(seq===TLK.seq) box.innerHTML='<div class="empty">Could not load team leader KPIs.</div>'; });
+  }
+  function tlTable(d){
+    var rows=d.leaders||[];
+    var h=tlControls();
+    if(!rows.length) return h+'<div class="empty">No team leaders in these dates. Name them per activity on the master plan; their weekly plans count from then on.</div>';
+    var th=function(label, key, cls){ return '<th'+(cls?' class="'+cls+'"':'')+' title="'+esc(TL_HELP[key])+'" style="cursor:help">'+label+'</th>'; };
+    h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Team leader</th>'+th("Weekly plans","plans","n")+
+       th("Completion","completion","n")+th("Efficiency","efficiency","n")+th("Cost eff.","cost","n")+
+       th("Master plan","mp","n")+th("Backlog","backlog","n")+th("Quality","quality")+'</tr></thead><tbody>';
+    rows.forEach(function(r,i){
+      h+='<tr data-tl="'+esc(r.user)+'"><td class="m">'+(i+1)+'</td><td><b>'+esc(r.full_name)+'</b></td>'+
+         '<td class="n m">'+fmt(r.plans)+'</td>'+
+         '<td class="n m" style="'+tlTone(r.completion,95,80)+'">'+tlPct(r.completion)+'</td>'+
+         '<td class="n m" style="'+tlTone(r.efficiency,95,80)+'">'+tlPct(r.efficiency)+'</td>'+
+         '<td class="n m">'+tlPct(r.cost_efficiency)+'</td>'+
+         '<td class="n m">'+tlPct(r.mp_progress)+'</td>'+
+         '<td class="n m">'+(r.mp_activities?fmt(r.backlog_md,1)+' md':'<span class="hint">—</span>')+'</td>'+
+         '<td>'+tlQual(r)+'</td></tr>';
+    });
+    return h+'</tbody></table></div><div class="hint" style="margin-top:6px;font-size:10.5px">Click a team leader for their scorecard. '+
+      'Hover a column heading for what it means.</div>'+tlHelp("table");
+  }
+  function tlCard(d){
+    var r=(d.leaders||[])[0] || {};
+    var wk=d.weeks||[];
+    var h=tlControls()+'<div style="font-weight:600;margin-bottom:8px">'+esc(d.full_name||d.team_leader)+'</div>';
+    function tile(label, val, sub, spark){
+      return '<div style="flex:1;min-width:170px;border:1px solid var(--line,#e5e7eb);border-radius:8px;padding:10px 12px">'+
+        '<div class="hint" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">'+label+'</div>'+
+        '<div style="font-size:22px;font-weight:650;margin:2px 0">'+val+'</div>'+
+        '<div class="hint" style="font-size:10.5px;margin-bottom:4px">'+sub+'</div>'+(spark||"")+'</div>';
+    }
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'+
+      tile("Completion", tlPct(r.completion), "weekly plans · master plan "+(r.mp_progress==null?"—":fmt(r.mp_progress,0)+"%"), tlSpark(wk,"completion","#2563eb"))+
+      tile("Efficiency", tlPct(r.efficiency), fmt(r.earned_md,1)+" earned of "+fmt(r.worked_md,1)+" worker-days", tlSpark(wk,"efficiency","#7c3aed"))+
+      tile("Backlog", r.mp_activities?fmt(r.backlog_md,1)+" md":"—", r.mp_activities?("KES "+money(r.backlog_cost)+" across "+fmt(r.mp_activities)+" activit"+(r.mp_activities===1?"y":"ies")):"owns no master plan activity", "")+
+      tile("Rework", tlPct(r.rework), r.scored?("G "+fmt(r.good,0)+"% · F "+fmt(r.fair,0)+"% · R "+fmt(r.rework,0)+"% of "+fmt(r.scored)+" scored"):"nothing scored yet", tlSpark(wk,"rework","#dc2626"))+
+      '</div>'+tlHelp("card")+'<div style="height:10px"></div>';
+    var mp=d.mp_rows||[];
+    if(mp.length){
+      h+='<div class="sech" style="font-size:12px">Master plan activities owned</div><div style="overflow:auto"><table><thead><tr><th>Plan</th><th>Activity</th>'+
+         '<th class="n">Target</th><th class="n">Done</th><th class="n">Progress</th><th class="n">Backlog</th><th class="n">Backlog md</th></tr></thead><tbody>';
+      mp.forEach(function(m){
+        h+='<tr><td class="m" style="font-size:10px">'+esc(m.plan_name||m.plan)+'</td><td>'+esc(m.subject)+'</td>'+
+           '<td class="n m">'+fmt(m.target_qty)+' '+esc(m.uom||"")+'</td><td class="n m">'+fmt(m.done_qty)+'</td>'+
+           '<td class="n m">'+tlPct(m.progress)+'</td><td class="n m">'+fmt(m.backlog_qty)+'</td><td class="n m">'+fmt(m.backlog_md,1)+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }
+    var pl=d.plans||[];
+    h+='<div class="sech" style="font-size:12px;margin-top:10px">Weekly plans run</div>';
+    if(!pl.length) return h+'<div class="empty">No weekly plans in these dates.</div>';
+    h+='<div style="overflow:auto"><table><thead><tr><th>From</th><th>Activity</th><th class="n">Planned</th><th class="n">Actual</th>'+
+       '<th class="n">Completion</th><th class="n">Planned md</th><th class="n">Worked md</th><th>Quality</th></tr></thead><tbody>';
+    pl.forEach(function(p){
+      var q=p.quality?String(p.quality):"", k=q.charAt(0);
+      var qc=k==="1"?"#0a7a43":k==="2"?"#a06000":k==="3"?"#b91c1c":"";
+      h+='<tr><td class="m" style="font-size:10px">'+esc(p.from_date)+'</td><td>'+esc(p.subject)+'</td>'+
+         '<td class="n m">'+fmt(p.planned_qty)+' '+esc(p.uom||"")+'</td><td class="n m">'+fmt(p.actual_qty)+'</td>'+
+         '<td class="n m">'+tlPct(p.completion)+'</td><td class="n m">'+fmt(p.planned_md,1)+'</td><td class="n m">'+fmt(p.worked_md)+'</td>'+
+         '<td>'+(q?'<span style="color:'+qc+';font-weight:600" title="'+esc(p.quality_note||"")+'">'+esc(q.replace(/^\d - /,""))+'</span>'+
+                  (p.quality_note?' <span class="hint" style="font-size:10px">'+esc(p.quality_note)+'</span>':''):'<span class="hint">—</span>')+'</td></tr>';
+    });
+    return h+'</tbody></table></div>';
+  }
+
   function planCompletion(){
     var box=el("wm-plancomp"); if(!box) return;
     var args={action:"plan_completion"};
@@ -1548,6 +1720,11 @@
       '<div class="card"><div class="hd"><h3>How each master plan is going</h3>'+
         '<div class="cap">work done against time gone by &middot; money planned, earned and paid &middot; open a plan for everything under it</div></div>'+
         '<div class="bd" id="wm-plancomp"><div class="loading">Measuring completion&hellip;</div></div></div>'+
+      // ===== team leaders: completion, efficiency, backlog, quality =====
+      '<div class="sech">Team leaders &mdash; completion, efficiency, backlog &amp; quality</div>'+
+      '<div class="card"><div class="hd"><h3>How each team leader is doing</h3>'+
+        '<div class="cap">weekly plans they ran against what was planned &middot; the master plan work they own &middot; the approver&rsquo;s quality scores</div></div>'+
+        '<div class="bd" id="wm-tlk"><div class="loading">Reading team leaders&hellip;</div></div></div>'+
       // ===== activities, people & blocks, in depth =====
       '<div class="sech">Activities, people &amp; '+esc(TX("unit_plural","Blocks")).toLowerCase()+'</div>'+
       '<div class="card"><div class="hd"><h3>What the work costs, who did it and where</h3>'+
@@ -1620,6 +1797,7 @@
           '<div id="wm-q-body" style="max-height:420px;overflow:auto;margin-top:10px"></div>'+
         '</div></div>';
     planCompletion();
+    tlLoad();
     exInit();
     initCharts();
     initQueues(D);

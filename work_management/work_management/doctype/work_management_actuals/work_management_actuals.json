@@ -16,6 +16,7 @@
   "block_section",
   "task",
   "task_kpi",
+  "team_leader",
   "rate",
   "cb_work",
   "from_date",
@@ -47,6 +48,12 @@
   "custom_balance_qty",
   "custom_close_reason",
   "custom_fm_approved_at",
+  "sb_quality",
+  "quality_score",
+  "quality_note",
+  "cb_quality",
+  "fm_approved_by",
+  "fm_approval_date",
   "custom_gm_approved_at",
   "custom_hr_approved_at",
   "custom_salaried_qty",
@@ -337,12 +344,59 @@
    "fieldtype": "Datetime",
    "label": "Submitted At",
    "read_only": 1
+  },
+  {
+   "fieldname": "team_leader",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Team Leader",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "fetch_from": "planner_request.team_leader",
+   "description": "Copied from the weekly plan."
+  },
+  {
+   "fieldname": "sb_quality",
+   "fieldtype": "Section Break",
+   "label": "Quality"
+  },
+  {
+   "fieldname": "quality_score",
+   "fieldtype": "Select",
+   "label": "Quality Score",
+   "options": "\n1 - Good\n2 - Fair\n3 - Rework",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "description": "Set by the Farm Manager when approving. 3 - Rework flags work that has to be redone; pay is not affected."
+  },
+  {
+   "fieldname": "quality_note",
+   "fieldtype": "Small Text",
+   "label": "Quality Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_quality",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fm_approved_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "FM Approved By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fm_approval_date",
+   "fieldtype": "Date",
+   "label": "FM Approval Date",
+   "read_only": 1
   }
  ],
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-07-23 00:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Actuals",
