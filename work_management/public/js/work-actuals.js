@@ -743,14 +743,12 @@
       btn.onclick=function(ev){
         ev.stopPropagation();
         var emp=btn.getAttribute("data-od-emp"), nm=btn.getAttribute("data-od-name"), dt=btn.getAttribute("data-od-date");
-        var why=window.prompt(nm+" is off on "+dt+".\nWhy were they called in? The Farm Manager approves this before the day can be recorded.");
-        if(why==null) return;
-        if(!why.trim()){ window.alert("A reason is needed."); return; }
-        btn.disabled=true; btn.textContent="asking…";
-        call({action:"od_request", assignment:ST.asg, employee:emp, work_date:dt, reason:why.trim()}).then(function(d){
-          if(d.error){ window.alert(d.error); btn.disabled=false; btn.textContent="ask"; return; }
-          onAsg(ST.asg);
-        }).catch(function(e){ window.alert("Could not send: "+e.message); btn.disabled=false; btn.textContent="ask"; });
+        askReason(nm+" is off on "+dt, "Why were they called in? The approver decides before the day can be recorded.", "Send request", function(why, done){
+          call({action:"od_request", assignment:ST.asg, employee:emp, work_date:dt, reason:why}).then(function(d){
+            if(d.error){ done(d.error); return; }
+            done(); onAsg(ST.asg);
+          }).catch(function(e){ done("Could not send: "+e.message); });
+        });
       };
     });
     box.querySelectorAll("[data-rel-emp]").forEach(function(btn){
@@ -1333,6 +1331,34 @@
       });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load.</div>'; });
   }
+  // A reason, asked in the page rather than in a browser dialog box.
+  // onOk(text, done) -- call done() to close, or
+  // done(message) to keep the box open and show why it failed.
+  function askReason(title, hint, okLabel, onOk){
+    var old=el("ac-askbox"); if(old) old.parentNode.removeChild(old);
+    var w=document.createElement("div"); w.id="ac-askbox";
+    w.style.cssText="position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+    w.innerHTML='<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:18px 18px 14px;box-shadow:0 12px 40px rgba(0,0,0,.2)">'+
+      '<div style="font-weight:650;margin-bottom:4px">'+esc(title)+'</div>'+
+      '<div style="font-size:12px;color:#64748b;margin-bottom:8px">'+esc(hint)+'</div>'+
+      '<textarea id="ac-askt" rows="3" style="width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid #cbd5e1;border-radius:8px"></textarea>'+
+      '<div id="ac-aske" style="color:#b91c1c;font-size:12px;min-height:16px;margin-top:4px"></div>'+
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px"><button type="button" class="btn" id="ac-askno">Cancel</button>'+
+      '<button type="button" class="btn solid" id="ac-askok">'+esc(okLabel)+'</button></div></div>';
+    // inside the page root, where the screen's fonts and buttons are styled
+    (el("acp")||document.body).appendChild(w);
+    var t=el("ac-askt"), e=el("ac-aske"), ok=el("ac-askok");
+    function close(){ if(w.parentNode) w.parentNode.removeChild(w); }
+    el("ac-askno").onclick=close;
+    w.onclick=function(ev){ if(ev.target===w) close(); };
+    ok.onclick=function(){
+      var v=(t.value||"").trim();
+      if(!v){ e.textContent="A reason is needed."; t.focus(); return; }
+      ok.disabled=true; e.textContent="";
+      onOk(v, function(err){ if(err){ e.textContent=err; ok.disabled=false; } else close(); });
+    };
+    t.focus();
+  }
   // OFF-DAY REQUESTS: workers called in on a rest day, waiting for this farm's
   // Farm Manager (or the GM). Approving opens that one worker's cell for that
   // date on the assignment's grid; nothing else changes.
@@ -1352,19 +1378,19 @@
            '<td><div class="ib"><button class="btn solid" data-odok="'+esc(r.name)+'">Approve</button><button class="btn" data-odno="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
       b.innerHTML=h+'</tbody></table>';
-      function decide(btn, nm, decision, note){
+      function decide(btn, nm, decision, note, done){
         btn.disabled=true;
         call({action:"od_decide", name:nm, decision:decision, note:note||""}).then(function(x){
-          if(x.error){ window.alert(x.error); btn.disabled=false; return; }
+          if(x.error){ btn.disabled=false; if(done) done(x.error); else toast(x.error); return; }
+          if(done) done();
           loadOffDayRequests();
-        }).catch(function(e){ window.alert(e.message); btn.disabled=false; });
+        }).catch(function(e){ btn.disabled=false; if(done) done(e.message); else toast(e.message); });
       }
       b.querySelectorAll("[data-odok]").forEach(function(btn){ btn.onclick=function(){ decide(btn, btn.getAttribute("data-odok"), "Approved"); }; });
       b.querySelectorAll("[data-odno]").forEach(function(btn){ btn.onclick=function(){
-        var why=window.prompt("Why is this rejected? The person who asked will see it on the grid.");
-        if(why==null) return;
-        if(!why.trim()){ window.alert("A reason is needed."); return; }
-        decide(btn, btn.getAttribute("data-odno"), "Rejected", why.trim());
+        askReason("Reject this off-day request", "Why is it rejected? The person who asked sees this on the grid.", "Reject", function(why, done){
+          decide(btn, btn.getAttribute("data-odno"), "Rejected", why, done);
+        });
       }; });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load off-day requests.</div>'; });
   }

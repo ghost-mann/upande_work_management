@@ -16,7 +16,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Delivery",
-   "link_count": 2,
+   "link_count": 3,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -38,6 +38,17 @@
    "label": "Recorded actuals",
    "link_count": 0,
    "link_to": "Work Management Actuals",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Off-day requests",
+   "link_count": 0,
+   "link_to": "Work Off Day Request",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

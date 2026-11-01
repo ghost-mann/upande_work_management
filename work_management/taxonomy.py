@@ -88,6 +88,7 @@ FIELD_LABELS = (
 		"Allow more than one approved master plan per {top_singular} at a time"),
 	("Work Management Settings", "rate_recalc_farm", "{top_singular} Scope"),
 	("Work Management Stage Approver", "scope", "{top_singular}"),
+	("Work Off Day Request", "farm", "{top_singular}"),
 	("Work Payment Line", "farm", "{top_singular}"),
 	("Work Payment Line", "block", "{unit_singular} / {section_singular}"),
 	("Work Planner Block", "block", "{unit_singular} / {section_singular}"),
