@@ -467,7 +467,21 @@ def wm_actuals(**kwargs):
                 leave_ok = 1
         except Exception:
             leave_ok = 0
+        # OFF-DAY REQUESTS on this assignment, per worker and date: the latest
+        # request's status. An Approved one opens that worker's off-day cell.
+        odr_map = {}
+        if name and frappe.db.exists("DocType", "Work Off Day Request"):
+            for odr in frappe.db.get_all("Work Off Day Request",
+                    filters={"assignment": name},
+                    fields=["name", "employee", "work_date", "status", "reason",
+                            "requested_by", "decided_by", "decision_note"],
+                    order_by="creation asc"):
+                odr_map.setdefault(odr.employee, {})[str(odr.work_date)] = {
+                    "name": odr.name, "status": odr.status, "reason": odr.reason,
+                    "requested_by": odr.requested_by, "decided_by": odr.decided_by,
+                    "note": odr.decision_note}
         for w in workers:
+            w["off_requests"] = odr_map.get(w.employee, {})
             offs = []
             hl = frappe.db.get_value("Employee", w.employee, "holiday_list")
             if hl and fromd and tod:
@@ -762,6 +776,12 @@ def wm_actuals(**kwargs):
                             leave_ranges.setdefault(r.employee, []).append((str(r.from_date), str(r.to_date), r.leave_type or "leave"))
                     off_set = {}
                     emp_hl = {}
+                    odr_ok = {}
+                    if gate_off and assignment and frappe.db.exists("DocType", "Work Off Day Request"):
+                        for odr in frappe.db.get_all("Work Off Day Request",
+                                filters={"assignment": assignment, "status": "Approved"},
+                                fields=["employee", "work_date"]):
+                            odr_ok[(odr.employee, str(odr.work_date))] = 1
                     if gate_off:
                         for r in frappe.db.sql("""
                             SELECT name, holiday_list FROM `tabEmployee`
@@ -804,7 +824,7 @@ def wm_actuals(**kwargs):
                                 reasons_map.setdefault(pe, []).append("on " + ltype + " on " + pd)
                                 flagged = 1
                                 break
-                        if emp_hl.get(pe) and off_set.get((emp_hl[pe], pd)):
+                        if emp_hl.get(pe) and off_set.get((emp_hl[pe], pd)) and not odr_ok.get((pe, pd)):
                             reasons_map.setdefault(pe, []).append("off day / holiday on " + pd)
                             flagged = 1
                         # no-scan check only when nothing else explains the day
@@ -1118,6 +1138,104 @@ def wm_actuals(**kwargs):
                     out["tw_qty"] = d.custom_tw_qty
                     out["salaried_qty"] = d.custom_salaried_qty
                     out["balance_qty"] = d.custom_balance_qty
+    # ---------------------------------------------------------------------
+    # OFF-DAY REQUESTS. A worker called in on a rest day / holiday from their
+    # holiday list cannot be recorded: the grid locks that cell. Whoever enters
+    # actuals asks for that one worker and date (od_request); the farm's Farm
+    # Manager or the GM approves or rejects it (od_pending / od_decide). Only an
+    # Approved request opens the cell, and act_submit then stops flagging it.
+    # ---------------------------------------------------------------------
+    elif action == "od_request":
+        assignment = frappe.form_dict.get("assignment")
+        employee = frappe.form_dict.get("employee")
+        work_date = frappe.form_dict.get("work_date")
+        reason = (frappe.form_dict.get("reason") or "").strip()
+        err = None
+        asg = None
+        if not (assignment and employee and work_date):
+            err = "Assignment, worker and date are required"
+        elif not reason:
+            err = "Say why they were called in"
+        if not err:
+            asg = frappe.db.get_value("Work Management Assigner", assignment,
+                ["farm", "task", "planner_request", "from_date", "to_date"], as_dict=True)
+            if not asg:
+                err = "No such assignment: " + str(assignment)
+            elif not (str(asg.from_date) <= str(work_date) <= str(asg.to_date)):
+                err = str(work_date) + " is outside this assignment's dates"
+        if not err:
+            on_crew = frappe.db.sql("""
+                SELECT 1 FROM `tabWork Assignment Employee`
+                WHERE parent = %s AND employee = %s LIMIT 1
+            """, (assignment, employee))
+            if not on_crew:
+                err = "That worker is not on this assignment"
+        if not err:
+            hl = frappe.db.get_value("Employee", employee, "holiday_list")
+            is_off = hl and frappe.db.exists("Holiday", {"parent": hl, "holiday_date": work_date})
+            if not is_off:
+                err = str(work_date) + " is not an off day for this worker -- record it directly"
+        if not err:
+            open_req = frappe.db.get_value("Work Off Day Request",
+                {"assignment": assignment, "employee": employee, "work_date": work_date,
+                 "status": ["in", ["Pending", "Approved"]]}, ["name", "status"], as_dict=True)
+            if open_req:
+                err = "Already " + open_req.status.lower() + " (" + open_req.name + ")"
+        if err:
+            out["error"] = err
+        else:
+            odr = frappe.get_doc({"doctype": "Work Off Day Request", "status": "Pending",
+                "assignment": assignment, "plan": asg.planner_request, "farm": asg.farm,
+                "task": asg.task, "employee": employee, "work_date": work_date, "reason": reason,
+                "requested_by": frappe.session.user, "requested_on": frappe.utils.now()})
+            odr.insert(ignore_permissions=True)
+            frappe.db.commit()
+            out["name"] = odr.name
+            out["status"] = "Pending"
+
+    elif action == "od_pending":
+        fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        fmbypass = ("System Manager" in fmrl) or ("General Manager" in fmrl)
+        odflt = {"status": frappe.form_dict.get("status") or "Pending"}
+        if not fmbypass:
+            fmallowed = []
+            for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+                if _role_ in fmrl: fmallowed.append(_farm_)
+            odflt["farm"] = ["in", fmallowed] if fmallowed else ["in", ["__none__"]]
+        out["pending"] = frappe.db.get_all("Work Off Day Request", filters=odflt,
+            fields=["name", "employee", "employee_name", "work_date", "reason", "assignment",
+                    "plan", "farm", "task", "requested_by", "requested_on", "status",
+                    "decided_by", "decided_on", "decision_note"],
+            order_by="work_date desc, creation desc", limit=300)
+
+    elif action == "od_decide":
+        nm = frappe.form_dict.get("name")
+        decision = frappe.form_dict.get("decision")
+        note = (frappe.form_dict.get("note") or "").strip()
+        cur = frappe.db.get_value("Work Off Day Request", nm, ["status", "farm"], as_dict=True)
+        fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        fmallowed = []
+        for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+            if _role_ in fmrl: fmallowed.append(_farm_)
+        fmbypass = ("System Manager" in fmrl) or ("General Manager" in fmrl)
+        if not cur:
+            out["error"] = "Request not found"
+        elif decision not in ("Approved", "Rejected"):
+            out["error"] = "Decision must be Approved or Rejected"
+        elif cur.status != "Pending":
+            out["error"] = "Already " + cur.status.lower()
+        elif not fmbypass and cur.farm not in fmallowed:
+            out["error"] = "Only the " + str(cur.farm) + " Farm Manager (or the GM) can decide this"
+        elif decision == "Rejected" and not note:
+            out["error"] = "Say why it is rejected"
+        else:
+            frappe.db.set_value("Work Off Day Request", nm, {"status": decision,
+                "decided_by": frappe.session.user, "decided_on": frappe.utils.now(),
+                "decision_note": note})
+            frappe.db.commit()
+            out["name"] = nm
+            out["status"] = decision
+
     elif action == "act_my":
         out["actuals"] = frappe.db.get_all("Work Management Actuals",
             or_filters={"entered_by":frappe.session.user, "team_leader":frappe.session.user},

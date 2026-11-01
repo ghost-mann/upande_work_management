@@ -44,7 +44,7 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep="/api/method/"+(method||"wm_actuals");
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_close_reject:1,act_reopen:1};
+    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_close_reject:1,act_reopen:1,od_request:1,od_decide:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -98,6 +98,9 @@
     for(var i=0;i<offs.length;i++){ if(offs[i]===iso) return true; }
     return false;
   }
+  // the latest off-day request for this worker and date, or null
+  function odReq(w, iso){ return (w.off_requests||{})[iso] || null; }
+  function odApproved(w, iso){ var r=odReq(w, iso); return !!(r && r.status==="Approved"); }
   function leaveDay(w, iso){
     var lv=w.leave_dates||[];
     for(var i=0;i<lv.length;i++){ if(lv[i]===iso) return true; }
@@ -112,7 +115,7 @@
     var st=(w.status||"Active");
     if(w.start_date && iso < w.start_date) return false;   // replacement not started yet
     if(st==="Left" && w.left_date && iso > w.left_date) return false;  // left worker, after last day
-    if(offDay(w, iso)) return false;   // worker's rest day / holiday
+    if(offDay(w, iso) && !odApproved(w, iso)) return false;   // rest day / holiday, unless approved
     if(leaveDay(w, iso)) return false; // approved leave blocks entry
     return true;
   }
@@ -155,6 +158,7 @@
     if(r.is_farm_manager) q.push({key:"fm",label:"Farm Manager",stage:"Pending Farm Manager",action:"act_fm_approve"});
     if(r.is_hr_head) q.push({key:"hr",label:"HR Head",stage:"Pending HR Head",action:"act_hr_approve"});
     q.push({key:"gm",label:"GM",stage:"Pending GM",action:"act_gm_approve"});
+    if(r.is_farm_manager || r.is_gm) q.push({key:"offday",label:"Off-day Requests"});
     if(r.is_gm) q.push({key:"close",label:"Close Requests"});
     if(r.is_gm) q.push({key:"closed",label:"Closed Plans"});
     return q;
@@ -173,7 +177,8 @@
     }
     var q=null;
     for(i=0;i<queues.length;i++){ if(queues[i].key===ST._apprKey) q=queues[i]; }
-    if(q && q.key==="close") loadCloseRequests();
+    if(q && q.key==="offday") loadOffDayRequests();
+    else if(q && q.key==="close") loadCloseRequests();
     else if(q && q.key==="closed") loadClosedPlans();
     else if(q) loadStage("acappr-body", q.stage, q.action);
   }
@@ -613,7 +618,9 @@
     var locked = a.live_name ? true : false;
 
     var h='<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:#777;margin-bottom:6px">'+
-          '<span><b style="color:#bbb">·</b> rest day / holiday</span>'+
+          '<span><b style="color:#bbb">·</b> rest day / holiday &mdash; <b>ask</b> to record work on it</span>'+
+          '<span><b style="color:#a06000">asked</b> off-day request waiting for the Farm Manager</span>'+
+          '<span><b style="color:#0a7a43">off ✓</b> off day approved for work</span>'+
           '<span><b style="color:#c2760c">L</b> approved leave (blocked)</span>'+
           '<span><b style="color:#d97706">○</b> pending leave (can still enter)</span>'+
           '<span><b style="color:#0a7a43">in 06:52</b> time scanned in (P = marked present, no scan time)</span>'+
@@ -650,12 +657,22 @@
           if(isLeave){
             h+='<td class="dcell leaveday" title="approved leave">L</td>';
           } else if(isOff){
-            h+='<td class="dcell offday" title="rest day / holiday">·</td>';
+            var odr=odReq(w,iso);
+            if(odr && odr.status==="Pending"){
+              h+='<td class="dcell offday odpend" title="Asked by '+esc(odr.requested_by||"")+': '+esc(odr.reason||"")+' — waiting for the Farm Manager">asked</td>';
+            } else {
+              var rej=(odr && odr.status==="Rejected");
+              var tip=rej ? ('Rejected by '+esc(odr.decided_by||"")+': '+esc(odr.note||"")+' — ask again if it is still needed') : 'rest day / holiday — ask the Farm Manager to let you record work on it';
+              h+='<td class="dcell offday'+(rej?' odrej':'')+'" title="'+tip+'">'+(rej?'✕':'·')+
+                 ((locked||isLeft)?'':'<button type="button" class="odask" data-od-emp="'+esc(w.employee)+'" data-od-name="'+esc(w.employee_name||w.employee)+'" data-od-date="'+iso+'">'+(rej?'ask again':'ask')+'</button>')+'</td>';
+            }
           } else {
             h+='<td class="dcell closed" title="not active this day"></td>';
           }
         } else {
           var pendCls = isLeavePend ? " leavepend" : "";
+          var odOpen = isOff && odApproved(w,iso);
+          if(odOpen) pendCls += " odok";
           var pendTitle = isLeavePend ? ' title="pending leave request — not yet approved"' : '';
           // presence strip: time in (scan) / P (manual present) / A (absent) / ? (no record)
           var pmark="";
@@ -685,7 +702,7 @@
               '" title="Hours this task took on '+iso+'. Pre-filled with the standard day; '+
               'change it only if the day was shared with another task.">';
           }
-          h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+hrsBox+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+pmark+'</td>';
+          h+='<td class="dcell'+pendCls+'"'+pendTitle+' style="position:relative"><input type="number" min="0" step="any" '+(cellLocked?"disabled":"")+' data-emp="'+esc(w.employee)+'" data-date="'+iso+'" data-et="'+esc(w.employment_type||"")+'" value="'+(val!=null&&val!==""?esc(val):"")+'" placeholder="0">'+hrsBox+(isLeavePend?'<span class="lp-dot" title="pending leave">○</span>':'')+(odOpen?'<span class="od-ok" title="off day — approved by '+esc(odReq(w,iso).decided_by||"")+'">off ✓</span>':'')+pmark+'</td>';
         }
       });
       h+='<td class="trow" data-wtot="'+esc(w.employee)+'">0</td></tr>';
@@ -720,6 +737,20 @@
         var v=parseFloat(inp.value);
         if(isNaN(v)||v<=0){ delete ST.cells[key]; } else { ST.cells[key]=v; }
         recompute(a);
+      };
+    });
+    box.querySelectorAll("[data-od-emp]").forEach(function(btn){
+      btn.onclick=function(ev){
+        ev.stopPropagation();
+        var emp=btn.getAttribute("data-od-emp"), nm=btn.getAttribute("data-od-name"), dt=btn.getAttribute("data-od-date");
+        var why=window.prompt(nm+" is off on "+dt+".\nWhy were they called in? The Farm Manager approves this before the day can be recorded.");
+        if(why==null) return;
+        if(!why.trim()){ window.alert("A reason is needed."); return; }
+        btn.disabled=true; btn.textContent="asking…";
+        call({action:"od_request", assignment:ST.asg, employee:emp, work_date:dt, reason:why.trim()}).then(function(d){
+          if(d.error){ window.alert(d.error); btn.disabled=false; btn.textContent="ask"; return; }
+          onAsg(ST.asg);
+        }).catch(function(e){ window.alert("Could not send: "+e.message); btn.disabled=false; btn.textContent="ask"; });
       };
     });
     box.querySelectorAll("[data-rel-emp]").forEach(function(btn){
@@ -1302,6 +1333,42 @@
       });
     }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load.</div>'; });
   }
+  // OFF-DAY REQUESTS: workers called in on a rest day, waiting for this farm's
+  // Farm Manager (or the GM). Approving opens that one worker's cell for that
+  // date on the assignment's grid; nothing else changes.
+  function loadOffDayRequests(){
+    var b=el("acappr-body"); if(!b) return; b.className="loading"; b.innerHTML="Loading…";
+    call({action:"od_pending"}).then(function(d){
+      var rows=d.pending||[];
+      b.className="";
+      if(!rows.length){ b.innerHTML='<div class="empty">No off-day requests awaiting you.</div>'; return; }
+      var h='<div class="note" style="margin-bottom:8px">Workers called in on their rest day or holiday. Approve to let their work that day be recorded on the assignment; the actuals still go through the normal approvals after.</div>'+
+        '<table><thead><tr><th>Worker</th><th>Off day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th>Assignment</th><th>Why</th><th>Asked by</th><th>Action</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        h+='<tr><td><b>'+esc(r.employee_name||r.employee)+'</b><div style="font-size:9px;color:#94a3b8">'+esc(r.employee)+'</div></td>'+
+           '<td>'+esc(dowShortIso(r.work_date))+' '+esc(isodate(r.work_date))+'</td><td>'+esc(r.farm||"")+'</td><td>'+esc(taskName(r.task))+'</td>'+
+           '<td>'+esc(r.assignment||"")+'</td><td style="max-width:240px;white-space:normal">'+esc(r.reason||"")+'</td>'+
+           '<td>'+esc(r.requested_by||"")+'<div style="font-size:9px;color:#94a3b8">'+esc(String(r.requested_on||"").slice(0,16))+'</div></td>'+
+           '<td><div class="ib"><button class="btn solid" data-odok="'+esc(r.name)+'">Approve</button><button class="btn" data-odno="'+esc(r.name)+'">Reject</button></div></td></tr>';
+      });
+      b.innerHTML=h+'</tbody></table>';
+      function decide(btn, nm, decision, note){
+        btn.disabled=true;
+        call({action:"od_decide", name:nm, decision:decision, note:note||""}).then(function(x){
+          if(x.error){ window.alert(x.error); btn.disabled=false; return; }
+          loadOffDayRequests();
+        }).catch(function(e){ window.alert(e.message); btn.disabled=false; });
+      }
+      b.querySelectorAll("[data-odok]").forEach(function(btn){ btn.onclick=function(){ decide(btn, btn.getAttribute("data-odok"), "Approved"); }; });
+      b.querySelectorAll("[data-odno]").forEach(function(btn){ btn.onclick=function(){
+        var why=window.prompt("Why is this rejected? The person who asked will see it on the grid.");
+        if(why==null) return;
+        if(!why.trim()){ window.alert("A reason is needed."); return; }
+        decide(btn, btn.getAttribute("data-odno"), "Rejected", why.trim());
+      }; });
+    }).catch(function(e){ b.className=""; b.innerHTML='<div class="empty">Could not load off-day requests.</div>'; });
+  }
+  function dowShortIso(iso){ return iso ? dowShort(String(iso).slice(0,10)) : ""; }
   function loadCloseRequests(){
     var b=el("acappr-body"); if(!b) return; b.className="loading"; b.innerHTML="Loading…";
     call({action:"act_close_pending"}).then(function(d){
