@@ -867,7 +867,6 @@
       // as an alert rather than a toast because a toast is missed, and the whole
       // point of these two is that somebody reads them.
       var notes=[];
-      if(d.long_day_warning) notes.push(d.long_day_warning);
       if(d.released_warning) notes.push(d.released_warning);
       if(d.joined_warning) notes.push(d.joined_warning);
       if(notes.length) window.alert("Recorded, with a note:\n\n• "+notes.join("\n\n• "));

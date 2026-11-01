@@ -921,8 +921,6 @@ def wm_actuals(**kwargs):
                 sal_qty = 0
                 seen_people = {}
                 seen_pay_people = {}
-                day_hours = {}
-                long_days = {}
                 released_after = []
                 joined_before = []
                 cells = payload.split("|") if payload else []
@@ -953,9 +951,6 @@ def wm_actuals(**kwargs):
                     hrs = frappe.utils.flt(bits[3]) if len(bits) > 3 else 0
                     if hrs <= 0:
                         hrs = std_h
-                    day_hours[wdate] = frappe.utils.flt(day_hours.get(wdate)) + hrs
-                    if std_h > 0 and hrs > std_h + 0.005:
-                        long_days[wdate] = 1
                     etype = frappe.db.get_value("Employee", emp, "employment_type")
                     # the same test the substitute picker and payment use. Reading
                     # employment_type alone here meant a person payment WOULD pay had
@@ -1018,26 +1013,6 @@ def wm_actuals(**kwargs):
                 d.total_payment = total_pay
                 d.cost_variance = total_pay - frappe.utils.flt(d.planned_cost)
                 d.entered_by = frappe.session.user
-                # A DAY LONGER THAN THE DAY IS. Judged per date against that date's
-                # own standard, so two ordinary full days are never read as one long
-                # one. Warned and recorded: a wrong figure here spoils a metric and
-                # never a wage, and somebody may genuinely have worked over.
-                long_list = []
-                for ld in day_hours:
-                    ld_i = frappe.utils.getdate(ld).weekday()
-                    if ld_i == 5:
-                        ld_std = frappe.utils.flt(STANDARD_DAY.get("saturday"))
-                    elif ld_i == 6:
-                        ld_std = frappe.utils.flt(STANDARD_DAY.get("sunday"))
-                    else:
-                        ld_std = frappe.utils.flt(STANDARD_DAY.get("weekday"))
-                    if ld_std > 0 and frappe.utils.flt(day_hours.get(ld)) > ld_std + 0.005:
-                        long_list.append(str(ld) + " (" + str(frappe.utils.flt(day_hours.get(ld))) +
-                            "h of " + str(ld_std) + ")")
-                if long_list:
-                    out["long_day_warning"] = ("More hours recorded than the day is long: " +
-                        ", ".join(long_list[:6]) + ". Recorded as typed -- check the split if that "
-                        "was not deliberate.")
                 if released_after:
                     out["released_warning"] = ("Work recorded for a worker already released from "
                         "this assignment: " + ", ".join(released_after[:6]) +
