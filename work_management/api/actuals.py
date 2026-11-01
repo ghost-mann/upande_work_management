@@ -137,8 +137,47 @@ def wm_actuals(**kwargs):
     # divide by nothing on every Sunday row. Mirrors work_management/split_day.py,
     # which is unit-tested; keep the two in step.
 
+    # OFF-DAY REQUESTS, switched in Work Management Settings and off by default.
+    # Read from the stored row rather than through the meta, so a site whose
+    # Settings has not got the field yet reads it as off instead of failing.
+    OD_ON = 0
+    if frappe.db.exists("DocType", "Work Off Day Request"):
+        od_sw = frappe.db.sql("""SELECT value FROM `tabSingles`
+            WHERE doctype = 'Work Management Settings' AND field = 'off_day_requests'""")
+        OD_ON = frappe.utils.cint(od_sw[0][0]) if od_sw else 0
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
+
+    # NO APPROVING PAST AN OPEN ASK. While an off-day request on the assignment is
+    # still Pending, the worker-days it covers are undecided, so the actuals cannot
+    # move on at any step -- including the GM confirming open actuals when a plan is
+    # closed early. Only while the feature is on: switched off, nothing can decide
+    # the ask, and refusing would leave the actuals stuck.
+    OD_BLOCK = ""
+    if OD_ON and action in ("act_fm_approve", "act_hr_approve", "act_gm_approve", "act_close_confirm"):
+        odb_asgs = []
+        if action == "act_close_confirm":
+            odb_plan = frappe.form_dict.get("plan")
+            if not odb_plan and frappe.form_dict.get("assignment"):
+                odb_plan = frappe.db.get_value("Work Management Assigner",
+                    frappe.form_dict.get("assignment"), "planner_request")
+            if odb_plan:
+                odb_asgs = frappe.db.get_all("Work Management Assigner",
+                    filters={"planner_request": odb_plan}, pluck="name")
+        else:
+            odb_a = frappe.db.get_value("Work Management Actuals", frappe.form_dict.get("name"), "assignment")
+            if odb_a:
+                odb_asgs = [odb_a]
+        if odb_asgs:
+            odb_wait = frappe.db.get_all("Work Off Day Request",
+                filters={"assignment": ["in", odb_asgs], "status": "Pending"},
+                fields=["name", "employee_name", "employee", "work_date"], limit=5)
+            if odb_wait:
+                OD_BLOCK = ("An off-day request on this work is still waiting for a decision: " +
+                    ", ".join([str(x.employee_name or x.employee) + " on " + str(x.work_date) +
+                               " (" + x.name + ")" for x in odb_wait]) +
+                    ". Approve or reject it under Off-day Requests first.")
 
     # ===== PLANNER =====
     # A farm this caller is not offered is not a farm they may ask about. FARMS is
@@ -169,6 +208,8 @@ def wm_actuals(**kwargs):
 
     if FARM_DENIED:
         out["error"] = FARM_DENIED
+    elif OD_BLOCK:
+        out["error"] = OD_BLOCK
     elif action == "act_assigned":
         # How many assignments the clerk is offered. The cap is applied at the END,
         # after the closed-early and already-fulfilled ones have been dropped, so it
@@ -470,7 +511,7 @@ def wm_actuals(**kwargs):
         # OFF-DAY REQUESTS on this assignment, per worker and date: the latest
         # request's status. An Approved one opens that worker's off-day cell.
         odr_map = {}
-        if name and frappe.db.exists("DocType", "Work Off Day Request"):
+        if OD_ON and name:
             for odr in frappe.db.get_all("Work Off Day Request",
                     filters={"assignment": name},
                     fields=["name", "employee", "work_date", "status", "reason",
@@ -777,7 +818,7 @@ def wm_actuals(**kwargs):
                     off_set = {}
                     emp_hl = {}
                     odr_ok = {}
-                    if gate_off and assignment and frappe.db.exists("DocType", "Work Off Day Request"):
+                    if gate_off and assignment and OD_ON:
                         for odr in frappe.db.get_all("Work Off Day Request",
                                 filters={"assignment": assignment, "status": "Approved"},
                                 fields=["employee", "work_date"]):
@@ -1145,6 +1186,13 @@ def wm_actuals(**kwargs):
     # Manager or the GM approves or rejects it (od_pending / od_decide). Only an
     # Approved request opens the cell, and act_submit then stops flagging it.
     # ---------------------------------------------------------------------
+    elif action in ("od_request", "od_decide") and not OD_ON:
+        out["error"] = "Off-day requests are switched off in Work Management Settings."
+
+    elif action == "od_pending" and not OD_ON:
+        out["pending"] = []
+        out["switched_off"] = 1
+
     elif action == "od_request":
         assignment = frappe.form_dict.get("assignment")
         employee = frappe.form_dict.get("employee")
@@ -1261,6 +1309,16 @@ def wm_actuals(**kwargs):
                     "planned_cost","total_payment","cost_variance","total_actual_qty","entered_by","entry_date",
                     "team_leader","quality_score","quality_note","fm_approved_by"],
             order_by="entry_date desc", limit=200)
+        if OD_ON and out["pending"]:
+            # rows the approval would refuse, so the screen can say why up front
+            odp_wait = {}
+            for odp in frappe.db.get_all("Work Off Day Request",
+                    filters={"status": "Pending",
+                             "assignment": ["in", [x.assignment for x in out["pending"] if x.assignment] or ["__none__"]]},
+                    fields=["assignment", "name"]):
+                odp_wait.setdefault(odp.assignment, []).append(odp.name)
+            for odp_r in out["pending"]:
+                odp_r["od_waiting"] = odp_wait.get(odp_r.assignment) or []
 
     elif action == "act_fm_approve":
         nm = frappe.form_dict.get("name")
@@ -1848,6 +1906,7 @@ def wm_actuals(**kwargs):
         for r in roles:
             rl.append(r.role)
         out["user"] = frappe.session.user
+        out["off_day_requests"] = OD_ON
         # Who enters work, and who works with payments, are capabilities set in
         # Settings -- they used to be these role names, compiled in.
         out["is_clerk"] = 1 if (("System Manager" in rl) or any(

@@ -37,6 +37,7 @@
   "att_block_absent",
   "att_block_leave",
   "att_block_off",
+  "off_day_requests",
   "att_require_scan",
   "asg_show_today_presence",
   "att_scan_cutoff",
@@ -154,7 +155,7 @@
    "description": "On: the farm list every screen offers is narrowed to the farms this person holds a Frappe User Permission for, and a person with no such permission still sees every farm -- Frappe's own default. Off, the default, is exactly today's behaviour on every site.\n\nRun the audit before turning this on. It reports who would lose access and who has already been working farms they are not permitted:\n\n    bench --site &lt;site&gt; execute work_management.farm_permission_audit.print_report\n\nAnybody it lists as working outside their permission is either mis-permissioned or the permission is wrong, and that has to be settled by a person before this is switched on -- otherwise the fix looks like an outage."
   },
   {
-   "description": "One row per farm this project works: its cost project \u2014 which is where a plan's activities come from \u2014 and an area override where the farm's own area is not the figure to divide by. The farms themselves are Upande Core's records. Whether this list also narrows the screens is the checkbox above.",
+   "description": "One row per farm this project works: its cost project — which is where a plan's activities come from — and an area override where the farm's own area is not the figure to divide by. The farms themselves are Upande Core's records. Whether this list also narrows the screens is the checkbox above.",
    "fieldname": "farms",
    "fieldtype": "Table",
    "label": "Farms in use",
@@ -193,6 +194,14 @@
    "description": "Actuals: blocks recording work on the employee's off day. Assigner: flags only when offs cover the whole assignment window."
   },
   {
+   "fieldname": "off_day_requests",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Allow off-day requests",
+   "depends_on": "eval:doc.att_block_off",
+   "description": "With off days checked above, a clerk can ask to record work for one worker on their off day, and that farm's approver (or the GM) approves or rejects it under Actuals → Approvals → Off-day Requests. While an ask is waiting, that assignment's actuals cannot be approved at any step. Off: off days stay locked, as before."
+  },
+  {
    "fieldname": "att_require_scan",
    "fieldtype": "Check",
    "label": "Require a morning scan for day-of assignment",
@@ -204,14 +213,14 @@
    "fieldtype": "Check",
    "default": "0",
    "label": "Show today's presence on the assigner",
-   "description": "On: each worker on the assigner carries a chip for today \u2014 P with the scan time when an Employee Checkin or a submitted Attendance says they are on site, A when marked Absent, ? when there is neither. Off by default, because a site without biometric hardware or with attendance kept elsewhere gets ? on every worker, which reads as information and is not. Off, the reads do not run."
+   "description": "On: each worker on the assigner carries a chip for today — P with the scan time when an Employee Checkin or a submitted Attendance says they are on site, A when marked Absent, ? when there is neither. Off by default, because a site without biometric hardware or with attendance kept elsewhere gets ? on every worker, which reads as information and is not. Off, the reads do not run."
   },
   {
    "fieldname": "att_scan_cutoff",
    "fieldtype": "Time",
    "label": "Morning scan cutoff",
    "default": "09:00:00",
-   "description": "Before this time, missing scans are shown as a grey chip only \u2014 no override dialog."
+   "description": "Before this time, missing scans are shown as a grey chip only — no override dialog."
   },
   {
    "fieldname": "att_block_noscan_actuals",
@@ -231,7 +240,7 @@
   {
    "fieldname": "sb_disc",
    "fieldtype": "Section Break",
-   "label": "Discrepancy checks (Audit \u2192 Discrepancies)"
+   "label": "Discrepancy checks (Audit → Discrepancies)"
   },
   {
    "fieldname": "disc_absent_paid",
@@ -264,9 +273,9 @@
   {
    "fieldname": "disc_rate_mismatch",
    "fieldtype": "Check",
-   "label": "Amount doesn't match qty \u00d7 rate",
+   "label": "Amount doesn't match qty × rate",
    "default": "1",
-   "description": "Flags a row whose amount is not quantity times rate \u2014 usually an edited or corrupted value."
+   "description": "Flags a row whose amount is not quantity times rate — usually an edited or corrupted value."
   },
   {
    "fieldname": "disc_multi_farm",
@@ -322,14 +331,14 @@
    "fieldtype": "Check",
    "default": "1",
    "label": "Hours and output disagree",
-   "description": "Flags a row whose output runs well ahead of the time recorded against it \u2014 three hours producing a full day's target. Not a short day: four hours producing about half a target is an ordinary half day and is never flagged."
+   "description": "Flags a row whose output runs well ahead of the time recorded against it — three hours producing a full day's target. Not a short day: four hours producing about half a target is an ordinary half day and is never flagged."
   },
   {
    "fieldname": "disc_hours_vs_qty",
    "fieldtype": "Check",
    "default": "1",
    "label": "Hourly task where the quantity and the hours differ",
-   "description": "On a task measured in Hours the quantity and the hours are the same fact typed twice. Flags the rows where they disagree \u2014 one of the two is wrong, and the quantity is the one that pays."
+   "description": "On a task measured in Hours the quantity and the hours are the same fact typed twice. Flags the rows where they disagree — one of the two is wrong, and the quantity is the one that pays."
   },
   {
    "fieldname": "att_auto_release_inactive",
@@ -354,7 +363,7 @@
    "fieldname": "master_plan_post_approval_editors",
    "fieldtype": "Small Text",
    "label": "Master plan post-approval editors (comma-separated emails)",
-   "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in \u2014 an administrator who must intervene already has the Desk form."
+   "description": "Who may correct a master plan after it is approved. Empty means nobody, which is the default. System Manager is deliberately not swept in — an administrator who must intervene already has the Desk form."
   },
   {
    "fieldname": "sb_master_plan",
@@ -366,7 +375,7 @@
    "fieldtype": "Check",
    "default": "0",
    "label": "Allow more than one approved master plan per Farm at a time",
-   "description": "Off: a farm holds one approved budget for any given day, and approving a second plan whose period overlaps is refused. On: a farm may run two budgets over the same days \u2014 separate streams of work, each with its own ceiling.\n\nRaising an overlapping plan has always been allowed and is reported when it happens; this governs approval. Nothing is bypassed silently: the approver is still told which plan overlaps, because raising the same plan twice by mistake looks identical to raising a deliberate second one.\n\nEach request already records the plan it draws down, so the planner asks which budget when two cover the dates rather than guessing. Off by default \u2014 a site that has always run one budget per period keeps doing so."
+   "description": "Off: a farm holds one approved budget for any given day, and approving a second plan whose period overlaps is refused. On: a farm may run two budgets over the same days — separate streams of work, each with its own ceiling.\n\nRaising an overlapping plan has always been allowed and is reported when it happens; this governs approval. Nothing is bypassed silently: the approver is still told which plan overlaps, because raising the same plan twice by mistake looks identical to raising a deliberate second one.\n\nEach request already records the plan it draws down, so the planner asks which budget when two cover the dates rather than guessing. Off by default — a site that has always run one budget per period keeps doing so."
   },
   {
    "fieldname": "sb_split_day",
@@ -379,7 +388,7 @@
    "fieldtype": "Check",
    "default": "0",
    "label": "Allow a worker's day to be split between tasks",
-   "description": "Off: a worker already on a live assignment over these dates cannot be put on another one, which is how it has always worked.\n\nOn: they can. Release them from one task's crew \u2014 their recorded work and pay stay exactly as they are \u2014 and assign them to another, recording work against both on the same day. Hours are then typed on each row, so the day counts once however many tasks it spanned.\n\nOff by default: with it off no figure on any site changes."
+   "description": "Off: a worker already on a live assignment over these dates cannot be put on another one, which is how it has always worked.\n\nOn: they can. Release them from one task's crew — their recorded work and pay stay exactly as they are — and assign them to another, recording work against both on the same day. Hours are then typed on each row, so the day counts once however many tasks it spanned.\n\nOff by default: with it off no figure on any site changes."
   },
   {
    "fieldname": "std_hours_weekday",
@@ -407,7 +416,7 @@
    "default": "8",
    "precision": "2",
    "label": "Standard hours, Sunday",
-   "description": "Sunday is worked on these farms, so it is a full day by default. Set it to zero for a site that does not work Sundays \u2014 a zero day contributes no man-days rather than dividing by nothing."
+   "description": "Sunday is worked on these farms, so it is a full day by default. Set it to zero for a site that does not work Sundays — a zero day contributes no man-days rather than dividing by nothing."
   },
   {
    "fieldname": "tab_rates",
@@ -418,10 +427,10 @@
    "fieldname": "sb_rates",
    "fieldtype": "Section Break",
    "label": "Rates",
-   "description": "Task rates are effective-dated in Work Task Rate. Task.custom_rate is mirrored from whichever period is active today, so the Task list stays the place you edit rates day to day \u2014 an edit there is recorded as a period starting today. Backdated changes belong to a rate card."
+   "description": "Task rates are effective-dated in Work Task Rate. Task.custom_rate is mirrored from whichever period is active today, so the Task list stays the place you edit rates day to day — an edit there is recorded as a period starting today. Backdated changes belong to a rate card."
   },
   {
-   "description": "The daily wage most active rate periods are derived from. Read-only \u2014 change it by applying a rate card, not by typing here.",
+   "description": "The daily wage most active rate periods are derived from. Read-only — change it by applying a rate card, not by typing here.",
    "fieldname": "current_daily_wage",
    "fieldtype": "Currency",
    "label": "Current Daily Wage",
@@ -441,7 +450,7 @@
    "description": "Revalues UNPAID day-rows at the rate in force on each work date. Never touches paid rows, tasks that are not wage-derived, or tasks whose unit or daily target changed at the boundary. Always dry-run it first."
   },
   {
-   "description": "Revalue work dated on or after this day, e.g. 2026-07-21 for the 340 \u2192 387 rate card.",
+   "description": "Revalue work dated on or after this day, e.g. 2026-07-21 for the 340 → 387 rate card.",
    "fieldname": "rate_recalc_from",
    "fieldtype": "Date",
    "label": "Recalculate From"
@@ -556,7 +565,7 @@
    "fieldname": "sb_whopays",
    "fieldtype": "Section Break",
    "label": "Who this system pays",
-   "description": "This system pays task work only. Salaried staff are paid through payroll, so their recorded work must never become a payment here. An employee qualifies if ANY of the three lists below matches \u2014 that way a blank employment type on a new hire does not quietly make them unpayable."
+   "description": "This system pays task work only. Salaried staff are paid through payroll, so their recorded work must never become a payment here. An employee qualifies if ANY of the three lists below matches — that way a blank employment type on a new hire does not quietly make them unpayable."
   },
   {
    "fieldname": "tw_employment_type_rows",
@@ -704,7 +713,7 @@
    "fieldname": "tax_top_singular",
    "fieldtype": "Data",
    "label": "Farm level (singular)",
-   "description": "Default: Farm. Estate, site, division \u2014 whatever your project calls it."
+   "description": "Default: Farm. Estate, site, division — whatever your project calls it."
   },
   {
    "fieldname": "tax_top_plural",
@@ -744,7 +753,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-23 12:00:00.000000",
+ "modified": "2026-11-01 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",

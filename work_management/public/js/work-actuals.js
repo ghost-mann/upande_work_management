@@ -158,7 +158,7 @@
     if(r.is_farm_manager) q.push({key:"fm",label:"Farm Manager",stage:"Pending Farm Manager",action:"act_fm_approve"});
     if(r.is_hr_head) q.push({key:"hr",label:"HR Head",stage:"Pending HR Head",action:"act_hr_approve"});
     q.push({key:"gm",label:"GM",stage:"Pending GM",action:"act_gm_approve"});
-    if(r.is_farm_manager || r.is_gm) q.push({key:"offday",label:"Off-day Requests"});
+    if(r.off_day_requests && (r.is_farm_manager || r.is_gm)) q.push({key:"offday",label:"Off-day Requests"});
     if(r.is_gm) q.push({key:"close",label:"Close Requests"});
     if(r.is_gm) q.push({key:"closed",label:"Closed Plans"});
     return q;
@@ -664,7 +664,7 @@
               var rej=(odr && odr.status==="Rejected");
               var tip=rej ? ('Rejected by '+esc(odr.decided_by||"")+': '+esc(odr.note||"")+' — ask again if it is still needed') : 'rest day / holiday — ask the Farm Manager to let you record work on it';
               h+='<td class="dcell offday'+(rej?' odrej':'')+'" title="'+tip+'">'+(rej?'✕':'·')+
-                 ((locked||isLeft)?'':'<button type="button" class="odask" data-od-emp="'+esc(w.employee)+'" data-od-name="'+esc(w.employee_name||w.employee)+'" data-od-date="'+iso+'">'+(rej?'ask again':'ask')+'</button>')+'</td>';
+                 ((locked||isLeft||!(ST.roles&&ST.roles.off_day_requests))?'':'<button type="button" class="odask" data-od-emp="'+esc(w.employee)+'" data-od-name="'+esc(w.employee_name||w.employee)+'" data-od-date="'+iso+'">'+(rej?'ask again':'ask')+'</button>')+'</td>';
             }
           } else {
             h+='<td class="dcell closed" title="not active this day"></td>';
@@ -1495,7 +1495,10 @@
         if(!list.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
         var h='<table><thead><tr><th>Ref</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Qty</th><th class="n">Paid</th><th class="n">Payment KES</th><th>By</th><th>Action</th></tr></thead><tbody>';
         list.forEach(function(r, i){
-          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+          h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty!=null?r.total_actual_qty:r.actual_people)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+esc((r.entered_by||"").split("@")[0])+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.assignment||"")+'" data-doc="'+esc(r.name)+'">Edit</button>'+
+          ((r.od_waiting||[]).length
+            ? '<button class="btn solid" disabled title="An off-day request on this assignment is waiting: '+esc(r.od_waiting.join(", "))+'. Decide it under Off-day Requests first." style="opacity:.45;cursor:not-allowed">Approve</button>'
+            : '<button class="btn solid" data-app="'+esc(r.name)+'">Approve</button>')+'<button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         wireExpand(body, 9, function(i){
