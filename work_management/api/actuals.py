@@ -461,7 +461,7 @@ def wm_actuals(**kwargs):
                 FROM `tabWork Management Actuals` ac
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                 WHERE a2.planner_request = %s
-                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                  AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
                   AND ac.assignment != %s
             """, (pr, name), as_dict=True)
             done_elsewhere = frappe.utils.flt(de[0].q) if de else 0
@@ -667,13 +667,28 @@ def wm_actuals(**kwargs):
         """, (name,), as_dict=True)
         a["draft_name"] = draft[0].name if draft else None
         a["draft_state"] = draft[0].workflow_state if draft else None
+        # An approver opening a pending record to edit it (Approvals -> edit) gets
+        # that record's own figures. Without this the grid seeded only from a
+        # Draft/Rejected record, so a pending one opened as zeros and had to be typed
+        # in again. act_submit decides who may save the edit.
+        edit_doc = frappe.form_dict.get("edit_doc")
+        editing = None
+        if edit_doc:
+            ed = frappe.db.sql("""
+                SELECT name, workflow_state FROM `tabWork Management Actuals`
+                WHERE name = %s AND assignment = %s
+                  AND workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM')
+            """, (edit_doc, name), as_dict=True)
+            editing = ed[0] if ed else None
+        a["editing_doc"] = editing.name if editing else None
         cells = {}
         cell_hours = {}
-        if draft:
+        seed_from = editing.name if editing else (draft[0].name if draft else None)
+        if seed_from:
             for r in frappe.db.sql("""
                     SELECT employee, work_date, actual_quantity, hours
                     FROM `tabWork Actuals Employee` WHERE parent = %s
-            """, (draft[0].name,), as_dict=True):
+            """, (seed_from,), as_dict=True):
                 cells[str(r.employee) + "~" + str(r.work_date)] = r.actual_quantity
                 # only when somebody typed one -- an empty box is the screen's cue to
                 # fill in that date's standard, and sending a 0 would suppress it
@@ -682,10 +697,16 @@ def wm_actuals(**kwargs):
         a["cells"] = cells
         a["cell_hours"] = cell_hours
         # also: is there a live (in-review/confirmed) doc blocking new entry?
+        # Pending Farm Manager is in review too: leaving it out showed a record that
+        # had been entered and saved as an empty, open grid. The record being edited
+        # does not lock its own grid.
         live = frappe.db.sql("""
             SELECT name, workflow_state FROM `tabWork Management Actuals`
-            WHERE assignment = %s AND workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED') LIMIT 1
-        """, (name,), as_dict=True)
+            WHERE assignment = %s AND name != %s
+              AND workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+            ORDER BY FIELD(workflow_state, 'Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
+            LIMIT 1
+        """, (name, editing.name if editing else ""), as_dict=True)
         a["live_name"] = live[0].name if live else None
         a["live_state"] = live[0].workflow_state if live else None
         # what that record holds, so the locked grid shows the work already
@@ -1111,7 +1132,7 @@ def wm_actuals(**kwargs):
                             FROM `tabWork Management Actuals` ac
                             INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                             WHERE a2.planner_request = %s
-                              AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                              AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
                               AND ac.name != %s
                         """, (a_pr, this_doc), as_dict=True)
                         other_done = frappe.utils.flt(other_done_rows[0].q) if other_done_rows else 0
@@ -1139,7 +1160,7 @@ def wm_actuals(**kwargs):
                                 FROM `tabWork Management Actuals` ac
                                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                                 WHERE a2.planner_request = %s
-                                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                                  AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
                                   AND ac.assignment != %s
                             """, (a_pr, assignment), as_dict=True)
                             other_done2 = frappe.utils.flt(odr[0].q) if odr else 0

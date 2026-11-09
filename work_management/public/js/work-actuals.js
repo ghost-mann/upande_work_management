@@ -431,7 +431,8 @@
     ST.asg=assignment; ST.cells={}; ST.hours={}; ST.detail=null;
     ST._editingDoc=docname; ST._editingStage=stage;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
-    call({action:"act_detail",assignment:assignment}).then(function(d){
+    // edit_doc: the server seeds the grid from this pending record and leaves it unlocked
+    call({action:"act_detail",assignment:assignment,edit_doc:docname}).then(function(d){
       var a=d.detail||{}; ST.detail=a;
       renderDetail(a);
       ST.cells = a.cells || {};
