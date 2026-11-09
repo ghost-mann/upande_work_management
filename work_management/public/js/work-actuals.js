@@ -451,7 +451,15 @@
     var over=a.over_target?true:false;
     var barPct=Math.min(a.pct||0,100);
     var barCol=over?"#0a0a0a":((a.pct||0)>=100?"#0a0a0a":"#3aa76d");
-    var liveWarn = a.live_name ? ('<div style="margin-top:8px;font-size:11px;color:#a00;border:1px solid #e0b4b4;background:#fff6f6;padding:8px">An actuals record is already '+esc(a.live_state)+' ('+esc(a.live_name)+'). Wait for it to be confirmed or rejected before entering more.</div>') : "";
+    // A record in review or confirmed locks entry. Its work is shown in the grid
+    // below, so the note says so: a locked grid of zeros read as "nothing entered".
+    var liveConf = a.live_state==="CONFIRMED";
+    var liveWarn = a.live_name ? ('<div style="margin-top:8px;font-size:11px;color:'+(liveConf?'#0a5c33;border:1px solid #b5dcc5;background:#f2faf5':'#a06000;border:1px solid #ecd3a4;background:#fffaf0')+';padding:8px">'+
+      (liveConf
+        ? 'Actuals <b>'+esc(a.live_name)+'</b> are <b>confirmed</b>. The grid below shows the work recorded on it, read-only.'+
+          (a.remaining_qty>0?' To finish the '+fmt(a.remaining_qty)+' '+esc(uom)+' left, the plan has to be closed or reopened.':'')
+        : 'Actuals <b>'+esc(a.live_name)+'</b> are waiting for approval ('+esc(a.live_state)+'). The grid below shows what was entered, read-only. Wait for it to be confirmed or rejected before entering more.')+
+      '</div>') : "";
     var draftNote = a.draft_name ? ('<div style="margin-top:8px;font-size:11px;color:#555">Resuming draft <b>'+esc(a.draft_name)+'</b> — edit and re-save.</div>') : "";
     el("ac-detail").style.display="block";
     el("ac-detail").innerHTML=
@@ -651,7 +659,7 @@
         var isOff=offDay(w,iso);
         var isLeave=leaveDay(w,iso);
         var isLeavePend=leavePendingDay(w,iso);
-        var val=ST.cells[ck(w.employee,iso)];
+        var val=(locked?(a.live_cells||{}):ST.cells)[ck(w.employee,iso)];
         var cellLocked = locked || !active;
         if(!active){
           if(isLeave){
@@ -784,6 +792,8 @@
     var days=daysBetween(a.from_date,a.to_date);
     var grand=0, grandPay=0, payPeople={}, people={};
     var twNow=0, salNow=0;
+    // a locked grid totals the record that locks it; an open one totals the entry
+    var srcCells = a.live_name ? (a.live_cells||{}) : ST.cells;
     // per-worker + per-day totals
     var wtot={}, dtot={};
     workers.forEach(function(w){ wtot[w.employee]=0; });
@@ -792,7 +802,7 @@
       var isTW=isTaskWorker(w);
       days.forEach(function(iso){
         if(!cellActive(w,iso)) return;   // skip cells outside this worker's active window
-        var q=ST.cells[ck(w.employee,iso)]||0;
+        var q=srcCells[ck(w.employee,iso)]||0;
         if(q>0){
           wtot[w.employee]+=q; dtot[iso]+=q; grand+=q;
           people[w.employee]=1;
@@ -819,6 +829,7 @@
     // remaining preview: target - (already-confirmed-elsewhere + this draft)
     var target=a.target_qty||0;
     var alreadyDone=(a.done!=null?a.done:(a.fulfilled_qty||0));  // qty confirmed on OTHER docs for this plan
+    // locked: grand is the locking record's own total, which `done` leaves out
     var projected=alreadyDone+grand;
     var projRemain=target-projected;
     var over=target>0 && projected>target;
@@ -829,6 +840,10 @@
       balanceLine = ' · <span style="color:#555">task-worker <b>'+fmt(twNow)+'</b> + salaried <b>'+fmt(salNow)+'</b>'+
         ' · balance vs target <b>'+(projRemain<0?"0":fmt(projRemain))+' '+esc(a.uom||"")+'</b></span>';
     }
+    if(a.live_name){
+      el("ac-varnote").innerHTML="Recorded on <b>"+esc(a.live_name)+"</b> ("+esc(a.live_state)+"): <b>"+fmt(grand)+"</b> "+esc(a.uom||"")+
+        " · task-worker <b>"+fmt(twNow)+"</b> + salaried <b>"+fmt(salNow)+"</b> · payment <b>KES "+fmt(grandPay,2)+"</b>";
+    } else
     el("ac-varnote").innerHTML="This entry adds <b>"+fmt(grand)+"</b> "+esc(a.uom||"")+" · projected remaining <b>"+(projRemain<0?"0":fmt(projRemain))+"</b>"+(over?' <span style="color:#a00;font-weight:700">⚠ exceeds target — reduce by '+fmt(projected-target)+' to submit</span>':'')+(noTarget?' <span style="color:#a00;font-weight:700">⚠ plan has no target set — cannot submit</span>':'')+" · payment <b>KES "+fmt(grandPay,2)+"</b>"+balanceLine+(salariedOnly&&projRemain>0?' <span style="color:#0a7a43;font-weight:600">✓ salaried — balance documented, no need to finish target</span>':'');
     // LIVE picker row: reflect the qty being typed (not yet saved) on the selected assignment's bar + "left"
     updatePickerRowLive(ST.asg, target, projected);
@@ -845,7 +860,8 @@
     // submit hint: show how much more is needed to complete before submit unlocks
     var hint=el("ac-submithint");
     if(hint){
-      if(noTarget){ hint.innerHTML=""; }
+      if(locked){ hint.innerHTML=""; }
+      else if(noTarget){ hint.innerHTML=""; }
       else if(over){ hint.innerHTML=""; }
       else if(!complete){
         var need = target - projected;
@@ -1200,7 +1216,7 @@
       '<a class="dv-desk" target="_blank" href="/app/work-management-actuals?assignment='+encodeURIComponent(ST.asg||"")+'">Open docs ↗</a></div>';
     h+='<div class="dv-figs">'+
       '<div class="dv-fig"><span>Confirmed</span><b>'+(rec?fmt(rec.qty):0)+' '+esc(uom)+'</b></div>'+
-      '<div class="dv-fig"><span>Workers paid</span><b>'+(rec?fmt(rec.workers):0)+'</b></div>'+
+      '<div class="dv-fig"><span>Workers</span><b>'+(rec?fmt(rec.workers):0)+'</b></div>'+
       '<div class="dv-fig"><span>Pay</span><b>KES '+(rec?fmt(rec.pay):0)+'</b></div>'+
       '<div class="dv-fig"><span>Documents</span><b>'+(rec?fmt(rec.entries||0):0)+'</b></div>'+
     '</div>';

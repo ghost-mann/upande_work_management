@@ -614,19 +614,24 @@ def wm_actuals(**kwargs):
             w["absent_dates"] = abs_by.get(w.employee, {})
         a["today"] = str(frappe.utils.today())
         a["workers"] = workers
-        # calendar: confirmed daily rollup for this plan
+        # calendar: confirmed daily rollup for this plan, by the day the work was
+        # done. It used to group the record's entry_date, so a week entered on Friday
+        # showed as one Friday holding the whole week, and the salaried crew -- who
+        # are not on the payroll count -- as "0w".
         daymap = {}
         if pr:
             for r in frappe.db.sql("""
-                SELECT ac.entry_date d,
-                       COALESCE(SUM(ac.total_actual_qty),0) qty,
-                       COALESCE(SUM(ac.payroll_people),0) workers,
-                       COALESCE(SUM(ac.total_payment),0) pay,
-                       COUNT(ac.name) entries
-                FROM `tabWork Management Actuals` ac
+                SELECT wae.work_date d,
+                       COALESCE(SUM(wae.actual_quantity),0) qty,
+                       COUNT(DISTINCT wae.employee) workers,
+                       COALESCE(SUM(wae.amount),0) pay,
+                       COUNT(DISTINCT ac.name) entries
+                FROM `tabWork Actuals Employee` wae
+                INNER JOIN `tabWork Management Actuals` ac ON wae.parent = ac.name
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                 WHERE a2.planner_request = %s AND ac.workflow_state = 'CONFIRMED'
-                GROUP BY ac.entry_date ORDER BY ac.entry_date
+                  AND COALESCE(wae.actual_quantity,0) > 0
+                GROUP BY wae.work_date ORDER BY wae.work_date
             """, (pr,), as_dict=True):
                 daymap[str(r.d)] = {"qty": r.qty, "workers": r.workers, "pay": r.pay, "entries": r.entries}
         a["days"] = daymap
@@ -683,6 +688,18 @@ def wm_actuals(**kwargs):
         """, (name,), as_dict=True)
         a["live_name"] = live[0].name if live else None
         a["live_state"] = live[0].workflow_state if live else None
+        # what that record holds, so the locked grid shows the work already
+        # recorded instead of a row of zeros that reads as "nothing was entered"
+        live_cells = {}
+        if live:
+            for r in frappe.db.sql("""
+                    SELECT employee, work_date, SUM(actual_quantity) q
+                    FROM `tabWork Actuals Employee` WHERE parent = %s
+                    GROUP BY employee, work_date
+            """, (live[0].name,), as_dict=True):
+                if frappe.utils.flt(r.q) > 0:
+                    live_cells[str(r.employee) + "~" + str(r.work_date)] = frappe.utils.flt(r.q)
+        a["live_cells"] = live_cells
         out["detail"] = a
 
     elif action == "act_submit":
