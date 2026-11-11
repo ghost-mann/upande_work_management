@@ -172,11 +172,22 @@ class TestThePlannerStoresIt(unittest.TestCase):
 		self.assertNotIn("LIMIT 1", block)
 
 	def test_it_refuses_when_two_plans_cover_the_dates_and_none_is_named(self):
-		"""Mirrors resolve_master_plan(). The wording has to name both plans."""
-		self.assertIn("More than one approved master plan covers these dates", self.src)
+		"""The cap and the task list ask the one resolver, rather than inlining
+		its rule -- the refusals themselves are tested against it directly."""
+		self.assertNotIn("More than one approved master plan covers these dates", self.src)
+		block = self.src[self.src.index("MASTER PLAN CAP"):][:3000]
+		self.assertIn("resolve_for_request(", block)
+		self.assertIn('cap_err = cap_res["reason"]', block)
 
 	def test_it_refuses_a_named_plan_that_does_not_cover_the_dates(self):
-		self.assertIn("does not cover this request's farm and dates", self.src)
+		block = self.src[self.src.index('action == "tasks"'):][:3000]
+		self.assertIn("resolve_for_request(", block)
+		self.assertNotIn("does not cover this request's farm and dates", self.src)
+
+	def test_the_approvals_panel_asks_the_same_resolver(self):
+		block = self.src[self.src.index("WHICH BUDGET THIS REQUEST DRAWS ON -- the link"):][:3000]
+		self.assertIn("resolve_for_request(", block)
+		self.assertIn("planner_blocks(", block)
 
 
 class TestTheDashboardDoesNotDoubleCount(unittest.TestCase):

@@ -36,6 +36,8 @@
   "column_break_tax2",
   "tax_section_singular",
   "tax_section_plural",
+  "sb_document_names",
+  "mp_name_format",
   "tab_attendance",
   "sb_att",
   "att_block_absent",
@@ -790,6 +792,18 @@
    "description": "Default: Sections."
   },
   {
+   "description": "How new documents are named. Existing documents keep their names.",
+   "fieldname": "sb_document_names",
+   "fieldtype": "Section Break",
+   "label": "Document names"
+  },
+  {
+   "description": "Name for new master plans. Empty: WMMP-#####. Placeholders: {greenhouse} (company suffix dropped, e.g. GH-3), {farm}, {YY}, {YYYY} (year the plan's period starts), and a run of # for the counter, which counts separately for every different prefix, so {greenhouse}-MP-{YY}-{###} numbers each greenhouse's plans per year: GH-3-MP-26-001. A format with {greenhouse} makes Greenhouse required.",
+   "fieldname": "mp_name_format",
+   "fieldtype": "Data",
+   "label": "Master plan name format"
+  },
+  {
    "fieldname": "sb_offday_bonus",
    "fieldtype": "Section Break",
    "label": "Weekly off-day bonus",
@@ -830,7 +844,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-15 00:00:01.000000",
+ "modified": "2026-11-11 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",

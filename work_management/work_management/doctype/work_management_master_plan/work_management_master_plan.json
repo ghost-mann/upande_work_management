@@ -9,6 +9,7 @@
  "field_order": [
   "naming_series",
   "farm",
+  "greenhouse",
   "plan_name",
   "workflow_state",
   "cb_mp_top",
@@ -49,6 +50,16 @@
    "label": "Farm",
    "options": "Farm",
    "reqd": 1
+  },
+  {
+   "description": "The greenhouse this plan budgets. Empty: a farm-level plan, which funds work no greenhouse plan covers. Required when Settings > Naming > Document names builds names from {greenhouse}.",
+   "fieldname": "greenhouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Greenhouse",
+   "options": "Warehouse",
+   "search_index": 1
   },
   {
    "fieldname": "plan_name",
@@ -190,7 +201,7 @@
  "idx": 0,
  "is_submittable": 0,
  "links": [],
- "modified": "2026-10-15 00:00:00.000000",
+ "modified": "2026-11-11 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Master Plan",

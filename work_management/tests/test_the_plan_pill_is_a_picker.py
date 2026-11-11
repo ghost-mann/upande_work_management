@@ -275,7 +275,14 @@ class TestWhatWasChosenIsShown(unittest.TestCase):
 		"""One plan covering the dates is not a choice; it is the only budget
 		there is, and the screen re-selects it on the next render. Offering
 		Clear there would be a button that undoes itself."""
-		self.assertIn("var wasAChoice = !!chosen && covering.length!==1;", self.fn)
+		self.assertIn("var wasAChoice = !!chosen && !(autoPick && autoPick.name===chosen.name);", self.fn)
+
+	def test_the_screen_picks_by_the_server_s_precedence(self):
+		"""One greenhouse plan beats the farm-level ones; without one, a lone
+		farm-level plan is the answer -- master_plan.py:pick_master_plan()."""
+		self.assertIn("var autoPick = ghCover.length===1 ? ghCover[0] : "
+			"(!ghCover.length && fmCover.length===1 ? fmCover[0] : null);", self.fn)
+		self.assertIn("b.fits!==0", self.fn)
 
 	def test_the_ambiguous_state_asks_rather_than_just_listing(self):
 		self.assertIn("approved plans cover these dates", self.fn)

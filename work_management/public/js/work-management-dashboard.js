@@ -236,8 +236,12 @@
       var f=el("mv-farm"); if(f) f.value=""; loadMasterPlanValue(); };
     loadMasterPlanValue();
   }
+  // the greenhouse a plan budgets, without the company suffix -- the same
+  // short form the plan's own name is built from, so the two read alike
+  function ghLabel(g){ return String(g||"").replace(/\s+-\s+[A-Za-z0-9]+$/,""); }
   function mvPlanRow(r){
-    return '<tr><td><b>'+esc(r.plan)+'</b></td><td>'+esc(r.farm||"")+'</td>'+
+    return '<tr><td><b>'+esc(r.plan)+'</b>'+
+      (r.greenhouse?('<div class="hint" style="font-size:10px">'+esc(ghLabel(r.greenhouse))+'</div>'):'')+'</td><td>'+esc(r.farm||"")+'</td>'+
       '<td class="m" style="font-size:10px">'+esc(r.period_from)+' &rarr; '+esc(r.period_to)+'</td>'+
       '<td class="n m">'+fmt(r.lines)+'</td>'+
       '<td class="n m">'+fmt(r.planned,0)+'</td>'+

@@ -1402,8 +1402,8 @@ def wm_dashboard(**kwargs):
             mconds = mconds + " AND mp.period_from <= %s"
             mparams.append(mpto)
         plans = frappe.db.sql("""
-            SELECT mp.name, mp.farm, mp.period_from, mp.period_to, mp.workflow_state,
-                   mp.total_man_days, mp.total_cost
+            SELECT mp.name, mp.farm, mp.greenhouse, mp.period_from, mp.period_to,
+                   mp.workflow_state, mp.total_man_days, mp.total_cost
             FROM `tabWork Management Master Plan` mp
             WHERE """ + mconds + """
             ORDER BY mp.period_from DESC
@@ -1466,6 +1466,7 @@ def wm_dashboard(**kwargs):
                     dqty = dqty + frappe.utils.flt(dv.qty)
             mrows.append({
                 "plan": mp.name, "farm": mp.farm, "state": mp.workflow_state,
+                "greenhouse": mp.greenhouse or "",
                 "period_from": str(mp.period_from), "period_to": str(mp.period_to),
                 "lines": frappe.utils.cint(ba.line_count) if ba else 0,
                 "planned": planned,

@@ -13,7 +13,15 @@ import frappe
 
 from work_management.api.config import chain_states, get_config, sql_in
 from work_management import audit, bulk, chain, notify, self_approval
-from work_management.master_plan import attributed_to_plan, unattributed_to_plan
+from work_management.master_plan import (
+    attributed_to_plan,
+    block_ancestors,
+    name_part,
+    planner_blocks,
+    plan_fits_blocks,
+    resolve_for_request,
+    unattributed_to_plan,
+)
 
 
 @frappe.whitelist()
@@ -191,37 +199,20 @@ def wm_planner(**kwargs):
         tk_from = frappe.form_dict.get("from_date") or frappe.utils.today()
         tk_to = frappe.form_dict.get("to_date") or tk_from
         tk_named = frappe.form_dict.get("master_plan") or ""
-        tk_all = frappe.db.sql("""
-            SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
-            WHERE farm = %(f)s AND workflow_state = 'Approved'
-              AND period_from <= %(from)s AND period_to >= %(to)s
-            ORDER BY period_from DESC
-        """, {"f": farm, "from": tk_from, "to": tk_to}, as_dict=True)
-        # The named plan decides which activities are on offer. Two plans can cover
-        # these dates and budget the same activity from different money, so taking the
-        # first by period would offer the wrong list -- and let a request draw down a
-        # budget nobody chose. resolve_master_plan(), inlined; keep in step with
-        # work_management/master_plan.py.
-        tk_names = []
-        for tk_c in tk_all:
-            if tk_c.name:
-                tk_names.append(tk_c.name)
-        tk_pick = None
-        tk_ambiguous = None
-        if tk_named:
-            if tk_named in tk_names:
-                tk_pick = tk_named
-        elif len(tk_names) > 1:
-            # Nothing named and more than one budget: which activities are on offer
-            # genuinely depends on which one, so the screen has to ask. Offering the
-            # first plan's list would be a guess dressed up as an answer.
-            tk_ambiguous = sorted(tk_names)
-        elif tk_names:
-            tk_pick = tk_names[0]
-        tk_mp = []
-        for tk_c in tk_all:
-            if tk_c.name == tk_pick:
-                tk_mp.append(tk_c)
+        # The blocks picked so far. Until one is, every plan on the farm is in
+        # play -- the screen asks for the dates before the blocks.
+        tk_blocks = [b for b in (frappe.form_dict.get("blocks") or "").split(",") if b.strip()]
+        # WHICH BUDGET -- work_management/master_plan.py:pick_master_plan(), the one
+        # rule the cap at submit, the approvals panel and the drawdown also read.
+        # Its stored link wins; a greenhouse plan beats a farm-level one; two at
+        # the same level are a question for the person, not a guess.
+        tk_res = resolve_for_request(farm, tk_from, tk_to, tk_blocks, tk_named)
+        tk_pick = tk_res["name"]
+        tk_ambiguous = tk_res["tied"] or None
+        # the blocks span greenhouses, or the plan named does not fund them:
+        # nothing is plannable, and the reason is the resolver's, not a guess
+        tk_block_why = tk_res["reason"] if tk_res["kind"] in ("span", "stored_elsewhere") else None
+        tk_mp = [tk_res["row"]] if tk_res["row"] else []
         tasks = []
         if not tk_mp:
             out["master_plan"] = None
@@ -241,7 +232,9 @@ def wm_planner(**kwargs):
             # "no approved master plan" about a plan that is plainly approved reads as
             # the system losing it. Name the period and what to do instead.
             tk_a = tk_any[0] if tk_any else None
-            if tk_ambiguous:
+            if tk_block_why:
+                tk_why = tk_block_why
+            elif tk_ambiguous:
                 tk_why = (str(farm) + " has more than one approved master plan over " +
                           str(tk_from) + " to " + str(tk_to) + ": " +
                           ", ".join(tk_ambiguous) +
@@ -339,16 +332,24 @@ def wm_planner(**kwargs):
             out["budgets"] = []
         else:
             out["budgets"] = frappe.db.sql("""
-                SELECT mp.name, mp.plan_name, mp.period_from, mp.period_to, mp.total_cost,
+                SELECT mp.name, mp.greenhouse, mp.plan_name, mp.period_from, mp.period_to,
+                       mp.total_cost,
                        (SELECT COUNT(*) FROM `tabWork Management Master Plan Activity` a
                          WHERE a.parent = mp.name AND a.consultant_state = 'OK') activities
                 FROM `tabWork Management Master Plan` mp
                 WHERE mp.farm = %(f)s AND mp.workflow_state = 'Approved'
                 ORDER BY mp.period_from DESC
             """, {"f": bg_farm}, as_dict=True)
+            # Whether each plan may fund the blocks picked so far -- the resolver's
+            # own test, so the pills offer exactly the plans submit will accept.
+            # No blocks yet: every plan stays on offer.
+            bg_blocks = [b for b in (frappe.form_dict.get("blocks") or "").split(",") if b.strip()]
+            bg_anc = block_ancestors(bg_blocks) if bg_blocks else None
             for bg in out["budgets"]:
                 bg["period_from"] = str(bg["period_from"])
                 bg["period_to"] = str(bg["period_to"])
+                bg["greenhouse_label"] = name_part(bg.get("greenhouse")) if bg.get("greenhouse") else ""
+                bg["fits"] = 1 if plan_fits_blocks(bg.get("greenhouse"), bg_anc) else 0
 
     elif action == "compare":
         rows = frappe.db.get_all("Work Management Planner",
@@ -427,6 +428,9 @@ def wm_planner(**kwargs):
             # rather than writing.
             pb_key = (str(pr.get("master_plan")) + "|" + str(pr.get("farm")) + "|"
                       + str(pr.get("from_date")) + "|" + str(pr.get("to_date")))
+            if not pr.get("master_plan"):
+                # unlinked: which plan funds it depends on its blocks too
+                pb_key = pb_key + "|" + str(pr.get("name"))
             if pb_key not in pb_plan:
                 pb_amb[pb_key] = 0
                 if pr.get("master_plan"):
@@ -435,18 +439,14 @@ def wm_planner(**kwargs):
                         WHERE name = %(n)s AND workflow_state = 'Approved'
                     """, {"n": pr.get("master_plan")}, as_dict=True)
                 else:
-                    pb_hit = frappe.db.sql("""
-                        SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
-                        WHERE farm = %(f)s AND workflow_state = 'Approved'
-                          AND period_from <= %(a)s AND period_to >= %(b)s
-                        ORDER BY period_from DESC
-                    """, {"f": pr.get("farm"), "a": pr.get("from_date"), "b": pr.get("to_date")},
-                        as_dict=True)
-                    if len(pb_hit) > 1:
-                        # two budgets could have funded this and the request names
-                        # neither. Showing one of them is the guess; say so instead.
+                    # pick_master_plan(), the same rule submit applied: only plans
+                    # that may fund this request's blocks, a greenhouse plan before a
+                    # farm-level one, and a tie shown as a tie rather than guessed
+                    pb_res = resolve_for_request(pr.get("farm"), pr.get("from_date"),
+                                                 pr.get("to_date"), planner_blocks(pr.get("name")))
+                    if pb_res["kind"] == "tied":
                         pb_amb[pb_key] = 1
-                        pb_hit = []
+                    pb_hit = [pb_res["row"]] if pb_res["row"] else []
                 pb_plan[pb_key] = pb_hit[0] if pb_hit else None
             pb_mp = pb_plan[pb_key]
             pr["budget_plan"] = pb_mp.name if pb_mp else None
@@ -622,45 +622,20 @@ def wm_planner(**kwargs):
             # allows, and only up to its budgeted quantity and cost. Mirrors
             # check_plan_allowed() in upande_work_management/master_plan.py.
             mp_named = frappe.form_dict.get("master_plan") or ""
-            cap_all = frappe.db.sql("""
-                SELECT name, period_from, period_to FROM `tabWork Management Master Plan`
-                WHERE farm = %(f)s AND workflow_state = 'Approved'
-                  AND period_from <= %(from)s AND period_to >= %(to)s
-                ORDER BY period_from DESC
-            """, {"f": farm, "from": from_date, "to": to_date}, as_dict=True)
-            cap_names = []
-            for cap_c in cap_all:
-                if cap_c.name:
-                    cap_names.append(cap_c.name)
-            # resolve_master_plan(), inlined -- no def in the sandbox. Keep in step
-            # with work_management/master_plan.py, which is unit-tested. The link the
-            # request carries wins; nothing named with one candidate resolves to it,
-            # which is how requests raised before the field keep working; two
-            # candidates refuses rather than guesses, because guessing which budget
-            # work came from is the whole error this exists to prevent.
-            cap_pick = None
-            cap_err = None
-            cap_line = None
-            if mp_named:
-                if mp_named in cap_names:
-                    cap_pick = mp_named
-                else:
-                    cap_err = (mp_named + " does not cover this request's farm and dates. "
-                               "Choose a master plan whose period contains them.")
-            elif not cap_names:
+            # WHICH BUDGET THIS REQUEST DRAWS ON -- master_plan.py:pick_master_plan(),
+            # the single rule. The link the request carries wins if that plan may
+            # fund these blocks; otherwise a greenhouse plan beats a farm-level one;
+            # two at the same level refuses rather than guesses, because guessing
+            # which budget work came from is the whole error this exists to prevent.
+            cap_res = resolve_for_request(farm, from_date, to_date, block_list, mp_named)
+            cap_pick = cap_res["name"]
+            cap_err = cap_res["reason"]
+            if cap_res["kind"] == "none":
                 cap_err = ("No approved master plan covers " + str(from_date) + " to " +
                            str(to_date) + " for " + str(farm) +
                            ". A master plan must be approved before work can be planned.")
-            elif len(cap_names) > 1:
-                cap_err = ("More than one approved master plan covers these dates: " +
-                           ", ".join(sorted(cap_names)) +
-                           ". Say which one this work is planned against.")
-            else:
-                cap_pick = cap_names[0]
-            cap_mp = []
-            for cap_c in cap_all:
-                if cap_c.name == cap_pick:
-                    cap_mp.append(cap_c)
+            cap_line = None
+            cap_mp = [cap_res["row"]] if cap_res["row"] else []
             if not cap_err:
                 cm = cap_mp[0]
                 cap_rows = frappe.db.sql("""

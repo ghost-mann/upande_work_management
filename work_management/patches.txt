@@ -51,4 +51,5 @@ work_management.patches.v1_0.seed_monthly_pay_period
 # and rebuilds the workflows, all in one transaction, before after_migrate. A
 # patch above that rebuilds the workflows only ever runs on a site that has not
 # had it yet -- live Altura has had every one of them.
+work_management.patches.v1_0.seed_master_plan_name_format
 work_management.patches.v1_0.rescue_documents_in_renamed_states

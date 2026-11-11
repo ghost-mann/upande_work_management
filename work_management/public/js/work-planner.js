@@ -110,6 +110,9 @@
   function dayDiff(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
   function nBlocks(){ var n=0; for(var k in ST.picked){ if(ST.picked[k]) n++; } return n; }
   function pickedList(){ var a=[]; for(var k in ST.picked){ if(ST.picked[k]) a.push(k); } return a; }
+  // a greenhouse without its company suffix: GH-3 - KFL reads GH-3, the same
+  // short form a master plan's name is built from
+  function ghLabel(g){ return String(g||"").replace(/\s+-\s+[A-Za-z0-9]+$/,""); }
   function blockLabel(name){ for(var i=0;i<ST.blocks.length;i++){ if(ST.blocks[i].name===name) return ST.blocks[i].label; } return lbl(name); }
   function blockArea(){ var t=0; for(var i=0;i<ST.blocks.length;i++){ var b=ST.blocks[i]; if(ST.picked[b.name]){ t+=(b.area||0); } } return t; }
   function shortUser(u){ return (u||"").split("@")[0]; }
@@ -596,7 +599,7 @@
            '</div>';
       }
       h+='<div class="mpf-tablewrap"><table><thead><tr>'+
-        (mpAct?'<th style="width:30px"></th>':'')+'<th>Master plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Period</th>'+
+        (mpAct?'<th style="width:30px"></th>':'')+'<th>Master plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Greenhouse</th><th>Period</th>'+
         '<th class="n">Activities</th><th class="n">Man days</th><th class="n">Budget KES</th>'+
         '<th>Status</th><th>Raised by</th></tr></thead><tbody>';
       rows.forEach(function(r){
@@ -604,6 +607,7 @@
            (mpAct?('<td><input type="checkbox" class="mpl-ck" data-n="'+esc(r.name)+'" data-st="'+esc(r.workflow_state||"")+'"></td>'):'')+
            '<td class="m" style="font-size:10px"><a href="#" data-mp="'+esc(r.name)+'">'+esc(r.name)+'</a></td>'+
            '<td>'+esc(r.farm||"")+'</td>'+
+           '<td>'+(r.greenhouse?esc(ghLabel(r.greenhouse)):'<span class="hint">whole '+esc(TX("top_singular","Farm")).toLowerCase()+'</span>')+'</td>'+
            '<td class="m" style="font-size:10px">'+esc(r.period_from)+' → '+esc(r.period_to)+'</td>'+
            '<td class="n m">'+fmt(r.total_activities)+'</td>'+
            '<td class="n m">'+fmt(r.total_man_days)+'</td>'+
@@ -731,7 +735,7 @@
       });
       var h='<button type="button" class="mpd-back" id="mp-back">&larr; All master plans</button>'+
         '<div class="mpd-head"><div class="mpd-top">'+
-          '<div><div class="mpd-name">'+esc(p.name)+' &middot; '+esc(p.farm)+'</div>'+
+          '<div><div class="mpd-name">'+esc(p.name)+' &middot; '+esc(p.farm)+(p.greenhouse?(' &middot; '+esc(ghLabel(p.greenhouse))):'')+'</div>'+
             '<div class="mpd-meta">'+esc(p.period_from)+' &rarr; '+esc(p.period_to)+
             (p.raised_by?(' &middot; raised by '+esc((p.raised_by||"").split("@")[0])):'')+
             (p.gm_approved_by?(' &middot; approved by '+esc((p.gm_approved_by||"").split("@")[0])):'')+
@@ -1221,6 +1225,9 @@
       '<div class="mpf-body">'+
         '<div class="mpf-grid">'+
           '<div><label class="fl" for="mpf-farm">'+esc(TX("top_singular","Farm"))+'</label><select id="mpf-farm"><option value="">— select '+esc(TX("top_singular","Farm")).toLowerCase()+' —</option></select></div>'+
+          // WHICH GREENHOUSE THIS BUDGETS. Empty is a farm-level plan; a site that
+          // names plans after their greenhouse requires one on every new plan.
+          '<div><label class="fl" for="mpf-greenhouse">Greenhouse</label><select id="mpf-greenhouse"><option value="">— whole '+esc(TX("top_singular","Farm")).toLowerCase()+' —</option></select></div>'+
           // A farm may hold more than one plan over the same dates, and the number
           // alone cannot tell them apart. Optional: a farm with one plan needs none.
           '<div><label class="fl" for="mpf-plan-name">Purpose</label><input type="text" id="mpf-plan-name" placeholder="Field operations, Replanting&hellip;" autocomplete="off"></div>'+
@@ -1262,6 +1269,23 @@
       '</div>'+
     '</div>';
   }
+  // the farm's locations a plan may be raised for -- the planner's block list,
+  // groups included -- keeping `keep` selected when it is still among them
+  function mpLoadGreenhouses(farm, keep){
+    var sel=el("mpf-greenhouse"); if(!sel) return;
+    while(sel.options.length>1) sel.remove(1);
+    if(!farm){ sel.value=""; return; }
+    call({action:"greenhouses", farm:farm}, "wm_masterplan").then(function(d){
+      (d.greenhouses||[]).forEach(function(g){
+        var o=document.createElement("option"); o.value=g.name; o.textContent=g.label; sel.appendChild(o);
+      });
+      if(keep && !Array.prototype.some.call(sel.options, function(o){ return o.value===keep; })){
+        // kept even when it is no longer offered, so editing never silently drops it
+        var o=document.createElement("option"); o.value=keep; o.textContent=ghLabel(keep); sel.appendChild(o);
+      }
+      sel.value=keep||"";
+    });
+  }
   function mpCloseForm(){
     var dlg=el("mp-formdialog"); if(!dlg) return;
     dlg.style.display="none"; dlg.innerHTML="";
@@ -1272,17 +1296,19 @@
       return { task:r.task, man_days:r.man_days||0, days:r.days||0, work_qty:r.work_qty||0 };
     });
     return { farm:farm, period_from:from, period_to:to, acts:acts,
+             greenhouse:((el("mpf-greenhouse")||{}).value||""),
              plan_name:((el("mpf-plan-name")||{}).value||"").trim() };
   }
   function mpDoSave(submitAfter, saveBtn, submitBtn){
     var p=mpCollectPayload();
     var missing=[];
     if(!p.farm) missing.push("select a "+TX("top_singular","Farm").toLowerCase());
+    if(!MPF.editing && !p.greenhouse && MP.roles && MP.roles.greenhouse_required) missing.push("choose the greenhouse");
     if(!p.period_from || !p.period_to) missing.push("set the period");
     if(!p.acts.length) missing.push("add at least one activity with a task");
     if(missing.length){ toast("To save: "+missing.join(" · ")); return; }
     saveBtn.disabled=true; submitBtn.disabled=true;
-    var args={ action:"save", farm:p.farm, plan_name:p.plan_name,
+    var args={ action:"save", farm:p.farm, greenhouse:p.greenhouse, plan_name:p.plan_name,
                period_from:p.period_from, period_to:p.period_to,
                activities:JSON.stringify(p.acts) };
     if(MPF.editing) args.name=MPF.editing;
@@ -1329,7 +1355,11 @@
     el("mpf-x").onclick=shut; el("mpf-cancel").onclick=shut;
     dlg.onclick=function(ev){ if(ev.target===dlg) shut(); };
     el("mpf-addrow").onclick=function(){ MPF.rows.push({task:"",man_days:0,days:0,work_qty:0}); mpRenderRows(); };
-    fs.onchange=function(){ mpRefreshCatalog(); chkPeriod(); };
+    fs.onchange=function(){ mpLoadGreenhouses(fs.value, ""); mpRefreshCatalog(); chkPeriod(); };
+    if(MP.roles && MP.roles.greenhouse_required){
+      var ghl=document.querySelector('label[for="mpf-greenhouse"]'); if(ghl) ghl.textContent="Greenhouse *";
+      var gh0=el("mpf-greenhouse"); if(gh0 && gh0.options[0]) gh0.options[0].textContent="— select greenhouse —";
+    }
     var chkPeriod=function(){
       var fm=el("mpf-farm").value, a=el("mpf-from").value, b=el("mpf-to").value;
       var bar=el("mpf-clash"); if(!bar) return;
@@ -1397,6 +1427,7 @@
           mpCanSubmit() ? ("Edit "+existingName)
                         : ("Correct "+existingName+" · "+(p.workflow_state||""));
         fs.value=p.farm;
+        mpLoadGreenhouses(p.farm, p.greenhouse||"");
         if(el("mpf-plan-name")) el("mpf-plan-name").value=p.plan_name||"";
         el("mpf-from").value=isodate(p.period_from);
         el("mpf-to").value=isodate(p.period_to);
@@ -1420,6 +1451,7 @@
     var sel=el("f-task"); if(!sel || !ST.farm) return;
     var f=el("f-from").value, t=el("f-to").value;
     call({action:"tasks", farm:ST.farm, from_date:f||"", to_date:t||"",
+          blocks:pickedList().join(","),
           master_plan:ST.masterPlan||""}).then(function(d){
       ST.tasks=d.tasks||[];
       ST.lastTasks=d;
@@ -1525,7 +1557,7 @@
   // typed and then refused. The active one is the budget the dates currently sit in.
   function loadBudgets(){
     if(!ST.farm){ ST.budgets=[]; renderPeriodBar(ST.lastTasks||{}); return; }
-    call({action:"budgets", farm:ST.farm}).then(function(d){
+    call({action:"budgets", farm:ST.farm, blocks:pickedList().join(",")}).then(function(d){
       ST.budgets=d.budgets||[];
       renderPeriodBar(ST.lastTasks||{});
     });
@@ -1629,14 +1661,22 @@
       return;
     }
     bar.style.display=""; btn.style.display="none";
-    var covering = buds.filter(function(b){ return (!f||f>=b.period_from) && (!t||t<=b.period_to); });
+    // Plans whose period holds these dates AND that may fund the blocks picked
+    // (b.fits, the server's own test: a farm-level plan always may, a greenhouse
+    // plan only when every block is in its greenhouse).
+    var covering = buds.filter(function(b){ return (!f||f>=b.period_from) && (!t||t<=b.period_to) && b.fits!==0; });
     var inside = covering.length>0;
+    // THE SAME PRECEDENCE AS THE SERVER: one greenhouse plan beats the farm-level
+    // ones; without one, a single farm-level plan is the answer. Anything else is
+    // the person's choice, and leaving it unset is what makes the server ask.
+    var ghCover = covering.filter(function(b){ return !!b.greenhouse; });
+    var fmCover = covering.filter(function(b){ return !b.greenhouse; });
+    var autoPick = ghCover.length===1 ? ghCover[0] : (!ghCover.length && fmCover.length===1 ? fmCover[0] : null);
     // Exactly one plan covers these dates, so there is nothing to choose and
     // nothing changes for a farm with a single budget. Two or more and the choice
     // is the person's; leaving it unset is what makes the server ask for it.
-    if(covering.length===1) ST.masterPlan = covering[0].name;
-    else if(covering.length!==1 && ST.masterPlan &&
-            !covering.filter(function(b){ return b.name===ST.masterPlan; }).length) ST.masterPlan = "";
+    if(ST.masterPlan && !covering.filter(function(b){ return b.name===ST.masterPlan; }).length) ST.masterPlan = "";
+    if(!ST.masterPlan && autoPick) ST.masterPlan = autoPick.name;
     // The screen's own choice first. In the ambiguous state the server answers
     // `master_plan: null` on purpose -- it will not guess between two -- so
     // reading only the response would leave the pill the person just clicked
@@ -1647,13 +1687,13 @@
       : null;
     // A choice, rather than the only plan there is. Nothing to clear when there
     // was nothing to decide.
-    var wasAChoice = !!chosen && covering.length!==1;
+    var wasAChoice = !!chosen && !(autoPick && autoPick.name===chosen.name);
     bar.className = inside ? "mp-period" : "mp-period out";
     var lead = !inside
       ? "<b>These dates cannot be planned.</b> A request has to sit wholly inside one "+
         "approved plan period, and "+esc(ST.farm||("this "+TX("top_singular","Farm").toLowerCase()))+"&rsquo;s plans are below. "+
         "Pick one to plan inside it:"
-      : (covering.length>1 && !ST.masterPlan
+      : (covering.length>1 && !ST.masterPlan && !autoPick
           ? ("<b>"+fmt(covering.length)+" approved plans cover these dates.</b> They can budget the "+
              "same activity from different money, so the dates cannot say which this request "+
              "draws on. Say which:")
@@ -1664,8 +1704,10 @@
       h += '<button type="button" class="bud'+(on?" on":"")+'" data-bf="'+esc(b.period_from)+
            '" data-bt="'+esc(b.period_to)+'" data-bn="'+esc(b.name)+'"'+
            (on?' aria-pressed="true"':' aria-pressed="false"')+'>'+
+           (b.greenhouse?('<b>'+esc(b.greenhouse_label||ghLabel(b.greenhouse))+'</b> &middot; '):'')+
            esc(b.plan_name||b.name)+
-           '<span>'+esc(b.period_from)+' &rarr; '+esc(b.period_to)+
+           '<span>'+(b.fits===0?'not for these '+esc(TX("unit_plural","blocks")).toLowerCase()+' &middot; ':'')+
+           esc(b.period_from)+' &rarr; '+esc(b.period_to)+
            ' · '+fmt(b.activities)+' activit'+(b.activities===1?"y":"ies")+'</span></button>';
     });
     h += "</div>";
@@ -1799,7 +1841,9 @@
       var d=document.createElement("div");
       d.className="bk"+(ST.picked[b.name]?" on":"");
       d.textContent=b.label;
-      d.onclick=function(){ ST.picked[b.name]=!ST.picked[b.name]; syncBlockGrid(); recalc(); };
+      // which budgets may fund the work depends on the blocks, so the plan pills
+      // and the task list are asked again
+      d.onclick=function(){ ST.picked[b.name]=!ST.picked[b.name]; syncBlockGrid(); recalc(); loadBudgets(); loadPlannableTasks(); };
       g.appendChild(d);
     });
     var n=nBlocks();

@@ -13,7 +13,13 @@ import frappe
 
 from work_management import audit, chain, consultant, notify, self_approval, stage_pills
 from work_management.api.config import get_config
-from work_management.master_plan import attributed_to_plan, unattributed_to_plan
+from work_management.master_plan import (
+    attributed_to_plan,
+    master_plan_name_format,
+    name_format_needs_greenhouse,
+    name_part,
+    unattributed_to_plan,
+)
 
 
 @frappe.whitelist()
@@ -296,6 +302,10 @@ def wm_masterplan(**kwargs):
         # than failing, which is how a dead Master Plan screen looks from the desk.
         # The mirror asks, because live owns a `Farm` of its own; the app does not.
         out["farms"] = sorted(FARMS)
+        # A site naming plans after their greenhouse (Settings > Naming >
+        # Document names) cannot name a new one without it, so the form asks.
+        out["greenhouse_required"] = 1 if name_format_needs_greenhouse(
+            master_plan_name_format()) else 0
         out["counts"] = frappe.db.sql("""
             SELECT workflow_state st, COUNT(*) n
             FROM `tabWork Management Master Plan` GROUP BY workflow_state
@@ -330,6 +340,19 @@ def wm_masterplan(**kwargs):
             else:
                 mp_pill["mine"] = 1 if (mp_may or IS_CONSULTANT or CAN_GM) else 0
         out["stages"] = mp_pills
+
+    elif action == "greenhouses":
+        # What a master plan may be raised for: the farm's own locations -- the
+        # same Warehouses the planner's block picker offers -- with group
+        # warehouses included, because a greenhouse that holds blocks is a group.
+        gh_farm = frappe.form_dict.get("farm")
+        out["greenhouses"] = []
+        if gh_farm:
+            for gh in frappe.db.get_all("Warehouse",
+                    filters={"custom_farm": gh_farm, "disabled": 0},
+                    fields=["name", "warehouse_name", "is_group"], order_by="name", limit=500):
+                out["greenhouses"].append({"name": gh.name, "is_group": gh.is_group,
+                                           "label": name_part(gh.name) or gh.name})
 
     elif action == "period_free":
         # Does this farm already have a budget over these dates? The form asks the
@@ -374,8 +397,8 @@ def wm_masterplan(**kwargs):
         out["can_decide"] = 1 if (IS_CONSULTANT or CAN_GM) else 0
         out["plans"] = frappe.db.get_all("Work Management Master Plan",
             filters=mp_filters,
-            fields=["name", "farm", "plan_name", "period_from", "period_to", "workflow_state",
-                    "total_activities", "total_man_days", "total_cost",
+            fields=["name", "farm", "greenhouse", "plan_name", "period_from", "period_to",
+                    "workflow_state", "total_activities", "total_man_days", "total_cost",
                     "raised_by", "raised_on", "gm_approved_by", "gm_approved_on"],
             order_by="period_from desc", limit=200)
 
@@ -385,7 +408,8 @@ def wm_masterplan(**kwargs):
             out["error"] = "name is required"
         else:
             mp = frappe.db.get_value("Work Management Master Plan", mp_name,
-                ["name", "farm", "plan_name", "period_from", "period_to", "workflow_state", "company",
+                ["name", "farm", "greenhouse", "plan_name", "period_from", "period_to",
+                 "workflow_state", "company",
                  "total_activities", "total_man_days", "total_cost",
                  "raised_by", "raised_on", "gm_approved_by", "gm_approved_on"], as_dict=True)
             if not mp:
@@ -506,10 +530,17 @@ def wm_masterplan(**kwargs):
             sv_plan_name = (frappe.form_dict.get("plan_name") or "").strip()
             sv_from = frappe.form_dict.get("period_from")
             sv_to = frappe.form_dict.get("period_to")
+            # Empty is a farm-level plan. A new plan on a site that names plans
+            # after their greenhouse must say which; an existing one keeps the
+            # name and the (possibly empty) greenhouse it has.
+            sv_greenhouse = (frappe.form_dict.get("greenhouse") or "").strip()
             sv_rows = json.loads(frappe.form_dict.get("activities") or "[]")
             sv_err = None
             if not sv_farm:
                 sv_err = "Farm is required"
+            elif (not sv_name and not sv_greenhouse
+                  and name_format_needs_greenhouse(master_plan_name_format())):
+                sv_err = "Choose the greenhouse this master plan budgets"
             elif not sv_from or not sv_to:
                 sv_err = "The period is required"
             elif str(sv_to) < str(sv_from):
@@ -621,13 +652,20 @@ def wm_masterplan(**kwargs):
                 sv_old = None
                 if sv_post:
                     sv_old = frappe.db.get_value("Work Management Master Plan", sv_name,
-                        ["farm", "period_from", "period_to"], as_dict=True)
+                        ["farm", "greenhouse", "period_from", "period_to"], as_dict=True)
                     if str(sv_farm) != str(sv_old.farm):
                         # a different farm is a different budget, and every weekly plan
                         # holding this one belongs to the farm it was approved for
                         sv_cut = ("The farm on an approved master plan cannot be "
                                   "changed: the weekly plans holding this budget belong "
                                   "to " + str(sv_old.farm) + ".")
+                    elif sv_greenhouse != (sv_old.greenhouse or ""):
+                        # the same reason: the requests drawing on it were matched
+                        # to its greenhouse when they were raised
+                        sv_cut = ("The greenhouse on an approved master plan cannot be "
+                                  "changed: the weekly plans holding this budget were "
+                                  "matched to " + str(sv_old.greenhouse or "the whole farm")
+                                  + ".")
                 if sv_name:
                     d = frappe.get_doc("Work Management Master Plan", sv_name)
                     d.set("activities", [])
@@ -637,6 +675,7 @@ def wm_masterplan(**kwargs):
                     d.raised_on = frappe.utils.now()
                     d.workflow_state = "Draft"
                 d.farm = sv_farm
+                d.greenhouse = sv_greenhouse or None
                 d.plan_name = sv_plan_name
                 d.period_from = sv_from
                 d.period_to = sv_to

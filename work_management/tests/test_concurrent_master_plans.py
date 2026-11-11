@@ -268,6 +268,8 @@ from work_management.master_plan import attributed_to_plan, unattributed_to_plan
 
 PLANS = "`tabWork Management Master Plan`"
 REQUESTS = "`tabWork Management Planner`"
+WAREHOUSES = "`tabWarehouse`"
+EXTRA_BLOCKS = "`tabWork Planner Block`"
 
 SUM = ("SELECT COALESCE(SUM(p.quantity),0) q, COALESCE(SUM(p.total_cost),0) c "
 	"FROM " + REQUESTS + " p "
@@ -293,21 +295,32 @@ class Ledger:
 	def __init__(self):
 		self.db = sqlite3.connect(":memory:")
 		self.db.execute("CREATE TABLE " + PLANS + " (name TEXT, farm TEXT, "
-			"period_from TEXT, period_to TEXT, workflow_state TEXT)")
+			"period_from TEXT, period_to TEXT, workflow_state TEXT, greenhouse TEXT)")
 		self.db.execute("CREATE TABLE " + REQUESTS + " (name TEXT, farm TEXT, "
 			"task TEXT, master_plan TEXT, from_date TEXT, to_date TEXT, "
-			"quantity REAL, total_cost REAL, workflow_state TEXT)")
+			"quantity REAL, total_cost REAL, workflow_state TEXT, block_section TEXT)")
+		# the Warehouse tree, as nested sets, and a request's extra blocks: what
+		# the greenhouse half of the rule reads
+		self.db.execute("CREATE TABLE " + WAREHOUSES + " (name TEXT, lft INTEGER, rgt INTEGER)")
+		self.db.execute("CREATE TABLE " + EXTRA_BLOCKS + " (parent TEXT, parenttype TEXT, block TEXT)")
 
-	def plan(self, name, farm, period_from, period_to, state="Approved"):
-		self.db.execute("INSERT INTO " + PLANS + " VALUES (?,?,?,?,?)",
-			(name, farm, period_from, period_to, state))
+	def warehouse(self, name, lft, rgt):
+		self.db.execute("INSERT INTO " + WAREHOUSES + " VALUES (?,?,?)", (name, lft, rgt))
+		return name
+
+	def plan(self, name, farm, period_from, period_to, state="Approved", greenhouse=None):
+		self.db.execute("INSERT INTO " + PLANS + " VALUES (?,?,?,?,?,?)",
+			(name, farm, period_from, period_to, state, greenhouse))
 		return name
 
 	def request(self, name, farm, from_date, to_date, quantity, master_plan=None,
-			state="Approved", task="T1", cost=None):
-		self.db.execute("INSERT INTO " + REQUESTS + " VALUES (?,?,?,?,?,?,?,?,?)",
+			state="Approved", task="T1", cost=None, block=None, extra_blocks=()):
+		self.db.execute("INSERT INTO " + REQUESTS + " VALUES (?,?,?,?,?,?,?,?,?,?)",
 			(name, farm, task, master_plan, from_date, to_date, quantity,
-			 cost if cost is not None else quantity * 10, state))
+			 cost if cost is not None else quantity * 10, state, block))
+		for b in extra_blocks:
+			self.db.execute("INSERT INTO " + EXTRA_BLOCKS + " VALUES (?,?,?)",
+				(name, "Work Management Planner", b))
 		return name
 
 	def charged(self, plan, farm="F"):
