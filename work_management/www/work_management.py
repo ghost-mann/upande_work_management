@@ -2,11 +2,12 @@ import frappe
 
 from work_management.api.config import get_config, screen_chain, header_logo
 from work_management.assets import screen_js
+from work_management.links import require_login
 
 
 def get_context(context):
-	if frappe.session.user == "Guest":
-		frappe.throw(frappe._("Please login to access Work Management"), frappe.PermissionError)
+	# Guest goes to log in and comes back to this exact link, ?tab=&ref= included
+	require_login()
 	context.no_cache = 1
 	context.title = "Command Centre · Work Management"
 	context.header_logo = header_logo()
@@ -19,5 +20,8 @@ def get_context(context):
 	# Cache-busted: /assets is served immutable for a year from a URL that
 	# never changed, so every deploy left readers on the old script.
 	context.screen_js = screen_js('work-management-dashboard.js')
+
+	# ?tab=&ref= deep links, loaded before the screen's own script
+	context.deeplink_js = screen_js('wm-deeplink.js')
 
 	return context

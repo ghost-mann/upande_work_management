@@ -70,6 +70,13 @@ doc_events = {
 	},
 }
 
+# {{ wm_screen_url(doc) }} in a Notification template: the command-centre
+# link for the document (screen, tab and ref) instead of the desk form.
+# Frappe registers each function under its own name.
+jinja = {
+	"methods": ["work_management.links.wm_screen_url"],
+}
+
 override_whitelisted_methods = {
 	"wm_dashboard": "work_management.api.dashboard.wm_dashboard",
 	"wm_planner": "work_management.api.planner.wm_planner",

@@ -2,11 +2,12 @@ import frappe
 
 from work_management.api.config import get_config, screen_chain
 from work_management.assets import screen_js
+from work_management.links import require_login
 
 
 def get_context(context):
-	if frappe.session.user == "Guest":
-		frappe.throw(frappe._("Please login to access Work Management"), frappe.PermissionError)
+	# Guest goes to log in and comes back to this exact link, ?tab=&ref= included
+	require_login()
 	context.no_cache = 1
 	# The page is a bare fragment, so Frappe never wraps it in base.html and its
 	# `<!-- csrf_token -->` script is never emitted. The page script reads

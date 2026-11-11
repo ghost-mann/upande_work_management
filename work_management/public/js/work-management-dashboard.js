@@ -3266,7 +3266,7 @@
 
   function load(){
     el("wm-body").innerHTML=skeleton();
-    call({action:"dash"}).then(function(D){
+    return call({action:"dash"}).then(function(D){
       if(D.error){ el("wm-body").innerHTML='<div class="err">Error: '+esc(D.error)+'</div>'; return; }
       render(D);
       syncWtd();
@@ -3287,7 +3287,24 @@
     // taskName() falls back to the docname, which is exactly the old behaviour.
     call({action:"task_names"}).then(function(d){
       TASK_NAMES=(d && d.task_names) || {};
-    }).catch(function(){}).then(load, load);
+    }).catch(function(){}).then(load, load).then(openLinked);
+  }
+  // ?ref=<name> opens that document's modal once the dashboard has drawn it.
+  // The dashboard has no tabs, so `tab` is not read. A master plan has no modal
+  // here and goes to its own tab on the planner.
+  function openLinked(){
+    var ref=(window.WMDeepLink && WMDeepLink.params.get("ref")) || "";
+    if(!ref) return;
+    WMDeepLink.locate(ref).then(function(info){
+      if(!info.ok){ WMDeepLink.notice(info.message); return; }
+      var dt=info.doctype;
+      if(dt==="Work Management Planner") openPlanModal(info.name, "plan");
+      else if(dt==="Work Management Assigner") openPlanModal(info.plan, "plan");
+      else if(dt==="Work Management Actuals") openActualModal(info.name);
+      else if(dt==="Work Management Payment") openPaymentModal(info.name);
+      else if(dt==="Work Management Master Plan")
+        location.replace("/work-planner?tab=mp&ref="+encodeURIComponent(info.name));
+    }).catch(function(){ WMDeepLink.notice("Could not open "+ref+"."); });
   }
   // No window.frappe check here. This page reads only -- every call is a
   // cookie-authenticated GET with no CSRF token to fetch -- and the route already

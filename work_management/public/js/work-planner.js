@@ -616,6 +616,10 @@
       box.querySelectorAll("[data-mp]").forEach(function(a){
         a.onclick=function(ev){ ev.preventDefault(); openMasterPlan(a.getAttribute("data-mp")); };
       });
+    }).then(function(){
+      // A PLAN NAMED IN THE LINK opens once the list is in, and not before: both
+      // draw into mp-body, so opening it alongside let whichever answered last win.
+      if(MP.openOnLoad){ var n=MP.openOnLoad; MP.openOnLoad=null; openMasterPlan(n); }
     }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
   }
   function wirePlanBulk(box){
@@ -1715,7 +1719,21 @@
       b.onclick=function(){ showTab(t[0]); };
       nav.appendChild(b);
     });
-    showTab("new");
+    // ?tab=&ref= -- the one link convention, public/js/wm-deeplink.js. A master
+    // plan opens in the Master plan tab; the older ?mp=<name> still works.
+    var tabLabels={}; tabs.forEach(function(t){ tabLabels[t[0]]=t[1]; });
+    WMDeepLink.start({
+      tabs: tabs.map(function(t){ return t[0]; }), labels: tabLabels,
+      defaultTab: "new", fallbackTab: "mine", show: showTab,
+      panel: function(n){ return el("p-"+n); },
+      doctypes: ["Work Management Planner", "Work Management Master Plan"],
+      alias: {mp: "mp"},
+      prepare: function(info){
+        // loadMasterPlans() opens it once its list is in -- not alongside it,
+        // since both draw into the same box
+        if(info.doctype==="Work Management Master Plan"){ MP.openOnLoad=info.name; return {tab:"mp", open:false}; }
+      }
+    });
   }
   // The request detail panel is shared by three tabs, so what to reload after a
   // change depends on which one is open rather than on where the code sits.

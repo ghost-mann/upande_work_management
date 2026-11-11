@@ -187,7 +187,19 @@
       b.onclick=function(){ showTab(t[0]); };
       nav.appendChild(b);
     });
-    showTab("assign");
+    // ?tab=&ref= -- the one link convention, public/js/wm-deeplink.js
+    var tabLabels={}; tabs.forEach(function(t){ tabLabels[t[0]]=t[1]; });
+    WMDeepLink.start({
+      tabs: tabs.map(function(t){ return t[0]; }), labels: tabLabels,
+      defaultTab: "assign", fallbackTab: "amine", show: showTab,
+      panel: function(n){ return el("p-"+n); },
+      doctypes: ["Work Management Assigner"],
+      // an approval waits in the queue of its step: open that one
+      prepare: function(info, t){
+        if(t!=="aappr") return;
+        apprQueues().forEach(function(q){ if(q.stage && q.stage===info.state) ST._apprKey=q.key; });
+      }
+    });
   }
   function showTab(name){
     ["assign","amine","arej","aappr"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
