@@ -289,6 +289,19 @@ class TestTheDoctypes(unittest.TestCase):
 		self.assertEqual((f["fieldtype"], f["options"]), ("Link", "Warehouse"))
 		self.assertIn("greenhouse", doctype("work_management_master_plan")["field_order"])
 
+	def test_a_farm_level_plan_keeps_wmmp_under_a_greenhouse_format(self):
+		"""No greenhouse is a farm-level plan, which the resolver falls back to
+		for blocks outside every greenhouse plan. It must stay possible to raise
+		one: it is not refused, it takes the doctype's own series."""
+		from unittest import mock
+
+		from work_management import master_plan as mp
+
+		with mock.patch.object(mp, "master_plan_name_format",
+				return_value="{greenhouse}-MP-{YY}-{###}"):
+			self.assertIsNone(mp.master_plan_name({"farm": "KenTrout Farm",
+				"greenhouse": "", "period_from": "2026-11-01"}))
+
 	def test_the_default_name_is_still_wmmp(self):
 		"""Other sites, and an empty format, keep WMMP-#####."""
 		d = doctype("work_management_master_plan")
@@ -329,7 +342,9 @@ class TestTheScreensShowTheGreenhouse(unittest.TestCase):
 		src = read("api", "masterplan.py")
 		self.assertIn('elif action == "greenhouses":', src)
 		self.assertIn("d.greenhouse = sv_greenhouse or None", src)
-		self.assertIn('out["greenhouse_required"]', src)
+		self.assertIn('out["named_by_greenhouse"]', src)
+		# a farm-level plan (no greenhouse) must stay possible under any format
+		self.assertNotIn("Choose the greenhouse this master plan budgets", src)
 		self.assertIn('"farm", "greenhouse", "plan_name"', src)
 
 	def test_the_planner_picker_offers_only_plans_that_fit(self):

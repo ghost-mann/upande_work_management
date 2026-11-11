@@ -303,8 +303,9 @@ def wm_masterplan(**kwargs):
         # The mirror asks, because live owns a `Farm` of its own; the app does not.
         out["farms"] = sorted(FARMS)
         # A site naming plans after their greenhouse (Settings > Naming >
-        # Document names) cannot name a new one without it, so the form asks.
-        out["greenhouse_required"] = 1 if name_format_needs_greenhouse(
+        # Document names). The greenhouse stays optional: left empty, the plan is
+        # farm-level and keeps WMMP-#####, and the form says so.
+        out["named_by_greenhouse"] = 1 if name_format_needs_greenhouse(
             master_plan_name_format()) else 0
         out["counts"] = frappe.db.sql("""
             SELECT workflow_state st, COUNT(*) n
@@ -530,17 +531,13 @@ def wm_masterplan(**kwargs):
             sv_plan_name = (frappe.form_dict.get("plan_name") or "").strip()
             sv_from = frappe.form_dict.get("period_from")
             sv_to = frappe.form_dict.get("period_to")
-            # Empty is a farm-level plan. A new plan on a site that names plans
-            # after their greenhouse must say which; an existing one keeps the
-            # name and the (possibly empty) greenhouse it has.
+            # Empty is a farm-level plan, named WMMP-##### even on a site that
+            # names plans after their greenhouse. An existing plan keeps its name.
             sv_greenhouse = (frappe.form_dict.get("greenhouse") or "").strip()
             sv_rows = json.loads(frappe.form_dict.get("activities") or "[]")
             sv_err = None
             if not sv_farm:
                 sv_err = "Farm is required"
-            elif (not sv_name and not sv_greenhouse
-                  and name_format_needs_greenhouse(master_plan_name_format())):
-                sv_err = "Choose the greenhouse this master plan budgets"
             elif not sv_from or not sv_to:
                 sv_err = "The period is required"
             elif str(sv_to) < str(sv_from):

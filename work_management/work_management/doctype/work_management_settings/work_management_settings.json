@@ -798,7 +798,7 @@
    "label": "Document names"
   },
   {
-   "description": "Name for new master plans. Empty: WMMP-#####. Placeholders: {greenhouse} (company suffix dropped, e.g. GH-3), {farm}, {YY}, {YYYY} (year the plan's period starts), and a run of # for the counter, which counts separately for every different prefix, so {greenhouse}-MP-{YY}-{###} numbers each greenhouse's plans per year: GH-3-MP-26-001. A format with {greenhouse} makes Greenhouse required.",
+   "description": "Name for new master plans. Empty: WMMP-#####. Placeholders: {greenhouse} (company suffix dropped, e.g. GH-3), {farm}, {YY}, {YYYY} (year the plan's period starts), and a run of # for the counter, which counts separately for every different prefix, so {greenhouse}-MP-{YY}-{###} numbers each greenhouse's plans per year: GH-3-MP-26-001. With {greenhouse} in the format, a plan with no greenhouse (a farm-level plan) keeps WMMP-#####.",
    "fieldname": "mp_name_format",
    "fieldtype": "Data",
    "label": "Master plan name format"

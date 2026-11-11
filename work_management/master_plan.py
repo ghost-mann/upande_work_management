@@ -232,9 +232,11 @@ def master_plan_name(doc):
 	fmt = master_plan_name_format()
 	if not fmt:
 		return None
+	# A plan with no greenhouse is a farm-level plan -- the one that covers the
+	# blocks no greenhouse plan does. A format built on the greenhouse has nothing
+	# to name it by, so it keeps the doctype's WMMP-#####.
 	if name_format_needs_greenhouse(fmt) and not doc.get("greenhouse"):
-		frappe.throw(frappe._("Choose the greenhouse this master plan budgets: new plans "
-			"are named after it."), title=frappe._("Greenhouse required"))
+		return None
 	gh = doc.get("greenhouse") or ""
 	abbr = None
 	if gh:

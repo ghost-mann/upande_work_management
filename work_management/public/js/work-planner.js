@@ -1303,7 +1303,6 @@
     var p=mpCollectPayload();
     var missing=[];
     if(!p.farm) missing.push("select a "+TX("top_singular","Farm").toLowerCase());
-    if(!MPF.editing && !p.greenhouse && MP.roles && MP.roles.greenhouse_required) missing.push("choose the greenhouse");
     if(!p.period_from || !p.period_to) missing.push("set the period");
     if(!p.acts.length) missing.push("add at least one activity with a task");
     if(missing.length){ toast("To save: "+missing.join(" · ")); return; }
@@ -1356,9 +1355,9 @@
     dlg.onclick=function(ev){ if(ev.target===dlg) shut(); };
     el("mpf-addrow").onclick=function(){ MPF.rows.push({task:"",man_days:0,days:0,work_qty:0}); mpRenderRows(); };
     fs.onchange=function(){ mpLoadGreenhouses(fs.value, ""); mpRefreshCatalog(); chkPeriod(); };
-    if(MP.roles && MP.roles.greenhouse_required){
-      var ghl=document.querySelector('label[for="mpf-greenhouse"]'); if(ghl) ghl.textContent="Greenhouse *";
-      var gh0=el("mpf-greenhouse"); if(gh0 && gh0.options[0]) gh0.options[0].textContent="— select greenhouse —";
+    if(MP.roles && MP.roles.named_by_greenhouse){
+      // optional: no greenhouse is a farm-level plan, named WMMP-#####
+      var gh0=el("mpf-greenhouse"); if(gh0 && gh0.options[0]) gh0.options[0].textContent="— whole farm (named WMMP-…) —";
     }
     var chkPeriod=function(){
       var fm=el("mpf-farm").value, a=el("mpf-from").value, b=el("mpf-to").value;
