@@ -18,7 +18,8 @@
   "payment_ref",
   "custom_reviewed",
   "custom_reviewed_by",
-  "custom_reviewed_at"
+  "custom_reviewed_at",
+  "payroll_check"
  ],
  "fields": [
   {
@@ -68,7 +69,7 @@
    "fieldtype": "Float",
    "label": "Hours",
    "precision": "2",
-   "description": "How long this worker gave this task on this date. Arrives filled with the standard hours for that date, so an ordinary day needs no typing; type the real time only when the day was shared with another task.\n\nMeasurement only \u2014 pay stays quantity \u00d7 rate, so a mistyped hour spoils a figure and never a wage. Empty reads as a full day, which is what every row recorded before this field existed means."
+   "description": "How long this worker gave this task on this date. Arrives filled with the standard hours for that date, so an ordinary day needs no typing; type the real time only when the day was shared with another task.\n\nMeasurement only — pay stays quantity × rate, so a mistyped hour spoils a figure and never a wage. Empty reads as a full day, which is what every row recorded before this field existed means."
   },
   {
    "columns": 1,
@@ -116,6 +117,14 @@
    "fieldtype": "Datetime",
    "label": "Reviewed At",
    "read_only": 1
+  },
+  {
+   "fieldname": "payroll_check",
+   "fieldtype": "Data",
+   "label": "Payroll Check",
+   "read_only": 1,
+   "search_index": 1,
+   "no_copy": 1
   }
  ],
  "idx": 0,

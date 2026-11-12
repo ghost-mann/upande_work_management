@@ -93,9 +93,10 @@
   "pay_day",
   "allow_part_week_send",
   "allow_day_range",
-  "section_week_signoff",
-  "week_signoff_required",
-  "week_signoff_notify",
+  "section_payroll_check",
+  "payroll_check_required",
+  "payroll_check_notify",
+  "max_backdate_days",
   "sb_payroll_pack",
   "payroll_pack_enabled",
   "payroll_pack_sender",
@@ -391,7 +392,8 @@
    "fieldtype": "Check",
    "default": "0",
    "label": "Allow a worker's day to be split between tasks",
-   "description": "Off: a worker already on a live assignment over these dates cannot be put on another one, which is how it has always worked.\n\nOn: they can. Release them from one task's crew — their recorded work and pay stay exactly as they are — and assign them to another, recording work against both on the same day. Hours are then typed on each row, so the day counts once however many tasks it spanned.\n\nOff by default: with it off no figure on any site changes."
+   "description": "Retired 2026-11-12: one worker, one day, one task. Kept hidden so old code paths read it as off.",
+   "hidden": 1
   },
   {
    "fieldname": "std_hours_weekday",
@@ -626,25 +628,6 @@
    "description": "Pay weeks can always be sent -- one payment per worker per completed week, which is what payroll has always received. Tick this to additionally offer paying a range you choose: one day, five days, a fortnight, up to a month. The range is grouped from the first date selected rather than into pay weeks, so it can pay a weekday the pay week above leaves out, which cannot be sent weekly at all. Ticking this changes nothing on its own -- an ordinary send still groups into pay weeks."
   },
   {
-   "fieldname": "section_week_signoff",
-   "fieldtype": "Section Break",
-   "label": "Farm manager week sign-off",
-   "collapsible": 1
-  },
-  {
-   "fieldname": "week_signoff_required",
-   "fieldtype": "Check",
-   "label": "Require Farm manager week sign-off before payment",
-   "default": "0",
-   "description": "On: a farm's pay week is only paid once its farm manager has signed it off on the Actuals screen. Off: sign-off is available but payment does not wait for it."
-  },
-  {
-   "fieldname": "week_signoff_notify",
-   "fieldtype": "Small Text",
-   "label": "Week sign-off emails to",
-   "description": "Comma-separated emails (HR, GM) told when a week is signed off and copied on draft reminders. Empty: the Settings approvers for Actuals: HR Head and Actuals: GM."
-  },
-  {
    "fieldname": "capabilities_section",
    "fieldtype": "Section Break",
    "label": "Who may do what"
@@ -770,6 +753,32 @@
    "fieldtype": "Data",
    "label": "Cost grouping (plural)",
    "description": "Default: Sections."
+  },
+  {
+   "fieldname": "section_payroll_check",
+   "fieldtype": "Section Break",
+   "label": "Payroll check",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "payroll_check_required",
+   "fieldtype": "Check",
+   "label": "Only pay dates in a GM-approved payroll check",
+   "default": "0",
+   "description": "On: a worker-day is paid only once it is in a payroll check that every farm manager, HR and the GM have approved. Off: payroll checks can be run but payment does not wait for them. Switch on after the first check has been through."
+  },
+  {
+   "fieldname": "payroll_check_notify",
+   "fieldtype": "Small Text",
+   "label": "Payroll check emails to",
+   "description": "Comma-separated emails of HR, told when every farm has approved and when the GM approves. Empty: the Settings approvers for Actuals: HR Head."
+  },
+  {
+   "fieldname": "max_backdate_days",
+   "fieldtype": "Int",
+   "label": "Days an assignment may start in the past",
+   "default": "7",
+   "description": "A worker may be put on an assignment starting at most this many days ago. Earlier needs the GM, with a reason."
   }
  ],
  "idx": 0,

@@ -4,5 +4,5 @@
 from frappe.model.document import Document
 
 
-class WorkManagementWeekSignoff(Document):
+class WorkManagementPayrollCheckFix(Document):
 	pass

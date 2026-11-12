@@ -353,6 +353,7 @@ class TestASiteThatRenamedNothingCarriesNothing(unittest.TestCase):
 					"Only show each person the Estates they are permitted",
 				("Work Management Settings", "farms_section"): "Estates",
 				("Work Management Settings", "disc_multi_farm"): "Two Estates, one day",
+				("Work Management Payroll Check", "farms"): "Estates",
 			},
 		)
 
