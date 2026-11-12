@@ -2642,6 +2642,140 @@
       PC.d=d; renderCheck(d);
     }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
   }
+  // ── ISSUES: everything in these dates that must be fixed or acknowledged ──
+  var PCI={ code:"", sel:{} };
+  function pcIssues(c, me){
+    var box=el("pc-iss"); if(!box) return;
+    box.innerHTML='<div class="loading">Checking every worker-day in these dates…</div>';
+    call({action:"chk_issues", check:c.name, farm:PC.farm||""}).then(function(d){
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      var counts=d.counts||[], iss=d.issues||[], h='';
+      var open=counts.reduce(function(a,x){ return a+x.open; },0);
+      h+='<div class="pc-sec">Issues to clear ('+fmt(open)+' open)</div>';
+      if(!counts.length){ box.innerHTML=h+'<div class="pc-note">Nothing to clear: no quantity, rate, attendance or approval problems in these dates.</div>'; return; }
+      h+='<div class="pc-bar" style="flex-wrap:wrap">';
+      counts.forEach(function(x){
+        var k=x.owner+"|"+x.code, on=(PCI.code===k);
+        h+='<button class="btn sm'+(on?' solid':'')+'" data-pck="'+esc(k)+'" title="'+esc(x.title)+'">'+
+           esc(x.owner)+' · '+esc(x.title)+' <b>'+fmt(x.open)+'</b>'+(x.cleared?' <span style="opacity:.6">('+fmt(x.cleared)+' cleared)</span>':'')+
+           (x.cls==="block"?' <span class="pc-chip bad">must fix</span>':' <span class="pc-chip wait">acknowledge</span>')+'</button>';
+      });
+      h+='</div>';
+      if(!PCI.code){ PCI.code=(counts.filter(function(x){ return x.open; })[0]||counts[0]).owner+"|"+(counts.filter(function(x){ return x.open; })[0]||counts[0]).code; }
+      var parts=PCI.code.split("|"), shown=iss.filter(function(i){ return i.owner===parts[0] && i.code===parts[1]; });
+      var cls=(shown[0]||{}).cls, mine=shown.length && (me.gm || (parts[0]==="HR"&&me.hr) || (parts[0]!=="GM"&&parts[0]!=="HR"&&(me.hr||(me.fm_farms||[]).indexOf(parts[0])>=0)));
+      var fixOps={rate_mismatch:[["recompute","Recompute"]], left_but_earning:[["zero","Zero"]], off_crew:[["zero","Zero"]],
+        qty_outlier_hard:[["set_qty","Correct qty"],["zero","Zero"]], qty_outlier:[["set_qty","Correct qty"],["zero","Zero"]],
+        absent_paid:[["zero","Zero"]], ghost_days:[["zero","Zero"]], leave_paid:[["zero","Zero"]], off_paid:[["zero","Zero"]]};
+      if(mine && cls==="ack") h+='<div class="pc-bar"><button class="btn sm good" id="pci-ack">Acknowledge selected</button><label style="font-size:12px"><input type="checkbox" id="pci-all"> select all '+fmt(shown.filter(function(i){return !i.acked;}).length)+'</label><span style="font-size:11px;color:var(--mute)">Uses the reason box above; logged per row.</span></div>';
+      h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+(cls==="ack"&&mine?'<th></th>':'')+'<th>Worker</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Record</th><th>Detail</th><th class="n">KES</th><th>State</th><th></th></tr></thead><tbody>';
+      shown.forEach(function(i){
+        var ops=(fixOps[i.code]||[]).map(function(o){ return o[0]==="set_qty"?
+            '<input type="number" min="0" step="any" style="width:70px" data-pciq="'+esc(i.row)+'" placeholder="qty"> <button class="btn sm" data-pcio="set_qty" data-pcir="'+esc(i.row)+'">Correct</button>' :
+            '<button class="btn sm" data-pcio="'+o[0]+'" data-pcir="'+esc(i.row)+'">'+o[1]+'</button>'; }).join(" ");
+        h+='<tr>'+(cls==="ack"&&mine?'<td>'+(i.acked?'':'<input type="checkbox" data-pcis="'+esc(i.key)+'">')+'</td>':'')+
+           '<td>'+esc(i.employee_name||i.employee||"")+'</td><td>'+esc(i.work_date)+'</td><td>'+esc(i.farm||"")+'</td>'+
+           '<td><a href="/app/work-management-actuals/'+esc(i.doc)+'" target="_blank" rel="noopener">'+esc(i.doc)+'</a></td><td>'+esc(i.detail)+'</td>'+
+           '<td class="n m">'+money(i.amount)+'</td><td>'+(i.acked?'<span class="pc-chip ok" title="'+esc(i.ack_reason||"")+'">acknowledged by '+esc(i.acked_by||"")+'</span>':(i.cls==="block"?'<span class="pc-chip bad">open</span>':'<span class="pc-chip wait">open</span>'))+'</td>'+
+           '<td>'+(mine&&!i.acked&&i.key===i.row?ops:'')+'</td></tr>';
+      });
+      h+='</tbody></table></div></div>';
+      if((d.issues_total||0)>iss.length) h+='<div class="pc-note">Showing the first '+fmt(iss.length)+' of '+fmt(d.issues_total)+'.</div>';
+      box.innerHTML=h;
+      box.querySelectorAll("[data-pck]").forEach(function(b){ b.onclick=function(){ PCI.code=b.getAttribute("data-pck"); pcIssues(c, me); }; });
+      if(el("pci-all")) el("pci-all").onchange=function(){ var on=this.checked; box.querySelectorAll("[data-pcis]").forEach(function(x){ x.checked=on; }); };
+      if(el("pci-ack")) el("pci-ack").onclick=function(){
+        var r=pcReason(); if(!r) return;
+        var keys=[]; box.querySelectorAll("[data-pcis]").forEach(function(x){ if(x.checked) keys.push(x.getAttribute("data-pcis")); });
+        if(!keys.length){ toast("Tick the rows to acknowledge","bad"); return; }
+        this.disabled=true;
+        call({action:"chk_ack", check:c.name, code:parts[1], keys:keys.join(","), reason:r}, true).then(function(x){
+          if(x.error){ toast(x.error,"bad"); pcIssues(c, me); return; }
+          toast(fmt(x.acknowledged)+" acknowledged and logged"); openCheck(); });
+      };
+      box.querySelectorAll("[data-pcio]").forEach(function(b){ b.onclick=function(){
+        var r=pcReason(); if(!r) return;
+        var op=b.getAttribute("data-pcio"), row=b.getAttribute("data-pcir"), args={action:"chk_fix_row", check:c.name, code:parts[1], row:row, op:op, reason:r};
+        if(op==="set_qty"){ var q=box.querySelector('[data-pciq="'+row+'"]'); if(!q||q.value===""){ toast("Type the correct quantity","bad"); return; } args.qty=q.value; }
+        b.disabled=true;
+        call(args, true).then(function(x){ if(x.error){ toast(x.error,"bad"); b.disabled=false; return; } toast("Fixed and logged: KES "+fmt(x.amount,2)); openCheck(); });
+      }; });
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load issues: '+esc(e.message)+'</div>'; });
+  }
+
+  // ── DUPLICATES, GROUPED by the assignments (or records) behind them ──
+  function pcGroups(c, me){
+    var box=el("pc-grp"); if(!box) return;
+    call({action:"chk_dup_groups", check:c.name, farm:PC.farm||""}).then(function(d){
+      var gs=d.groups||[]; if(!gs.length){ box.innerHTML=""; return; }
+      var h='<div class="pc-sec">Duplicates by the work behind them ('+fmt(gs.length)+')</div><div class="pc-note">Usually a whole crew was put on two assignments. Decide once which one holds the days; every unpaid extra copy on the others is zeroed and logged.</div>';
+      gs.forEach(function(g){
+        var may=c.status!=="Sent"&&c.status!=="Cancelled"&&(g.owner==="HR"?me.hr:(me.hr||(me.fm_farms||[]).indexOf(g.owner)>=0));
+        h+='<div class="pc-item" style="cursor:default"><b>'+fmt(g.workers)+' workers × '+fmt(g.days)+' day'+(g.days>1?'s':'')+'</b><span class="pc-sub">'+esc(g.from)+(g.to!==g.from?' → '+esc(g.to):'')+' · extra '+money(g.excess)+' · '+esc(g.owner)+'</span>';
+        g.assignments.forEach(function(a){
+          h+='<span class="pc-sub">'+esc(a)+' — '+esc((g.tasks||{})[a]||"")+' (created '+esc((g.created||{})[a]||"?")+')</span>'+
+             (may?'<button class="btn sm good" data-pcgk="'+esc(g.key)+'" data-pcgv="'+esc(a)+'">Keep '+esc(a)+'</button>':'');
+        });
+        h+='</div>';
+      });
+      box.innerHTML=h;
+      box.querySelectorAll("[data-pcgk]").forEach(function(b){ b.onclick=function(){
+        var r=pcReason(); if(!r) return; b.disabled=true;
+        call({action:"chk_dup_group_fix", check:c.name, key:b.getAttribute("data-pcgk"), keep:b.getAttribute("data-pcgv"), reason:r}, true).then(function(x){
+          if(x.error){ toast(x.error,"bad"); b.disabled=false; return; } toast(fmt(x.zeroed)+" extra copies zeroed and logged"); openCheck(); });
+      }; });
+    }).catch(function(){ box.innerHTML=""; });
+  }
+
+  // ── ONE DUPLICATE DAY, OPENED UP: everything needed to judge which copy is real ──
+  function pcDupDetail(c, me, emp, day){
+    var m=el("pc-modal");
+    if(!m){ m=document.createElement("div"); m.id="pc-modal"; m.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:30px 12px"; (el("wpay")||document.body).appendChild(m); }
+    m.innerHTML='<div style="background:#fff;border-radius:14px;max-width:1100px;width:100%;padding:18px" id="pc-mbody"><div class="loading">Loading…</div></div>';
+    m.onclick=function(e){ if(e.target===m) m.remove(); };
+    call({action:"chk_dup_detail", check:c.name, employee:emp, work_date:day}).then(function(d){
+      var b=el("pc-mbody"); if(!b) return;
+      if(d.error){ b.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      var w=d.worker||{}, dy=d.day||{}, cps=d.copies||[];
+      var qsum=cps.reduce(function(a,x){ return a+(x.amount||0); },0);
+      var h='<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">'+esc(w.employee_name||emp)+' · '+esc(day)+'</h3><button class="btn sm" id="pc-mclose">Close</button></div>';
+      h+='<div class="pc-farms" style="margin-top:10px">'+
+         '<div class="pc-farm"><div class="pc-n"><b>Worker</b><br>'+esc(w.employee)+' · '+esc(w.designation||"")+'<br>'+esc(w.employment_type||"")+' · '+esc(w.farm||"")+' · '+esc(w.status||"")+'</div></div>'+
+         '<div class="pc-farm"><div class="pc-n"><b>That day on site</b><br>Attendance: '+esc(dy.attendance||"none")+'<br>Scans: '+((dy.scans||[]).map(function(s){ return esc(s.time)+(s.type?' '+esc(s.type):'')+(s.device?' ('+esc(s.device)+')':''); }).join(", ")||"none")+'</div></div>'+
+         '<div class="pc-farm"><div class="pc-n"><b>Recorded</b><br>'+fmt(cps.length)+' records · '+money(qsum)+'<br>extra beyond one: '+money(d.excess)+'</div></div></div>';
+      h+='<div class="pc-farms">';
+      cps.forEach(function(x){
+        var flag=function(t){ return '<div style="color:#b91c1c;font-size:11.5px">⚑ '+esc(t)+'</div>'; };
+        var paid=x.paid?'paid '+esc(x.payment_ref||""):(x.payment_ref?'in run '+esc(x.payment_ref):'not paid yet');
+        h+='<div class="pc-farm" style="'+(x.keep?'border:2px solid #f59e0b':'')+'"><h4>'+esc(x.doc)+(x.keep?'<span class="pc-chip wait">suggested keep</span>':'')+'</h4><div class="pc-n">'+
+           '<b>'+esc(x.task_name||x.task||"")+'</b> · '+esc(x.block||"")+'<br>'+
+           'Assignment '+esc(x.assignment||"—")+': '+esc(x.asg_from||"")+' → '+esc(x.asg_to||"")+'<br>created '+esc(x.asg_created||"")+' by '+esc(x.asg_by||"")+
+           (x.backdated?flag("assignment created long after it started"):'')+
+           '<br>On the crew: '+((x.window||[]).map(function(v){ return esc(v.start)+' → '+esc(v.left||"…")+' ('+esc(v.status)+')'; }).join("; ")||"—")+
+           '<br>Entered '+esc(x.entered_at||"")+' by '+esc(x.entered_by||"")+(x.late_days>14?flag("entered "+x.late_days+" days after the work"):'')+
+           '<br>FM '+esc(x.fm||"—")+' · HR '+esc(x.hr||"—")+' · GM '+esc(x.gm||"—")+(x.self_approved?flag("approved by the person who entered it"):'')+((!x.fm||!x.hr)?flag("an approval step is missing"):'')+
+           '<br>Team leader: '+esc(x.team_leader||"—")+
+           '<br>'+fmt(x.qty,2)+' '+esc(x.pay_basis||"")+' · '+fmt(x.hours,1)+' h · rate '+fmt(x.rate,3)+' · <b>'+money(x.amount)+'</b>'+
+           '<br>'+paid+
+           '<br>Plan: '+fmt(x.plan_done,1)+' of '+fmt(x.plan_qty,1)+' delivered → '+fmt(x.plan_after_zero,1)+' if this copy is zeroed'+
+           '</div>'+((x.paid||x.payment_ref)?'':'<div class="pc-bar"><button class="btn sm good" data-pckeep="'+esc(x.row)+'">Keep this one</button></div>')+'</div>';
+      });
+      h+='</div><div class="pc-sec">Their days around it</div><div class="pc-bar">';
+      (d.around||[]).forEach(function(a){
+        h+='<span class="pc-chip'+(a.records.length>1?' bad':'')+'" title="'+esc(a.records.map(function(r){ return r.doc+" "+(r.task_name||""); }).join(", "))+'">'+esc(a.date.slice(5))+' · '+(a.records.length?a.records.map(function(r){ return esc((r.task_name||r.task||"").slice(0,18)); }).join(" + "):'—')+'</span>';
+      });
+      h+='</div><div class="pc-bar"><select id="pc-mwhy" class="pc-reason" style="flex:0 0 auto"><option>Entered twice by mistake</option><option>Backdated assignment</option><option>Worker moved mid-day</option><option>Other</option></select><input id="pc-mnote" class="pc-reason" placeholder="Note (logged)"></div>';
+      b.innerHTML=h;
+      el("pc-mclose").onclick=function(){ m.remove(); };
+      b.querySelectorAll("[data-pckeep]").forEach(function(k){ k.onclick=function(){
+        var why=el("pc-mwhy").value+(el("pc-mnote").value?": "+el("pc-mnote").value:"");
+        k.disabled=true;
+        call({action:"chk_fix_dup", check:c.name, keep_row:k.getAttribute("data-pckeep"), reason:why}, true).then(function(x){
+          if(x.error){ toast(x.error,"bad"); k.disabled=false; return; } toast(fmt(x.zeroed)+" other copies zeroed and logged"); m.remove(); openCheck(); });
+      }; });
+    }).catch(function(e){ var b=el("pc-mbody"); if(b) b.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+
   function renderCheck(d){
     var box=el("pc-open"), c=d.check, me=d.me||{}, fm=me.fm_farms||[];
     var h='<div class="sech">'+esc(c.name)+' · '+pcDates(c)+' '+pcChip(c.status)+'</div><div class="pc-steps">';
@@ -2676,12 +2810,13 @@
     // duplicates
     var dups=(d.duplicates||[]).filter(function(x){ return !x.paid_twice; });
     var twice=(d.duplicates||[]).filter(function(x){ return x.paid_twice; });
+    h+='<div id="pc-iss"></div><div id="pc-grp"></div>';
     h+='<div class="pc-sec">Duplicate days'+(PC.farm?' · '+esc(PC.farm):'')+' ('+fmt(dups.length)+')'+(PC.farm?' <a href="#" id="pc-allfarms">show all</a>':'')+'</div>';
     if(!dups.length) h+='<div class="pc-note">None — every worker has at most one payable record per day here.</div>';
     else{
       var fixFarm=PC.farm || (fm.length===1?fm[0]:"");
       if(c.status!=="Sent" && c.status!=="Cancelled" && ((fixFarm && (me.hr||fm.indexOf(fixFarm)>=0)) || me.hr))
-        h+='<div class="pc-bar"><button class="btn sm" id="pc-fixall">Zero every extra copy'+(fixFarm?' on '+esc(fixFarm):' (all farms)')+'</button><span class="pc-sub" style="font-size:11px;color:var(--mute)">Keeps the copy marked ★ (the assignment the worker was on first, or the one already paid).</span></div>';
+        h+='<div class="pc-bar"><button class="btn sm" id="pc-fixall">Zero every extra copy'+(fixFarm?' on '+esc(fixFarm):' (all farms)')+'</button><span class="pc-sub" style="font-size:11px;color:var(--mute)">Keeps the copy marked ★: the one recorded first (a backdated copy is never picked), or the one already paid.</span></div>';
       h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr><th>Worker</th><th>Date</th><th>Fix by</th><th>Records</th><th class="n">Extra</th></tr></thead><tbody>';
       dups.forEach(function(x){
         var cp=x.copies.map(function(k){
@@ -2693,7 +2828,7 @@
                  (inRun?' · <span class="pc-chip wait">in run '+esc(k.payment_ref)+' — withdraw it on Awaiting accounts to zero</span>':'')+
                  (mayZero?' <button class="btn sm" data-pcz="'+esc(k.row)+'">Zero this</button>':'')+'</div>';
         }).join("");
-        h+='<tr><td>'+esc(x.employee_name||x.employee)+'<div class="pc-sub" style="font-size:10.5px;color:var(--mute)">'+esc(x.employee)+'</div></td><td>'+esc(x.work_date)+'</td><td>'+esc(x.owner)+'</td><td>'+cp+'</td><td class="n m">'+money(x.excess)+'</td></tr>';
+        h+='<tr><td>'+esc(x.employee_name||x.employee)+'<div class="pc-sub" style="font-size:10.5px;color:var(--mute)">'+esc(x.employee)+'</div><button class="btn sm" data-pcv="'+esc(x.employee)+'|'+esc(x.work_date)+'">View</button></td><td>'+esc(x.work_date)+'</td><td>'+esc(x.owner)+'</td><td>'+cp+'</td><td class="n m">'+money(x.excess)+'</td></tr>';
       });
       h+='</tbody></table></div></div>';
       if((d.duplicates_total||0)>(d.duplicates||[]).length) h+='<div class="pc-note">Showing the first '+fmt((d.duplicates||[]).length)+' of '+fmt(d.duplicates_total)+'. Fix these and the rest load.</div>';
@@ -2727,6 +2862,8 @@
     }
     box.innerHTML=h;
     box.querySelectorAll("[data-pcf]").forEach(function(b){ b.onclick=function(){ PC.farm=b.getAttribute("data-pcf"); openCheck(); }; });
+    box.querySelectorAll("[data-pcv]").forEach(function(b){ b.onclick=function(){ var p=b.getAttribute("data-pcv").split("|"); pcDupDetail(c, me, p[0], p[1]); }; });
+    pcIssues(c, me); pcGroups(c, me);
     if(el("pc-allfarms")) el("pc-allfarms").onclick=function(e){ e.preventDefault(); PC.farm=""; openCheck(); };
     box.querySelectorAll("[data-pca]").forEach(function(b){ b.onclick=function(){ b.disabled=true;
       pcDo({action:"chk_farm_approve", farm:b.getAttribute("data-pca")}, b.getAttribute("data-pca")+" approved"); }; });

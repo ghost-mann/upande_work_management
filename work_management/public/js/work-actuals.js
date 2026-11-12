@@ -893,6 +893,23 @@
         } else { refresh(); onAsg(ST.asg); }
         return;
       }
+      if(d.needs_qty_reason){
+        // UNUSUALLY HIGH QUANTITIES: saved only with a reason, kept on each row and
+        // raised again in the payroll check. Asked in the page, not a browser prompt.
+        var qbox=el("ac-qtyreason");
+        if(!qbox){ qbox=document.createElement("div"); qbox.id="ac-qtyreason";
+          qbox.style.cssText="margin:10px 0;padding:10px 12px;border:1px solid #fde68a;background:#fffbeb;border-radius:10px;font-size:12.5px";
+          var host=el("b-acsubmit").parentNode; host.parentNode.insertBefore(qbox, host); }
+        qbox.innerHTML='<b>Unusually high quantities. Say why before saving:</b><ul style="margin:6px 0 8px 18px">'+
+          (d.qty_flagged||[]).map(function(x){ return '<li>'+esc(x)+'</li>'; }).join("")+'</ul>'+
+          '<input id="ac-qr-in" style="width:70%;padding:6px 9px;border:1px solid var(--line);border-radius:8px" placeholder="e.g. double shift agreed with the farm manager"> '+
+          '<button class="btn" id="ac-qr-go">Save with this reason</button> <button class="btn" id="ac-qr-no">Fix the numbers instead</button>';
+        el("ac-qr-go").onclick=function(){ var v=(el("ac-qr-in").value||"").trim(); if(!v){ toast("Write the reason first"); return; }
+          args.qty_reason=v; qbox.remove(); call(args).then(handleResp).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); refresh(); }); };
+        el("ac-qr-no").onclick=function(){ qbox.remove(); refresh(); };
+        el("b-acdraft").disabled=false; el("b-acsubmit").disabled=false;
+        return;
+      }
       if(d.att_overridden){ toast("Attendance override logged for "+d.att_overridden+" worker"+(d.att_overridden>1?"s":"")); }
       if(d.error){ toast("Error: "+d.error); refresh(); return; }
       // Advisory, and deliberately so: the rows were written either way. Shown
