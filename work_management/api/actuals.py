@@ -1338,8 +1338,6 @@ def wm_actuals(**kwargs):
                     wmg_bad.append(n3 + " on " + b3[1] + ": that day has not happened yet")
                 elif wmg_emp_dates(b3[0], b3[1]):
                     wmg_bad.append(n3 + " on " + b3[1] + ": " + wmg_emp_dates(b3[0], b3[1]))
-                elif wmg_hourly and q3 > 24:
-                    wmg_bad.append(n3 + " on " + b3[1] + ": " + str(q3) + " hours is more than a day")
                 elif wmg_tgt > 0 and q3 > wmg_refuse_x * wmg_tgt:
                     wmg_bad.append(n3 + " on " + b3[1] + ": " + str(q3) + " is more than " + str(wmg_refuse_x) +
                                    "x the daily target of " + str(wmg_tgt))

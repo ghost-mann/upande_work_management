@@ -50,12 +50,19 @@ def block(action):
 
 
 class TestWhoKeepsTheDay(unittest.TestCase):
-	def test_keeper_is_first_assignment(self):
-		"""Decision 2: the old assignment keeps the days already worked."""
-		a = Row(row="r-new", asg_start="2026-09-28", asg_created="2026-10-23", ac_created="2026-10-24")
-		b = Row(row="r-old", asg_start="2026-09-28", asg_created="2026-09-28", ac_created="2026-09-29")
-		c = Row(row="r-late", asg_start="2026-10-01", asg_created="2026-09-01", ac_created="2026-09-01")
-		self.assertEqual(keeper()([a, c, b])["row"], "r-old")
+	def test_keeper_is_the_copy_recorded_first(self):
+		"""The user's rule (2026-11-12): the assignment created first, then the actuals."""
+		a = Row(row="r-new", asg_created="2026-10-23", ac_created="2026-10-24")
+		b = Row(row="r-old", asg_created="2026-09-28", ac_created="2026-09-29")
+		self.assertEqual(keeper()([a, b])["row"], "r-old")
+
+	def test_a_backdated_copy_is_never_suggested(self):
+		"""Josephine Nasambu Simiyu, 30 Oct: WMA-1291644 started 29 Oct but was created
+		11 Nov. By start date it won; recorded first, the fertilizer copy wins."""
+		fly = Row(row="fly", asg_start="2026-10-29", asg_created="2026-11-11", ac_created="2026-11-12", backdated=1)
+		fert = Row(row="fert", asg_start="2026-10-30", asg_created="2026-10-31", ac_created="2026-10-31")
+		fert2 = Row(row="fert2", asg_start="2026-10-30", asg_created="2026-11-02", ac_created="2026-11-03")
+		self.assertEqual(keeper()([fly, fert2, fert])["row"], "fert")
 
 	def test_a_paid_copy_is_always_kept(self):
 		a = Row(row="r-first", asg_start="2026-09-01", asg_created="2026-09-01", ac_created="2026-09-01")
@@ -65,7 +72,7 @@ class TestWhoKeepsTheDay(unittest.TestCase):
 
 	def test_a_copy_without_an_assignment_ranks_last(self):
 		a = Row(row="r-none", ac_created="2026-09-01")
-		b = Row(row="r-asg", asg_start="2026-10-01", asg_created="2026-10-01", ac_created="2026-10-02")
+		b = Row(row="r-asg", asg_created="2026-10-01", ac_created="2026-10-02")
 		self.assertEqual(keeper()([a, b])["row"], "r-asg")
 
 

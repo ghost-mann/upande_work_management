@@ -3739,6 +3739,11 @@ def wm_payment(**kwargs):
             return (str(c.name) + " (" + frappe.utils.formatdate(c.period_from, "d MMM") + " – " +
                     frappe.utils.formatdate(c.period_to, "d MMM yyyy") + (", top-up" if c.is_top_up else "") + ")")
 
+        PC_BACKDATE = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "max_backdate_days")) \
+            if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                AND field = 'max_backdate_days' LIMIT 1""") else 0
+        PC_BACKDATE = PC_BACKDATE or 7
+
         def wmpc_keeper(copies):
             """The copy a duplicate keeps: one already paid if there is one, else the
             copy on the assignment the worker was on first (earliest start, then the
@@ -3749,7 +3754,11 @@ def wm_payment(**kwargs):
             sent = [c for c in copies if c.get("payment_ref")]
             if sent:
                 return sent[0]
-            ranked = sorted(copies, key=lambda c: (str(c.get("asg_start") or "9999"),
+            # the copy RECORDED first (user's decision, 2026-11-12): the assignment created
+            # first, then the actuals entered first. A copy on a backdated assignment is
+            # never suggested while another exists -- by start date a backdated assignment
+            # always looked first, and was usually the second copy.
+            ranked = sorted(copies, key=lambda c: (1 if c.get("backdated") else 0,
                 str(c.get("asg_created") or "9999"), str(c.get("ac_created") or "9999"), str(c.get("row"))))
             return ranked[0]
 
@@ -3780,7 +3789,7 @@ def wm_payment(**kwargs):
                        IFNULL(we.payment_ref, '') payment_ref, IFNULL(we.payroll_check, '') payroll_check,
                        ac.farm farm, ac.task task, ac.assignment asg, ac.workflow_state state,
                        ac.creation ac_created, ac.entered_by entered_by,
-                       a.creation asg_created,
+                       a.creation asg_created, a.from_date asg_from, a.owner asg_by,
                        (SELECT MIN(COALESCE(wae.start_date, a.from_date)) FROM `tabWork Assignment Employee` wae
                          WHERE wae.parent = a.name AND wae.employee = we.employee) asg_start
                 FROM `tabWork Actuals Employee` we
@@ -3800,6 +3809,8 @@ def wm_payment(**kwargs):
                     r["ac_created"] = str(r.ac_created)
                     r["asg_created"] = str(r.asg_created) if r.asg_created else None
                     r["asg_start"] = str(r.asg_start) if r.asg_start else None
+                    r["backdated"] = 1 if (r.asg_created and r.asg_from and frappe.utils.date_diff(
+                        frappe.utils.getdate(r.asg_created), r.asg_from) > PC_BACKDATE) else 0
                     groups.setdefault(k, []).append(r)
             dups = []
             for k in sorted(groups.keys()):
@@ -3969,6 +3980,174 @@ def wm_payment(**kwargs):
             frappe.db.set_value("Work Management Payroll Check", c.name, {
                 "worker_days": frappe.utils.cint(tt[0].n), "amount": frappe.utils.flt(tt[0].a)}, update_modified=False)
 
+        # ---- ISSUES: everything in the dates that must be fixed or acknowledged ----
+        # (2026-11-12) Each issue is "block" (fixed before the step that owns it can
+        # approve), "ack" (the owner confirms it with a reason, logged) or "info". The
+        # owner is the farm (its manager), "HR" or "GM". A stage is held up only by
+        # issues it, or an earlier stage, can clear.
+        WMI_CLASS = {
+            "qty_outlier_hard": ("block", "farm", "Quantity far above the daily target"),
+            "rate_mismatch": ("block", "HR", "Amount is not quantity x rate"),
+            "left_but_earning": ("block", "HR", "Work after the employee left the company"),
+            "off_crew": ("block", "farm", "Not on that assignment's crew that day"),
+            "qty_outlier": ("ack", "farm", "Quantity well above the daily target"),
+            "absent_paid": ("ack", "farm", "Paid on a day marked Absent"),
+            "ghost_days": ("ack", "farm", "No scan and no attendance that day"),
+            "leave_paid": ("ack", "farm", "Paid on approved leave"),
+            "off_paid": ("ack", "farm", "Paid on an off day or holiday"),
+            "late_entry": ("ack", "farm", "Entered more than 14 days after the work"),
+            "approval_gap": ("ack", "GM", "An approval step skipped, or one person on two steps"),
+            "self_approved": ("ack", "GM", "Approved by the person who entered it"),
+            "backdated": ("ack", "GM", "Assignment created long after it started"),
+        }
+        WMI_FLAG_X = frappe.utils.flt(frappe.db.get_single_value("Work Management Settings", "qty_flag_multiple")) \
+            if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                AND field = 'qty_flag_multiple' LIMIT 1""") else 0
+        WMI_FLAG_X = WMI_FLAG_X or 2.0
+        WMI_REFUSE_X = frappe.utils.flt(frappe.db.get_single_value("Work Management Settings", "qty_refuse_multiple")) \
+            if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                AND field = 'qty_refuse_multiple' LIMIT 1""") else 0
+        WMI_REFUSE_X = WMI_REFUSE_X or 3.0
+
+        def wmi_print(qty, amount, day, emp):
+            """The fingerprint an acknowledgement is tied to: change the row, lose the ack."""
+            return str(round(frappe.utils.flt(qty), 3)) + "|" + str(round(frappe.utils.flt(amount), 2)) + "|" + str(day) + "|" + str(emp)
+
+        def wmi_issues(c, farm):
+            """Every issue in check `c`'s dates, optionally one farm's; each with its
+            class, owner and whether it is already acknowledged for the row as it is."""
+            base = """FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+                LEFT JOIN `tabWork Management Assigner` a ON a.name = ac.assignment
+                LEFT JOIN `tabWork Management Planner` pl ON pl.name = a.planner_request
+                LEFT JOIN `tabEmployee` e ON e.name = we.employee
+                WHERE we.parenttype = 'Work Management Actuals' AND ac.workflow_state = 'CONFIRMED'
+                  AND IFNULL(we.amount, 0) > 0 AND IFNULL(we.count_in_payroll, 0) = 1
+                  AND IFNULL(we.paid, 0) = 0 AND IFNULL(we.payment_ref, '') = ''
+                  AND IFNULL(we.payroll_check, '') IN ('', %(c)s)
+                  AND we.work_date BETWEEN %(f)s AND %(t)s"""
+            if farm:
+                base = base + " AND ac.farm = %(farm)s"
+            rows = frappe.db.sql("""
+                SELECT we.name row, we.parent doc, we.employee, we.employee_name, we.work_date d,
+                       we.actual_quantity qty, we.amount, IFNULL(we.count_in_payroll, 0) cip, ac.rate,
+                       ac.farm, ac.task, ac.creation ac_created, ac.entered_by, ac.owner ac_owner,
+                       ac.fm_approved_by, ac.hr_approved_by, ac.gm_approved_by, ac.total_payment,
+                       ac.assignment, a.creation asg_created, a.from_date asg_from,
+                       IFNULL(pl.daily_target, 0) tgt, IFNULL(pl.uom, '') uom,
+                       e.relieving_date, e.holiday_list,
+                       EXISTS (SELECT 1 FROM `tabWork Assignment Employee` wae WHERE wae.parent = ac.assignment
+                               AND wae.employee = we.employee
+                               AND COALESCE(wae.start_date, a.from_date) <= we.work_date
+                               AND COALESCE(CASE WHEN IFNULL(wae.status, 'Active') = 'Left' THEN wae.left_date END,
+                                            a.to_date) >= we.work_date) on_crew,
+                       EXISTS (SELECT 1 FROM `tabAttendance` att WHERE att.employee = we.employee
+                               AND att.attendance_date = we.work_date AND att.docstatus = 1 AND att.status = 'Absent'
+                               AND NOT EXISTS (SELECT 1 FROM `tabAttendance` pp WHERE pp.employee = we.employee
+                                    AND pp.attendance_date = we.work_date AND pp.docstatus = 1
+                                    AND pp.status IN ('Present', 'Half Day', 'Work From Home'))) absent,
+                       EXISTS (SELECT 1 FROM `tabAttendance` pp WHERE pp.employee = we.employee
+                               AND pp.attendance_date = we.work_date AND pp.docstatus = 1
+                               AND pp.status IN ('Present', 'Half Day', 'Work From Home')) present,
+                       EXISTS (SELECT 1 FROM `tabEmployee Checkin` ck WHERE ck.employee = we.employee
+                               AND ck.time >= we.work_date AND ck.time < DATE_ADD(we.work_date, INTERVAL 1 DAY)) scanned,
+                       EXISTS (SELECT 1 FROM `tabLeave Application` la WHERE la.employee = we.employee
+                               AND la.docstatus = 1 AND la.status = 'Approved'
+                               AND we.work_date BETWEEN la.from_date AND la.to_date) on_leave,
+                       EXISTS (SELECT 1 FROM `tabHoliday` h WHERE h.parent = e.holiday_list
+                               AND h.holiday_date = we.work_date) off_day
+                """ + base + " ORDER BY ac.farm, we.work_date, we.employee",
+                {"c": c.name, "f": c.period_from, "t": c.period_to, "farm": farm}, as_dict=True)
+            acks = {}
+            for a1 in frappe.db.get_all("Work Management Payroll Check Fix",
+                    filters={"kind": "acknowledged", "issue": ["is", "set"]},
+                    fields=["issue", "kept_row", "row_hash", "fixed_by", "fixed_at", "reason"]):
+                acks[(a1.issue, a1.kept_row)] = a1
+            found = []
+            docs_seen = {}
+
+            def add(code, key, r, detail, fprint):
+                cls, owner, title = WMI_CLASS[code]
+                ak = acks.get((code, key))
+                ok = 1 if (ak and ak.row_hash == fprint) else 0
+                found.append({"code": code, "cls": cls, "title": title,
+                              "owner": (r.farm if owner == "farm" else owner), "farm": r.farm,
+                              "key": key, "row": r.row, "doc": r.doc, "employee": r.employee,
+                              "employee_name": r.employee_name, "work_date": str(r.d),
+                              "amount": frappe.utils.flt(r.amount), "qty": frappe.utils.flt(r.qty),
+                              "detail": detail, "acked": ok,
+                              "acked_by": ak.fixed_by if (ak and ok) else None,
+                              "ack_reason": ak.reason if (ak and ok) else None})
+            for r in rows:
+                fp = wmi_print(r.qty, r.amount, r.d, r.employee)
+                q = frappe.utils.flt(r.qty)
+                tg = frappe.utils.flt(r.tgt)
+                # multiples of the plan's own daily target only: some plans carry "Hours" as
+                # their unit with a daily target of 400, so a flat 24-hour rule misfires
+                if tg > 0 and q > WMI_REFUSE_X * tg:
+                    add("qty_outlier_hard", r.row, r, str(q) + " against a daily target of " + str(tg), fp)
+                elif tg > 0 and q > WMI_FLAG_X * tg:
+                    add("qty_outlier", r.row, r, str(q) + " against a daily target of " + str(tg), fp)
+                want = round(q * frappe.utils.flt(r.rate), 2) if frappe.utils.cint(r.cip) else 0
+                if abs(frappe.utils.flt(r.amount) - want) > max(1.0, 0.01 * want):
+                    add("rate_mismatch", r.row, r, "paid " + str(frappe.utils.flt(r.amount)) + ", quantity x rate is " +
+                        str(want), fp)
+                if r.relieving_date and str(r.d) > str(r.relieving_date):
+                    add("left_but_earning", r.row, r, "left the company " + str(r.relieving_date), fp)
+                if r.assignment and not frappe.utils.cint(r.on_crew):
+                    add("off_crew", r.row, r, "not on " + str(r.assignment) + "'s crew on that day", fp)
+                if frappe.utils.cint(r.absent):
+                    add("absent_paid", r.row, r, "attendance says Absent", fp)
+                elif not frappe.utils.cint(r.present) and not frappe.utils.cint(r.scanned):
+                    add("ghost_days", r.row, r, "no scan and no Present attendance", fp)
+                if frappe.utils.cint(r.on_leave):
+                    add("leave_paid", r.row, r, "on approved leave", fp)
+                if frappe.utils.cint(r.off_day):
+                    add("off_paid", r.row, r, "an off day or holiday on their list", fp)
+                if r.ac_created and frappe.utils.date_diff(frappe.utils.getdate(r.ac_created), r.d) > 14:
+                    add("late_entry", r.row, r, "entered " + str(frappe.utils.getdate(r.ac_created)), fp)
+                if r.doc not in docs_seen:
+                    docs_seen[r.doc] = 1
+                    dfp = str(round(frappe.utils.flt(r.total_payment), 2))
+                    entered = r.entered_by or r.ac_owner
+                    gaps = []
+                    if not r.fm_approved_by:
+                        gaps.append("no farm manager approval")
+                    if not r.hr_approved_by:
+                        gaps.append("no HR approval")
+                    if not r.gm_approved_by:
+                        gaps.append("no GM approval")
+                    if r.hr_approved_by and r.hr_approved_by == r.gm_approved_by:
+                        gaps.append(str(r.hr_approved_by) + " took both HR and GM")
+                    if gaps:
+                        add("approval_gap", r.doc, r, "; ".join(gaps), dfp)
+                    if entered and entered in (r.fm_approved_by, r.hr_approved_by, r.gm_approved_by):
+                        add("self_approved", r.doc, r, str(entered) + " entered and approved it", dfp)
+                    if r.asg_created and r.asg_from and frappe.utils.date_diff(
+                            frappe.utils.getdate(r.asg_created), r.asg_from) > PC_BACKDATE:
+                        add("backdated", r.doc, r, str(r.assignment) + " started " + str(r.asg_from) + ", created " +
+                            str(frappe.utils.getdate(r.asg_created)), dfp)
+            return found
+
+        def wmpc_ident(dp, cx):
+            """What a duplicate's copy is told apart by: its assignment, or its record
+            when two copies sit on the same assignment."""
+            if len({str(x.asg or x.doc) for x in dp["copies"]}) < len(dp["copies"]):
+                return str(cx.doc)
+            return str(cx.asg or cx.doc)
+
+        def wmi_open(issues, owners):
+            """Issues still open for these owners: unfixed blocks, unacknowledged acks."""
+            return [i for i in issues if i["owner"] in owners and i["cls"] in ("block", "ack") and not i["acked"]]
+
+        def wmi_may(owner):
+            """May this person clear an issue owned by `owner`?"""
+            if owner == "GM":
+                return pc_gm
+            if owner == "HR":
+                return pc_hr
+            return pc_hr or (owner in pc_fm)
+
         pc_name = frappe.form_dict.get("check")
         pc = wmpc_get(pc_name) if pc_name else None
         pc_reason = (frappe.form_dict.get("reason") or "").strip()
@@ -4136,6 +4315,7 @@ def wm_payment(**kwargs):
 
         elif action == "chk_fix_dup":
             zrow = frappe.form_dict.get("zero_row")
+            krow = frappe.form_dict.get("keep_row")
             fx_farm = (frappe.form_dict.get("farm") or "").strip() or None
             fx_all = frappe.utils.cint(frappe.form_dict.get("all"))
             ferr = None
@@ -4152,6 +4332,12 @@ def wm_payment(**kwargs):
                             continue
                         for cx in dp["copies"]:
                             if cx.row != dp["keep"] and not cx.payment_ref and not frappe.utils.cint(cx.paid):
+                                todo.append((dp, cx))
+                    elif krow and [cx for cx in dp["copies"] if cx.row == krow]:
+                        # keep this copy, zero every other (unpaid, unsent) one
+                        dp["keep"] = krow
+                        for cx in dp["copies"]:
+                            if cx.row != krow and not cx.payment_ref and not frappe.utils.cint(cx.paid):
                                 todo.append((dp, cx))
                     else:
                         for cx in dp["copies"]:
@@ -4197,9 +4383,11 @@ def wm_payment(**kwargs):
             if not aerr:
                 dl = [x for x in wmpc_duplicates(pc.period_from, pc.period_to, af) if not x["paid_twice"]]
                 uf = wmpc_unfinished(pc.period_from, pc.period_to, af) if not pc.is_top_up else []
-                if dl or uf:
-                    aerr = (af + " still has " + str(len(dl)) + " duplicate day(s) and " + str(len(uf)) +
-                            " unfinished record(s) in these dates. Fix them first.")
+                oi = wmi_open(wmi_issues(pc, af), [af])
+                if dl or uf or oi:
+                    aerr = (af + " still has " + str(len(dl)) + " duplicate day(s), " + str(len(uf)) +
+                            " unfinished record(s) and " + str(len(oi)) + " open issue(s) in these dates. "
+                            "Fix or acknowledge them first.")
             if aerr:
                 out["error"] = aerr
             else:
@@ -4239,9 +4427,12 @@ def wm_payment(**kwargs):
             if not herr:
                 dl = [x for x in wmpc_duplicates(pc.period_from, pc.period_to, None) if not x["paid_twice"]]
                 uf = wmpc_unfinished(pc.period_from, pc.period_to, None) if not pc.is_top_up else []
-                if dl or uf:
-                    herr = (str(len(dl)) + " duplicate day(s) and " + str(len(uf)) + " unfinished record(s) are "
-                            "still in these dates. Fix them, or send the check back.")
+                hi = wmi_issues(pc, None)
+                oi = wmi_open(hi, [f.farm for f in pc.farms] + ["HR"] + ([] if is_hr_step else ["GM"]))
+                if dl or uf or oi:
+                    herr = (str(len(dl)) + " duplicate day(s), " + str(len(uf)) + " unfinished record(s) and " +
+                            str(len(oi)) + " open issue(s) are still in these dates. Fix or acknowledge them, "
+                            "or send the check back.")
             if herr:
                 out["error"] = herr
             elif is_hr_step:
@@ -4320,6 +4511,307 @@ def wm_payment(**kwargs):
                 frappe.db.commit()
                 out["status"] = "Sent"
                 out["released"] = frappe.utils.cint(cs_left.n)
+
+        elif action == "chk_issues":
+            fscope = (frappe.form_dict.get("farm") or "").strip() or None
+            if not pc_hr:
+                if fscope not in pc_fm:
+                    fscope = pc_fm[0] if pc_fm else "__none__"
+            iss = wmi_issues(pc, fscope)
+            counts = {}
+            for i in iss:
+                k = i["owner"] + "|" + i["code"]
+                cn = counts.get(k) or {"owner": i["owner"], "code": i["code"], "title": i["title"], "cls": i["cls"],
+                                       "open": 0, "cleared": 0, "amount": 0}
+                if i["acked"]:
+                    cn["cleared"] = cn["cleared"] + 1
+                else:
+                    cn["open"] = cn["open"] + 1
+                    cn["amount"] = cn["amount"] + i["amount"]
+                counts[k] = cn
+            out["counts"] = [counts[k] for k in sorted(counts.keys())]
+            out["issues"] = iss[:1500]
+            out["issues_total"] = len(iss)
+            out["me"] = {"fm_farms": pc_fm, "hr": pc_hr, "gm": pc_gm}
+
+        elif action == "chk_ack":
+            ak_code = frappe.form_dict.get("code")
+            ak_keys = [x.strip() for x in str(frappe.form_dict.get("keys") or "").split(",") if x.strip()]
+            ak_err = None
+            if pc.status in ("Sent", "Cancelled"):
+                ak_err = "This check is " + pc.status + "."
+            elif not pc_reason:
+                ak_err = "Say why (it is logged with the acknowledgement)."
+            elif not ak_keys or ak_code not in WMI_CLASS or WMI_CLASS[ak_code][0] != "ack":
+                ak_err = "Pick the issues to acknowledge."
+            ak_now = {}
+            if not ak_err:
+                for i in wmi_issues(pc, None):
+                    if i["code"] == ak_code and i["key"] in ak_keys:
+                        ak_now[i["key"]] = i
+                for kk in ak_keys:
+                    if kk not in ak_now:
+                        ak_err = "That issue is no longer open (" + kk + ")."
+                    elif not wmi_may(ak_now[kk]["owner"]):
+                        ak_err = "Only " + ak_now[kk]["owner"] + " can acknowledge this."
+                    if ak_err:
+                        break
+            if ak_err:
+                out["error"] = ak_err
+            else:
+                for kk in ak_keys:
+                    i = ak_now[kk]
+                    if i["key"] == i["doc"]:
+                        fp = str(round(frappe.utils.flt(frappe.db.get_value("Work Management Actuals", i["doc"], "total_payment")), 2))
+                    else:
+                        fp = wmi_print(i["qty"], i["amount"], i["work_date"], i["employee"])
+                    fx = frappe.new_doc("Work Management Payroll Check Fix")
+                    fx.payroll_check = pc.name
+                    fx.kind = "acknowledged"
+                    fx.issue = ak_code
+                    fx.kept_row = kk
+                    fx.kept_actuals = i["doc"]
+                    fx.row_hash = fp
+                    fx.employee = i["employee"]
+                    fx.employee_name = i["employee_name"]
+                    fx.work_date = i["work_date"]
+                    fx.farm = i["farm"]
+                    fx.amount_before = i["amount"]
+                    fx.fixed_by = frappe.session.user
+                    fx.fixed_at = frappe.utils.now()
+                    fx.reason = pc_reason
+                    fx.insert(ignore_permissions=True)
+                frappe.db.commit()
+                out["acknowledged"] = len(ak_keys)
+
+        elif action == "chk_fix_row":
+            fr_code = frappe.form_dict.get("code")
+            fr_row = frappe.form_dict.get("row")
+            fr_op = frappe.form_dict.get("op")
+            fr_qty = frappe.utils.flt(frappe.form_dict.get("qty"))
+            fr_ops = {"zero": ("qty_outlier_hard", "qty_outlier", "left_but_earning", "off_crew", "absent_paid",
+                               "ghost_days", "leave_paid", "off_paid"),
+                      "recompute": ("rate_mismatch",),
+                      "set_qty": ("qty_outlier_hard", "qty_outlier")}
+            fr_err = None
+            fr_issue = None
+            if pc.status in ("Sent", "Cancelled"):
+                fr_err = "This check is " + pc.status + "."
+            elif not pc_reason:
+                fr_err = "Say why (it is logged with the fix)."
+            elif fr_op not in fr_ops or fr_code not in fr_ops[fr_op]:
+                fr_err = "That fix does not apply to this issue."
+            elif fr_op == "set_qty" and fr_qty < 0:
+                fr_err = "A quantity cannot be negative."
+            if not fr_err:
+                for i in wmi_issues(pc, None):
+                    if i["code"] == fr_code and i["row"] == fr_row:
+                        fr_issue = i
+                if not fr_issue:
+                    fr_err = "That issue is no longer open."
+                elif not wmi_may(fr_issue["owner"]):
+                    fr_err = "Only " + fr_issue["owner"] + " can fix this."
+                elif fr_issue["owner"] not in ("HR", "GM") and [f for f in pc.farms if f.farm == fr_issue["owner"] and f.status == "Approved"]:
+                    fr_err = fr_issue["owner"] + " is already approved in this check; send it back first."
+            if fr_err:
+                out["error"] = fr_err
+            else:
+                fr_r = frappe.db.get_value("Work Actuals Employee", fr_row,
+                    ["parent", "actual_quantity", "amount", "count_in_payroll"], as_dict=True)
+                fr_rate = frappe.utils.flt(frappe.db.get_value("Work Management Actuals", fr_r.parent, "rate"))
+                if fr_op == "zero":
+                    fr_new_q = 0
+                    fr_new_a = 0
+                elif fr_op == "recompute":
+                    fr_new_q = frappe.utils.flt(fr_r.actual_quantity)
+                    fr_new_a = round(fr_new_q * fr_rate, 2) if frappe.utils.cint(fr_r.count_in_payroll) else 0
+                else:
+                    fr_new_q = fr_qty
+                    fr_new_a = round(fr_qty * fr_rate, 2) if frappe.utils.cint(fr_r.count_in_payroll) else 0
+                frappe.db.set_value("Work Actuals Employee", fr_row, {"actual_quantity": fr_new_q, "amount": fr_new_a,
+                    "custom_reviewed": 0}, update_modified=False)
+                wmpc_retotal(fr_r.parent)
+                fx = frappe.new_doc("Work Management Payroll Check Fix")
+                fx.payroll_check = pc.name
+                fx.kind = {"zero": "zeroed", "recompute": "recomputed", "set_qty": "edited"}[fr_op]
+                fx.issue = fr_code
+                fx.zeroed_row = fr_row
+                fx.zeroed_actuals = fr_r.parent
+                fx.employee = fr_issue["employee"]
+                fx.employee_name = fr_issue["employee_name"]
+                fx.work_date = fr_issue["work_date"]
+                fx.farm = fr_issue["farm"]
+                fx.qty_before = frappe.utils.flt(fr_r.actual_quantity)
+                fx.amount_before = frappe.utils.flt(fr_r.amount)
+                fx.fixed_by = frappe.session.user
+                fx.fixed_at = frappe.utils.now()
+                fx.reason = pc_reason + " (now " + str(fr_new_q) + " / KES " + str(fr_new_a) + ")"
+                fx.insert(ignore_permissions=True)
+                try:
+                    frappe.get_doc("Work Management Actuals", fr_r.parent).add_comment("Edited",
+                        "Payroll check " + pc.name + ": " + str(fr_issue["employee_name"] or fr_issue["employee"]) + " on " +
+                        fr_issue["work_date"] + " " + fx.kind + " by " + frappe.session.user + ". " + pc_reason)
+                except Exception:
+                    pass
+                if fr_issue["owner"] == "HR":
+                    wmpc_totals(pc)
+                frappe.db.commit()
+                out["fixed"] = fr_row
+                out["amount"] = fr_new_a
+
+        elif action == "chk_dup_groups":
+            fscope = (frappe.form_dict.get("farm") or "").strip() or None
+            if not pc_hr:
+                if fscope not in pc_fm:
+                    fscope = pc_fm[0] if pc_fm else "__none__"
+            grp = {}
+            for dp in wmpc_duplicates(pc.period_from, pc.period_to, fscope):
+                if dp["paid_twice"]:
+                    continue
+                asgs = sorted({wmpc_ident(dp, cx) for cx in dp["copies"]})
+                gk = " + ".join(asgs)
+                g = grp.get(gk) or {"key": gk, "assignments": asgs, "owner": dp["owner"], "workers": {}, "days": 0,
+                                    "excess": 0, "dates": {}, "tasks": {}}
+                g["workers"][dp["employee"]] = dp["employee_name"]
+                g["days"] = g["days"] + 1
+                g["excess"] = g["excess"] + dp["excess"]
+                g["dates"][dp["work_date"]] = 1
+                for cx in dp["copies"]:
+                    g["tasks"][wmpc_ident(dp, cx)] = str(frappe.db.get_value("Task", cx.task, "subject") or cx.task or "")
+                grp[gk] = g
+            res = []
+            for gk in grp:
+                g = grp[gk]
+                ds = sorted(g["dates"].keys())
+                res.append({"key": gk, "assignments": g["assignments"], "owner": g["owner"],
+                            "workers": len(g["workers"]), "days": g["days"], "excess": g["excess"],
+                            "from": ds[0], "to": ds[-1], "tasks": g["tasks"],
+                            "created": {x: str(frappe.db.get_value("Work Management Assigner", x, "creation")
+                                                or frappe.db.get_value("Work Management Actuals", x, "creation") or "")[:10]
+                                        for x in g["assignments"]}})
+            out["groups"] = sorted(res, key=lambda x: -x["days"])
+
+        elif action == "chk_dup_group_fix":
+            gf_key = frappe.form_dict.get("key")
+            gf_keep = frappe.form_dict.get("keep")
+            gf_err = None
+            if pc.status in ("Sent", "Cancelled"):
+                gf_err = "This check is " + pc.status + "."
+            elif not pc_reason:
+                gf_err = "Say why (it is logged with every fix)."
+            gf_todo = []
+            if not gf_err:
+                for dp in wmpc_duplicates(pc.period_from, pc.period_to, None):
+                    if dp["paid_twice"] or " + ".join(sorted({wmpc_ident(dp, cx) for cx in dp["copies"]})) != gf_key:
+                        continue
+                    keepers = [cx for cx in dp["copies"] if wmpc_ident(dp, cx) == gf_keep]
+                    if not keepers:
+                        continue
+                    if not wmi_may(dp["owner"]):
+                        gf_err = "Only " + dp["owner"] + " can fix these."
+                        break
+                    if dp["owner"] != "HR" and [f for f in pc.farms if f.farm == dp["owner"] and f.status == "Approved"]:
+                        gf_err = dp["owner"] + " is already approved in this check; send it back first."
+                        break
+                    dp["keep"] = keepers[0].row
+                    for cx in dp["copies"]:
+                        if cx.row != keepers[0].row and not cx.payment_ref and not frappe.utils.cint(cx.paid):
+                            gf_todo.append((dp, cx))
+                if not gf_err and not gf_todo:
+                    gf_err = "Nothing left to fix in that group."
+            if gf_err:
+                out["error"] = gf_err
+            else:
+                for dp, cx in gf_todo:
+                    wmpc_zero(pc, dp, cx, pc_reason + " (kept " + str(gf_keep) + ")")
+                frappe.db.commit()
+                out["zeroed"] = len(gf_todo)
+
+        elif action == "chk_dup_detail":
+            dd_emp = frappe.form_dict.get("employee")
+            dd_day = frappe.form_dict.get("work_date")
+            dd = None
+            for dp in wmpc_duplicates(dd_day, dd_day, None):
+                if dp["employee"] == dd_emp:
+                    dd = dp
+            if not dd:
+                out["error"] = "No duplicate for that worker on that day."
+            elif not (pc_hr or dd["owner"] in pc_fm):
+                out["error"] = "That duplicate is not on your farm."
+            else:
+                ee = frappe.db.get_value("Employee", dd_emp, ["employee_name", "designation", "employment_type",
+                    "custom_farm", "status", "relieving_date"], as_dict=True) or {}
+                att = frappe.db.get_value("Attendance", {"employee": dd_emp, "attendance_date": dd_day, "docstatus": 1},
+                    ["status"], as_dict=True)
+                ck_cols = "time, log_type" + (", device_id" if frappe.get_meta("Employee Checkin").get_field("device_id") else "")
+                scans = frappe.db.sql("SELECT " + ck_cols + """ FROM `tabEmployee Checkin`
+                    WHERE employee = %s AND time >= %s AND time < DATE_ADD(%s, INTERVAL 1 DAY) ORDER BY time""",
+                    (dd_emp, dd_day, dd_day), as_dict=True)
+                cards = []
+                for cx in dd["copies"]:
+                    ac = frappe.db.get_value("Work Management Actuals", cx.doc, ["task", "block_section", "assignment",
+                        "entered_by", "owner", "creation", "fm_approved_by", "fm_approval_date", "hr_approved_by",
+                        "hr_approval_date", "gm_approved_by", "gm_approval_date", "team_leader", "rate",
+                        "workflow_state"], as_dict=True)
+                    asg = frappe.db.get_value("Work Management Assigner", ac.assignment, ["from_date", "to_date",
+                        "owner", "creation", "workflow_state", "planner_request"], as_dict=True) if ac.assignment else None
+                    win = frappe.db.sql("""SELECT start_date, left_date, IFNULL(status, 'Active') status
+                        FROM `tabWork Assignment Employee` WHERE parent = %s AND employee = %s""",
+                        (ac.assignment, dd_emp), as_dict=True) if ac.assignment else []
+                    pl = frappe.db.get_value("Work Management Planner", asg.planner_request, ["quantity", "uom",
+                        "daily_target"], as_dict=True) if (asg and asg.planner_request) else None
+                    done = 0
+                    if asg and asg.planner_request:
+                        done = frappe.utils.flt(frappe.db.sql("""SELECT COALESCE(SUM(ac2.total_actual_qty), 0)
+                            FROM `tabWork Management Actuals` ac2 INNER JOIN `tabWork Management Assigner` a2
+                              ON a2.name = ac2.assignment
+                            WHERE a2.planner_request = %s AND ac2.workflow_state = 'CONFIRMED'""",
+                            (asg.planner_request,))[0][0])
+                    hrs = frappe.db.get_value("Work Actuals Employee", cx.row, "hours")
+                    cards.append({
+                        "row": cx.row, "doc": cx.doc, "keep": 1 if cx.row == dd["keep"] else 0,
+                        "task": ac.task, "task_name": frappe.db.get_value("Task", ac.task, "subject") if ac.task else None,
+                        "block": ac.block_section, "state": ac.workflow_state, "farm": cx.farm,
+                        "assignment": ac.assignment,
+                        "asg_from": str(asg.from_date) if asg else None, "asg_to": str(asg.to_date) if asg else None,
+                        "asg_by": asg.owner if asg else None, "asg_created": str(asg.creation)[:16] if asg else None,
+                        "backdated": cx.get("backdated"),
+                        "window": [{"start": str(w.start_date or (asg.from_date if asg else "")), "left": str(w.left_date or ""),
+                                    "status": w.status} for w in win],
+                        "entered_by": ac.entered_by or ac.owner, "entered_at": str(ac.creation)[:16],
+                        "late_days": frappe.utils.date_diff(frappe.utils.getdate(ac.creation), dd_day),
+                        "fm": ac.fm_approved_by, "fm_on": str(ac.fm_approval_date or ""),
+                        "hr": ac.hr_approved_by, "hr_on": str(ac.hr_approval_date or ""),
+                        "gm": ac.gm_approved_by, "gm_on": str(ac.gm_approval_date or ""),
+                        "self_approved": 1 if (ac.entered_by or ac.owner) in (ac.fm_approved_by, ac.hr_approved_by,
+                                                                              ac.gm_approved_by) else 0,
+                        "team_leader": ac.team_leader, "qty": frappe.utils.flt(cx.qty), "hours": frappe.utils.flt(hrs),
+                        "rate": frappe.utils.flt(ac.rate), "amount": frappe.utils.flt(cx.amount),
+                        "paid": frappe.utils.cint(cx.paid), "payment_ref": cx.payment_ref,
+                        "pay_basis": (pl.uom if pl else None), "daily_target": (frappe.utils.flt(pl.daily_target) if pl else 0),
+                        "plan_qty": (frappe.utils.flt(pl.quantity) if pl else 0), "plan_done": done,
+                        "plan_after_zero": done - frappe.utils.flt(cx.qty)})
+                around = []
+                for k in range(-3, 4):
+                    day = str(frappe.utils.add_days(dd_day, k))
+                    recs = frappe.db.sql("""SELECT ac.name doc, ac.task, we.actual_quantity qty FROM `tabWork Actuals Employee` we
+                        INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+                        WHERE we.employee = %s AND we.work_date = %s AND IFNULL(ac.workflow_state, '') != 'Rejected'
+                          AND ac.docstatus < 2 AND (IFNULL(we.actual_quantity, 0) > 0 OR IFNULL(we.amount, 0) > 0)""",
+                        (dd_emp, day), as_dict=True)
+                    around.append({"date": day, "records": [{"doc": r.doc, "task": r.task,
+                        "task_name": frappe.db.get_value("Task", r.task, "subject") if r.task else None,
+                        "qty": frappe.utils.flt(r.qty)} for r in recs]})
+                out["worker"] = {"employee": dd_emp, "employee_name": ee.get("employee_name"),
+                                 "designation": ee.get("designation"), "employment_type": ee.get("employment_type"),
+                                 "farm": ee.get("custom_farm"), "status": ee.get("status")}
+                out["day"] = {"date": dd_day, "attendance": att.status if att else None,
+                              "scans": [{"time": str(x.time)[11:16], "type": x.get("log_type"), "device": x.get("device_id")}
+                                        for x in scans]}
+                out["copies"] = cards
+                out["owner"] = dd["owner"]
+                out["around"] = around
+                out["excess"] = dd["excess"]
 
         elif action == "chk_cancel":
             if not pc_hr:
