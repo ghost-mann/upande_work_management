@@ -599,7 +599,7 @@ def wm_assigner(**kwargs):
         # BACKDATING: putting workers on work that started long ago is how a second
         # assignment came to cover days another already held.
         bd_start = None
-        if not err and planner:
+        if not err and planner and not asg_name:
             bd_start = frappe.db.get_value("Work Management Planner", planner, "from_date")
             err = wmg_backdate_err(bd_start) or None
         # ── TIME & ATTENDANCE GATE (server enforcement; toggles in Work Management

@@ -53,6 +53,13 @@ ROWS = [
 
 
 class TestBackfill(unittest.TestCase):
+	def test_only_settled_pay_counts(self):
+		"""A copy sitting in a run awaiting accounts is not paid yet (final review)."""
+		import work_management
+		src = open(work_management.__path__[0] + "/payroll_check_backfill.py").read()
+		self.assertNotIn("OR IFNULL(w.payment_ref, '') != ''", src)
+		self.assertNotIn("OR IFNULL(we.payment_ref, '') != ''", src)
+
 	def test_one_entry_per_worker_day_paid_twice(self):
 		out, ins = run_with(ROWS)
 		self.assertEqual(out["logged"], 1)

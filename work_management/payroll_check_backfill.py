@@ -23,11 +23,11 @@ def run(dry_run=True):
 		    SELECT w.employee, w.work_date FROM `tabWork Actuals Employee` w
 		    INNER JOIN `tabWork Management Actuals` a ON w.parent = a.name
 		    WHERE w.parenttype = 'Work Management Actuals' AND IFNULL(a.workflow_state, '') != 'Rejected'
-		      AND a.docstatus < 2 AND w.amount > 0 AND (IFNULL(w.paid, 0) = 1 OR IFNULL(w.payment_ref, '') != '')
+		      AND a.docstatus < 2 AND w.amount > 0 AND IFNULL(w.paid, 0) = 1
 		    GROUP BY w.employee, w.work_date HAVING COUNT(*) > 1
 		) twice ON twice.employee = we.employee AND twice.work_date = we.work_date
 		WHERE we.parenttype = 'Work Management Actuals' AND IFNULL(ac.workflow_state, '') != 'Rejected'
-		  AND ac.docstatus < 2 AND we.amount > 0 AND (IFNULL(we.paid, 0) = 1 OR IFNULL(we.payment_ref, '') != '')
+		  AND ac.docstatus < 2 AND we.amount > 0 AND IFNULL(we.paid, 0) = 1
 		ORDER BY we.employee, we.work_date, we.payment_ref
 		""",
 		as_dict=True,

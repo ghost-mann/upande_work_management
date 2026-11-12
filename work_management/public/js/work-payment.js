@@ -2661,6 +2661,7 @@
     if(c.status==="HR Review" && me.hr) acts+='<button class="btn good" id="pc-hr">HR approve</button>';
     if(c.status==="GM Review" && me.gm) acts+='<button class="btn good" id="pc-gm">GM approve</button>';
     if(c.status==="Approved" && me.can_send) acts+='<button class="btn pay" id="pc-send">Send to payroll</button>';
+    if(c.status==="Approved" && me.hr) acts+='<button class="btn" id="pc-close" title="Some days went to payroll and the rest cannot: take the rest out for a top-up check">Close as sent</button>';
     var reviewer=me.hr || (d.farms||[]).some(function(f){ return fm.indexOf(f.farm)>=0; });
     if(c.status!=="Sent" && c.status!=="Cancelled" && reviewer) acts+='<button class="btn" id="pc-back">Send back</button>';
     if(c.status!=="Sent" && c.status!=="Cancelled" && me.hr) acts+='<button class="btn" id="pc-cancel">Cancel check</button>';
@@ -2677,11 +2678,12 @@
       h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr><th>Worker</th><th>Date</th><th>Fix by</th><th>Records</th><th class="n">Extra</th></tr></thead><tbody>';
       dups.forEach(function(x){
         var cp=x.copies.map(function(k){
-          var keep=k.row===x.keep, paid=+k.paid||k.payment_ref;
-          var mayZero=!keep && !paid && c.status!=="Sent" && c.status!=="Cancelled" &&
+          var keep=k.row===x.keep, paid=+k.paid, inRun=!paid&&k.payment_ref;
+          var mayZero=!keep && !paid && !inRun && c.status!=="Sent" && c.status!=="Cancelled" &&
                       (x.owner==="HR" ? me.hr : (me.hr || fm.indexOf(x.owner)>=0));
           return '<div class="pc-copy'+(keep?' keep':'')+'">'+(keep?'★ ':'')+esc(k.doc)+' · '+esc(taskName(k.task))+' · '+esc(k.farm)+' · '+esc(k.state==="CONFIRMED"?"Confirmed":k.state)+
                  ' · '+money(k.amount)+(paid?' · <span class="pc-chip ok">paid '+esc(k.payment_ref||"")+'</span>':'')+
+                 (inRun?' · <span class="pc-chip wait">in run '+esc(k.payment_ref)+' — withdraw it on Awaiting accounts to zero</span>':'')+
                  (mayZero?' <button class="btn sm" data-pcz="'+esc(k.row)+'">Zero this</button>':'')+'</div>';
         }).join("");
         h+='<tr><td>'+esc(x.employee_name||x.employee)+'<div class="pc-sub" style="font-size:10.5px;color:var(--mute)">'+esc(x.employee)+'</div></td><td>'+esc(x.work_date)+'</td><td>'+esc(x.owner)+'</td><td>'+cp+'</td><td class="n m">'+money(x.excess)+'</td></tr>';
@@ -2729,6 +2731,7 @@
     if(el("pc-hr")) el("pc-hr").onclick=function(){ this.disabled=true; pcDo({action:"chk_hr_approve"}, "Approved for the GM"); };
     if(el("pc-gm")) el("pc-gm").onclick=function(){ this.disabled=true; pcDo({action:"chk_gm_approve"}, "Approved: HR can send it to payroll"); };
     if(el("pc-back")) el("pc-back").onclick=function(){ var r=pcReason(); if(!r) return; this.disabled=true; pcDo({action:"chk_send_back", reason:r}, "Sent back to the farm managers"); };
+    if(el("pc-close")) el("pc-close").onclick=function(){ var r=pcReason(); if(!r) return; this.disabled=true; pcDo({action:"chk_close_sent", reason:r}, "Closed: unsent days released for a top-up check"); };
     if(el("pc-cancel")) el("pc-cancel").onclick=function(){ var r=pcReason(); if(!r) return; this.disabled=true; pcDo({action:"chk_cancel", reason:r}, "Check cancelled"); };
     if(el("pc-send")) el("pc-send").onclick=function(){
       // the Pay workers tab sends; with the gate on, only this check's days are payable there

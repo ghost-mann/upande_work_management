@@ -1686,9 +1686,9 @@ def wm_actuals(**kwargs):
                 rej_err = ("These dates are locked by payroll check " + rj_lock +
                            ". Ask HR or the GM to send the check back first.")
             elif frappe.db.sql("""SELECT 1 FROM `tabWork Actuals Employee` WHERE parent = %s
-                                  AND (IFNULL(paid, 0) = 1""" + (" OR IFNULL(payroll_check, '') != ''" if WMG_PC_DT else "") +
+                                  AND (IFNULL(paid, 0) = 1 OR IFNULL(payment_ref, '') != ''""" + (" OR IFNULL(payroll_check, '') != ''" if WMG_PC_DT else "") +
                                """) LIMIT 1""", (nm,)):
-                rej_err = nm + " has worker-days already in a payroll check or paid, so it cannot be rejected."
+                rej_err = nm + " has worker-days already in a payment run, a payroll check or paid, so it cannot be rejected."
         if rej_err:
             out["error"] = rej_err
         else:

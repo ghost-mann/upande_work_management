@@ -168,7 +168,7 @@ class TestTheCheckActions(unittest.TestCase):
 				self.assertIn(clause, body)
 
 	def test_a_paid_copy_is_never_zeroed(self):
-		self.assertIn("That copy is already in a payment", block("chk_fix_dup"))
+		self.assertIn("That copy is already paid; zero the other one.", block("chk_fix_dup"))
 
 	def test_cross_farm_duplicates_belong_to_hr(self):
 		src = source("payment")
@@ -178,3 +178,43 @@ class TestTheCheckActions(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestReviewFixes(unittest.TestCase):
+	"""Final-review findings, 2026-11-12."""
+
+	def test_a_part_sent_check_can_be_closed(self):
+		b = block("chk_close_sent")
+		self.assertIn("wmpc_unstamp(pc)", b)
+		self.assertIn('"status": "Sent"', b)
+		self.assertIn("pc_reason", b)
+
+	def test_paid_twice_means_paid_not_merely_sent(self):
+		src = defined("payment", "wmpc_duplicates")
+		self.assertIn('"paid_twice": 1 if npaid_settled > 1 else 0', src)
+
+	def test_a_copy_already_in_a_run_points_hr_to_withdraw_it(self):
+		self.assertIn("withdraw that run on Awaiting accounts", block("chk_fix_dup"))
+
+	def test_the_gm_cannot_approve_what_they_approved_for_hr(self):
+		b = block("chk_hr_approve")
+		self.assertIn("pc.hr_approved_by == frappe.session.user", b)
+
+	def test_empty_drafts_do_not_block(self):
+		src = defined("payment", "wmpc_unfinished")
+		self.assertIn("IFNULL(w0.actual_quantity, 0) > 0 OR IFNULL(w0.amount, 0) > 0", src)
+
+	def test_a_farm_manager_sees_only_their_farm(self):
+		b = block("chk_detail")
+		self.assertIn("fscope = pc_fm[0]", b)
+		self.assertIn("out[\"fixes\"] = [x for x in out[\"fixes\"] if x.farm in pc_fm]", b)
+
+	def test_reject_refuses_a_record_in_a_run(self):
+		src = source("actuals")
+		start = src.index('    elif action == "act_reject"')
+		b = src[start:src.find("\n    elif action", start + 1)]
+		self.assertIn("IFNULL(payment_ref, '') != ''", b)
+
+	def test_editing_a_pending_assignment_is_not_backdating(self):
+		src = source("assigner")
+		self.assertIn("if not err and planner and not asg_name:", src)

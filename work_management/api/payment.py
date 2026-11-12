@@ -3608,9 +3608,12 @@ def wm_payment(**kwargs):
             """The copy a duplicate keeps: one already paid if there is one, else the
             copy on the assignment the worker was on first (earliest start, then the
             assignment created first, then the record created first)."""
-            paid = [c for c in copies if frappe.utils.cint(c.get("paid")) or c.get("payment_ref")]
+            paid = [c for c in copies if frappe.utils.cint(c.get("paid"))]
             if paid:
                 return paid[0]
+            sent = [c for c in copies if c.get("payment_ref")]
+            if sent:
+                return sent[0]
             ranked = sorted(copies, key=lambda c: (str(c.get("asg_start") or "9999"),
                 str(c.get("asg_created") or "9999"), str(c.get("ac_created") or "9999"), str(c.get("row"))))
             return ranked[0]
@@ -3675,26 +3678,30 @@ def wm_payment(**kwargs):
                 if farm and owner != farm:
                     continue
                 keep = wmpc_keeper(g)
+                # paid twice = settled by payroll on two or more copies. A copy only
+                # sitting in a run awaiting accounts is still an open problem: HR
+                # withdraws that run, then the copy can be zeroed.
                 npaid = len([c for c in g if frappe.utils.cint(c.paid) or c.payment_ref])
+                npaid_settled = len([c for c in g if frappe.utils.cint(c.paid)])
                 excess = 0
                 for c in g:
                     if c.row != keep.row:
                         excess = excess + frappe.utils.flt(c.amount)
                 dups.append({"employee": k[0], "employee_name": g[0].ename, "work_date": k[1],
                     "owner": owner, "keep": keep.row, "copies": g, "paid_copies": npaid,
-                    "paid_twice": 1 if npaid > 1 else 0, "excess": excess})
+                    "paid_twice": 1 if npaid_settled > 1 else 0, "in_runs": npaid, "excess": excess})
             return dups
 
         def wmpc_unfinished(f, t, farm):
             """Records that still have to be finished, approved, or cleared away."""
+            # only records holding work in these dates: an empty draft pays nobody,
+            # and there is no way to clear one from the screens
             conds = """ac.docstatus < 2 AND ac.workflow_state IN
                        ('Draft', 'Rejected', 'Pending Farm Manager', 'Pending HR Head', 'Pending GM')
-                    AND (EXISTS (SELECT 1 FROM `tabWork Actuals Employee` w1 WHERE w1.parent = ac.name
-                                   AND w1.parenttype = 'Work Management Actuals'
-                                   AND w1.work_date BETWEEN %(f)s AND %(t)s)
-                         OR (NOT EXISTS (SELECT 1 FROM `tabWork Actuals Employee` w2 WHERE w2.parent = ac.name
-                                         AND w2.parenttype = 'Work Management Actuals')
-                             AND ac.from_date <= %(t)s AND ac.to_date >= %(f)s))"""
+                    AND EXISTS (SELECT 1 FROM `tabWork Actuals Employee` w0 WHERE w0.parent = ac.name
+                                  AND w0.parenttype = 'Work Management Actuals'
+                                  AND w0.work_date BETWEEN %(f)s AND %(t)s
+                                  AND (IFNULL(w0.actual_quantity, 0) > 0 OR IFNULL(w0.amount, 0) > 0))"""
             if farm:
                 conds = conds + " AND ac.farm = %(farm)s"
             return frappe.db.sql("""
@@ -3781,7 +3788,7 @@ def wm_payment(**kwargs):
                 if frappe.db.exists("Work Management Payroll Check Fix", {"kind": "paid twice",
                         "employee": dp["employee"], "work_date": dp["work_date"]}):
                     continue
-                paid = [x for x in dp["copies"] if frappe.utils.cint(x.paid) or x.payment_ref]
+                paid = [x for x in dp["copies"] if frappe.utils.cint(x.paid)]
                 fx = frappe.new_doc("Work Management Payroll Check Fix")
                 fx.payroll_check = c.name if c else None
                 fx.kind = "paid twice"
@@ -3937,6 +3944,10 @@ def wm_payment(**kwargs):
 
         elif action == "chk_detail":
             fscope = (frappe.form_dict.get("farm") or "").strip() or None
+            if not pc_hr:
+                # a farm manager sees their own farm's part of the check, nobody else's
+                if fscope not in pc_fm:
+                    fscope = pc_fm[0] if pc_fm else "__none__"
             dl = wmpc_duplicates(pc.period_from, pc.period_to, fscope)
             uf = wmpc_unfinished(pc.period_from, pc.period_to, fscope) if not pc.is_top_up else []
             open_dups = [x for x in dl if not x["paid_twice"]]
@@ -3983,6 +3994,10 @@ def wm_payment(**kwargs):
                         "zeroed_actuals", "amount_before", "payments", "fixed_by", "fixed_at", "reason"],
                 order_by="fixed_at desc", limit=500)
             out["me"] = {"fm_farms": pc_fm, "hr": pc_hr, "gm": pc_gm, "can_send": CAN_SEND, "gate": PC_GATE}
+            if not pc_hr:
+                out["farms"] = [x for x in out["farms"] if x["farm"] in pc_fm]
+                out["fixes"] = [x for x in out["fixes"] if x.farm in pc_fm]
+                out["hr_dups"] = 0
 
         elif action == "chk_fix_dup":
             zrow = frappe.form_dict.get("zero_row")
@@ -4001,7 +4016,7 @@ def wm_payment(**kwargs):
                         if (fx_farm and dp["owner"] != fx_farm) or (not fx_farm and not pc_hr):
                             continue
                         for cx in dp["copies"]:
-                            if cx.row != dp["keep"]:
+                            if cx.row != dp["keep"] and not cx.payment_ref and not frappe.utils.cint(cx.paid):
                                 todo.append((dp, cx))
                     else:
                         for cx in dp["copies"]:
@@ -4015,8 +4030,11 @@ def wm_payment(**kwargs):
                         ferr = "A duplicate across two farms is for HR to fix."
                     elif dp["owner"] != "HR" and not (pc_hr or dp["owner"] in pc_fm):
                         ferr = "Only " + dp["owner"] + "'s farm manager, HR or the GM can fix that."
-                    elif frappe.utils.cint(cx.paid) or cx.payment_ref:
-                        ferr = "That copy is already in a payment; zero the other one."
+                    elif frappe.utils.cint(cx.paid):
+                        ferr = "That copy is already paid; zero the other one."
+                    elif cx.payment_ref:
+                        ferr = ("That copy is in payment run " + str(cx.payment_ref) + ", not yet paid: "
+                                "withdraw that run on Awaiting accounts first, then zero it here.")
                     elif dp["owner"] != "HR" and [f for f in pc.farms if f.farm == dp["owner"] and f.status == "Approved"]:
                         ferr = dp["owner"] + " is already approved in this check; send it back first."
                     if ferr:
@@ -4080,6 +4098,9 @@ def wm_payment(**kwargs):
                 herr = "Only the GM can approve a payroll check."
             elif pc.status != ("HR Review" if is_hr_step else "GM Review"):
                 herr = "This check is at " + pc.status + "."
+            elif (not is_hr_step) and pc.hr_approved_by == frappe.session.user:
+                herr = ("You approved this check for HR, so somebody else must give the GM approval: "
+                        "two people see every payroll.")
             if not herr:
                 dl = [x for x in wmpc_duplicates(pc.period_from, pc.period_to, None) if not x["paid_twice"]]
                 uf = wmpc_unfinished(pc.period_from, pc.period_to, None) if not pc.is_top_up else []
@@ -4140,6 +4161,30 @@ def wm_payment(**kwargs):
                     frappe.utils.escape_html(wmpc_label(pc)) + "</b> back to the farm managers:</p><blockquote>" +
                     frappe.utils.escape_html(pc_reason) + "</blockquote><p>Every farm needs approving again.</p>")
                 out["status"] = "Farm Review"
+
+        elif action == "chk_close_sent":
+            # Part of an Approved check went to payroll and the rest never can (a worker
+            # no longer a task worker, no salary structure, a day outside every pay
+            # week). Close it as Sent: the unsent days leave the check, are logged on
+            # it, and turn up as late work for a top-up check.
+            if not pc_hr:
+                out["error"] = "Only HR or the GM can close a payroll check."
+            elif pc.status != "Approved":
+                out["error"] = "Only an Approved check can be closed as sent."
+            elif not pc_reason:
+                out["error"] = "Say why the rest of it is not being sent."
+            else:
+                cs_left = frappe.db.sql("""SELECT COUNT(*) n, COALESCE(SUM(amount), 0) a FROM `tabWork Actuals Employee`
+                    WHERE payroll_check = %s AND IFNULL(payment_ref, '') = ''""", (pc.name,), as_dict=True)[0]
+                wmpc_unstamp(pc)
+                wmpc_totals(pc)
+                frappe.db.set_value("Work Management Payroll Check", pc.name, {"status": "Sent", "sent_at": frappe.utils.now()})
+                frappe.get_doc("Work Management Payroll Check", pc.name).add_comment("Comment",
+                    "Closed as sent by " + pc_me + ": " + str(frappe.utils.cint(cs_left.n)) + " unsent worker-day(s), KES " +
+                    frappe.utils.fmt_money(cs_left.a) + ", taken out for a top-up check. " + pc_reason)
+                frappe.db.commit()
+                out["status"] = "Sent"
+                out["released"] = frappe.utils.cint(cs_left.n)
 
         elif action == "chk_cancel":
             if not pc_hr:
