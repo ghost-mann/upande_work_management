@@ -223,6 +223,8 @@ class TestScreensReadTheTemplate(unittest.TestCase):
 	# Strings containing a level word that are identifiers, not labels.
 	ALLOWED = (
 		"Pending Farm Manager", "Farm Manager", "Farm Manager Saboti",
+		# Payroll check status, a stored Select value rather than a label.
+		'"Farm Review"',
 		"Farm Manager Lokitela", "Farm Manager Endebess", "Farm Manager Valle",
 		"Plan approval — Farm Manager", "block employees marked Absent",
 		# Payment screen: object keys for the exported audit/worker CSV and
