@@ -366,12 +366,37 @@ def wm_actuals(**kwargs):
         """, (docname,), as_dict=True)]
 
 
+    def wmg_cap_err(docname):
+        """The plan-target refusal for a record about to move on, or "". Every record
+        on the plan that is past Draft counts, this one included -- two crews each
+        entered up to the full target while both sat with the farm manager used to
+        pay the plan twice over."""
+        asg = frappe.db.get_value("Work Management Actuals", docname, "assignment")
+        pr = frappe.db.get_value("Work Management Assigner", asg, "planner_request") if asg else None
+        target = frappe.utils.flt(frappe.db.get_value("Work Management Planner", pr, "quantity")) if pr else 0
+        if target <= 0:
+            return ""
+        tot = frappe.db.sql("""
+            SELECT COALESCE(SUM(ac.total_actual_qty), 0) q
+            FROM `tabWork Management Actuals` ac
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            WHERE a2.planner_request = %s
+              AND (ac.workflow_state IN ('Pending Farm Manager', 'Pending HR Head', 'Pending GM', 'CONFIRMED')
+                   OR ac.name = %s)
+        """, (pr, docname), as_dict=True)
+        done = frappe.utils.flt(tot[0].q) if tot else 0
+        if done > target + 0.0001:
+            return ("The plan's target is " + str(target) + " and " + str(done) + " is now recorded across its "
+                    "records -- " + str(round(done - target, 2)) + " over. Correct the quantities before approving.")
+        return ""
+
+
     def wmg_doc_err(docname):
-        """wmg_guard_err() for a saved actuals record, as it stands."""
+        """wmg_guard_err() and the plan cap for a saved actuals record, as it stands."""
         h = frappe.db.get_value("Work Management Actuals", docname, ["assignment", "farm"], as_dict=True)
         if not h:
             return ""
-        return wmg_guard_err(h.assignment, h.farm, wmg_doc_pairs(docname), docname)
+        return wmg_guard_err(h.assignment, h.farm, wmg_doc_pairs(docname), docname) or wmg_cap_err(docname)
 
 
     action = frappe.form_dict.get("action") or "meta"
@@ -715,7 +740,7 @@ def wm_actuals(**kwargs):
                 FROM `tabWork Management Actuals` ac
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                 WHERE a2.planner_request = %s
-                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                  AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
                   AND ac.assignment != %s
             """, (pr, name), as_dict=True)
             done_elsewhere = frappe.utils.flt(de[0].q) if de else 0
@@ -1165,6 +1190,44 @@ def wm_actuals(**kwargs):
                 bits2 = c2.split("~")
                 if len(bits2) >= 3 and bits2[0] and bits2[1] and frappe.utils.flt(bits2[2]) > 0:
                     wmg_pairs.append((bits2[0], bits2[1]))
+            # QUANTITY AND DATE SANITY (2026-11-12): no work dated after today, and a day's
+            # quantity far above the plan's daily target is refused (a slipped 88 for
+            # 8 was paid 4,257). Between the two thresholds it needs a reason, kept on
+            # the row and raised again in the payroll check.
+            wmg_qty_flagged = {}
+            wmg_qty_reason = (frappe.form_dict.get("qty_reason") or "").strip()
+            wmg_pi = frappe.db.get_value("Work Management Planner",
+                frappe.db.get_value("Work Management Assigner", assignment, "planner_request"),
+                ["daily_target", "uom"], as_dict=True) if assignment else None
+            wmg_tgt = frappe.utils.flt(wmg_pi.daily_target) if wmg_pi else 0
+            wmg_hourly = 1 if (wmg_pi and str(wmg_pi.uom or "").strip().lower() in ("hour", "hours", "hr", "hrs")) else 0
+            wmg_flag_x = 2.0
+            wmg_refuse_x = 3.0
+            for wmg_f, wmg_dflt in (("qty_flag_multiple", 2.0), ("qty_refuse_multiple", 3.0)):
+                wmg_v = frappe.db.sql("""SELECT value FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                         AND field = %s""", (wmg_f,))
+                wmg_v = frappe.utils.flt(wmg_v[0][0]) if wmg_v and wmg_v[0][0] else wmg_dflt
+                if wmg_f == "qty_flag_multiple":
+                    wmg_flag_x = wmg_v
+                else:
+                    wmg_refuse_x = wmg_v
+            wmg_bad = []
+            for c3 in (payload.split("|") if payload else []):
+                b3 = c3.split("~")
+                if len(b3) < 3 or not b3[0] or not b3[1] or frappe.utils.flt(b3[2]) <= 0:
+                    continue
+                q3 = frappe.utils.flt(b3[2])
+                n3 = frappe.db.get_value("Employee", b3[0], "employee_name") or b3[0]
+                if str(b3[1]) > str(frappe.utils.today()):
+                    wmg_bad.append(n3 + " on " + b3[1] + ": that day has not happened yet")
+                elif wmg_hourly and q3 > 24:
+                    wmg_bad.append(n3 + " on " + b3[1] + ": " + str(q3) + " hours is more than a day")
+                elif wmg_tgt > 0 and q3 > wmg_refuse_x * wmg_tgt:
+                    wmg_bad.append(n3 + " on " + b3[1] + ": " + str(q3) + " is more than " + str(wmg_refuse_x) +
+                                   "x the daily target of " + str(wmg_tgt))
+                elif wmg_tgt > 0 and q3 > wmg_flag_x * wmg_tgt:
+                    wmg_qty_flagged[(b3[0], str(b3[1]))] = (n3 + " on " + b3[1] + ": " + str(q3) +
+                                                           " against a daily target of " + str(wmg_tgt))
             wmg_self = edit_doc if editing_pending else (existing[0] if existing else None)
             wmg_err = wmg_guard_err(assignment,
                 frappe.db.get_value("Work Management Assigner", assignment, "farm") if assignment else None,
@@ -1187,6 +1250,13 @@ def wm_actuals(**kwargs):
                     allowed = True
                 if not allowed:
                     can_override = 0
+            if not wmg_err and wmg_bad:
+                wmg_err = "Not saved: " + "; ".join(wmg_bad[:8]) + (" and more" if len(wmg_bad) > 8 else "") + "."
+            if not wmg_err and wmg_qty_flagged and not wmg_qty_reason:
+                out["needs_qty_reason"] = 1
+                out["qty_flagged"] = [wmg_qty_flagged[k] for k in sorted(wmg_qty_flagged.keys())]
+                wmg_err = ("Unusually high quantities -- say why before saving: " +
+                           "; ".join(out["qty_flagged"][:6]) + ".")
             if wmg_err:
                 out["error"] = wmg_err
             elif att_conflicts and att_override and not can_override:
@@ -1221,6 +1291,8 @@ def wm_actuals(**kwargs):
                 # actual; the workflow validator's check_permission("read") would throw. Doc-level
                 # flag makes validation skip the caller's row-access enforcement.
                 d.flags.ignore_permissions = True
+                # tells the save hook this came through the screen's own checks
+                d.flags.wm_screen = 1
                 d.rate = rate
                 total_qty = 0
                 total_pay = 0
@@ -1275,6 +1347,9 @@ def wm_actuals(**kwargs):
                     row.hours = hrs
                     row.count_in_payroll = in_pay
                     row.amount = amt
+                    if (emp, str(wdate)) in wmg_qty_flagged:
+                        row.qty_flag = (wmg_qty_flagged[(emp, str(wdate))] + ". Reason: " + wmg_qty_reason +
+                                        " (" + frappe.session.user + ")")[:500]
                     # RECORDED AFTER THEY WERE RELEASED. Warned, never refused: a
                     # clerk may be entering a day that genuinely predates the
                     # release, or correcting one, and blocking that would cost more
@@ -1345,7 +1420,7 @@ def wm_actuals(**kwargs):
                             FROM `tabWork Management Actuals` ac
                             INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                             WHERE a2.planner_request = %s
-                              AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                              AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
                               AND ac.name != %s
                         """, (a_pr, this_doc), as_dict=True)
                         other_done = frappe.utils.flt(other_done_rows[0].q) if other_done_rows else 0
@@ -1373,7 +1448,7 @@ def wm_actuals(**kwargs):
                                 FROM `tabWork Management Actuals` ac
                                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                                 WHERE a2.planner_request = %s
-                                  AND ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')
+                                  AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
                                   AND ac.assignment != %s
                             """, (a_pr, assignment), as_dict=True)
                             other_done2 = frappe.utils.flt(odr[0].q) if odr else 0

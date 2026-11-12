@@ -19,7 +19,8 @@
   "custom_reviewed",
   "custom_reviewed_by",
   "custom_reviewed_at",
-  "payroll_check"
+  "payroll_check",
+  "qty_flag"
  ],
  "fields": [
   {
@@ -124,6 +125,13 @@
    "label": "Payroll Check",
    "read_only": 1,
    "search_index": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "qty_flag",
+   "fieldtype": "Small Text",
+   "label": "Quantity flag",
+   "read_only": 1,
    "no_copy": 1
   }
  ],

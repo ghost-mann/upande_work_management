@@ -254,6 +254,7 @@ class TestTheDeskSaveHook(unittest.TestCase):
 			import work_management.duplicate_guard as guard
 			importlib.reload(guard)
 			doc = Row(name="WMAC-1", docstatus=0, workflow_state="Draft",
+				flags=Row(wm_screen=1),
 				employees=[Row(employee="401151", work_date="2026-11-02", actual_quantity=1, amount=387)])
 			doc.get = lambda k, d=None: dict.get(doc, k, d)
 			with self.assertRaises(Stop):

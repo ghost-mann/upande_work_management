@@ -45,10 +45,78 @@ def clashes(doc):
 	return found
 
 
+def recompute(doc):
+	"""Desk and REST saves never re-derived the amount, so a typed amount or an
+	edited quantity went to payroll as entered. Each payable row is amount =
+	quantity x rate, to the cent; a value within 1% is kept, so the Actuals
+	screen's wage rounding survives a later desk save."""
+	rate = float(doc.get("rate") or 0)
+	total_qty = total_pay = 0.0
+	for row in doc.get("employees") or []:
+		qty = float(row.actual_quantity or 0)
+		if qty < 0:
+			frappe.throw(_("A quantity cannot be negative ({0} on {1}).").format(row.employee, row.work_date))
+		want = round(qty * rate, 2) if row.count_in_payroll else 0.0
+		have = float(row.amount or 0)
+		if abs(have - want) > max(0.01, 0.01 * want):
+			row.amount = want
+		total_qty += qty
+		total_pay += float(row.amount or 0)
+	doc.total_actual_qty = total_qty
+	doc.total_payment = round(total_pay, 2)
+
+
+def dates_err(doc):
+	"""Rows dated outside the record's own dates, or after today."""
+	today = str(frappe.utils.today())
+	f, t = str(doc.get("from_date") or ""), str(doc.get("to_date") or "")
+	bad = []
+	for row in doc.get("employees") or []:
+		d = str(row.work_date or "")
+		if not d:
+			continue
+		if d > today or (f and d < f) or (t and d > t):
+			bad.append("{0} on {1}".format(row.employee, d))
+	return bad
+
+
+def locked_by(doc):
+	"""The payroll check that has locked this record's dates on its farm, if any."""
+	if not frappe.db.exists("DocType", "Work Management Payroll Check"):
+		return None
+	days = sorted({str(r.work_date) for r in doc.get("employees") or [] if r.work_date})
+	if not days or not doc.get("farm"):
+		return None
+	for name, f, t in frappe.db.sql(
+		"""
+		SELECT pc.name, pc.period_from, pc.period_to FROM `tabWork Management Payroll Check` pc
+		WHERE pc.status NOT IN ('Cancelled', 'Sent') AND pc.period_from <= %(t)s AND pc.period_to >= %(f)s
+		  AND (pc.status IN ('HR Review', 'GM Review', 'Approved')
+		       OR EXISTS (SELECT 1 FROM `tabWork Management Payroll Check Farm` cf
+		                  WHERE cf.parent = pc.name AND cf.farm = %(farm)s AND cf.status = 'Approved'))
+		""",
+		{"f": days[0], "t": days[-1], "farm": doc.farm},
+	):
+		if any(str(f) <= d <= str(t) for d in days):
+			return name
+	return None
+
+
 def validate_actuals(doc, method=None):
-	"""Refuse a save that would pay one worker twice for one day."""
+	"""Refuse a save that would pay one worker twice for one day; on desk and REST
+	saves also re-derive amounts, refuse impossible dates, and respect a payroll
+	check's lock. Saves from the Actuals screen (flags.wm_screen) have already
+	been through all of that, with the screen's own wage rounding."""
 	if (doc.get("workflow_state") or "") == "Rejected" or doc.docstatus == 2:
 		return
+	if not doc.flags.get("wm_screen"):
+		recompute(doc)
+		bad = dates_err(doc)
+		if bad:
+			frappe.throw(_("Work dated after today or outside this record's dates: {0}").format(", ".join(bad[:8])))
+		lock = locked_by(doc)
+		if lock:
+			frappe.throw(_("These dates are locked by payroll check {0}. Ask HR or the GM to send it back first.").format(lock))
 	found = clashes(doc)
 	if found:
 		lines = ", ".join("{0} on {1} ({2})".format(e, d, other) for e, d, other in found[:8])

@@ -97,6 +97,8 @@
   "payroll_check_required",
   "payroll_check_notify",
   "max_backdate_days",
+  "qty_flag_multiple",
+  "qty_refuse_multiple",
   "sb_payroll_pack",
   "payroll_pack_enabled",
   "payroll_pack_sender",
@@ -779,6 +781,20 @@
    "label": "Days an assignment may start in the past",
    "default": "7",
    "description": "A worker may be put on an assignment starting at most this many days ago. Earlier needs the GM, with a reason."
+  },
+  {
+   "fieldname": "qty_flag_multiple",
+   "fieldtype": "Float",
+   "label": "Ask for a reason above this many times the daily target",
+   "default": "2",
+   "description": "A worker's quantity for one day above this multiple of the plan's daily target needs a reason when it is saved, and is raised again in the payroll check."
+  },
+  {
+   "fieldname": "qty_refuse_multiple",
+   "fieldtype": "Float",
+   "label": "Refuse above this many times the daily target",
+   "default": "3",
+   "description": "A worker's quantity for one day above this multiple of the plan's daily target is refused outright: almost always a typo (88 for 8)."
   }
  ],
  "idx": 0,

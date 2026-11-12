@@ -96,6 +96,69 @@ def wm_planner(**kwargs):
 
     # Who may do what. In the app port_app.py rebuilds this from Settings.
 
+
+    # HOW FAR BACK A WORKER MAY BE PUT ON WORK (one worker, one day, one task).
+    # WMA-863710 was created on 23 Oct covering 28 Sep - 11 Oct, beside the
+    # assignment that already held those days, and they were paid twice. A start
+    # more than max_backdate_days ago is refused unless the GM (or System Manager)
+    # does it with a reason, which is logged on the assignment.
+    WMG_BACKDATE_DAYS = 7
+    if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                        AND field = 'max_backdate_days' LIMIT 1"""):
+        WMG_BACKDATE_DAYS = frappe.utils.cint(
+            frappe.db.get_single_value("Work Management Settings", "max_backdate_days")) or 7
+    WMG_GM = 1 if (("General Manager" in MY_ROLES) or ("System Manager" in MY_ROLES)) else 0
+
+
+    def wmg_backdate_err(start):
+        """An error message when `start` is further back than allowed for this
+        caller, else "". The GM passes only with a `backdate_reason`."""
+        if not start:
+            return ""
+        oldest = frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)
+        if str(start) >= str(oldest):
+            return ""
+        if not WMG_GM:
+            return ("A worker cannot be put on work starting " + str(start) + ": that is more than " +
+                    str(WMG_BACKDATE_DAYS) + " days ago. Ask the GM, who can do it with a reason.")
+        if not (frappe.form_dict.get("backdate_reason") or "").strip():
+            return ("Starting " + str(start) + " is more than " + str(WMG_BACKDATE_DAYS) +
+                    " days ago. Give a reason (backdate_reason) and it will be logged on the assignment.")
+        return ""
+
+
+    def wmg_log_backdate(asg_name, start):
+        """Record a GM backdate on the assignment, once the start is known to be old."""
+        reason = (frappe.form_dict.get("backdate_reason") or "").strip()
+        if asg_name and reason and str(start) < str(frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)):
+            frappe.get_doc("Work Management Assigner", asg_name).add_comment("Comment",
+                "Backdated to " + str(start) + " by " + str(frappe.session.user) + ": " + reason)
+
+
+
+    # WHAT AN ACTIVITY PAYS ON A GIVEN DAY (2026-11-12). A plan used to be priced at
+    # the Task's rate as of today, so a plan raised after a wage change for days
+    # before it paid every day at the new rate. The rate period covering the day
+    # answers it; the Task's own fields are the fallback where no period exists.
+    def wmg_task_terms(task, day):
+        """{custom_daily_target, custom_rate, custom_uom} for `task` on `day`."""
+        t = frappe.db.get_value("Task", task, ["custom_daily_target", "custom_rate", "custom_uom"], as_dict=True)
+        if not t:
+            return None
+        if day and frappe.db.exists("DocType", "Work Task Rate"):
+            p = frappe.db.sql("""
+                SELECT rate, daily_target, uom FROM `tabWork Task Rate`
+                WHERE task = %(t)s AND valid_from <= %(d)s AND (valid_to IS NULL OR valid_to >= %(d)s)
+                ORDER BY valid_from DESC LIMIT 1
+            """, {"t": task, "d": day}, as_dict=True)
+            if p and frappe.utils.flt(p[0].rate) > 0:
+                t["custom_rate"] = p[0].rate
+                if frappe.utils.flt(p[0].daily_target) > 0:
+                    t["custom_daily_target"] = p[0].daily_target
+                if p[0].uom:
+                    t["custom_uom"] = p[0].uom
+        return t
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -476,6 +539,17 @@ def wm_planner(**kwargs):
         if not task: err = "Task is required"
         if qty <= 0: err = "Quantity must be greater than zero"
         if not from_date or not to_date: err = "Date range is required"
+        if not err and str(to_date) < str(from_date): err = "The plan ends before it starts."
+        # a plan whose days span a change in what the activity pays cannot carry one
+        # rate: split it at the change
+        if not err and task and frappe.db.exists("DocType", "Work Task Rate") and frappe.db.sql("""
+                SELECT 1 FROM `tabWork Task Rate` WHERE task = %(t)s
+                  AND valid_from > %(f)s AND valid_from <= %(to)s LIMIT 1""",
+                {"t": task, "f": from_date, "to": to_date}):
+            err = ("What this activity pays changes during these dates. Split the plan at the change, "
+                   "so each part carries the rate of its own days.")
+        if not err and not plan_name:
+            err = wmg_backdate_err(from_date) or None
         # Submitting crosses a workflow transition; saving a draft does not, and
         # stays open to whoever may raise the plan. The step's own configured role
         # gates it and System Manager bypasses -- may_take_step()'s rule, which
@@ -582,8 +656,7 @@ def wm_planner(**kwargs):
                     # when the line is already over-consumed -- clamping to 0 would make
                     # a genuine overrun look like an exact fit, and would disagree with
                     # what headroom() reports for the same line at the same moment.
-                    cap_tinfo = frappe.db.get_value("Task", task,
-                        ["custom_daily_target", "custom_rate"], as_dict=True)
+                    cap_tinfo = wmg_task_terms(task, from_date)
                     cap_rate = frappe.utils.flt(cap_tinfo.custom_rate) if cap_tinfo else 0
                     # identical arithmetic to d.total_cost = qty * rate below -- the cap
                     # must check the same figure the document is saved with, unrounded.
@@ -602,7 +675,7 @@ def wm_planner(**kwargs):
                 out["error"] = cap_err
             else:
                 out["master_plan"] = cap_mp[0].name
-                tinfo = frappe.db.get_value("Task", task, ["custom_daily_target","custom_rate","custom_uom"], as_dict=True)
+                tinfo = wmg_task_terms(task, from_date)
                 tgt = frappe.utils.flt(tinfo.custom_daily_target) if tinfo else 0
                 rate = frappe.utils.flt(tinfo.custom_rate) if tinfo else 0
                 uom = tinfo.custom_uom if tinfo else None
