@@ -140,6 +140,44 @@ def wm_assigner(**kwargs):
     # How long a full day is. The denominator every man-day figure divides by.
     # Sunday is worked on these farms, so it is a full day and not zero.
 
+    # HOW FAR BACK A WORKER MAY BE PUT ON WORK (one worker, one day, one task).
+    # WMA-863710 was created on 23 Oct covering 28 Sep - 11 Oct, beside the
+    # assignment that already held those days, and they were paid twice. A start
+    # more than max_backdate_days ago is refused unless the GM (or System Manager)
+    # does it with a reason, which is logged on the assignment.
+    WMG_BACKDATE_DAYS = 7
+    if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                        AND field = 'max_backdate_days' LIMIT 1"""):
+        WMG_BACKDATE_DAYS = frappe.utils.cint(
+            frappe.db.get_single_value("Work Management Settings", "max_backdate_days")) or 7
+    WMG_GM = 1 if (("General Manager" in MY_ROLES) or ("System Manager" in MY_ROLES)) else 0
+
+
+    def wmg_backdate_err(start):
+        """An error message when `start` is further back than allowed for this
+        caller, else "". The GM passes only with a `backdate_reason`."""
+        if not start:
+            return ""
+        oldest = frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)
+        if str(start) >= str(oldest):
+            return ""
+        if not WMG_GM:
+            return ("A worker cannot be put on work starting " + str(start) + ": that is more than " +
+                    str(WMG_BACKDATE_DAYS) + " days ago. Ask the GM, who can do it with a reason.")
+        if not (frappe.form_dict.get("backdate_reason") or "").strip():
+            return ("Starting " + str(start) + " is more than " + str(WMG_BACKDATE_DAYS) +
+                    " days ago. Give a reason (backdate_reason) and it will be logged on the assignment.")
+        return ""
+
+
+    def wmg_log_backdate(asg_name, start):
+        """Record a GM backdate on the assignment, once the start is known to be old."""
+        reason = (frappe.form_dict.get("backdate_reason") or "").strip()
+        if asg_name and reason and str(start) < str(frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)):
+            frappe.get_doc("Work Management Assigner", asg_name).add_comment("Comment",
+                "Backdated to " + str(start) + " by " + str(frappe.session.user) + ": " + reason)
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -284,8 +322,8 @@ def wm_assigner(**kwargs):
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
-                  AND IFNULL(we.status,'Active') = 'Active'
-                  AND a.from_date <= %s AND a.to_date >= %s
+                  AND COALESCE(we.start_date, a.from_date) <= %s
+                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
             """, (exclude_asg, pt, pf), as_dict=True)
             for r in rows:
                 if r.emp and r.emp not in allocated:
@@ -524,8 +562,7 @@ def wm_assigner(**kwargs):
                     " workers really cost " + str(planned) + " person-days.")
             else:
                 err = ("Too many workers: plan allows " + str(planned) + " per day, you selected " +
-                    str(len(emp_list)) + ". Remove " + str(over_by) + ", or turn on 'Allow a "
-                    "worker's day to be split between tasks' in Work Management Settings.")
+                    str(len(emp_list)) + ". Remove " + str(over_by) + ".")
         # DOUBLE-ALLOCATION GUARD (server enforcement): reject workers already on an overlapping live assignment
         if not err and planner and emp_list:
             p_dates = frappe.db.get_value("Work Management Planner", planner, ["from_date","to_date"], as_dict=True)
@@ -536,8 +573,8 @@ def wm_assigner(**kwargs):
                     INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                     WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                       AND a.name != %s
-                      AND IFNULL(we.status,'Active') = 'Active'
-                      AND a.from_date <= %s AND a.to_date >= %s
+                      AND COALESCE(we.start_date, a.from_date) <= %s
+                      AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
                       AND we.employee IN %s
                 """, (asg_name or "__none__", p_dates.to_date, p_dates.from_date, tuple(emp_list)), as_dict=True)
                 if clash:
@@ -557,8 +594,14 @@ def wm_assigner(**kwargs):
                         out["split_workers"] = names
                     else:
                         err = ("These workers are already assigned elsewhere for an overlapping period: " +
-                            clash_who + ". Remove them to avoid double-allocation, or turn on "
-                            "'Allow a worker's day to be split between tasks' in Work Management Settings.")
+                            clash_who + ". One worker, one day, one task: remove them here, or release "
+                            "them there and add them to this assignment from the day after with Add crew.")
+        # BACKDATING: putting workers on work that started long ago is how a second
+        # assignment came to cover days another already held.
+        bd_start = None
+        if not err and planner:
+            bd_start = frappe.db.get_value("Work Management Planner", planner, "from_date")
+            err = wmg_backdate_err(bd_start) or None
         # ── TIME & ATTENDANCE GATE (server enforcement; toggles in Work Management
         # Settings): a worker on approved leave, marked Absent inside the window, or
         # off for the WHOLE window needs an explicit, logged override. ──
@@ -727,6 +770,7 @@ def wm_assigner(**kwargs):
                 d.add_comment("Comment", "Attendance override by " + frappe.session.user + " — assigned despite: " + " | ".join(ov_lines))
                 out["att_overridden"] = len(att_conflicts)
             out["name"] = d.name; out["workflow_state"] = d.workflow_state
+            wmg_log_backdate(d.name, bd_start)
             out["assigned_count"] = d.assigned_count; out["variance"] = d.variance
             out["editing"] = editing; out["editing_pending"] = editing_pending
 
@@ -912,8 +956,8 @@ def wm_assigner(**kwargs):
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
-                  AND IFNULL(we.status,'Active') = 'Active'
-                  AND a.from_date <= %s AND a.to_date >= %s
+                  AND COALESCE(we.start_date, a.from_date) <= %s
+                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
             """, (nm, adates.to_date, adates.from_date), as_dict=True)
             for r in busyrows:
                 busy_map[r.emp] = 1
@@ -965,6 +1009,8 @@ def wm_assigner(**kwargs):
                 err = "Workers can only be added to an approved (Assigned) assignment"
             elif not add_from:
                 add_from = d.from_date
+            if not err:
+                err = wmg_backdate_err(add_from) or None
             if not err and str(add_from) > str(d.to_date):
                 err = ("They cannot start on " + str(add_from) + " -- this assignment ends " +
                     str(d.to_date) + ".")
@@ -1009,8 +1055,8 @@ def wm_assigner(**kwargs):
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
-                  AND IFNULL(we.status,'Active') = 'Active'
-                  AND a.from_date <= %s AND a.to_date >= %s
+                  AND COALESCE(we.start_date, a.from_date) <= %s
+                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
                   AND we.employee IN %s
             """, (nm, d.to_date, add_from, tuple(add_who)), as_dict=True)
             busy_names = []
@@ -1019,8 +1065,8 @@ def wm_assigner(**kwargs):
                     + " (" + str(b.asg) + ")")
             if busy and not ALLOW_SPLIT_DAY:
                 out["error"] = ("Already assigned elsewhere over these dates: " +
-                    ", ".join(busy_names[:6]) + ". Release them there first, or turn on "
-                    "'Allow a worker's day to be split between tasks' in Work Management Settings.")
+                    ", ".join(busy_names[:6]) + ". One worker, one day, one task: release them "
+                    "there first, and start them here after the day they leave.")
             else:
                 if busy:
                     out["split_warning"] = ("Also assigned elsewhere over these dates: " +
@@ -1030,6 +1076,7 @@ def wm_assigner(**kwargs):
                     SELECT COALESCE(MAX(idx),0) m FROM `tabWork Assignment Employee` WHERE parent=%s
                 """, (nm,), as_dict=True)
                 next_idx = (maxidx[0].m if maxidx else 0) + 1
+                wmg_log_backdate(nm, add_from)
                 added = []
                 for aw in add_who:
                     # the parent is submitted, so the row is inserted directly -- the
@@ -1197,6 +1244,8 @@ def wm_assigner(**kwargs):
         err = None
         if not nm or not outgoing or not replacement: err = "Outgoing, replacement, and dates are required"
         if not left_date or not start_date: err = "Both the left date and the replacement start date are required"
+        if not err:
+            err = wmg_backdate_err(start_date) or None
         d = None
         if not err:
             d = frappe.get_doc("Work Management Assigner", nm)
@@ -1226,11 +1275,12 @@ def wm_assigner(**kwargs):
                     INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                     WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                       AND a.name != %s
-                      AND IFNULL(we.status,'Active') = 'Active'
                       AND we.employee = %s
-                      AND a.from_date <= %s AND a.to_date >= %s
+                      AND COALESCE(we.start_date, a.from_date) <= %s
+                      AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
                     LIMIT 1
-                """, (nm, replacement, rdates.to_date, rdates.from_date), as_dict=True)
+                """, (nm, replacement, rdates.to_date,
+                      str(start_date) if start_date and str(start_date) > str(rdates.from_date) else rdates.from_date), as_dict=True)
                 if clash:
                     err = "Replacement is already assigned elsewhere for an overlapping period (" + str(clash[0].asg) + "). Pick someone else."
         if err:
@@ -1247,6 +1297,7 @@ def wm_assigner(**kwargs):
                 # This assignment is SUBMITTED (docstatus=1). doc.save() is blocked on submitted docs,
                 # so we edit the child rows + parent counts via direct DB writes (allowed, no re-approval).
                 rep_name = frappe.db.get_value("Employee", replacement, "employee_name")
+                wmg_log_backdate(nm, start_date)
                 # 1) mark outgoing row Left + left_date
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "status", "Left", update_modified=False)
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "left_date", left_date, update_modified=False)

@@ -197,6 +197,44 @@ def wm_actuals(**kwargs):
     """
     WS_BLOCKING = ("Draft", "Rejected", "Pending Farm Manager")
 
+    # HOW FAR BACK A WORKER MAY BE PUT ON WORK (one worker, one day, one task).
+    # WMA-863710 was created on 23 Oct covering 28 Sep - 11 Oct, beside the
+    # assignment that already held those days, and they were paid twice. A start
+    # more than max_backdate_days ago is refused unless the GM (or System Manager)
+    # does it with a reason, which is logged on the assignment.
+    WMG_BACKDATE_DAYS = 7
+    if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                        AND field = 'max_backdate_days' LIMIT 1"""):
+        WMG_BACKDATE_DAYS = frappe.utils.cint(
+            frappe.db.get_single_value("Work Management Settings", "max_backdate_days")) or 7
+    WMG_GM = 1 if (("General Manager" in MY_ROLES) or ("System Manager" in MY_ROLES)) else 0
+
+
+    def wmg_backdate_err(start):
+        """An error message when `start` is further back than allowed for this
+        caller, else "". The GM passes only with a `backdate_reason`."""
+        if not start:
+            return ""
+        oldest = frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)
+        if str(start) >= str(oldest):
+            return ""
+        if not WMG_GM:
+            return ("A worker cannot be put on work starting " + str(start) + ": that is more than " +
+                    str(WMG_BACKDATE_DAYS) + " days ago. Ask the GM, who can do it with a reason.")
+        if not (frappe.form_dict.get("backdate_reason") or "").strip():
+            return ("Starting " + str(start) + " is more than " + str(WMG_BACKDATE_DAYS) +
+                    " days ago. Give a reason (backdate_reason) and it will be logged on the assignment.")
+        return ""
+
+
+    def wmg_log_backdate(asg_name, start):
+        """Record a GM backdate on the assignment, once the start is known to be old."""
+        reason = (frappe.form_dict.get("backdate_reason") or "").strip()
+        if asg_name and reason and str(start) < str(frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)):
+            frappe.get_doc("Work Management Assigner", asg_name).add_comment("Comment",
+                "Backdated to " + str(start) + " by " + str(frappe.session.user) + ": " + reason)
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -2009,8 +2047,8 @@ def wm_actuals(**kwargs):
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
-                  AND IFNULL(we.status,'Active') = 'Active'
-                  AND a.from_date <= %s AND a.to_date >= %s
+                  AND COALESCE(we.start_date, a.from_date) <= %s
+                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
             """, (nm, adates.to_date, adates.from_date), as_dict=True)
             for r in busyrows:
                 busy_map[r.emp] = 1
@@ -2034,6 +2072,8 @@ def wm_actuals(**kwargs):
         err = None
         if not nm or not outgoing or not replacement: err = "Outgoing, replacement, and dates are required"
         if not left_date or not start_date: err = "Both the left date and the replacement start date are required"
+        if not err:
+            err = wmg_backdate_err(start_date) or None
         d = None
         if not err:
             d = frappe.get_doc("Work Management Assigner", nm)
@@ -2063,11 +2103,12 @@ def wm_actuals(**kwargs):
                     INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                     WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                       AND a.name != %s
-                      AND IFNULL(we.status,'Active') = 'Active'
                       AND we.employee = %s
-                      AND a.from_date <= %s AND a.to_date >= %s
+                      AND COALESCE(we.start_date, a.from_date) <= %s
+                      AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
                     LIMIT 1
-                """, (nm, replacement, rdates.to_date, rdates.from_date), as_dict=True)
+                """, (nm, replacement, rdates.to_date,
+                      str(start_date) if start_date and str(start_date) > str(rdates.from_date) else rdates.from_date), as_dict=True)
                 if clash:
                     err = "Replacement is already assigned elsewhere for an overlapping period (" + str(clash[0].asg) + "). Pick someone else."
         if err:
@@ -2084,6 +2125,7 @@ def wm_actuals(**kwargs):
                 # This assignment is SUBMITTED (docstatus=1). doc.save() is blocked on submitted docs,
                 # so we edit the child rows + parent counts via direct DB writes (allowed, no re-approval).
                 rep_name = frappe.db.get_value("Employee", replacement, "employee_name")
+                wmg_log_backdate(nm, start_date)
                 # 1) mark outgoing row Left + left_date
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "status", "Left", update_modified=False)
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "left_date", left_date, update_modified=False)
