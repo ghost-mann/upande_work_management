@@ -20,3 +20,4 @@ work_management.patches.v1_0.backfill_actuals_hours
 work_management.patches.v1_0.switch_on_the_new_discrepancy_checks
 work_management.patches.v1_0.seed_payroll_pack_recipients
 work_management.patches.v1_0.seed_repair_payments_capability
+work_management.patches.v1_0.seed_pay_integrity_settings

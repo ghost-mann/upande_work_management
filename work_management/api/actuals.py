@@ -1308,7 +1308,8 @@ def wm_actuals(**kwargs):
             for wmg_f, wmg_dflt in (("qty_flag_multiple", 2.0), ("qty_refuse_multiple", 3.0)):
                 wmg_v = frappe.db.sql("""SELECT value FROM `tabSingles` WHERE doctype = 'Work Management Settings'
                                          AND field = %s""", (wmg_f,))
-                wmg_v = frappe.utils.flt(wmg_v[0][0]) if wmg_v and wmg_v[0][0] else wmg_dflt
+                # a field added to an already-saved Single reads "0" until somebody sets it
+                wmg_v = (frappe.utils.flt(wmg_v[0][0]) if wmg_v and wmg_v[0][0] else 0) or wmg_dflt
                 if wmg_f == "qty_flag_multiple":
                     wmg_flag_x = wmg_v
                 else:

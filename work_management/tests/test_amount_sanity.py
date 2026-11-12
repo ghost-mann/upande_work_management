@@ -134,3 +134,17 @@ class TestPlansArePricedByDate(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestANewSettingReadsZero(unittest.TestCase):
+	"""e2e 2026-11-12: a field added to a saved Single reads "0"; the quantity
+	check turned that into a 0x multiple and refused every entry."""
+
+	def test_zero_falls_back_to_the_default(self):
+		self.assertIn("else 0) or wmg_dflt", block("actuals", "act_submit"))
+
+	def test_running_sites_get_the_defaults(self):
+		import os
+		here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		with open(os.path.join(here, "patches.txt")) as handle:
+			self.assertIn("work_management.patches.v1_0.seed_pay_integrity_settings", handle.read())
