@@ -159,6 +159,49 @@ def wm_planner(**kwargs):
                     t["custom_uom"] = p[0].uom
         return t
 
+    # STAND-INS AND TWO PAIRS OF EYES (2026-11-12). Nobody approves their own entry,
+    # and nobody takes two steps on one record. When the usual approver is the one
+    # who already acted, a stand-in listed in Settings takes the step -- they may
+    # take it without holding the step's role. A System Manager may override with a
+    # reason, which is logged on the record and raised in the payroll check.
+    WMG_SI = []
+    if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+        for wmg_r in frappe.db.get_all("Work Management Approval Stand In",
+                filters={"parenttype": "Work Management Settings", "user": frappe.session.user},
+                fields=["stage", "farm"]):
+            WMG_SI.append((wmg_r.stage, str(wmg_r.farm or "").strip()))
+
+
+    def wmg_si(stage, farm):
+        """1 when this person is a listed stand-in for `stage` on `farm`."""
+        for wmg_s in WMG_SI:
+            if wmg_s[0] == stage and (not wmg_s[1] or wmg_s[1] == str(farm or "").strip()):
+                return 1
+        return 0
+
+
+    def wmg_step_err(stage, farm, others, doctype, name):
+        """The refusal when this person already acted on the record (entered it, or
+        took the step before), else "". A System Manager's logged override passes."""
+        me = frappe.session.user
+        if me not in [o for o in others if o]:
+            return ""
+        reason = (frappe.form_dict.get("override_reason") or "").strip()
+        if "System Manager" in frappe.get_roles() and reason:
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Two-pairs-of-eyes override at " + stage + " by " + me + ": " + reason)
+            return ""
+        sis = []
+        if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+            for r in frappe.db.get_all("Work Management Approval Stand In",
+                    filters={"parenttype": "Work Management Settings", "stage": stage}, fields=["user", "farm"]):
+                if r.user != me and (not r.farm or str(r.farm).strip() == str(farm or "").strip()):
+                    sis.append(r.user)
+        return ("You already acted on this record (you entered it or took the step before), so somebody else "
+                "must take this step" + (": " + ", ".join(sis) + "." if sis else
+                ". Add a stand-in under Work Management Settings > Approval stand-ins."))
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -760,11 +803,13 @@ def wm_planner(**kwargs):
     elif action == "approve":
         nm = frappe.form_dict.get("name")
         ap_doc = frappe.db.get_value("Work Management Planner", nm,
-            ["workflow_state", "farm"], as_dict=True)
+            ["workflow_state", "farm", "requested_by", "owner"], as_dict=True)
+        wmg_se = wmg_step_err("planner_fm", ap_doc.farm, [ap_doc.requested_by or ap_doc.owner],
+                              "Work Management Planner", nm) if ap_doc else ""
         cur_ws = ap_doc.workflow_state if ap_doc else None
         if not ap_doc:
             out["error"] = "no such plan: " + str(nm)
-        elif not AP_BYPASS and ap_doc.farm not in AP_FARMS:
+        elif not AP_BYPASS and ap_doc.farm not in AP_FARMS and not wmg_si("planner_fm", ap_doc.farm):
             out["error"] = ("You cannot approve plans for " + str(ap_doc.farm) +
                             ". A farm manager decides their own farm; the general manager "
                             "and the HR head decide any farm.")
@@ -772,6 +817,8 @@ def wm_planner(**kwargs):
             out["error"] = "The Farm Approval step is switched off for this project."
         elif cur_ws != STAGE_STATE["planner_farm_approval"]:
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
         else:
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", STAGE_NEXT["planner_farm_approval"], update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "docstatus", 1, update_modified=False)

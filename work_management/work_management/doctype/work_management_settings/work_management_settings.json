@@ -19,6 +19,8 @@
   "sb_approvals",
   "approval_stages",
   "stage_approvers",
+  "sb_stand_ins",
+  "approval_stand_ins",
   "tab_taxonomy",
   "sb_taxonomy",
   "tax_bu_enabled",
@@ -795,6 +797,20 @@
    "label": "Refuse above this many times the daily target",
    "default": "3",
    "description": "A worker's quantity for one day above this multiple of the plan's daily target is refused outright: almost always a typo (88 for 8)."
+  },
+  {
+   "fieldname": "sb_stand_ins",
+   "fieldtype": "Section Break",
+   "label": "Approval stand-ins",
+   "collapsible": 1,
+   "description": "Nobody approves their own entry or takes two steps on one record. When the usual approver did, a stand-in listed here takes the step instead."
+  },
+  {
+   "fieldname": "approval_stand_ins",
+   "fieldtype": "Table",
+   "label": "Stand-ins",
+   "options": "Work Management Approval Stand In",
+   "description": "One row per stand-in: the step, the farm (empty for every farm) and the person. They may take that step without holding its role, but only when the usual approver already acted on the record."
   }
  ],
  "idx": 0,

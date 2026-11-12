@@ -88,6 +88,7 @@ doc_events = {
 	# (desk form, import). See work_management/duplicate_guard.py.
 	"Work Management Actuals": {
 		"validate": "work_management.duplicate_guard.validate_actuals",
+		"on_update": "work_management.duplicate_guard.on_actuals_update",
 	},
 	"Work Management Payment": {
 		# Not on_cancel: this doctype's docstatus never leaves 0 by design, so

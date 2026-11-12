@@ -93,6 +93,7 @@ FIELD_LABELS = (
 	("Work Management Payroll Check", "farms", "{top_plural}"),
 	("Work Management Payroll Check", "section_farms", "{top_singular} reviews"),
 	("Work Management Payroll Check Farm", "farm", "{top_singular}"),
+	("Work Management Approval Stand In", "farm", "{top_singular}"),
 	("Work Management Payroll Check Fix", "farm", "{top_singular}"),
 	("Work Off Day Request", "farm", "{top_singular}"),
 	("Work Payment Line", "farm", "{top_singular}"),

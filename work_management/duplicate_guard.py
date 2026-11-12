@@ -117,6 +117,7 @@ def validate_actuals(doc, method=None):
 		lock = locked_by(doc)
 		if lock:
 			frappe.throw(_("These dates are locked by payroll check {0}. Ask HR or the GM to send it back first.").format(lock))
+	desk_step_check(doc)
 	found = clashes(doc)
 	if found:
 		lines = ", ".join("{0} on {1} ({2})".format(e, d, other) for e, d, other in found[:8])
@@ -124,3 +125,55 @@ def validate_actuals(doc, method=None):
 			_("One worker, one day, one task. Already recorded elsewhere: {0}").format(lines),
 			title=_("Worker already recorded for that day"),
 		)
+
+
+# Which approver field each step's approval fills, keyed by the state it leaves.
+STEP_FIELDS = {
+	"Pending Farm Manager": ("fm_approved_by", "fm_approval_date"),
+	"Pending HR Head": ("hr_approved_by", "hr_approval_date"),
+	"Pending GM": ("gm_approved_by", "gm_approval_date"),
+}
+
+
+def _desk_transition(doc):
+	"""(old_state, new_state) when this save moves the workflow outside the screens."""
+	if doc.flags.get("wm_screen"):
+		return None
+	before = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
+	if not before:
+		return None
+	old, new = before.get("workflow_state"), doc.get("workflow_state")
+	if old == new or old not in STEP_FIELDS:
+		return None
+	return old, new
+
+
+def desk_step_check(doc):
+	"""Approving on the desk form follows the same two-pairs-of-eyes rule as the
+	screens: not the person who entered the record, nor whoever took the step
+	before. A System Manager is the break-glass, as on the screens."""
+	moved = _desk_transition(doc)
+	if not moved or moved[1] == "Rejected":
+		return
+	me = frappe.session.user
+	others = {doc.get("entered_by") or doc.get("owner")}
+	if moved[0] == "Pending HR Head":
+		others.add(doc.get("fm_approved_by"))
+	if moved[0] == "Pending GM":
+		others.add(doc.get("hr_approved_by"))
+	if me in others and "System Manager" not in frappe.get_roles():
+		frappe.throw(_("You entered this record or took the step before, so somebody else must approve it."))
+
+
+def on_actuals_update(doc, method=None):
+	"""Record who took a step on the desk. The screens always wrote
+	fm/hr/gm_approved_by; the desk workflow buttons never did, which is how
+	161 records reached CONFIRMED since 1 Oct with only a GM on them."""
+	moved = _desk_transition(doc)
+	if not moved or moved[1] == "Rejected":
+		return
+	who_field, date_field = STEP_FIELDS[moved[0]]
+	if doc.meta.get_field(who_field):
+		doc.db_set(who_field, frappe.session.user, update_modified=False)
+	if doc.meta.get_field(date_field):
+		doc.db_set(date_field, frappe.utils.today(), update_modified=False)

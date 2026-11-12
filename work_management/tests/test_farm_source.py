@@ -137,7 +137,7 @@ class TestTheFarmDoctypeIsGone(unittest.TestCase):
 		every other test here. Thirteen: the twelve on this app's own doctypes and the
 		Settings farms table, which is now the only place farms are configured.
 		"""
-		self.assertEqual(len(links_to("Farm")), 13)
+		self.assertEqual(len(links_to("Farm")), 14)
 
 	def test_the_app_no_longer_ships_a_farm_doctype(self):
 		from work_management import install

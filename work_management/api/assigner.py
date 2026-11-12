@@ -225,6 +225,49 @@ def wm_assigner(**kwargs):
                 "Backdated to " + str(start) + " by " + str(frappe.session.user) + ": " + reason)
 
 
+    # STAND-INS AND TWO PAIRS OF EYES (2026-11-12). Nobody approves their own entry,
+    # and nobody takes two steps on one record. When the usual approver is the one
+    # who already acted, a stand-in listed in Settings takes the step -- they may
+    # take it without holding the step's role. A System Manager may override with a
+    # reason, which is logged on the record and raised in the payroll check.
+    WMG_SI = []
+    if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+        for wmg_r in frappe.db.get_all("Work Management Approval Stand In",
+                filters={"parenttype": "Work Management Settings", "user": frappe.session.user},
+                fields=["stage", "farm"]):
+            WMG_SI.append((wmg_r.stage, str(wmg_r.farm or "").strip()))
+
+
+    def wmg_si(stage, farm):
+        """1 when this person is a listed stand-in for `stage` on `farm`."""
+        for wmg_s in WMG_SI:
+            if wmg_s[0] == stage and (not wmg_s[1] or wmg_s[1] == str(farm or "").strip()):
+                return 1
+        return 0
+
+
+    def wmg_step_err(stage, farm, others, doctype, name):
+        """The refusal when this person already acted on the record (entered it, or
+        took the step before), else "". A System Manager's logged override passes."""
+        me = frappe.session.user
+        if me not in [o for o in others if o]:
+            return ""
+        reason = (frappe.form_dict.get("override_reason") or "").strip()
+        if "System Manager" in frappe.get_roles() and reason:
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Two-pairs-of-eyes override at " + stage + " by " + me + ": " + reason)
+            return ""
+        sis = []
+        if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+            for r in frappe.db.get_all("Work Management Approval Stand In",
+                    filters={"parenttype": "Work Management Settings", "stage": stage}, fields=["user", "farm"]):
+                if r.user != me and (not r.farm or str(r.farm).strip() == str(farm or "").strip()):
+                    sis.append(r.user)
+        return ("You already acted on this record (you entered it or took the step before), so somebody else "
+                "must take this step" + (": " + ", ".join(sis) + "." if sis else
+                ". Add a stand-in under Work Management Settings > Approval stand-ins."))
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -892,7 +935,9 @@ def wm_assigner(**kwargs):
 
     elif action == "a_fm_approve":
         nm = frappe.form_dict.get("name")
-        cur = frappe.db.get_value("Work Management Assigner", nm, ["workflow_state","farm"], as_dict=True)
+        cur = frappe.db.get_value("Work Management Assigner", nm, ["workflow_state","farm","assigned_by","owner"], as_dict=True)
+        wmg_se = wmg_step_err("assigner_fm", cur.farm, [cur.assigned_by or cur.owner],
+                              "Work Management Assigner", nm) if cur else ""
         fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         fmallowed = []
         for _farm_, _role_ in FARM_APPROVER_ROLE.items():
@@ -905,12 +950,14 @@ def wm_assigner(**kwargs):
             # would write a state nothing is watching.
             out["error"] = "The Farm Manager step is switched off for this project."
         elif not (STAGE_ROLE["assigner_farm_manager"] in MY_ROLES
-                  or "System Manager" in MY_ROLES or fmbypass or fmallowed):
+                  or "System Manager" in MY_ROLES or fmbypass or fmallowed or wmg_si("assigner_fm", cur.farm)):
             out["error"] = ("Only " + str(STAGE_ROLE["assigner_farm_manager"]) + " can take this step."
                             " You do not hold it.")
         elif cur.workflow_state != STAGE_STATE["assigner_farm_manager"]:
             out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
-        elif not fmbypass and cur.farm not in fmallowed:
+        elif wmg_se:
+            out["error"] = wmg_se
+        elif not fmbypass and cur.farm not in fmallowed and not wmg_si("assigner_fm", cur.farm):
             if not fmallowed:
                 out["error"] = "You have no farm assigned for approvals. Ask an admin to grant you a farm-specific Farm Manager role."
             else:
@@ -927,13 +974,20 @@ def wm_assigner(**kwargs):
     elif action == "a_hr_approve":
         nm = frappe.form_dict.get("name")
         cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
+        wmg_h = frappe.db.get_value("Work Management Assigner", nm, ["farm", "assigned_by", "owner"], as_dict=True) or {}
+        wmg_se = wmg_step_err("assigner_hr", wmg_h.get("farm"),
+            [wmg_h.get("assigned_by") or wmg_h.get("owner"), wmg_h.get("hr_approved_by")],
+            "Work Management Assigner", nm) if wmg_h else ""
         if not STAGE_ON["assigner_hr_head"]:
             out["error"] = "The HR Head step is switched off for this project."
-        elif not (STAGE_ROLE["assigner_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
+        elif not (STAGE_ROLE["assigner_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES
+                  or wmg_si("assigner_hr", wmg_h.get("farm"))):
             out["error"] = ("Only " + str(STAGE_ROLE["assigner_hr_head"]) + " can take this step."
                             " You do not hold it.")
         elif cur_ws != STAGE_STATE["assigner_hr_head"]:
             out["error"] = "Not at HR stage (state: " + str(cur_ws) + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
         else:
             frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_hr_head"], update_modified=False)
             try:
@@ -946,13 +1000,22 @@ def wm_assigner(**kwargs):
     elif action == "a_gm_approve":
         nm = frappe.form_dict.get("name")
         cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
+        wmg_h = frappe.db.get_value("Work Management Assigner", nm, ["farm", "assigned_by", "owner"] +
+            (["hr_approved_by"] if frappe.get_meta("Work Management Assigner").get_field("hr_approved_by") else []),
+            as_dict=True) or {}
+        wmg_se = wmg_step_err("assigner_gm", wmg_h.get("farm"),
+            [wmg_h.get("assigned_by") or wmg_h.get("owner"), wmg_h.get("hr_approved_by")],
+            "Work Management Assigner", nm) if wmg_h else ""
         if not STAGE_ON["assigner_gm"]:
             out["error"] = "The GM step is switched off for this project."
-        elif not (STAGE_ROLE["assigner_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
+        elif not (STAGE_ROLE["assigner_gm"] in MY_ROLES or "System Manager" in MY_ROLES
+                  or wmg_si("assigner_gm", wmg_h.get("farm"))):
             out["error"] = ("Only " + str(STAGE_ROLE["assigner_gm"]) + " can take this step."
                             " You do not hold it.")
         elif cur_ws != STAGE_STATE["assigner_gm"]:
             out["error"] = "Not at GM stage (state: " + str(cur_ws) + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
         else:
             frappe.db.set_value("Work Management Assigner", nm, "workflow_state", STAGE_NEXT["assigner_gm"], update_modified=False)
             frappe.db.set_value("Work Management Assigner", nm, "docstatus", 1, update_modified=False)

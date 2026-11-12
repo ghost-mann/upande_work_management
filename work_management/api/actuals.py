@@ -428,6 +428,61 @@ def wm_actuals(**kwargs):
         return wmg_guard_err(h.assignment, h.farm, wmg_doc_pairs(docname), docname) or wmg_cap_err(docname)
 
 
+    # STAND-INS AND TWO PAIRS OF EYES (2026-11-12). Nobody approves their own entry,
+    # and nobody takes two steps on one record. When the usual approver is the one
+    # who already acted, a stand-in listed in Settings takes the step -- they may
+    # take it without holding the step's role. A System Manager may override with a
+    # reason, which is logged on the record and raised in the payroll check.
+    WMG_SI = []
+    if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+        for wmg_r in frappe.db.get_all("Work Management Approval Stand In",
+                filters={"parenttype": "Work Management Settings", "user": frappe.session.user},
+                fields=["stage", "farm"]):
+            WMG_SI.append((wmg_r.stage, str(wmg_r.farm or "").strip()))
+
+
+    def wmg_si(stage, farm):
+        """1 when this person is a listed stand-in for `stage` on `farm`."""
+        for wmg_s in WMG_SI:
+            if wmg_s[0] == stage and (not wmg_s[1] or wmg_s[1] == str(farm or "").strip()):
+                return 1
+        return 0
+
+
+
+    def wmg_finalise(nm, state):
+        """Whichever step ends the chain submits the record, as the GM step always
+        has. With the GM step switched off, HR's approval wrote CONFIRMED at
+        docstatus 0, which payment paid while it could still be edited."""
+        if state != "CONFIRMED":
+            return
+        frappe.db.set_value("Work Management Actuals", nm, "docstatus", 1, update_modified=False)
+        for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
+            frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 1, update_modified=False)
+
+
+    def wmg_step_err(stage, farm, others, doctype, name):
+        """The refusal when this person already acted on the record (entered it, or
+        took the step before), else "". A System Manager's logged override passes."""
+        me = frappe.session.user
+        if me not in [o for o in others if o]:
+            return ""
+        reason = (frappe.form_dict.get("override_reason") or "").strip()
+        if "System Manager" in frappe.get_roles() and reason:
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Two-pairs-of-eyes override at " + stage + " by " + me + ": " + reason)
+            return ""
+        sis = []
+        if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+            for r in frappe.db.get_all("Work Management Approval Stand In",
+                    filters={"parenttype": "Work Management Settings", "stage": stage}, fields=["user", "farm"]):
+                if r.user != me and (not r.farm or str(r.farm).strip() == str(farm or "").strip()):
+                    sis.append(r.user)
+        return ("You already acted on this record (you entered it or took the step before), so somebody else "
+                "must take this step" + (": " + ", ".join(sis) + "." if sis else
+                ". Add a stand-in under Work Management Settings > Approval stand-ins."))
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -1088,6 +1143,24 @@ def wm_actuals(**kwargs):
                 filters={"assignment": assignment, "workflow_state": ["in", ["Pending Farm Manager","Pending HR Head","Pending GM","CONFIRMED"]]},
                 pluck="name", limit=1)
             editing_pending = 0
+            # EDITING A RECORD MID-APPROVAL (2026-11-12): only the approver of the step it
+            # is at (the farm's manager at the FM step), only on its own assignment, and
+            # a change in pay sends it back to the farm manager with the old and new totals.
+            ep_before = None
+            ep_err = None
+            if edit_doc and frappe.db.exists("Work Management Actuals", edit_doc):
+                ep_before = frappe.db.get_value("Work Management Actuals", edit_doc,
+                    ["assignment", "farm", "workflow_state", "total_payment", "fm_approved_by", "hr_approved_by"], as_dict=True)
+                if ep_before.assignment != assignment:
+                    ep_err = "That record belongs to another assignment (" + str(ep_before.assignment) + ")."
+                elif ep_before.workflow_state == STAGE_STATE["actuals_farm_manager"]:
+                    ep_err = wmg_farm_err(ep_before.farm, "change this record") or None
+                elif ep_before.workflow_state == STAGE_STATE["actuals_hr_head"] and not (
+                        STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
+                    ep_err = "Only " + str(STAGE_ROLE["actuals_hr_head"]) + " can change a record waiting for HR."
+                elif ep_before.workflow_state == STAGE_STATE["actuals_gm"] and not (
+                        STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
+                    ep_err = "Only " + str(STAGE_ROLE["actuals_gm"]) + " can change a record waiting for the GM."
             if edit_doc and frappe.db.exists("Work Management Actuals", edit_doc):
                 estate = frappe.db.get_value("Work Management Actuals", edit_doc, "workflow_state")
                 if estate in ("Pending Farm Manager","Pending HR Head","Pending GM"):
@@ -1295,6 +1368,8 @@ def wm_actuals(**kwargs):
                     allowed = True
                 if not allowed:
                     can_override = 0
+            if not wmg_err and ep_err:
+                wmg_err = ep_err
             if not wmg_err and wmg_bad:
                 wmg_err = "Not saved: " + "; ".join(wmg_bad[:8]) + (" and more" if len(wmg_bad) > 8 else "") + "."
             if not wmg_err and wmg_qty_flagged and not wmg_qty_reason:
@@ -1518,8 +1593,20 @@ def wm_actuals(**kwargs):
                     if is_new:
                         d.insert(ignore_permissions=True)
                     elif editing_pending:
-                        # keep the current workflow_state (approver edit-in-place)
+                        # keep the current workflow_state (approver edit-in-place) -- unless the
+                        # pay changed after somebody approved it: then it starts again
                         d.save(ignore_permissions=True)
+                        if ep_before and abs(frappe.utils.flt(d.total_payment) - frappe.utils.flt(ep_before.total_payment)) > 0.5 \
+                                and (ep_before.fm_approved_by or ep_before.hr_approved_by) \
+                                and ep_before.workflow_state != STAGE_STATE["actuals_farm_manager"]:
+                            frappe.db.set_value("Work Management Actuals", d.name, {
+                                "workflow_state": STAGE_STATE["actuals_farm_manager"],
+                                "fm_approved_by": None, "hr_approved_by": None}, update_modified=False)
+                            d.workflow_state = STAGE_STATE["actuals_farm_manager"]
+                            d.add_comment("Comment", "Changed by " + frappe.session.user + " while " +
+                                str(ep_before.workflow_state) + ": pay " + str(frappe.utils.flt(ep_before.total_payment)) +
+                                " -> " + str(frappe.utils.flt(d.total_payment)) + ". Sent back to the farm manager.")
+                            out["sent_back_to_fm"] = 1
                     else:
                         d.workflow_state = "Draft"
                         d.save(ignore_permissions=True)
@@ -1702,7 +1789,9 @@ def wm_actuals(**kwargs):
                    "1 - Good": "1 - Good", "2 - Fair": "2 - Fair", "3 - Rework": "3 - Rework"}
         fm_qv = fm_qmap.get(fm_q)
         fm_qnote = (frappe.form_dict.get("quality_note") or "").strip()
-        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","farm"], as_dict=True)
+        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","farm","entered_by","owner"], as_dict=True)
+        wmg_se = wmg_step_err("actuals_fm", cur.farm, [cur.entered_by or cur.owner],
+                              "Work Management Actuals", nm) if cur else ""
         fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         fmallowed = []
         for _farm_, _role_ in FARM_APPROVER_ROLE.items():
@@ -1713,16 +1802,18 @@ def wm_actuals(**kwargs):
         elif not STAGE_ON["actuals_farm_manager"]:
             out["error"] = "The Farm Manager step is switched off for this project."
         elif not (STAGE_ROLE["actuals_farm_manager"] in MY_ROLES
-                  or "System Manager" in MY_ROLES or fmbypass or fmallowed):
+                  or "System Manager" in MY_ROLES or fmbypass or fmallowed or wmg_si("actuals_fm", cur.farm)):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_farm_manager"]) + " can take this step."
                             " You do not hold it.")
         elif cur.workflow_state != STAGE_STATE["actuals_farm_manager"]:
             out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
-        elif not fmbypass and cur.farm not in fmallowed:
+        elif not fmbypass and cur.farm not in fmallowed and not wmg_si("actuals_fm", cur.farm):
             if not fmallowed:
                 out["error"] = "You have no farm assigned for approvals. Ask an admin to grant you a farm-specific Farm Manager role."
             else:
                 out["error"] = "You can only approve records for your farm(s): " + ", ".join(fmallowed) + ". This record is for " + str(cur.farm) + "."
+        elif wmg_se:
+            out["error"] = wmg_se
         elif not fm_qv:
             out["error"] = "Score the quality of this work before approving it: 1 Good, 2 Fair or 3 Rework."
         elif fm_qv == "3 - Rework" and not fm_qnote:
@@ -1737,6 +1828,7 @@ def wm_actuals(**kwargs):
                 "fm_approval_date": frappe.utils.today()}, update_modified=False)
             frappe.get_doc("Work Management Actuals", nm).add_comment(
                 "Comment", "Farm Manager approved. Quality: " + fm_qv + (" -- " + fm_qnote if fm_qnote else ""))
+            wmg_finalise(nm, STAGE_NEXT["actuals_farm_manager"])
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["actuals_farm_manager"]
             out["quality_score"] = fm_qv
 
@@ -1744,32 +1836,47 @@ def wm_actuals(**kwargs):
         nm = frappe.form_dict.get("name")
         wmg_e = wmg_doc_err(nm) if nm else ""  # one worker, one day, one task -- again at every step
         cur_ws = frappe.db.get_value("Work Management Actuals", nm, "workflow_state")
+        wmg_h = frappe.db.get_value("Work Management Actuals", nm,
+            ["farm", "entered_by", "owner", "fm_approved_by"], as_dict=True) or {}
+        wmg_se = wmg_step_err("actuals_hr", wmg_h.get("farm"),
+            [wmg_h.get("entered_by") or wmg_h.get("owner"), wmg_h.get("fm_approved_by")],
+            "Work Management Actuals", nm) if wmg_h else ""
         if not STAGE_ON["actuals_hr_head"]:
             out["error"] = "The HR Head step is switched off for this project."
-        elif not (STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
+        elif not (STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES
+                  or wmg_si("actuals_hr", wmg_h.get("farm"))):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_hr_head"]) + " can take this step."
                             " You do not hold it.")
         elif cur_ws != STAGE_STATE["actuals_hr_head"]:
             out["error"] = "Not at HR stage (state: " + str(cur_ws) + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
         elif wmg_e:
             out["error"] = wmg_e
         else:
             frappe.db.set_value("Work Management Actuals", nm, "workflow_state", STAGE_NEXT["actuals_hr_head"], update_modified=False)
             frappe.db.set_value("Work Management Actuals", nm, "hr_approved_by", frappe.session.user, update_modified=False)
             frappe.db.set_value("Work Management Actuals", nm, "hr_approval_date", frappe.utils.today(), update_modified=False)
+            wmg_finalise(nm, STAGE_NEXT["actuals_hr_head"])
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["actuals_hr_head"]
 
     elif action == "act_gm_approve":
         nm = frappe.form_dict.get("name")
         wmg_e = wmg_doc_err(nm) if nm else ""  # one worker, one day, one task -- again at every step
-        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","assignment"], as_dict=True)
+        cur = frappe.db.get_value("Work Management Actuals", nm,
+            ["workflow_state", "assignment", "farm", "entered_by", "owner", "hr_approved_by"], as_dict=True)
+        wmg_se = wmg_step_err("actuals_gm", cur.farm, [cur.entered_by or cur.owner, cur.hr_approved_by],
+                              "Work Management Actuals", nm) if cur else ""
         if not STAGE_ON["actuals_gm"]:
             out["error"] = "The GM step is switched off for this project."
-        elif not (STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
+        elif not (STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES
+                  or (cur and wmg_si("actuals_gm", cur.farm))):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_gm"]) + " can take this step."
                             " You do not hold it.")
         elif not cur or cur.workflow_state != STAGE_STATE["actuals_gm"]:
             out["error"] = "Not at GM stage (state: " + str(cur.workflow_state if cur else "not found") + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
         elif wmg_e:
             out["error"] = wmg_e
         else:
@@ -2077,6 +2184,13 @@ def wm_actuals(**kwargs):
                     continue
                 # one worker, one day, one task: a closing GM confirms only clean records;
                 # a clashing one stays open and turns up in the payroll check
+                # a rejected record stays rejected -- an early close is no way to pay work
+                # somebody refused -- and a draft is confirmed only when the GM ticked it
+                if ar.ws == "Rejected":
+                    continue
+                if ar.ws == "Draft" and ar.nm not in [x.strip() for x in str(frappe.form_dict.get("confirm_drafts") or "").split(",")]:
+                    close_skipped.append(ar.nm)
+                    continue
                 if wmg_doc_err(ar.nm):
                     close_skipped.append(ar.nm)
                     continue

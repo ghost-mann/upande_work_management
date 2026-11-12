@@ -172,6 +172,49 @@ def wm_payment(**kwargs):
 
 
 
+    # STAND-INS AND TWO PAIRS OF EYES (2026-11-12). Nobody approves their own entry,
+    # and nobody takes two steps on one record. When the usual approver is the one
+    # who already acted, a stand-in listed in Settings takes the step -- they may
+    # take it without holding the step's role. A System Manager may override with a
+    # reason, which is logged on the record and raised in the payroll check.
+    WMG_SI = []
+    if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+        for wmg_r in frappe.db.get_all("Work Management Approval Stand In",
+                filters={"parenttype": "Work Management Settings", "user": frappe.session.user},
+                fields=["stage", "farm"]):
+            WMG_SI.append((wmg_r.stage, str(wmg_r.farm or "").strip()))
+
+
+    def wmg_si(stage, farm):
+        """1 when this person is a listed stand-in for `stage` on `farm`."""
+        for wmg_s in WMG_SI:
+            if wmg_s[0] == stage and (not wmg_s[1] or wmg_s[1] == str(farm or "").strip()):
+                return 1
+        return 0
+
+
+    def wmg_step_err(stage, farm, others, doctype, name):
+        """The refusal when this person already acted on the record (entered it, or
+        took the step before), else "". A System Manager's logged override passes."""
+        me = frappe.session.user
+        if me not in [o for o in others if o]:
+            return ""
+        reason = (frappe.form_dict.get("override_reason") or "").strip()
+        if "System Manager" in frappe.get_roles() and reason:
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Two-pairs-of-eyes override at " + stage + " by " + me + ": " + reason)
+            return ""
+        sis = []
+        if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+            for r in frappe.db.get_all("Work Management Approval Stand In",
+                    filters={"parenttype": "Work Management Settings", "stage": stage}, fields=["user", "farm"]):
+                if r.user != me and (not r.farm or str(r.farm).strip() == str(farm or "").strip()):
+                    sis.append(r.user)
+        return ("You already acted on this record (you entered it or took the step before), so somebody else "
+                "must take this step" + (": " + ", ".join(sis) + "." if sis else
+                ". Add a stand-in under Work Management Settings > Approval stand-ins."))
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -3569,8 +3612,10 @@ def wm_payment(**kwargs):
         pc_fm = []
         for _farm_, _role_ in FARM_APPROVER_ROLE.items():
             if _role_ in pc_roles: pc_fm.append(_farm_)
-        pc_gm = 1 if (("General Manager" in pc_roles) or ("System Manager" in pc_roles)) else 0
-        pc_hr = 1 if (any(_r_ in pc_roles for _r_ in HR_HEAD_ROLES) or pc_gm) else 0
+        pc_gm = 1 if (("General Manager" in pc_roles) or ("System Manager" in pc_roles)
+                      or wmg_si("check_gm", None)) else 0
+        pc_hr = 1 if (any(_r_ in pc_roles for _r_ in HR_HEAD_ROLES) or pc_gm
+                      or wmg_si("check_hr", None)) else 0
         pc_role_of = dict(FARM_APPROVER_ROLE)
         pc_me = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
         pc_sender = frappe.db.get_single_value("Work Management Settings", "payroll_pack_sender") \
