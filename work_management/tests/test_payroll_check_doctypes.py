@@ -45,7 +45,8 @@ class TestTheCheck(unittest.TestCase):
 	def test_the_fix_log(self):
 		meta = doctype("work_management_payroll_check_fix")
 		self.assertEqual(field(meta, "kind")["options"].split("\n"),
-			["duplicate", "paid twice", "draft completed", "rejected deleted"])
+			["duplicate", "paid twice", "draft completed", "rejected deleted", "acknowledged", "zeroed",
+			 "recomputed", "edited", "slip mismatch"])
 		for name in ("employee", "work_date", "kept_row", "zeroed_row", "amount_before", "reason"):
 			with self.subTest(name=name):
 				self.assertIsNotNone(field(meta, name))

@@ -284,6 +284,11 @@ def wm_payment(**kwargs):
             order_by="farm", limit=500)
         out["actuals"] = rows
 
+    elif action == "pay_submit":
+        # Retired 2026-11-12: it stamped no payment_ref and raised no Additional
+        # Salary, so its rows stayed payable and its runs were never stamped paid.
+        out["error"] = "Send from the Pay workers tab, one worker or many at a time."
+
     elif action == "pay_submit" and not CAN_SEND:
         out["error"] = ("Only the HR head, accounting or the general manager can send work to "
                         "accounts. You can review and audit, but not create the payment.")
@@ -1543,6 +1548,11 @@ def wm_payment(**kwargs):
                         "accounts. You can review and audit, but not create the payment.")
 
     elif action == "pay_worker_submit":
+        # ONE SEND AT A TIME (2026-11-12): two people sending at once, or a retried
+        # request, both saw the same unsent rows and both paid them. A site-wide lock
+        # held for the whole send makes the second wait, then find nothing left.
+        if not frappe.db.sql("SELECT GET_LOCK('wmpay-send', 60)")[0][0]:
+            frappe.throw("Another payment send is running. Try again in a minute.")
         # Approve ONE worker's unpaid confirmed earnings and send them to accounts
         # as a single-worker payment run (workers are paid one at a time).
         emp = frappe.form_dict.get("employee")
@@ -1713,9 +1723,13 @@ def wm_payment(**kwargs):
                                 wm_pay_on = frappe.utils.add_days(wm_pay_on, 1)
                                 wm_guard = wm_guard + 1
                         wm_emp = frappe.db.get_value("Employee", emp,
-                            ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
+                            ["status", "date_of_joining", "relieving_date", "employee_name", "company"], as_dict=True)
                         wm_block = None
-                        if wm_emp and wm_emp.status == "Inactive":
+                        if wm_emp and wm_emp.status == "Suspended":
+                            wm_block = "employee is Suspended"
+                        elif wm_emp and wm_emp.company and wm_emp.company != DEFAULT_COMPANY:
+                            wm_block = "employee belongs to " + str(wm_emp.company) + ", not " + str(DEFAULT_COMPANY)
+                        elif wm_emp and wm_emp.status == "Inactive":
                             wm_block = "employee is Inactive"
                         elif wm_emp and wm_emp.relieving_date and str(wm_pay_on) > str(wm_emp.relieving_date):
                             wm_block = ("pay date " + str(wm_pay_on) + " is after the relieving date "
@@ -1872,6 +1886,13 @@ def wm_payment(**kwargs):
                                 WHERE """ + sconds + """
                             """, tuple(sparams), as_dict=True)
                             subnow = frappe.utils.now()
+                            if refrows:
+                                # stamp only rows still unsent; if any were taken meanwhile, undo this week
+                                frappe.db.sql("""UPDATE `tabWork Actuals Employee` SET payment_ref = %s
+                                    WHERE name IN %s AND IFNULL(payment_ref, '') = ''""",
+                                    (d.name, tuple([x.rowname for x in refrows])))
+                                if frappe.db.count("Work Actuals Employee", {"payment_ref": d.name}) != len(refrows):
+                                    frappe.throw("Some of these days were sent by somebody else meanwhile.")
                             for rr in refrows:
                                 frappe.db.set_value("Work Actuals Employee", rr.rowname, "payment_ref", d.name, update_modified=False)
                                 frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed", 1, update_modified=False)
@@ -1960,6 +1981,11 @@ def wm_payment(**kwargs):
                         "accounts. You can review and audit, but not create the payment.")
 
     elif action == "pay_bulk_submit":
+        # ONE SEND AT A TIME (2026-11-12): two people sending at once, or a retried
+        # request, both saw the same unsent rows and both paid them. A site-wide lock
+        # held for the whole send makes the second wait, then find nothing left.
+        if not frappe.db.sql("SELECT GET_LOCK('wmpay-send', 60)")[0][0]:
+            frappe.throw("Another payment send is running. Try again in a minute.")
         # Send SEVERAL reviewed workers to accounts in one call: one Work
         # Management Payment per employee (same shape as pay_worker_submit).
         # A worker with any unreviewed unpaid rows is skipped — review first.
@@ -2098,9 +2124,13 @@ def wm_payment(**kwargs):
                             bw_pay_on = frappe.utils.add_days(bw_pay_on, 1)
                             bw_guard = bw_guard + 1
                     bw_emp = frappe.db.get_value("Employee", emp,
-                        ["status", "date_of_joining", "relieving_date", "employee_name"], as_dict=True)
+                        ["status", "date_of_joining", "relieving_date", "employee_name", "company"], as_dict=True)
                     bw_block = None
-                    if bw_emp and bw_emp.status == "Inactive":
+                    if bw_emp and bw_emp.status == "Suspended":
+                        bw_block = "employee is Suspended"
+                    elif bw_emp and bw_emp.company and bw_emp.company != DEFAULT_COMPANY:
+                        bw_block = "employee belongs to " + str(bw_emp.company) + ", not " + str(DEFAULT_COMPANY)
+                    elif bw_emp and bw_emp.status == "Inactive":
                         bw_block = "employee is Inactive"
                     elif bw_emp and bw_emp.relieving_date and str(bw_pay_on) > str(bw_emp.relieving_date):
                         bw_block = ("pay date " + str(bw_pay_on) + " is after the relieving date "
@@ -2247,6 +2277,12 @@ def wm_payment(**kwargs):
                             WHERE """ + sconds + """
                         """, tuple(sparams), as_dict=True)
                         bulknow = frappe.utils.now()
+                        if refrows:
+                            frappe.db.sql("""UPDATE `tabWork Actuals Employee` SET payment_ref = %s
+                                WHERE name IN %s AND IFNULL(payment_ref, '') = ''""",
+                                (d.name, tuple([x.rowname for x in refrows])))
+                            if frappe.db.count("Work Actuals Employee", {"payment_ref": d.name}) != len(refrows):
+                                frappe.throw("Some of these days were sent by somebody else meanwhile.")
                         for rr in refrows:
                             frappe.db.set_value("Work Actuals Employee", rr.rowname, "payment_ref", d.name, update_modified=False)
                             frappe.db.set_value("Work Actuals Employee", rr.rowname, "custom_reviewed", 1, update_modified=False)
@@ -2928,7 +2964,7 @@ def wm_payment(**kwargs):
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                 WHERE ac.workflow_state = 'CONFIRMED'
-                  AND IFNULL(we.paid,0) = 0 AND IFNULL(we.count_in_payroll,0) = 1
+                  AND IFNULL(we.paid,0) = 0 AND IFNULL(we.payment_ref,'') = '' AND IFNULL(we.payroll_check,'') = '' AND IFNULL(we.count_in_payroll,0) = 1
                   AND we.actual_quantity > 0
                   AND a2.planner_request IN %s
             """, (tuple(bad_plans.keys()),), as_dict=True)
@@ -2974,7 +3010,7 @@ def wm_payment(**kwargs):
             SELECT we.name rowname, we.parent, we.amount
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-            WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(we.paid,0) = 0
+            WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(we.paid,0) = 0 AND IFNULL(we.payment_ref,'') = '' AND IFNULL(we.payroll_check,'') = ''
               AND we.amount != ROUND(we.amount, 2)
             LIMIT 900
         """, as_dict=True)
@@ -2992,14 +3028,20 @@ def wm_payment(**kwargs):
         remaining_rr = frappe.db.sql("""
             SELECT COUNT(*) n FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-            WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(we.paid,0) = 0
+            WHERE ac.workflow_state = 'CONFIRMED' AND IFNULL(we.paid,0) = 0 AND IFNULL(we.payment_ref,'') = '' AND IFNULL(we.payroll_check,'') = ''
               AND we.amount != ROUND(we.amount, 2)
         """, as_dict=True)
         out["rounded"] = len(rr_rows)
         out["parents_resummed"] = len(parents_rr)
         out["remaining"] = frappe.utils.cint(remaining_rr[0].n) if remaining_rr else 0
 
-    elif action == "pay_fix_duplicates":
+    elif action == "pay_fix_duplicates" and not frappe.form_dict.get("force_legacy"):
+        # Retired 2026-11-12: it kept the earliest-created copy and zeroed rows already
+        # in a sent payment, so the worker was paid again. Duplicates are fixed in the
+        # payroll check, which keeps the copy recorded first and never touches sent rows.
+        out["error"] = "Duplicate days are now fixed in Payment > Payroll checks."
+
+    elif action == "pay_fix_duplicates" and False:
         # DUPLICATE-DAY REPAIR: for every (worker, task, date) recorded in more
         # than one confirmed document, KEEP the copy in the earliest-created
         # document and zero the rest (qty and amount, review stamps reset).
@@ -3190,31 +3232,40 @@ def wm_payment(**kwargs):
             """, {"p": tuple(pq_names)}, as_dict=True):
                 pq_used[u.n] = 1
             pq_go = [n for n in pq_names if not pq_used.get(n)]
+            # ONE PAYMENT AT A TIME, MONEY FIRST (2026-11-12). The Additional Salary is
+            # cancelled before the rows are freed, all inside one savepoint: if the cancel
+            # fails, nothing about that payment has changed. Freeing first used to leave
+            # rows sendable while the old Additional Salary still paid them.
             pq_freed = 0
-            if pq_go:
-                for rr in frappe.db.sql("""
-                    SELECT name FROM `tabWork Actuals Employee`
-                    WHERE payment_ref IN %(p)s AND IFNULL(paid,0) = 0
-                """, {"p": tuple(pq_go)}, as_dict=True):
-                    frappe.db.set_value("Work Actuals Employee", rr.name, "payment_ref", None, update_modified=False)
-                    frappe.db.set_value("Work Actuals Employee", rr.name, "custom_reviewed", 0, update_modified=False)
-                    frappe.db.set_value("Work Actuals Employee", rr.name, "custom_reviewed_by", None, update_modified=False)
-                    frappe.db.set_value("Work Actuals Employee", rr.name, "custom_reviewed_at", None, update_modified=False)
-                    pq_freed = pq_freed + 1
-                frappe.db.commit()
             pq_gone = 0
+            pq_failed = []
             for n in pq_go:
-                for asr in frappe.db.sql("""
-                    SELECT name FROM `tabAdditional Salary`
-                    WHERE ref_doctype = 'Work Management Payment' AND ref_docname = %(n)s
-                      AND docstatus = 1
-                """, {"n": n}, as_dict=True):
-                    adoc = frappe.get_doc("Additional Salary", asr.name)
-                    adoc.flags.ignore_permissions = True
-                    adoc.cancel()
-                frappe.delete_doc("Work Management Payment", n, ignore_permissions=True, force=True)
-                pq_gone = pq_gone + 1
+                pq_sp = "wmpq_" + str(pq_gone + len(pq_failed))
+                frappe.db.savepoint(pq_sp)
+                try:
+                    for asr in frappe.db.sql("""
+                        SELECT name FROM `tabAdditional Salary`
+                        WHERE ref_doctype = 'Work Management Payment' AND ref_docname = %(n)s
+                          AND docstatus = 1
+                    """, {"n": n}, as_dict=True):
+                        adoc = frappe.get_doc("Additional Salary", asr.name)
+                        adoc.flags.ignore_permissions = True
+                        adoc.cancel()
+                    for rr in frappe.db.sql("""
+                        SELECT name FROM `tabWork Actuals Employee`
+                        WHERE payment_ref = %(p)s AND IFNULL(paid,0) = 0
+                    """, {"p": n}, as_dict=True):
+                        frappe.db.set_value("Work Actuals Employee", rr.name, {"payment_ref": None,
+                            "custom_reviewed": 0, "custom_reviewed_by": None, "custom_reviewed_at": None},
+                            update_modified=False)
+                        pq_freed = pq_freed + 1
+                    frappe.delete_doc("Work Management Payment", n, ignore_permissions=True, force=True)
+                    pq_gone = pq_gone + 1
+                except Exception as pq_exc:
+                    frappe.db.rollback(save_point=pq_sp)
+                    pq_failed.append({"payment": n, "error": str(pq_exc)[:200]})
             frappe.db.commit()
+            out["failed"] = pq_failed
             out["deleted"] = pq_gone
             out["rows_freed"] = pq_freed
             out["skipped_paid_by_payroll"] = len(pq_used)
@@ -3422,6 +3473,9 @@ def wm_payment(**kwargs):
             WHERE IFNULL(we.payment_ref,'') != ''
               AND IFNULL(we.paid,0) = 0
               AND p.name IS NULL
+              AND NOT EXISTS (SELECT 1 FROM `tabAdditional Salary` asl
+                              WHERE asl.ref_doctype = 'Work Management Payment'
+                                AND asl.ref_docname = we.payment_ref AND asl.docstatus = 1)
             ORDER BY we.name
             LIMIT %(n)s
         """, {"n": fo_chunk}, as_dict=True)
@@ -3432,6 +3486,9 @@ def wm_payment(**kwargs):
             WHERE IFNULL(we.payment_ref,'') != ''
               AND IFNULL(we.paid,0) = 0
               AND p.name IS NULL
+              AND NOT EXISTS (SELECT 1 FROM `tabAdditional Salary` asl
+                              WHERE asl.ref_doctype = 'Work Management Payment'
+                                AND asl.ref_docname = we.payment_ref AND asl.docstatus = 1)
         """, as_dict=True)[0]
         out["dry_run"] = fo_dry
         out["orphan_rows"] = frappe.utils.cint(fo_total.n)
@@ -3454,6 +3511,9 @@ def wm_payment(**kwargs):
             WHERE IFNULL(we.payment_ref,'') != ''
               AND IFNULL(we.paid,0) = 0
               AND p.name IS NULL
+              AND NOT EXISTS (SELECT 1 FROM `tabAdditional Salary` asl
+                              WHERE asl.ref_doctype = 'Work Management Payment'
+                                AND asl.ref_docname = we.payment_ref AND asl.docstatus = 1)
         """, as_dict=True)[0].n)
 
     elif action == "pay_release_inactive":
@@ -4297,6 +4357,9 @@ def wm_payment(**kwargs):
             frappe.db.set_value("Work Management Payroll Check", pcs.name, {"status": "Sent", "sent_at": frappe.utils.now()})
         frappe.db.commit()
 
+    if action in ("pay_worker_submit", "pay_bulk_submit"):
+        frappe.db.sql("SELECT RELEASE_LOCK('wmpay-send')")
+
     return out
 
 
@@ -4502,12 +4565,38 @@ def on_salary_slip_submit(doc, method=None):
     rows = frappe.db.get_all("Additional Salary",
         filters={"name": ["in", as_names], "ref_doctype": "Work Management Payment"},
         fields=["name", "ref_docname"])
+    slip_amt = {}
+    for row in doc.get("earnings") or []:
+        if row.get("additional_salary"):
+            slip_amt[row.additional_salary] = slip_amt.get(row.additional_salary, 0) + frappe.utils.flt(row.amount)
     for r in rows:
         pay_name = r.ref_docname
         if not pay_name:
             continue
         state = frappe.db.get_value("Work Management Payment", pay_name, "workflow_state")
-        if not state or state == "Paid":
+        # only an Unpaid run becomes Paid: a Cancelled run stays cancelled (2026-11-12)
+        if state != "Unpaid":
+            continue
+        # THE MONEY MUST AGREE (2026-11-12): the slip's line, the Additional Salary and
+        # the rows the run carried. If payroll prorated or edited the line, the rows are
+        # not stamped paid on a short payment -- the mismatch is logged for HR instead.
+        as_amt = frappe.utils.flt(frappe.db.get_value("Additional Salary", r.name, "amount"))
+        rows_amt = frappe.utils.flt(frappe.db.sql("""SELECT COALESCE(SUM(amount), 0) FROM `tabWork Actuals Employee`
+                                        WHERE payment_ref = %s""", (pay_name,))[0][0])
+        paid_amt = frappe.utils.flt(slip_amt.get(r.name, as_amt))
+        if abs(paid_amt - as_amt) > 1 or (rows_amt and abs(rows_amt - as_amt) > 1):
+            if frappe.db.exists("DocType", "Work Management Payroll Check Fix"):
+                fx = frappe.new_doc("Work Management Payroll Check Fix")
+                fx.kind = "slip mismatch"
+                fx.employee = frappe.db.get_value("Work Management Payment", pay_name, "employee")
+                fx.payments = pay_name + ", " + r.name + ", " + doc.name
+                fx.amount_before = as_amt
+                fx.fixed_by = frappe.session.user
+                fx.fixed_at = frappe.utils.now()
+                fx.reason = ("Salary Slip " + doc.name + " paid " + str(paid_amt) + " on Additional Salary " +
+                             r.name + " (" + str(as_amt) + "); the run's rows total " + str(rows_amt) +
+                             ". Rows not stamped paid; HR to reconcile.")
+                fx.insert(ignore_permissions=True)
             continue
         frappe.db.set_value("Work Management Payment", pay_name, "workflow_state", "Paid", update_modified=False)
         frappe.db.set_value("Work Management Payment", pay_name, "accounts_approved_by", frappe.session.user, update_modified=False)
@@ -4596,6 +4685,17 @@ def on_payment_update(doc, method=None):
     (_revert_actuals_paid_to_sent, on_salary_slip_cancel())."""
     if not doc.has_value_changed("workflow_state") or doc.workflow_state != "Cancelled":
         return
+    # a draft or submitted Salary Slip still carrying this run's Additional Salary
+    # would keep paying it after the rows are freed and re-sent (2026-11-12)
+    held = frappe.db.sql("""
+        SELECT ss.name FROM `tabSalary Detail` sd
+        INNER JOIN `tabSalary Slip` ss ON ss.name = sd.parent
+        INNER JOIN `tabAdditional Salary` a ON a.name = sd.additional_salary
+        WHERE a.ref_doctype = %s AND a.ref_docname = %s AND ss.docstatus < 2 LIMIT 1
+    """, (doc.doctype, doc.name))
+    if held:
+        frappe.throw(frappe._("Salary Slip {0} still carries this run. Remove it from that slip (or cancel the "
+            "slip) before cancelling the run.").format(held[0][0]))
     for asr in frappe.db.get_all("Additional Salary",
             filters={"ref_doctype": doc.doctype, "ref_docname": doc.name, "docstatus": 1}):
         as_doc = frappe.get_doc("Additional Salary", asr.name)

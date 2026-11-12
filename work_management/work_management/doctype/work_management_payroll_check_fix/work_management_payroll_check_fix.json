@@ -23,7 +23,9 @@
   "column_break_who",
   "fixed_by",
   "fixed_at",
-  "reason"
+  "reason",
+  "issue",
+  "row_hash"
  ],
  "fields": [
   {
@@ -38,7 +40,7 @@
    "fieldname": "kind",
    "fieldtype": "Select",
    "label": "Kind",
-   "options": "duplicate\npaid twice\ndraft completed\nrejected deleted",
+   "options": "duplicate\npaid twice\ndraft completed\nrejected deleted\nacknowledged\nzeroed\nrecomputed\nedited\nslip mismatch",
    "in_list_view": 1,
    "in_standard_filter": 1
   },
@@ -130,6 +132,19 @@
    "fieldname": "reason",
    "fieldtype": "Small Text",
    "label": "Reason"
+  },
+  {
+   "fieldname": "issue",
+   "fieldtype": "Data",
+   "label": "Issue",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "row_hash",
+   "fieldtype": "Data",
+   "label": "Row fingerprint",
+   "read_only": 1,
+   "description": "The acknowledged row's quantity, amount, date and worker. An acknowledgement stops counting once the row changes."
   }
  ],
  "index_web_pages_for_search": 0,
