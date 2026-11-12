@@ -218,3 +218,12 @@ class TestReviewFixes(unittest.TestCase):
 	def test_editing_a_pending_assignment_is_not_backdating(self):
 		src = source("assigner")
 		self.assertIn("if not err and planner and not asg_name:", src)
+
+
+class TestTheListShowsWhatCanBeSent(unittest.TestCase):
+	def test_payable_column_obeys_the_gate(self):
+		"""e2e 2026-11-12: with the gate on, Pay workers (include_all) showed 11,739
+		KES payable for dates no check covered; the send would have refused it."""
+		self.assertIn("THEN we.amount ELSE 0 END),0) payable_amt", block("pay_workers"))
+		self.assertIn("IFNULL(we.payment_ref,'')=''\"\"\" + CHECKED_ONLY + \"\"\" THEN we.amount ELSE 0 END),0) payable_amt",
+			block("pay_workers"))

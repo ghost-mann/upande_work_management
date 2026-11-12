@@ -331,7 +331,7 @@ def wm_payment(**kwargs):
                    COALESCE(SUM(we.amount),0) owed,
                    COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=1 THEN we.amount ELSE 0 END),0) paid_amt,
                    COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 THEN we.amount ELSE 0 END),0) unpaid_amt,
-                   COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.payment_ref,'')='' THEN we.amount ELSE 0 END),0) payable_amt,
+                   COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.payment_ref,'')=''""" + CHECKED_ONLY + """ THEN we.amount ELSE 0 END),0) payable_amt,
                    COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.payment_ref,'')!='' THEN we.amount ELSE 0 END),0) sent_amt,
                    COALESCE(SUM(CASE WHEN IFNULL(we.paid,0)=0 AND IFNULL(we.custom_reviewed,0)=0 THEN we.amount ELSE 0 END),0) unreviewed_amt,
                    COUNT(DISTINCT ac.name) docs,
