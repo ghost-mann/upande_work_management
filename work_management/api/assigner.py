@@ -170,6 +170,35 @@ def wm_assigner(**kwargs):
                 verb + ".")
 
 
+    def wmg_left_err(asg, emp, left_date):
+        """Why `emp` cannot be released from `asg` on `left_date`, or "". Not in the
+        future, not after the assignment ends, not before they started on it, and not
+        before the last day they have work recorded on it -- a release backdated past
+        recorded work frees days that are already paid for."""
+        if not (asg and emp and left_date):
+            return ""
+        a = frappe.db.get_value("Work Management Assigner", asg, ["from_date", "to_date"], as_dict=True)
+        nm = frappe.db.get_value("Employee", emp, "employee_name") or emp
+        if str(left_date) > str(frappe.utils.today()):
+            return nm + " cannot be released on " + str(left_date) + ": that day has not come yet."
+        if a and str(left_date) > str(a.to_date):
+            return nm + " cannot be released after the assignment ends (" + str(a.to_date) + ")."
+        st = frappe.db.sql("""SELECT MIN(COALESCE(start_date, %s)) FROM `tabWork Assignment Employee`
+                              WHERE parent = %s AND employee = %s""", (a.from_date if a else None, asg, emp))
+        if st and st[0][0] and str(left_date) < str(st[0][0]):
+            return nm + " cannot be released on " + str(left_date) + ", before they started (" + str(st[0][0]) + ")."
+        last = frappe.db.sql("""
+            SELECT MAX(we.work_date) FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+            WHERE ac.assignment = %s AND we.employee = %s AND IFNULL(ac.workflow_state, '') != 'Rejected'
+              AND ac.docstatus < 2 AND (IFNULL(we.actual_quantity, 0) > 0 OR IFNULL(we.amount, 0) > 0)
+        """, (asg, emp))
+        if last and last[0][0] and str(left_date) < str(last[0][0]):
+            return (nm + " has work recorded here up to " + str(last[0][0]) + ", so the release date must be "
+                    "that day or later.")
+        return ""
+
+
 
     def wmg_backdate_err(start):
         """An error message when `start` is further back than allowed for this
@@ -561,6 +590,44 @@ def wm_assigner(**kwargs):
                 if ev and ev not in emp_list:
                     emp_list.append(ev)
         if not emp_list: err = "Assign at least one employee"
+        # WHAT THIS SUBMIT IS, AND WHETHER IT MAY (2026-11-12). The assignment named
+        # decides it -- not whether a name was sent at all -- so a stale draft or a
+        # made-up name cannot skip the checks a new assignment gets.
+        sb_cur = frappe.db.get_value("Work Management Assigner", asg_name,
+            ["workflow_state", "planner_request", "farm"], as_dict=True) if asg_name else None
+        sb_pending = 1 if (sb_cur and sb_cur.workflow_state in ("Pending Farm Manager", "Pending HR Head", "Pending GM")) else 0
+        if not err and sb_cur and sb_cur.planner_request and planner and sb_cur.planner_request != planner:
+            err = "That assignment belongs to another plan (" + str(sb_cur.planner_request) + ")."
+        if not err and sb_pending:
+            # changing a crew mid-approval is the current step's approver's call, and
+            # sends it back to the farm manager to see the new crew
+            if sb_cur.workflow_state == "Pending Farm Manager":
+                err = wmg_farm_err(sb_cur.farm, "change this crew") or None
+            elif sb_cur.workflow_state == "Pending HR Head" and not (WMG_HR or WMG_GM):
+                err = "Only the HR head (or the GM) can change a crew waiting for HR."
+            elif sb_cur.workflow_state == "Pending GM" and not WMG_GM:
+                err = "Only the GM can change a crew waiting for the GM."
+        if not err and planner:
+            sb_plan = frappe.db.get_value("Work Management Planner", planner,
+                ["workflow_state", "custom_close_state", "farm"], as_dict=True)
+            if not sb_plan:
+                err = "No such plan: " + str(planner)
+            elif sb_plan.workflow_state != "Approved":
+                err = "Only an approved plan can be assigned (this one is " + str(sb_plan.workflow_state) + ")."
+            elif (sb_plan.custom_close_state or "") == "Closed":
+                err = "That plan is closed. Reopen it before assigning more work."
+            elif FARMS and str(sb_plan.farm or "").strip() not in FARMS:
+                err = str(sb_plan.farm) + " is not a farm you are working."
+            elif frappe.db.sql("""SELECT 1 FROM `tabWork Management Assigner` WHERE planner_request = %s
+                    AND name != %s AND workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
+                    LIMIT 1""", (planner, asg_name or "__none__")):
+                err = "That plan already has a live assignment. Add workers to it instead of raising a second one."
+        if not err and emp_list:
+            sb_off = [r.employee_name or r.name for r in frappe.db.sql("""
+                SELECT e.name, e.employee_name FROM `tabEmployee` e WHERE e.name IN %s AND e.status != 'Active'
+            """, (tuple(emp_list),), as_dict=True)]
+            if sb_off:
+                err = "Not active employees, so they cannot be put on work: " + ", ".join(sb_off[:8]) + "."
         # Submitting crosses a workflow transition; saving a draft does not, and stays
         # open to whoever may enter the crew. The step's own configured role gates it
         # and System Manager bypasses -- may_take_step()'s rule, which every approve
@@ -641,7 +708,7 @@ def wm_assigner(**kwargs):
         # BACKDATING: putting workers on work that started long ago is how a second
         # assignment came to cover days another already held.
         bd_start = None
-        if not err and planner and not asg_name:
+        if not err and planner and not sb_pending:
             bd_start = frappe.db.get_value("Work Management Planner", planner, "from_date")
             err = wmg_backdate_err(bd_start) or None
         # ── TIME & ATTENDANCE GATE (server enforcement; toggles in Work Management
@@ -796,6 +863,13 @@ def wm_assigner(**kwargs):
             d.assigned_count = active
             d.variance = active - frappe.utils.cint(d.planned_people)
             d.save(ignore_permissions=True)
+            if editing_pending and sb_cur and sb_cur.workflow_state != STAGE_STATE["assigner_farm_manager"]:
+                # a crew changed mid-approval goes back to the farm manager
+                frappe.db.set_value("Work Management Assigner", d.name, "workflow_state",
+                    STAGE_STATE["assigner_farm_manager"], update_modified=False)
+                d.workflow_state = STAGE_STATE["assigner_farm_manager"]
+                d.add_comment("Comment", "Crew changed by " + frappe.session.user + " while " +
+                    str(sb_cur.workflow_state) + "; sent back to the farm manager.")
             if submit_now and not editing_pending:
                 # written directly rather than through save(): the workflow's own
                 # transition-role gate would refuse the enterer here, and it is the
@@ -1082,6 +1156,10 @@ def wm_assigner(**kwargs):
             # a task worker under the CURRENT settings, or their work could never be
             # paid through this system and recording it would be recording something
             # nobody will settle
+            add_off = [r[0] for r in frappe.db.sql("""SELECT employee_name FROM `tabEmployee`
+                WHERE name IN %s AND status != 'Active'""", (tuple(add_who),))]
+            if add_off:
+                err = "Not active employees: " + ", ".join(add_off[:6]) + "."
             not_tw = []
             for aw in add_who:
                 ok = frappe.db.sql("""
@@ -1229,6 +1307,10 @@ def wm_assigner(**kwargs):
                 err = "Workers can only be released from an approved (Assigned) assignment"
             if not err:
                 err = wmg_farm_err(d.farm, "release a worker from this farm's work") or None
+            if not err:
+                for rw in rel_who:
+                    if not err:
+                        err = wmg_left_err(nm, rw, rel_day) or None
         if err:
             out["error"] = err
         else:
@@ -1300,6 +1382,12 @@ def wm_assigner(**kwargs):
         if not err:
             err = wmg_farm_err(frappe.db.get_value("Work Management Assigner", nm, "farm"),
                                "swap a worker on this farm's work") or None
+        if not err:
+            err = wmg_left_err(nm, outgoing, left_date) or None
+        if not err and str(start_date) < str(left_date):
+            err = "The replacement cannot start before the worker they replace leaves (" + str(left_date) + ")."
+        if not err and frappe.db.get_value("Employee", replacement, "status") != "Active":
+            err = "The replacement is not an active employee."
         if not err:
             err = wmg_backdate_err(start_date) or None
         d = None

@@ -217,7 +217,7 @@ class TestReviewFixes(unittest.TestCase):
 
 	def test_editing_a_pending_assignment_is_not_backdating(self):
 		src = source("assigner")
-		self.assertIn("if not err and planner and not asg_name:", src)
+		self.assertIn("if not err and planner and not sb_pending:", src)
 
 
 class TestTheListShowsWhatCanBeSent(unittest.TestCase):

@@ -208,6 +208,35 @@ def wm_actuals(**kwargs):
                 verb + ".")
 
 
+    def wmg_left_err(asg, emp, left_date):
+        """Why `emp` cannot be released from `asg` on `left_date`, or "". Not in the
+        future, not after the assignment ends, not before they started on it, and not
+        before the last day they have work recorded on it -- a release backdated past
+        recorded work frees days that are already paid for."""
+        if not (asg and emp and left_date):
+            return ""
+        a = frappe.db.get_value("Work Management Assigner", asg, ["from_date", "to_date"], as_dict=True)
+        nm = frappe.db.get_value("Employee", emp, "employee_name") or emp
+        if str(left_date) > str(frappe.utils.today()):
+            return nm + " cannot be released on " + str(left_date) + ": that day has not come yet."
+        if a and str(left_date) > str(a.to_date):
+            return nm + " cannot be released after the assignment ends (" + str(a.to_date) + ")."
+        st = frappe.db.sql("""SELECT MIN(COALESCE(start_date, %s)) FROM `tabWork Assignment Employee`
+                              WHERE parent = %s AND employee = %s""", (a.from_date if a else None, asg, emp))
+        if st and st[0][0] and str(left_date) < str(st[0][0]):
+            return nm + " cannot be released on " + str(left_date) + ", before they started (" + str(st[0][0]) + ")."
+        last = frappe.db.sql("""
+            SELECT MAX(we.work_date) FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+            WHERE ac.assignment = %s AND we.employee = %s AND IFNULL(ac.workflow_state, '') != 'Rejected'
+              AND ac.docstatus < 2 AND (IFNULL(we.actual_quantity, 0) > 0 OR IFNULL(we.amount, 0) > 0)
+        """, (asg, emp))
+        if last and last[0][0] and str(left_date) < str(last[0][0]):
+            return (nm + " has work recorded here up to " + str(last[0][0]) + ", so the release date must be "
+                    "that day or later.")
+        return ""
+
+
 
     def wmg_backdate_err(start):
         """An error message when `start` is further back than allowed for this
@@ -1211,6 +1240,20 @@ def wm_actuals(**kwargs):
                     wmg_flag_x = wmg_v
                 else:
                     wmg_refuse_x = wmg_v
+            wmg_emp_cache = {}
+
+            def wmg_emp_dates(emp, day):
+                """Why `emp` cannot have work on `day` (before joining / after leaving), or ""."""
+                if emp not in wmg_emp_cache:
+                    wmg_emp_cache[emp] = frappe.db.get_value("Employee", emp,
+                        ["date_of_joining", "relieving_date"], as_dict=True) or {}
+                e = wmg_emp_cache[emp]
+                if e.get("date_of_joining") and str(day) < str(e.get("date_of_joining")):
+                    return "before they joined (" + str(e.get("date_of_joining")) + ")"
+                if e.get("relieving_date") and str(day) > str(e.get("relieving_date")):
+                    return "after they left the company (" + str(e.get("relieving_date")) + ")"
+                return ""
+
             wmg_bad = []
             for c3 in (payload.split("|") if payload else []):
                 b3 = c3.split("~")
@@ -1220,6 +1263,8 @@ def wm_actuals(**kwargs):
                 n3 = frappe.db.get_value("Employee", b3[0], "employee_name") or b3[0]
                 if str(b3[1]) > str(frappe.utils.today()):
                     wmg_bad.append(n3 + " on " + b3[1] + ": that day has not happened yet")
+                elif wmg_emp_dates(b3[0], b3[1]):
+                    wmg_bad.append(n3 + " on " + b3[1] + ": " + wmg_emp_dates(b3[0], b3[1]))
                 elif wmg_hourly and q3 > 24:
                     wmg_bad.append(n3 + " on " + b3[1] + ": " + str(q3) + " hours is more than a day")
                 elif wmg_tgt > 0 and q3 > wmg_refuse_x * wmg_tgt:
@@ -2327,6 +2372,12 @@ def wm_actuals(**kwargs):
         if not err:
             err = wmg_farm_err(frappe.db.get_value("Work Management Assigner", nm, "farm"),
                                "swap a worker on this farm's work") or None
+        if not err:
+            err = wmg_left_err(nm, outgoing, left_date) or None
+        if not err and str(start_date) < str(left_date):
+            err = "The replacement cannot start before the worker they replace leaves (" + str(left_date) + ")."
+        if not err and frappe.db.get_value("Employee", replacement, "status") != "Active":
+            err = "The replacement is not an active employee."
         if not err:
             err = wmg_backdate_err(start_date) or None
         d = None
