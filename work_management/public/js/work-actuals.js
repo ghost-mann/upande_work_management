@@ -44,7 +44,7 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep="/api/method/"+(method||"wm_actuals");
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_close_reject:1,act_reopen:1,od_request:1,od_decide:1};
+    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_close_reject:1,act_reopen:1,od_request:1,od_decide:1,ws_signoff:1,ws_reopen:1,ws_notify:1,ws_delete_rejected:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -139,6 +139,8 @@
 
   function buildTabs(){
     var tabs=[["enter","Enter Actuals"],["acmine","My Actuals"],["acrej","Rejected"],["acappr","Approvals"]];
+    var wsm=ST.ws||{};
+    if(wsm.available && (wsm.view_farms||[]).length){ tabs.push(["ws","Week sign-off"]); tabs.push(["hist","History"]); }
     var nav=el("ac-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button"); b.textContent=t[1]; b.setAttribute("data-tab",t[0]);
@@ -147,11 +149,13 @@
     showTab("enter");
   }
   function showTab(name){
-    ["enter","acmine","acrej","acappr"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on",n===name); });
+    ["enter","acmine","acrej","acappr","ws","hist"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on",n===name); });
     document.querySelectorAll("#ac-tabs button").forEach(function(b){ b.setAttribute("aria-selected",b.getAttribute("data-tab")===name); });
     if(name==="acmine") loadMine();
     if(name==="acrej") loadRejected();
     if(name==="acappr") renderApprovals();
+    if(name==="ws") loadWeekSignoff();
+    if(name==="hist") loadHistory();
   }
   function apprQueues(){
     var r=ST.roles||{}, q=[];
@@ -1574,12 +1578,359 @@
     })]);
   }
 
+  // ===================================================================
+  // WEEK SIGN-OFF. The farm manager closes their farm's pay week: nothing left
+  // as a draft, rejected, or waiting for them. Drafts can be chased (email to
+  // whoever entered it, HR and GM copied) or finished here; rejected records
+  // that will never be fixed can be deleted (a log is kept). Payment includes a
+  // farm-week once it is signed off, when Settings asks it to wait.
+  // ===================================================================
+  var WS = { farm:"", week:"" };
+  function wsDateLabel(a,b){
+    var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var x=new Date(a+"T00:00:00"), y=new Date(b+"T00:00:00");
+    return x.getDate()+" "+m[x.getMonth()]+" – "+y.getDate()+" "+m[y.getMonth()]+" "+y.getFullYear();
+  }
+  function wsStatusFor(farm, wf){
+    var s=((ST.ws&&ST.ws.signoffs)||[]).filter(function(x){ return x.farm===farm && String(x.week_from)===wf; })[0];
+    return s ? s.status : "";
+  }
+  // A reason asked for in the page, not a browser prompt: the button's cell turns
+  // into a box with Confirm / Cancel.
+  function wsAsk(btn, placeholder, okLabel, onOk){
+    var cell=btn.parentNode, keep=cell.innerHTML;
+    cell.innerHTML='<input type="text" class="ws-why" placeholder="'+esc(placeholder)+'" style="min-width:220px"> '+
+      '<button type="button" class="btn solid ws-ok">'+esc(okLabel)+'</button> <button type="button" class="btn ws-no">Cancel</button>';
+    var inp=cell.querySelector(".ws-why"); inp.focus();
+    cell.querySelector(".ws-no").onclick=function(){ cell.innerHTML=keep; wsRender(); };
+    cell.querySelector(".ws-ok").onclick=function(){
+      var v=(inp.value||"").trim(); if(!v){ toast("Give a reason"); inp.focus(); return; }
+      this.disabled=true; onOk(v);
+    };
+  }
+  function loadWeekSignoff(){
+    var box=el("ws-body"), fs=el("ws-farm"), ws=el("ws-week");
+    if(!box||!fs||!ws) return;
+    var m=ST.ws||{};
+    if(!fs.options.length){
+      var farms=m.view_farms||[];
+      farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
+      var mine=(m.manage_farms||[]).filter(function(f){ return farms.indexOf(f)>-1; });
+      fs.value = mine.length===1 ? mine[0] : (farms[0]||"");
+      fs.onchange=function(){ WS.farm=this.value; wsFillWeeks(); wsRender(); };
+      ws.onchange=function(){ WS.week=this.value; wsRender(); };
+      WS.farm=fs.value;
+      // last week is the one being closed, so it is the default
+      WS.week=((m.weeks||[])[1]||(m.weeks||[])[0]||{}).week_from||"";
+      wsFillWeeks();
+    }
+    wsRender();
+  }
+  function wsFillWeeks(){
+    var ws=el("ws-week"), m=ST.ws||{}; ws.innerHTML="";
+    (m.weeks||[]).forEach(function(w,i){
+      var st=wsStatusFor(WS.farm, w.week_from);
+      var o=document.createElement("option"); o.value=w.week_from;
+      o.textContent=wsDateLabel(w.week_from,w.week_to)+(i===0?" (this week)":"")+(st==="Signed off"?"  ✓ signed off":(st==="Reopened"?"  · reopened":""));
+      if(w.week_from===WS.week) o.selected=true;
+      ws.appendChild(o);
+    });
+  }
+  function wsRefreshMeta(){
+    return call({action:"ws_meta"}).then(function(d){ ST.ws=d; wsFillWeeks(); });
+  }
+  function wsRender(){
+    var box=el("ws-body"); box.className="";
+    if(!WS.farm||!WS.week){ box.innerHTML='<div class="empty">Pick a '+esc(TX("top_singular","Farm").toLowerCase())+' and a week.</div>'; return; }
+    box.innerHTML='<div class="loading">Loading…</div>';
+    var farm=WS.farm, week=WS.week;
+    call({action:"ws_week", farm:farm, week_from:week}).then(function(d){
+      if(WS.farm!==farm||WS.week!==week) return;
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      var recs=d.records||[], so=d.signoff, signed=so&&so.status==="Signed off";
+      var g={Draft:[],Rejected:[],"Pending Farm Manager":[],later:[],CONFIRMED:[]};
+      recs.forEach(function(r){
+        if(g[r.workflow_state]) g[r.workflow_state].push(r); else g.later.push(r);
+      });
+      var h='';
+      if(!(ST.ws&&ST.ws.required)){
+        h+='<div class="ws-note">Payment does not wait for sign-off yet: the Settings switch '+
+           '<b>Require farm manager week sign-off before payment</b> is off.</div>';
+      }
+      // where the week stands
+      if(signed){
+        h+='<div class="ws-state ok"><b>Signed off</b> by '+esc(String(so.signed_by||"").split("@")[0])+' on '+esc(String(so.signed_on||"").slice(0,16))+
+           ' · '+fmt(so.records)+' records, '+fmt(so.worker_days)+' worker-days, KES '+fmt(so.amount,2)+
+           (d.late?(' <span class="ws-late">'+fmt(d.late)+' late record'+(d.late===1?'':'s')+' since</span>'):'')+
+           (d.can_reopen?' <button type="button" class="btn" id="ws-reopen" style="margin-left:8px">Reopen week</button>':'')+'</div>';
+      } else {
+        h+='<div class="ws-state'+(d.blocking?' bad':'')+'"><b>'+(so&&so.status==="Reopened"?'Reopened':'Not signed off')+'</b>'+
+           (so&&so.status==="Reopened"?(' by '+esc(String(so.reopened_by||"").split("@")[0])+': '+esc(so.reopen_reason||"")):'')+
+           ' · '+(d.blocking?('<b>'+fmt(d.blocking)+'</b> record'+(d.blocking===1?'':'s')+' to clear before sign-off'):'nothing left to clear')+
+           (d.can_manage?' <button type="button" class="btn solid" id="ws-sign"'+(d.can_signoff?'':' disabled')+' style="margin-left:8px">Sign off '+esc(farm)+' week</button>':'')+'</div>';
+      }
+      h+='<div class="ws-counts">'+
+         [["Drafts",g.Draft.length,"bad"],["Rejected",g.Rejected.length,"bad"],["Waiting for farm manager",g["Pending Farm Manager"].length,"bad"],
+          ["With HR / GM",g.later.length,""],["Confirmed",g.CONFIRMED.length,"ok"]].map(function(c){
+           return '<div class="ws-c '+(c[1]?c[2]:'')+'"><span>'+c[0]+'</span><b>'+fmt(c[1])+'</b></div>'; }).join("")+'</div>';
+      function tbl(title, rows, kind){
+        if(!rows.length) return '';
+        var t='<div class="sech" style="margin-top:14px">'+title+'</div><table><thead><tr><th>Ref</th><th>Task</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Dates</th><th>Entered by</th>'+
+              '<th class="n">Worker-days</th><th class="n">KES</th>'+(kind?'<th></th>':'<th>Status</th>')+'</tr></thead><tbody>';
+        rows.forEach(function(r){
+          t+='<tr><td class="m">'+esc(r.name)+(r.late?' <span class="ws-late">late</span>':'')+'</td><td>'+esc(taskName(r.task))+'</td><td style="font-size:11px">'+esc(r.block_section||"")+'</td>'+
+             '<td class="m" style="font-size:11px">'+esc(isodate(r.from_date))+' → '+esc(isodate(r.to_date))+'</td>'+
+             '<td>'+esc(r.entered_name||String(r.entered_by||"—").split("@")[0])+
+               (r.rejected_by?'<div class="hint">rejected by '+esc(r.rejected_by.split("@")[0])+' '+esc(r.rejected_on||"")+'</div>':'')+
+               (r.reminded_on?'<div class="hint">reminded '+esc(r.reminded_on)+'</div>':'')+'</td>'+
+             '<td class="n m">'+fmt(r.worker_days)+'</td><td class="n m">'+fmt(r.amount,2)+'</td>';
+          if(kind==="draft" && d.can_manage){
+            t+='<td style="white-space:nowrap"><button type="button" class="btn ws-notify" data-n="'+esc(r.name)+'">Notify</button> '+
+               '<button type="button" class="btn ws-finish" data-a="'+esc(r.assignment)+'">Complete it myself</button></td>';
+          } else if(kind==="rej" && d.can_manage){
+            t+='<td style="white-space:nowrap"><button type="button" class="btn ws-finish" data-a="'+esc(r.assignment)+'">Fix &amp; resubmit</button> '+
+               '<button type="button" class="btn ws-del" data-n="'+esc(r.name)+'">Delete</button></td>';
+          } else if(kind==="fm"){
+            t+='<td><button type="button" class="btn ws-appr">Approve in Approvals</button></td>';
+          } else if(kind){ t+='<td></td>'; }
+          else { t+='<td>'+stateTag(r.workflow_state==="CONFIRMED"?"Confirmed":r.workflow_state)+'</td>'; }
+          t+='</tr>';
+        });
+        return t+'</tbody></table>';
+      }
+      h+=tbl("Drafts — not yet submitted", g.Draft, "draft");
+      h+=tbl("Rejected — fix and resubmit, or delete", g.Rejected, "rej");
+      h+=tbl("Waiting for the farm manager", g["Pending Farm Manager"], "fm");
+      h+=tbl("Past the farm manager — with HR or the GM (do not block sign-off)", g.later, "");
+      h+=tbl("Confirmed", g.CONFIRMED, "");
+      if(!recs.length) h+='<div class="empty" style="margin-top:12px">No actuals recorded for '+esc(farm)+' in this week.</div>';
+      box.innerHTML=h;
+      box.querySelectorAll(".ws-notify").forEach(function(b){ b.onclick=function(){
+        b.disabled=true;
+        call({action:"ws_notify", name:b.getAttribute("data-n")}).then(function(r){
+          if(r.error){ toast(r.error); b.disabled=false; return; }
+          toast("Reminder emailed to "+r.sent_to+((r.cc||[]).length?(" (cc "+r.cc.join(", ")+")"):""));
+          wsRender();
+        }).catch(function(e){ toast(e.message); b.disabled=false; });
+      }; });
+      box.querySelectorAll(".ws-finish").forEach(function(b){ b.onclick=function(){ resumeActual(b.getAttribute("data-a")); }; });
+      box.querySelectorAll(".ws-appr").forEach(function(b){ b.onclick=function(){ showTab("acappr"); }; });
+      box.querySelectorAll(".ws-del").forEach(function(b){ b.onclick=function(){
+        var nm=b.getAttribute("data-n");
+        wsAsk(b, "Why delete "+nm+"? (it will not be paid; a log is kept)", "Delete", function(why){
+          call({action:"ws_delete_rejected", name:nm, reason:why}).then(function(r){
+            if(r.error){ toast(r.error); wsRender(); return; }
+            toast(r.deleted+" deleted (logged as "+r.log+")"); wsRender();
+          }).catch(function(e){ toast(e.message); wsRender(); });
+        });
+      }; });
+      var sb=el("ws-sign");
+      if(sb){
+        if(!d.can_signoff) sb.title = d.blocking ? "Clear the drafts, rejected records and your approvals first" : "This week cannot be signed off yet";
+        sb.onclick=function(){
+          if(!window.confirm("Sign off "+farm+" "+wsDateLabel(d.week_from,d.week_to)+"? HR and the GM are told, and the week can go into payment.")) return;
+          sb.disabled=true;
+          call({action:"ws_signoff", farm:farm, week_from:week}).then(function(r){
+            if(r.error){ toast(r.error); sb.disabled=false; return; }
+            toast("Signed off"+((r.notified||[]).length?(" — emailed "+r.notified.join(", ")):""));
+            wsRefreshMeta().then(wsRender);
+          }).catch(function(e){ toast(e.message); sb.disabled=false; });
+        };
+      }
+      var rb=el("ws-reopen");
+      if(rb) rb.onclick=function(){
+        wsAsk(rb, "Why reopen? It leaves payment until signed off again", "Reopen", function(why){
+          call({action:"ws_reopen", farm:farm, week_from:week, reason:why}).then(function(r){
+            if(r.error){ toast(r.error); wsRender(); return; }
+            toast("Week reopened"); wsRefreshMeta().then(wsRender);
+          });
+        });
+      };
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+
+  // ===================================================================
+  // HISTORY. One farm, all time, every status -- including work that was never
+  // paid and rejected records that were deleted. Per employee, per activity, and
+  // a month calendar. Export downloads what is on screen as CSV (opens in Excel).
+  // ===================================================================
+  var HS = { farm:"", view:"emp", emp:"", task:"", month:"", rows:[], cols:[], name:"" };
+  function loadHistory(){
+    var fs=el("hs-farm"); if(!fs) return;
+    if(!fs.options.length){
+      ((ST.ws&&ST.ws.view_farms)||[]).forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
+      var mine=((ST.ws&&ST.ws.manage_farms)||[]);
+      if(mine.length===1) fs.value=mine[0];
+      fs.onchange=function(){ HS.farm=this.value; HS.emp=""; HS.task=""; hsRender(); };
+      HS.farm=fs.value; HS.month=new Date().toISOString().slice(0,7);
+      document.querySelectorAll("#hs-views [data-v]").forEach(function(b){
+        b.onclick=function(){ HS.view=b.getAttribute("data-v");
+          document.querySelectorAll("#hs-views [data-v]").forEach(function(x){ x.classList.toggle("on", x===b); });
+          hsRender(); };
+      });
+      el("hs-export").onclick=hsExport;
+    }
+    hsRender();
+  }
+  function hsTable(cols, rows){
+    HS.cols=cols; HS.rows=rows;
+    if(!rows.length) return '<div class="empty" style="margin-top:10px">Nothing recorded.</div>';
+    var t='<table><thead><tr>'+cols.map(function(c){ return '<th'+(c.n?' class="n"':'')+'>'+esc(c.h)+'</th>'; }).join("")+'</tr></thead><tbody>';
+    rows.forEach(function(r){
+      t+='<tr'+(r._cls?' class="'+r._cls+'"':'')+'>'+cols.map(function(c){
+        var v=c.f?c.f(r):r[c.k];
+        return '<td'+(c.n?' class="n m"':'')+'>'+(c.html?v:(c.n?fmt(v,c.d||0):esc(v==null?"":v)))+'</td>';
+      }).join("")+'</tr>';
+    });
+    return t+'</tbody></table>';
+  }
+  function hsTag(s){ return s==="Deleted" ? '<span class="tag rej">Deleted</span>' : stateTag(s==="CONFIRMED"?"Confirmed":s); }
+  function hsRender(){
+    var box=el("hs-body"), side=el("hs-pick"); box.className="";
+    HS.rows=[]; HS.cols=[];
+    if(!HS.farm){ box.innerHTML='<div class="empty">Pick a '+esc(TX("top_singular","Farm").toLowerCase())+'.</div>'; side.innerHTML=""; return; }
+    var farm=HS.farm;
+    if(HS.view==="emp"){
+      side.innerHTML='<input type="search" id="hs-q" placeholder="Find a worker by name or number…" style="min-width:260px"> <select id="hs-emp"><option value="">— pick a worker —</option></select>';
+      var q=el("hs-q"), sel=el("hs-emp");
+      var fill=function(){
+        call({action:"hist_people", farm:farm, q:q.value||""}).then(function(d){
+          sel.innerHTML='<option value="">— pick a worker ('+fmt((d.people||[]).length)+') —</option>';
+          (d.people||[]).forEach(function(p){ var o=document.createElement("option"); o.value=p.employee;
+            o.textContent=(p.employee_name||p.employee)+" · "+p.employee+" · "+fmt(p.days)+" days"; if(p.employee===HS.emp) o.selected=true; sel.appendChild(o); });
+        });
+      };
+      var tm=null; q.oninput=function(){ clearTimeout(tm); tm=setTimeout(fill,300); };
+      sel.onchange=function(){ HS.emp=this.value; hsEmployee(); };
+      fill(); hsEmployee();
+    } else if(HS.view==="act"){
+      side.innerHTML='<select id="hs-task"><option value="">— pick an activity —</option></select>';
+      var ts=el("hs-task");
+      call({action:"hist_tasks", farm:farm}).then(function(d){
+        (d.tasks||[]).forEach(function(t){ var o=document.createElement("option"); o.value=t.task;
+          o.textContent=(t.subject||t.task)+" · "+fmt(t.records)+" records"; if(t.task===HS.task) o.selected=true; ts.appendChild(o); });
+      });
+      ts.onchange=function(){ HS.task=this.value; hsActivity(); };
+      hsActivity();
+    } else {
+      side.innerHTML='<input type="month" id="hs-month" value="'+esc(HS.month)+'">';
+      el("hs-month").onchange=function(){ HS.month=this.value; hsCalendar(); };
+      hsCalendar();
+    }
+  }
+  function hsEmployee(){
+    var box=el("hs-body");
+    if(!HS.emp){ box.innerHTML='<div class="empty">Pick a worker to see every day they worked on '+esc(HS.farm)+'.</div>'; return; }
+    box.innerHTML='<div class="loading">Loading…</div>';
+    call({action:"hist_employee", farm:HS.farm, employee:HS.emp}).then(function(d){
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      var rows=(d.days||[]).concat(d.deleted||[]).sort(function(a,b){ return String(b.work_date)<String(a.work_date)?-1:1; });
+      var conf=0, paid=0, notc=0, del=0, days={};
+      rows.forEach(function(r){
+        var a=Number(r.amount)||0;
+        if(r.workflow_state==="Deleted") del+=a;
+        else if(r.workflow_state==="CONFIRMED"){ conf+=a; if(r.paid) paid+=a; if(Number(r.qty)>0) days[r.work_date]=1; }
+        else notc+=a;
+      });
+      var e=d.employee||{};
+      HS.name=(e.employee_name||HS.emp)+"_"+HS.farm;
+      var h='<div class="ws-state"><b>'+esc(e.employee_name||HS.emp)+'</b> · '+esc(HS.emp)+' · '+esc(e.designation||"")+' · '+esc(e.employment_type||"")+
+            ' · '+esc(e.status||"")+(e.custom_farm&&e.custom_farm!==HS.farm?(' · now on '+esc(e.custom_farm)):'')+'</div>'+
+            '<div class="ws-counts">'+[["Days worked (confirmed)",Object.keys(days).length,"",0],["Earned, confirmed",conf,"ok",2],["Paid",paid,"ok",2],
+              ["Confirmed, not yet paid",conf-paid,(conf-paid>0.5?"bad":""),2],["Not confirmed (draft / rejected / pending)",notc,(notc>0.5?"bad":""),2],["Deleted",del,"",2]]
+              .map(function(c){ return '<div class="ws-c '+c[2]+'"><span>'+c[0]+'</span><b>'+fmt(c[1],c[3])+'</b></div>'; }).join("")+'</div>';
+      rows.forEach(function(r){ if(r.workflow_state!=="CONFIRMED") r._cls="hs-dim"; });
+      h+=hsTable([{h:"Date",k:"work_date"},{h:"Activity",f:function(r){ return r.task_name||taskName(r.task); }},{h:TX("unit_singular","Block"),k:"block_section"},
+                  {h:"Qty",k:"qty",n:1,d:2},{h:"Hours",k:"hours",n:1,d:1},{h:"KES",k:"amount",n:1,d:2},
+                  {h:"Status",html:1,f:function(r){ return hsTag(r.workflow_state)+(r.reason?'<div class="hint">'+esc(r.reason)+'</div>':''); },csv:function(r){ return r.workflow_state; }},
+                  {h:"Paid",f:function(r){ return r.paid?("Paid "+(r.payment_ref||"")):(r.workflow_state==="CONFIRMED"?"Not yet":"—"); }},
+                  {h:"Record",k:"actuals"},{h:"Team leader",f:function(r){ return String(r.team_leader||"").split("@")[0]; }}], rows);
+      box.innerHTML=h;
+    }).catch(function(e2){ box.innerHTML='<div class="empty">Could not load: '+esc(e2.message)+'</div>'; });
+  }
+  function hsActivity(){
+    var box=el("hs-body");
+    if(!HS.task){ box.innerHTML='<div class="empty">Pick an activity to see who did it, day by day.</div>'; return; }
+    box.innerHTML='<div class="loading">Loading…</div>';
+    call({action:"hist_activity", farm:HS.farm, task:HS.task}).then(function(d){
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      HS.name=(d.task_name||HS.task)+"_"+HS.farm;
+      var rows=d.days||[]; rows.forEach(function(r){ if(r.workflow_state!=="CONFIRMED") r._cls="hs-dim"; });
+      var h=hsTable([{h:"Date",k:"work_date"},{h:"Status",html:1,f:function(r){ return hsTag(r.workflow_state); },csv:function(r){ return r.workflow_state; }},
+                     {h:"Workers",k:"workers",n:1},{h:"Qty",k:"qty",n:1,d:2},{h:"KES",k:"amount",n:1,d:2},{h:"Paid KES",k:"paid",n:1,d:2},
+                     {h:"Team leader",f:function(r){ return String(r.leaders||"").split(",").map(function(x){ return x.split("@")[0]; }).join(", "); }},
+                     {h:TX("unit_plural","Blocks"),k:"blocks"},{h:"Records",k:"records"}], rows);
+      var wk=d.workers||[];
+      if(wk.length){
+        var keep={cols:HS.cols, rows:HS.rows};
+        h+='<div class="sech" style="margin-top:16px">Who did it (confirmed work)</div>'+
+           hsTable([{h:"Worker",k:"employee_name"},{h:"No.",k:"employee"},{h:"Days",k:"days",n:1},{h:"Qty",k:"qty",n:1,d:2},{h:"KES",k:"amount",n:1,d:2}], wk);
+        HS.cols=keep.cols; HS.rows=keep.rows;   // export the day-by-day table
+      }
+      box.innerHTML=h;
+    }).catch(function(e2){ box.innerHTML='<div class="empty">Could not load: '+esc(e2.message)+'</div>'; });
+  }
+  function hsCalendar(){
+    var box=el("hs-body"); box.innerHTML='<div class="loading">Loading…</div>';
+    var farm=HS.farm, month=HS.month;
+    call({action:"hist_calendar", farm:farm, month:month}).then(function(d){
+      if(HS.farm!==farm||HS.month!==month) return;
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      HS.name="calendar_"+farm+"_"+month;
+      var byDay={}; (d.days||[]).forEach(function(x){ byDay[x.date]=x; });
+      HS.cols=[{h:"Date",k:"date"},{h:"Workers (confirmed)",k:"workers"},{h:"Confirmed KES",k:"confirmed_amount"},{h:"Paid KES",k:"paid"},
+               {h:"Drafts",k:"drafts"},{h:"Rejected",k:"rejected"},{h:"Being approved",k:"pending"},{h:"Workers on two records",k:"dup_workers"}];
+      HS.rows=d.days||[];
+      var so={}; (d.signoffs||[]).forEach(function(s){ so[String(s.week_from)]=s; });
+      var first=new Date(d.from+"T00:00:00"), last=new Date(d.to+"T00:00:00");
+      var startIdx=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].indexOf((ST.ws&&ST.ws.week_starts_on)||"Monday");
+      var jsStart=(startIdx+1)%7;   // JS: Sunday=0
+      var names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      var h='<div class="hs-legend"><span class="hs-f d">D</span> drafts <span class="hs-f r">R</span> rejected <span class="hs-f p">P</span> being approved <span class="hs-f x">2×</span> same worker on two records</div>';
+      h+='<div class="hs-cal">';
+      for(var k=0;k<7;k++) h+='<div class="hs-dow">'+names[(jsStart+k)%7]+'</div>';
+      var lead=(first.getDay()-jsStart+7)%7;
+      for(var i=0;i<lead;i++) h+='<div class="hs-cell blank"></div>';
+      for(var dt=new Date(first); dt<=last; dt.setDate(dt.getDate()+1)){
+        var iso=dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+        var c=byDay[iso];
+        var wkStart=new Date(dt); wkStart.setDate(dt.getDate()-((dt.getDay()-jsStart+7)%7));
+        var wkIso=wkStart.getFullYear()+"-"+String(wkStart.getMonth()+1).padStart(2,"0")+"-"+String(wkStart.getDate()).padStart(2,"0");
+        var s=so[wkIso];
+        h+='<div class="hs-cell'+(c&&(c.drafts||c.rejected||c.dup_workers)?' warn':'')+'"><div class="hs-dn">'+dt.getDate()+
+           ((dt.getDay()===jsStart&&s)?'<span class="hs-so'+(s.status==="Signed off"?' ok':'')+'">'+(s.status==="Signed off"?'week ✓':'reopened')+'</span>':'')+'</div>';
+        if(c){
+          h+='<div class="hs-w">'+fmt(c.workers)+' <span>worked</span></div><div class="hs-k">KES '+fmt(c.confirmed_amount)+'</div>';
+          if(c.confirmed_amount-c.paid>0.5) h+='<div class="hs-u">unpaid '+fmt(c.confirmed_amount-c.paid)+'</div>';
+          h+='<div>'+(c.drafts?'<span class="hs-f d">D'+c.drafts+'</span>':'')+(c.rejected?'<span class="hs-f r">R'+c.rejected+'</span>':'')+
+             (c.pending?'<span class="hs-f p">P'+c.pending+'</span>':'')+(c.dup_workers?'<span class="hs-f x">2×'+c.dup_workers+'</span>':'')+'</div>';
+        }
+        h+='</div>';
+      }
+      box.innerHTML=h+'</div>';
+    }).catch(function(e2){ box.innerHTML='<div class="empty">Could not load: '+esc(e2.message)+'</div>'; });
+  }
+  function hsExport(){
+    if(!HS.rows.length){ toast("Nothing on screen to export"); return; }
+    var q=function(v){ v=(v==null?"":String(v)); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+    var lines=[HS.cols.map(function(c){ return q(c.h); }).join(",")];
+    HS.rows.forEach(function(r){
+      lines.push(HS.cols.map(function(c){ return q(c.csv?c.csv(r):(c.f?c.f(r):r[c.k])); }).join(","));
+    });
+    var blob=new Blob(["﻿"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+    var a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download=("history_"+(HS.name||HS.farm)).replace(/[^\w.-]+/g,"_")+".csv";
+    document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },500);
+  }
+
   function boot(){
     var names = taskNamesReady();
     call({action:"a_roles"}).then(function(roles){
       ST.roles=roles;
       el("ac-who").textContent=(roles.user||"")+(roles.is_hr_head?" · HR Head":"");
-      return names.then(function(){ initEnter(); buildTabs(); });
+      // week sign-off and history: which farms this person signs off and sees
+      var wsMeta=call({action:"ws_meta"}).then(function(d){ ST.ws=d||{}; }).catch(function(){ ST.ws={}; });
+      return names.then(function(){ return wsMeta; }).then(function(){ initEnter(); buildTabs(); });
     }).catch(function(e){ el("ac-who").textContent="Could not load."; });
   }
   // No window.frappe check before booting -- see the note in work-planner.js. csrf()

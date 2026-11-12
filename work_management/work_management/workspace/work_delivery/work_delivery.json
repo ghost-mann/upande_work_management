@@ -16,7 +16,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Delivery",
-   "link_count": 3,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -49,6 +49,28 @@
    "label": "Off-day requests",
    "link_count": 0,
    "link_to": "Work Off Day Request",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Week sign-offs",
+   "link_count": 0,
+   "link_to": "Work Management Week Signoff",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Deleted actuals log",
+   "link_count": 0,
+   "link_to": "Work Management Deleted Actuals",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

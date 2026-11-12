@@ -179,6 +179,22 @@ def wm_masterplan(**kwargs):
     if STAGE_ROLE.get("masterplan_consultant") in mp_roles:
         IS_CONSULTANT = 1
 
+    # TEAM LEADERS PER FARM. Each farm keeps a list of its team leaders (Planner ->
+    # Team leaders tab), and a master plan activity may only be given someone on its
+    # farm's active list. One record per person, so a person leads on one farm only.
+    # The farm manager keeps their own farm's list; the GM (and System Manager) every
+    # farm's. A site without the doctype (the Server Script world) still requires a
+    # team leader on every activity, it just has no list to check the name against.
+    TL_DT = 1 if frappe.db.exists("DocType", "Work Management Team Leader") else 0
+    tl_my_farms = []
+    for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+        if _role_ in mp_roles: tl_my_farms.append(_farm_)
+    TL_ALL_FARMS = 1 if (CAN_GM or "System Manager" in mp_roles) else 0
+    TL_MANAGE_FARMS = []
+    for tl_f in FARMS:
+        if TL_ALL_FARMS or tl_f in tl_my_farms:
+            TL_MANAGE_FARMS.append(tl_f)
+
     # The caller's roles, read once. Each step's configured Role gates that step --
     # see may_take_step() in approvals.py, whose rule this mirrors: the step's own
     # role, or System Manager as the unstick-the-pipeline bypass. General Manager is
@@ -228,6 +244,8 @@ def wm_masterplan(**kwargs):
         out["can_gm_approve"] = CAN_GM
         out["is_consultant"] = IS_CONSULTANT
         out["can_edit_approved"] = CAN_EDIT_APPROVED
+        # the Team leaders tab is offered to whoever keeps at least one farm's list
+        out["tl_manage"] = 1 if (TL_DT and TL_MANAGE_FARMS) else 0
         # Farms are Upande Core's records. hooks.py declares that app required, so
         # `Farm` is unambiguous and unguarded here -- and it has to be unguarded: a
         # guard around a doctype every screen depends on answers "no farms" rather
@@ -348,20 +366,33 @@ def wm_masterplan(**kwargs):
                     filters={"parent": mp_name, "parenttype": "Work Management Master Plan"},
                     fields=["team_leader", "stand_in", "from_date", "to_date", "note", "set_by", "set_on"],
                     order_by="from_date") if frappe.db.exists("DocType", "Work Management Team Leader Stand In") else []
-                # who can be picked: people working this farm who have a login, then
-                # everyone already named on the plan even if they have moved farms
+                # who can be picked: the farm's active team leaders (Team leaders tab),
+                # then everyone already named on the plan even if they have since left
+                # the list -- a plan never loses a name it already carries
                 gl_opts = []
                 gl_seen = {}
-                for gl_e in frappe.db.sql("""
-                    SELECT e.user_id user, e.employee_name full_name
-                    FROM `tabEmployee` e INNER JOIN `tabUser` u ON u.name = e.user_id
-                    WHERE e.custom_farm = %(f)s AND e.status = 'Active'
-                      AND IFNULL(e.user_id, '') != '' AND u.enabled = 1
-                    ORDER BY e.employee_name
-                """, {"f": mp.farm}, as_dict=True):
+                if TL_DT:
+                    gl_src = frappe.db.sql("""
+                        SELECT t.user user, IFNULL(t.full_name, u.full_name) full_name
+                        FROM `tabWork Management Team Leader` t
+                        INNER JOIN `tabUser` u ON u.name = t.user
+                        WHERE t.farm = %(f)s AND t.active = 1 AND u.enabled = 1
+                        ORDER BY full_name
+                    """, {"f": mp.farm}, as_dict=True)
+                else:
+                    gl_src = frappe.db.sql("""
+                        SELECT e.user_id user, e.employee_name full_name
+                        FROM `tabEmployee` e INNER JOIN `tabUser` u ON u.name = e.user_id
+                        WHERE e.custom_farm = %(f)s AND e.status = 'Active'
+                          AND IFNULL(e.user_id, '') != '' AND u.enabled = 1
+                        ORDER BY e.employee_name
+                    """, {"f": mp.farm}, as_dict=True)
+                for gl_e in gl_src:
                     if not gl_seen.get(gl_e.user):
                         gl_seen[gl_e.user] = 1
                         gl_opts.append({"user": gl_e.user, "full_name": gl_e.full_name, "on_farm": 1})
+                out["tl_registry"] = TL_DT
+                out["missing_leaders"] = len([a for a in out["activities"] if not a.get("team_leader")])
                 gl_named = []
                 for gl_a in out["activities"]:
                     if gl_a.get("team_leader"):
@@ -517,6 +548,44 @@ def wm_masterplan(**kwargs):
                     elif sv_seen.get(st):
                         sv_err = str(st) + " appears twice. One line per activity."
                     sv_seen[st] = 1
+            # EVERY ACTIVITY NEEDS A TEAM LEADER, and it must be someone on this farm's
+            # active list. Checked on every save -- new plans, edits, and corrections
+            # to a plan under review or approved -- so no plan that anyone touches can
+            # go forward with an activity nobody runs. A row the screen sent without a
+            # team_leader key keeps whoever it named before.
+            if not sv_err:
+                sv_had = {}
+                if sv_name:
+                    for sx in frappe.db.get_all("Work Management Master Plan Activity",
+                            filters={"parent": sv_name}, fields=["task", "team_leader"]):
+                        sv_had[sx.task] = sx.team_leader
+                sv_ok_tl = {}
+                if TL_DT:
+                    for sx in frappe.db.sql("""
+                        SELECT t.user FROM `tabWork Management Team Leader` t
+                        INNER JOIN `tabUser` u ON u.name = t.user
+                        WHERE t.farm = %(f)s AND t.active = 1 AND u.enabled = 1
+                    """, {"f": sv_farm}, as_dict=True):
+                        sv_ok_tl[sx.user] = 1
+                sv_no_tl = []
+                sv_bad_tl = []
+                for sr in sv_rows:
+                    sv_tl = sr.get("team_leader") if "team_leader" in sr else sv_had.get(sr.get("task"))
+                    sv_lbl = frappe.db.get_value("Task", sr.get("task"), "subject") or str(sr.get("task"))
+                    if not sv_tl:
+                        sv_no_tl.append(sv_lbl)
+                    elif TL_DT and not sv_ok_tl.get(sv_tl):
+                        sv_bad_tl.append(sv_lbl + " (" + str(sv_tl) + ")")
+                if TL_DT and not sv_ok_tl:
+                    sv_err = ("No team leaders are set up for " + str(sv_farm) + " yet. Add them in "
+                              "the Planner's Team leaders tab, then pick one for every activity.")
+                elif sv_no_tl:
+                    sv_err = ("Every activity needs a team leader. Pick one for: " +
+                              ", ".join(sv_no_tl) + ".")
+                elif sv_bad_tl:
+                    sv_err = ("These team leaders are not on " + str(sv_farm) + "'s active team "
+                              "leader list: " + ", ".join(sv_bad_tl) + ". Pick someone from the "
+                              "list, or add them in the Team leaders tab.")
             if sv_err:
                 out["error"] = sv_err
             else:
@@ -757,6 +826,31 @@ def wm_masterplan(**kwargs):
                 if sl_u and not frappe.db.get_value("User", sl_u, "enabled"):
                     sl_err = str(sl_u) + " is not an active user."
                     break
+            # the farm's active team leaders; a name the plan already carries may stay
+            # even if it has since left the list, but nobody new comes from outside it
+            sl_ok_tl = {}
+            if TL_DT:
+                for sl_t in frappe.db.get_all("Work Management Team Leader",
+                        filters={"farm": sl_mp.farm, "active": 1}, pluck="user"):
+                    sl_ok_tl[sl_t] = 1
+            for sl_r in sl_rows:
+                if sl_err:
+                    break
+                sl_v = sl_owner.get(sl_r.task)
+                sl_lbl = frappe.db.get_value("Task", sl_r.task, "subject") or str(sl_r.task)
+                if sl_r.team_leader and not sl_v:
+                    sl_err = (sl_lbl + ": a team leader can be changed but not removed. "
+                              "Every activity needs one.")
+                elif TL_DT and sl_v and sl_v != sl_r.team_leader and not sl_ok_tl.get(sl_v):
+                    sl_err = (sl_lbl + ": " + str(sl_v) + " is not on " + str(sl_mp.farm) +
+                              "'s active team leader list.")
+            sl_si_had = {}
+            for sl_p in frappe.db.get_all("Work Management Team Leader Stand In",
+                    filters={"parent": sl_name, "parenttype": "Work Management Master Plan"},
+                    fields=["team_leader", "stand_in", "from_date", "to_date"]) \
+                    if frappe.db.exists("DocType", "Work Management Team Leader Stand In") else []:
+                sl_si_had[str(sl_p.team_leader) + "|" + str(sl_p.stand_in) + "|" +
+                          str(sl_p.from_date) + "|" + str(sl_p.to_date)] = 1
             sl_named = {}
             for sl_u in sl_owner.values():
                 if sl_u:
@@ -780,6 +874,11 @@ def wm_masterplan(**kwargs):
                     sl_err = "Stand-in row " + str(sl_i) + ": " + str(sl_tl) + " leads no activity on this plan."
                 elif not frappe.db.get_value("User", sl_si, "enabled"):
                     sl_err = "Stand-in row " + str(sl_i) + ": " + str(sl_si) + " is not an active user."
+                elif (TL_DT and not sl_ok_tl.get(sl_si) and not sl_si_had.get(
+                        str(sl_tl) + "|" + str(sl_si) + "|" + str(sl_fd) + "|" + str(sl_td))):
+                    # a stand-in comes from the same farm list as the team leaders
+                    sl_err = ("Stand-in row " + str(sl_i) + ": " + str(sl_si) + " is not on " +
+                              str(sl_mp.farm) + "'s active team leader list.")
         if sl_err:
             out["error"] = sl_err
         else:
@@ -844,6 +943,110 @@ def wm_masterplan(**kwargs):
             out["name"] = sl_name
             out["restamped"] = sl_moved
 
+    elif action == "tl_list":
+        # A farm's team leaders, for the Team leaders tab (everyone, active or not)
+        # and for the master plan form's picker (the screen keeps the active ones).
+        # Readable by whoever may raise, review or approve a plan; changed only by
+        # the farm's manager and the GM (tl_save).
+        tll_farm = (frappe.form_dict.get("farm") or "").strip()
+        if not TL_DT:
+            out["error"] = "Team leader lists are not available on this site."
+        elif not (CAN_EDIT or IS_CONSULTANT or CAN_GM or TL_MANAGE_FARMS):
+            out["error"] = "You do not work with master plans."
+        else:
+            out["manage_farms"] = TL_MANAGE_FARMS
+            out["farm"] = tll_farm
+            out["can_manage"] = 1 if (tll_farm and tll_farm in TL_MANAGE_FARMS) else 0
+            out["leaders"] = []
+            out["candidates"] = []
+            if tll_farm:
+                out["leaders"] = frappe.db.sql("""
+                    SELECT t.user, IFNULL(t.full_name, u.full_name) full_name, t.active,
+                           u.enabled, t.added_by, t.added_on, t.changed_by, t.changed_on
+                    FROM `tabWork Management Team Leader` t
+                    INNER JOIN `tabUser` u ON u.name = t.user
+                    WHERE t.farm = %(f)s
+                    ORDER BY t.active DESC, full_name
+                """, {"f": tll_farm}, as_dict=True)
+            if tll_farm and out["can_manage"]:
+                # who can be added: people working this farm who have a login. Anyone
+                # already on a list is marked, because a person leads on one farm only.
+                for tll_e in frappe.db.sql("""
+                    SELECT e.user_id user, e.employee_name full_name, e.designation,
+                           t.farm tl_farm, t.active tl_active
+                    FROM `tabEmployee` e
+                    INNER JOIN `tabUser` u ON u.name = e.user_id
+                    LEFT JOIN `tabWork Management Team Leader` t ON t.user = e.user_id
+                    WHERE e.custom_farm = %(f)s AND e.status = 'Active'
+                      AND IFNULL(e.user_id, '') != '' AND u.enabled = 1
+                    ORDER BY e.employee_name
+                """, {"f": tll_farm}, as_dict=True):
+                    if tll_e.tl_farm == tll_farm:
+                        continue
+                    out["candidates"].append({
+                        "user": tll_e.user, "full_name": tll_e.full_name,
+                        "designation": tll_e.designation,
+                        "elsewhere": tll_e.tl_farm if (tll_e.tl_farm and tll_e.tl_active) else None})
+
+    elif action == "tl_save":
+        # Add a team leader to a farm's list, or take one off it (active = 0). Taking
+        # someone off keeps the record -- plans that already name them keep the
+        # name, and the history of who was a team leader where survives.
+        tls_farm = (frappe.form_dict.get("farm") or "").strip()
+        tls_user = (frappe.form_dict.get("user") or "").strip()
+        tls_active = 1 if str(frappe.form_dict.get("active", "1")) in ("1", "true", "True") else 0
+        tls_err = None
+        if not TL_DT:
+            tls_err = "Team leader lists are not available on this site."
+        elif not tls_farm or not tls_user:
+            tls_err = "Pick a farm and a person."
+        elif tls_farm not in TL_MANAGE_FARMS:
+            tls_err = ("Only " + str(tls_farm) + "'s farm manager or the general manager can "
+                       "change its team leaders.")
+        elif tls_active and not frappe.db.get_value("User", tls_user, "enabled"):
+            tls_err = str(tls_user) + " is not an active user."
+        tls_rec = None
+        if not tls_err:
+            tls_rec = frappe.db.get_value("Work Management Team Leader", tls_user,
+                ["name", "farm", "active"], as_dict=True)
+            if tls_rec and tls_rec.farm != tls_farm:
+                if not tls_active:
+                    tls_err = str(tls_user) + " is not on " + str(tls_farm) + "'s list."
+                elif tls_rec.active:
+                    tls_err = (str(tls_user) + " is already a team leader on " + str(tls_rec.farm) +
+                               ". A person leads on one farm only: take them off " +
+                               str(tls_rec.farm) + "'s list first.")
+            elif not tls_rec and not tls_active:
+                tls_err = str(tls_user) + " is not on " + str(tls_farm) + "'s list."
+        if tls_err:
+            out["error"] = tls_err
+        else:
+            if tls_rec:
+                tls_doc = frappe.get_doc("Work Management Team Leader", tls_rec.name)
+            else:
+                tls_doc = frappe.new_doc("Work Management Team Leader")
+                tls_doc.user = tls_user
+            tls_doc.farm = tls_farm
+            tls_doc.active = tls_active
+            if not tls_doc.full_name:
+                tls_doc.full_name = frappe.db.get_value("User", tls_user, "full_name")
+            if tls_rec:
+                tls_doc.save(ignore_permissions=True)
+            else:
+                tls_doc.insert(ignore_permissions=True)
+            frappe.db.commit()
+            out["user"] = tls_user
+            out["active"] = tls_active
+            if not tls_active:
+                # the plans still running that name them, so the screen can say so
+                out["still_named"] = frappe.db.sql("""
+                    SELECT COUNT(*) FROM `tabWork Management Master Plan Activity` a
+                    INNER JOIN `tabWork Management Master Plan` m ON m.name = a.parent
+                    WHERE a.team_leader = %(u)s AND m.farm = %(f)s
+                      AND IFNULL(m.workflow_state, '') != 'Rejected'
+                      AND m.period_to >= %(d)s
+                """, {"u": tls_user, "f": tls_farm, "d": frappe.utils.today()})[0][0]
+
     elif action == "submit_for_review":
         sr_name = frappe.form_dict.get("name")
         sr_state = frappe.db.get_value("Work Management Master Plan", sr_name, "workflow_state")
@@ -853,6 +1056,13 @@ def wm_masterplan(**kwargs):
             out["error"] = "no such master plan: " + str(sr_name)
         elif sr_state not in ("Draft", "Rejected"):
             out["error"] = "Only a Draft or Rejected master plan can be submitted (state: " + str(sr_state) + ")"
+        elif frappe.db.sql("""
+                SELECT 1 FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s AND IFNULL(team_leader, '') = '' LIMIT 1
+            """, {"p": sr_name}):
+            # a draft saved before team leaders were required can still be missing one
+            out["error"] = ("Every activity needs a team leader before the plan can go for "
+                            "review. Open the plan, pick a team leader for each activity and save.")
         else:
             frappe.db.set_value("Work Management Master Plan", sr_name,
                                 "workflow_state", STAGE_NEXT["masterplan_submit"])
@@ -917,6 +1127,14 @@ def wm_masterplan(**kwargs):
                     frappe.db.set_value("Work Management Master Plan", dl.parent,
                                         "workflow_state", "Draft")
                     out["moved_to"] = "Draft"
+                elif not dl_pending and frappe.db.sql("""
+                SELECT COUNT(*) FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s AND IFNULL(team_leader, '') = ''
+                  AND IFNULL(consultant_state, '') != 'Rejected'
+            """, {"p": dl.parent})[0][0]:
+                    # the decision stands, but the plan waits here until every activity
+                    # has a team leader
+                    out["held_for_leaders"] = 1
                 elif not dl_pending:
                     frappe.db.set_value("Work Management Master Plan", dl.parent,
                                         "workflow_state", STAGE_NEXT["masterplan_consultant"])
@@ -979,6 +1197,12 @@ def wm_masterplan(**kwargs):
                 if db_edit:
                     frappe.db.set_value("Work Management Master Plan", db_parent, "workflow_state", "Draft")
                     out["moved_to"] = "Draft"
+                elif not db_pending and frappe.db.sql("""
+                SELECT COUNT(*) FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s AND IFNULL(team_leader, '') = ''
+                  AND IFNULL(consultant_state, '') != 'Rejected'
+            """, {"p": db_parent})[0][0]:
+                    out["held_for_leaders"] = 1
                 elif not db_pending:
                     frappe.db.set_value("Work Management Master Plan", db_parent, "workflow_state", STAGE_NEXT["masterplan_consultant"])
                     out["moved_to"] = STAGE_NEXT["masterplan_consultant"]
@@ -1032,6 +1256,12 @@ def wm_masterplan(**kwargs):
                         pb_failed.append({"name": pb_n, "why": "only the general manager can approve"})
                     elif pb_st != "Pending GM":
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not awaiting the GM"})
+                    elif frappe.db.sql("""
+                SELECT COUNT(*) FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s AND IFNULL(team_leader, '') = ''
+                  AND IFNULL(consultant_state, '') != 'Rejected'
+            """, {"p": pb_n})[0][0]:
+                        pb_failed.append({"name": pb_n, "why": "has activities with no team leader"})
                     else:
                         pb_ok = frappe.db.sql("""
                             SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity`
@@ -1073,6 +1303,12 @@ def wm_masterplan(**kwargs):
                         pb_failed.append({"name": pb_n, "why": "not yours to send on"})
                     elif pb_st != "Pending Consultant":
                         pb_failed.append({"name": pb_n, "why": "is at " + str(pb_st) + ", not with the consultants"})
+                    elif frappe.db.sql("""
+                SELECT COUNT(*) FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s AND IFNULL(team_leader, '') = ''
+                  AND IFNULL(consultant_state, '') != 'Rejected'
+            """, {"p": pb_n})[0][0]:
+                        pb_failed.append({"name": pb_n, "why": "has activities with no team leader"})
                     else:
                         for pb_p in frappe.db.get_all("Work Management Master Plan Activity",
                                 filters={"parent": pb_n, "consultant_state": "Pending"}, pluck="name"):
@@ -1101,6 +1337,14 @@ def wm_masterplan(**kwargs):
             out["error"] = "no such master plan: " + str(sg_name)
         elif sg_state != "Pending Consultant":
             out["error"] = "Only a plan awaiting consultant review can be sent to the GM (state: " + str(sg_state) + ")"
+        elif frappe.db.sql("""
+                SELECT COUNT(*) FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s AND IFNULL(team_leader, '') = ''
+                  AND IFNULL(consultant_state, '') != 'Rejected'
+            """, {"p": sg_name})[0][0]:
+            # no plan moves up a step while an activity has nobody running it
+            out["error"] = ("Every activity needs a team leader before this plan can move on. "
+                            "Pick them in the Team leader column and press Save team leaders.")
         else:
             sg_rows = frappe.db.sql("""
                 SELECT consultant_state, task FROM `tabWork Management Master Plan Activity`
@@ -1148,6 +1392,13 @@ def wm_masterplan(**kwargs):
             out["error"] = "The GM step is switched off for this project."
         elif ga_state != STAGE_STATE["masterplan_gm"]:
             out["error"] = "This master plan is not awaiting GM approval (state: " + str(ga_state) + ")"
+        elif frappe.db.sql("""
+                SELECT COUNT(*) FROM `tabWork Management Master Plan Activity`
+                WHERE parent = %(p)s AND IFNULL(team_leader, '') = ''
+                  AND IFNULL(consultant_state, '') != 'Rejected'
+            """, {"p": ga_name})[0][0]:
+            out["error"] = ("Every activity needs a team leader before this plan can move on. "
+                            "Pick them in the Team leader column and press Save team leaders.")
         else:
             ga_doc = frappe.db.get_value("Work Management Master Plan", ga_name,
                 ["farm", "period_from", "period_to"], as_dict=True)

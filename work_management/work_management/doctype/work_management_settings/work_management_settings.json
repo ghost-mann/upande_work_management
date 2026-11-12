@@ -93,6 +93,9 @@
   "pay_day",
   "allow_part_week_send",
   "allow_day_range",
+  "section_week_signoff",
+  "week_signoff_required",
+  "week_signoff_notify",
   "sb_payroll_pack",
   "payroll_pack_enabled",
   "payroll_pack_sender",
@@ -621,6 +624,25 @@
    "fieldtype": "Check",
    "label": "Also allow sending a chosen range of days",
    "description": "Pay weeks can always be sent -- one payment per worker per completed week, which is what payroll has always received. Tick this to additionally offer paying a range you choose: one day, five days, a fortnight, up to a month. The range is grouped from the first date selected rather than into pay weeks, so it can pay a weekday the pay week above leaves out, which cannot be sent weekly at all. Ticking this changes nothing on its own -- an ordinary send still groups into pay weeks."
+  },
+  {
+   "fieldname": "section_week_signoff",
+   "fieldtype": "Section Break",
+   "label": "Farm manager week sign-off",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "week_signoff_required",
+   "fieldtype": "Check",
+   "label": "Require Farm manager week sign-off before payment",
+   "default": "0",
+   "description": "On: a farm's pay week is only paid once its farm manager has signed it off on the Actuals screen. Off: sign-off is available but payment does not wait for it."
+  },
+  {
+   "fieldname": "week_signoff_notify",
+   "fieldtype": "Small Text",
+   "label": "Week sign-off emails to",
+   "description": "Comma-separated emails (HR, GM) told when a week is signed off and copied on draft reminders. Empty: the Settings approvers for Actuals: HR Head and Actuals: GM."
   },
   {
    "fieldname": "capabilities_section",

@@ -16,7 +16,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Planning",
-   "link_count": 2,
+   "link_count": 3,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -27,6 +27,17 @@
    "label": "Master plans",
    "link_count": 0,
    "link_to": "Work Management Master Plan",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Team leaders",
+   "link_count": 0,
+   "link_to": "Work Management Team Leader",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

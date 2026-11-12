@@ -99,6 +99,20 @@ def wm_payment(**kwargs):
     TW_ONLY = (" AND EXISTS (SELECT 1 FROM `tabEmployee` twe WHERE twe.name = we.employee"
                "             AND (" + " OR ".join(TW_CLAUSES) + "))")
 
+    # FARM MANAGER WEEK SIGN-OFF. With the Settings switch on, a farm's pay week is
+    # payable only once its farm manager has signed it off on the Actuals screen;
+    # the rest of the run goes ahead and the unsigned farm-weeks are listed. Appended
+    # to every selection of payable work, the way TW_ONLY is. Off (or no doctype):
+    # empty, and payment behaves exactly as before.
+    WS_GATE = 0
+    if frappe.db.exists("DocType", "Work Management Week Signoff"):
+        ws_sw = frappe.db.sql("""SELECT value FROM `tabSingles`
+            WHERE doctype = 'Work Management Settings' AND field = 'week_signoff_required'""")
+        WS_GATE = frappe.utils.cint(ws_sw[0][0]) if ws_sw else 0
+    SIGNED_ONLY = (" AND EXISTS (SELECT 1 FROM `tabWork Management Week Signoff` wso"
+                   " WHERE wso.farm = ac.farm AND wso.status = 'Signed off'"
+                   " AND we.work_date BETWEEN wso.week_from AND wso.week_to)") if WS_GATE else ""
+
     # WHO MAY SEND WORK TO ACCOUNTS
     # Sending creates the payment record and commits the money, so it is limited to
     # the HR head, accounting and the general manager. Everyone else can review and
@@ -234,7 +248,7 @@ def wm_payment(**kwargs):
             gt = 0
             cnt = 0
             for emp in emp_list:
-                aconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                aconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0" + SIGNED_ONLY
                 aparams = [emp]
                 if dfrom:
                     aconds = aconds + " AND we.work_date >= %s"
@@ -287,7 +301,7 @@ def wm_payment(**kwargs):
         include_all = frappe.form_dict.get("include_all")
         conds = "ac.workflow_state='CONFIRMED' AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0" + TW_ONLY
         if not include_all:
-            conds = conds + " AND IFNULL(we.paid,0)=0"
+            conds = conds + " AND IFNULL(we.paid,0)=0" + SIGNED_ONLY
         params = []
         farm_list = []
         if farms_raw:
@@ -377,6 +391,46 @@ def wm_payment(**kwargs):
             r["wto"] = str(r.get("wto")) if r.get("wto") else None
             r["payable"] = 1 if payable_amt > 0.001 else 0
         out["workers"] = rows
+        # farm-weeks held back because their farm manager has not signed them off
+        out["awaiting_signoff"] = []
+        if WS_GATE:
+            aw_conds = ("ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.payment_ref,'')=''"
+                        " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0" + TW_ONLY +
+                        " AND NOT EXISTS (SELECT 1 FROM `tabWork Management Week Signoff` wso"
+                        " WHERE wso.farm = ac.farm AND wso.status = 'Signed off'"
+                        " AND we.work_date BETWEEN wso.week_from AND wso.week_to)")
+            aw_params = []
+            if farm_list:
+                aw_conds = aw_conds + " AND ac.farm IN (" + ",".join(["%s"] * len(farm_list)) + ")"
+                for fv in farm_list:
+                    aw_params.append(fv)
+            if dfrom:
+                aw_conds = aw_conds + " AND we.work_date >= %s"
+                aw_params.append(dfrom)
+            if dto:
+                aw_conds = aw_conds + " AND we.work_date <= %s"
+                aw_params.append(dto)
+            aw_start = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
+            aw_idx = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(aw_start) \
+                if aw_start in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] else 6
+            aw_map = {}
+            for aw in frappe.db.sql("""
+                SELECT ac.farm farm, we.work_date d, COUNT(*) n, COALESCE(SUM(we.amount),0) amt
+                FROM `tabWork Actuals Employee` we
+                INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+                WHERE """ + aw_conds + """
+                GROUP BY ac.farm, we.work_date
+            """, tuple(aw_params), as_dict=True):
+                aw_d = frappe.utils.getdate(aw.d)
+                aw_wf = str(frappe.utils.add_days(aw_d, -((aw_d.weekday() - aw_idx) % 7)))
+                aw_k = aw.farm + "|" + aw_wf
+                aw_e = aw_map.get(aw_k) or {"farm": aw.farm, "week_from": aw_wf,
+                                            "week_to": str(frappe.utils.add_days(frappe.utils.getdate(aw_wf), 6)),
+                                            "worker_days": 0, "amount": 0}
+                aw_e["worker_days"] = aw_e["worker_days"] + aw.n
+                aw_e["amount"] = aw_e["amount"] + frappe.utils.flt(aw.amt)
+                aw_map[aw_k] = aw_e
+            out["awaiting_signoff"] = [aw_map[k] for k in sorted(aw_map.keys())]
         tot = 0
         for r in rows:
             tot = tot + frappe.utils.flt(r.get("payable_amt"))
@@ -384,7 +438,7 @@ def wm_payment(**kwargs):
         # ALL farms that have earnings in the same window (payable-only for the multi-select summary --
         # an amount already sent, awaiting payroll, is not something this chip's count should offer again)
         fconds = ("ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.payment_ref,'')='' "
-                  "AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0")
+                  "AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0") + SIGNED_ONLY
         fparams = []
         if dfrom:
             fconds = fconds + " AND we.work_date >= %s"
@@ -406,7 +460,7 @@ def wm_payment(**kwargs):
         emp = frappe.form_dict.get("employee")
         dfrom = frappe.form_dict.get("from_date")
         dto = frappe.form_dict.get("to_date")
-        jconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1"
+        jconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1" + SIGNED_ONLY
         jparams = [emp]
         if dfrom:
             jconds = jconds + " AND we.work_date >= %s"
@@ -1393,7 +1447,7 @@ def wm_payment(**kwargs):
         if not emp:
             out["error"] = "employee is required"
         else:
-            rconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+            rconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0" + SIGNED_ONLY
             rparams = [emp]
             if dfrom:
                 rconds = rconds + " AND we.work_date >= %s"
@@ -1453,7 +1507,7 @@ def wm_payment(**kwargs):
             wk_len = ((wk_end_idx - wk_start_wd) % 7) + 1
             wconds = ("we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
                       " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
-                      " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY
+                      " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY + SIGNED_ONLY
             wparams = [emp]
             if dfrom:
                 wconds = wconds + " AND we.work_date >= %s"
@@ -1545,7 +1599,7 @@ def wm_payment(**kwargs):
                     # that already sit on a payment, silently orphaning the first document
                     sconds = ("we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
                                " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
-                               " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY
+                               " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY + SIGNED_ONLY
                     sparams = [emp]
                     if dfrom:
                         sconds = sconds + " AND we.work_date >= %s"
@@ -1808,7 +1862,7 @@ def wm_payment(**kwargs):
             results = []
             total_rows = 0
             for emp in emp_list:
-                rconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
+                rconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0" + SIGNED_ONLY
                 rparams = [emp]
                 if dfrom:
                     rconds = rconds + " AND we.work_date >= %s"
@@ -1888,7 +1942,7 @@ def wm_payment(**kwargs):
                 dto = bw_to
                 bconds = ("we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0"
                            " AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0"
-                           " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY
+                           " AND IFNULL(we.payment_ref,'')=''") + TW_ONLY + SIGNED_ONLY
                 bparams = [emp]
                 if dfrom:
                     bconds = bconds + " AND we.work_date >= %s"
@@ -1930,7 +1984,7 @@ def wm_payment(**kwargs):
                         dto = bw_to
                     # IFNULL(payment_ref,'')='' matters: without it a second send re-claims rows
                     # that already sit on a payment, silently orphaning the first document
-                    sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''"
+                    sconds = "we.employee=%s AND ac.workflow_state='CONFIRMED' AND IFNULL(we.paid,0)=0 AND IFNULL(we.count_in_payroll,0)=1 AND we.amount>0 AND IFNULL(we.payment_ref,'')=''" + SIGNED_ONLY
                     sparams = [emp]
                     if dfrom:
                         sconds = sconds + " AND we.work_date >= %s"

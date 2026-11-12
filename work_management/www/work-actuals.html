@@ -190,6 +190,34 @@
 #acp .subtab{font-family:inherit;font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:6px 13px;border:1px solid transparent;background:transparent;color:var(--mute);border-radius:999px;cursor:pointer;transition:all .12s}
 #acp .subtab:hover{color:var(--ink);background:#fff;box-shadow:var(--sh)}
 #acp .subtab.on{background:var(--ink);border-color:var(--ink);color:#fff;box-shadow:var(--sh)}
+#acp .ws-note{margin:0 0 10px;padding:9px 13px;border:1px dashed var(--line);border-radius:10px;font-size:11.5px;color:var(--mute)}
+#acp .ws-state{margin:0 0 10px;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:12.5px;display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+#acp .ws-state.ok{border-color:#bbf7d0;background:#f0fdf4}
+#acp .ws-state.bad{border-color:#fecaca;background:#fef2f2}
+#acp .ws-counts{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 6px}
+#acp .ws-c{flex:1;min-width:130px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+#acp .ws-c span{display:block;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+#acp .ws-c b{font-size:18px}
+#acp .ws-c.bad{border-color:#fecaca;background:#fef2f2}#acp .ws-c.bad b{color:#b91c1c}
+#acp .ws-c.ok b{color:#15803d}
+#acp .ws-late{display:inline-block;padding:1px 7px;border-radius:999px;background:#fff7ed;color:#c2410c;border:1px solid #fed7aa;font-size:10px;font-weight:600}
+#acp .hint{font-size:10px;color:#94a3b8}
+#acp .ws-pick{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+#acp tr.hs-dim td{color:#94a3b8}
+#acp .hs-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-top:8px}
+#acp .hs-dow{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;text-align:center}
+#acp .hs-cell{min-height:86px;border:1px solid var(--line);border-radius:9px;background:#fff;padding:6px 7px;font-size:11px}
+#acp .hs-cell.blank{background:transparent;border:none}
+#acp .hs-cell.warn{border-color:#fecaca}
+#acp .hs-dn{font-weight:700;display:flex;justify-content:space-between;align-items:center}
+#acp .hs-so{font-size:9px;font-weight:600;color:#c2410c}#acp .hs-so.ok{color:#15803d}
+#acp .hs-w{margin-top:3px}#acp .hs-w span{color:#94a3b8}
+#acp .hs-k{font-family:var(--mono,monospace);font-size:10.5px}
+#acp .hs-u{font-size:10px;color:#c2410c}
+#acp .hs-f{display:inline-block;margin:2px 3px 0 0;padding:0 5px;border-radius:5px;font-size:9.5px;font-weight:700}
+#acp .hs-f.d{background:#e2e8f0;color:#334155}#acp .hs-f.r{background:#fee2e2;color:#b91c1c}#acp .hs-f.p{background:#e0f2fe;color:#0369a1}#acp .hs-f.x{background:#fef3c7;color:#92400e}
+#acp .hs-legend{font-size:10.5px;color:var(--mute)}
+@media(max-width:700px){ #acp .hs-cal{grid-template-columns:repeat(7,minmax(38px,1fr));overflow-x:auto}#acp .hs-cell{min-height:64px;font-size:9.5px}}
 /* list filter bar */
 #acp .lfb{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--wash);margin-bottom:10px;font-size:11px}
 #acp .lfb input[type=text]{min-width:190px;width:auto;flex:0 1 auto}
@@ -770,6 +798,26 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <div class="sech">Approvals &mdash; everything waiting on you, in one place</div>
     <div class="subtabs" id="ac-appr-subtabs"></div>
     <div id="acappr-body" class="loading">Loading&hellip;</div>
+  </div>
+
+  <div class="panel" id="p-ws">
+    <div class="sech">Week sign-off &mdash; close a farm&rsquo;s pay week before payment</div>
+    <div class="ws-pick">
+      <div><label class="fl" for="ws-farm">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</label><select id="ws-farm"></select></div>
+      <div><label class="fl" for="ws-week">Pay week</label><select id="ws-week"></select></div>
+    </div>
+    <div id="ws-body" class="loading">Loading&hellip;</div>
+  </div>
+
+  <div class="panel" id="p-hist">
+    <div class="sech">History &mdash; every day&rsquo;s work on a farm, paid or not</div>
+    <div class="ws-pick">
+      <div><label class="fl" for="hs-farm">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</label><select id="hs-farm"></select></div>
+      <div class="subtabs" id="hs-views" style="margin:0"><button type="button" class="subtab on" data-v="emp">Employee</button><button type="button" class="subtab" data-v="act">Activity</button><button type="button" class="subtab" data-v="cal">Calendar</button></div>
+      <div id="hs-pick" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+      <button type="button" class="btn" id="hs-export">Export to Excel (CSV)</button>
+    </div>
+    <div id="hs-body" class="loading">Loading&hellip;</div>
   </div>
 
   <!-- substitution modal -->

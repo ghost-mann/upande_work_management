@@ -313,6 +313,19 @@
         renderFarmChips();
         renderPayable(d);
         renderBuildKpis(d);
+        // farm-weeks the farm manager has not signed off are not sent, whatever the
+        // list shows -- say which, and how much is held back
+        var aw=d.awaiting_signoff||[];
+        if(aw.length){
+          var tot=0; aw.forEach(function(x){ tot+=x.amount||0; });
+          var note=document.createElement("div");
+          note.className="err"; note.style.marginBottom="10px";
+          note.innerHTML='<b>'+aw.length+' farm-week'+(aw.length===1?'':'s')+' waiting for farm manager sign-off — '+money(tot)+
+            ' will not be sent until signed off:</b> '+aw.map(function(x){
+              return esc(x.farm)+' '+esc(x.week_from)+' → '+esc(x.week_to)+' ('+money(x.amount)+')'; }).join(" · ")+
+            '. The farm manager signs off on Actuals → Week sign-off.';
+          box.insertBefore(note, box.firstChild);
+        }
       })
       .catch(function(e){
         box.innerHTML='<div class="err">Could not load payable workers: '+esc(e.message)+'. Check the <code>wm_payment</code> server script is enabled.</div>';
