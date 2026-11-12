@@ -83,6 +83,11 @@ doc_events = {
 	"Payroll Entry": {
 		"on_update_after_submit": "work_management.payroll_pack.on_payroll_entry_update",
 	},
+	# One worker, one day, one task, for saves that bypass the Actuals screen
+	# (desk form, import). See work_management/duplicate_guard.py.
+	"Work Management Actuals": {
+		"validate": "work_management.duplicate_guard.validate_actuals",
+	},
 	"Work Management Payment": {
 		# Not on_cancel: this doctype's docstatus never leaves 0 by design, so
 		# its workflow's Cancel action is a plain save, not a real

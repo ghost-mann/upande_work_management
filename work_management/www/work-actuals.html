@@ -800,15 +800,6 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <div id="acappr-body" class="loading">Loading&hellip;</div>
   </div>
 
-  <div class="panel" id="p-ws">
-    <div class="sech">Week sign-off &mdash; close a farm&rsquo;s pay week before payment</div>
-    <div class="ws-pick">
-      <div><label class="fl" for="ws-farm">{{ (taxonomy or {}).get('top_singular', 'Farm') | e }}</label><select id="ws-farm"></select></div>
-      <div><label class="fl" for="ws-week">Pay week</label><select id="ws-week"></select></div>
-    </div>
-    <div id="ws-body" class="loading">Loading&hellip;</div>
-  </div>
-
   <div class="panel" id="p-hist">
     <div class="sech">History &mdash; every day&rsquo;s work on a farm, paid or not</div>
     <div class="ws-pick">
