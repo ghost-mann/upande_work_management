@@ -139,7 +139,8 @@ def _desk_transition(doc):
 	"""(old_state, new_state) when this save moves the workflow outside the screens."""
 	if doc.flags.get("wm_screen"):
 		return None
-	before = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
+	fn = getattr(doc, "get_doc_before_save", None)
+	before = fn() if callable(fn) else None
 	if not before:
 		return None
 	old, new = before.get("workflow_state"), doc.get("workflow_state")
