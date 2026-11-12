@@ -67,6 +67,7 @@ doc_events = {
 	# Editing a rate in the Task list records a rate period effective today, so
 	# history writes itself rather than depending on anyone maintaining it.
 	"Task": {
+		"validate": "work_management.rates.task_validate",
 		"on_update": "work_management.rates.task_on_update",
 	},
 	# Payroll linkage: the Additional Salary a payment run raises only actually

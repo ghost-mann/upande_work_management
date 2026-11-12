@@ -48,7 +48,14 @@
   }
 
   // GET/POST to the single wm_payment endpoint. Writes go as POST with the CSRF token.
+  // Every action the server treats as a write (WMG_WRITES in wm_payment and
+  // wm_actuals): those refuse anything but a POST, whatever the caller passed.
+  var WRITES={pay_bulk_submit:1,pay_bulk_withdraw:1,pay_run_withdraw:1,pay_worker_submit:1,pay_worker_edit_day:1,
+    pay_worker_edit_days:1,pay_submit:1,pay_bulk_review:1,pay_worker_review:1,pay_fix_duplicates:1,pay_fix_orphan_refs:1,
+    pay_fix_unvalued:1,pay_purge_queue:1,pay_recalc_wages:1,pay_release_inactive:1,pay_round_amounts:1,
+    ws_notify:1,ws_delete_rejected:1};
   function call(args, isWrite, method){
+    if(WRITES[args.action] || (/^chk_/.test(args.action||"") && !/^chk_(list|detail|issues|dup_groups|dup_detail)$/.test(args.action))) isWrite=true;
     // `method` names another screen's script -- only wm_dashboard, for its
     // task_names map. It is the third argument rather than the second because
     // the second already means isWrite here, unlike the other screens.

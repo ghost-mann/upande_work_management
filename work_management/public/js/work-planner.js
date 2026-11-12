@@ -31,8 +31,13 @@
 
   function call(args, method){
     var ep = "/api/method/" + (method || "wm_planner");
+    // Every action the server treats as a write (WMG_WRITES in wm_planner,
+    // wm_masterplan, wm_rates): those refuse anything but a POST.
     var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1,
-                  save:1, submit_for_review:1, decide_line:1, gm_approve:1, set_leaders:1};
+                  save:1, submit_for_review:1, decide_line:1, gm_approve:1, set_leaders:1,
+                  decide_bulk:1, headroom:1, plans_bulk:1, return_to_consultant:1, send_to_gm:1, tl_save:1,
+                  apply_wage:1, backfill:1, classify:1, correct_apply:1, new_rate:1, recalc:1, reverse:1,
+                  revert_periods:1, sync_doc_rates:1, sync_planner_rates:1, sync_task_rates:1, unit_change_apply:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }

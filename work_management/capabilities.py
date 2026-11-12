@@ -59,6 +59,10 @@ CATALOGUE = [
 	_cap("enter_work", "Enter work",
 		"Record assignments and actuals -- the day-to-day data entry the screens "
 		"are built around. It grants no approval of any kind."),
+	_cap("repair_payments", "Repair payments and pay rows",
+		"Run the tools that rewrite money after the fact: purge the payment queue, "
+		"recalculate or round wages, repair orphaned references, release inactive "
+		"workers, recompute payroll rows. Approving and sending are separate."),
 	_cap("handle_payments", "Work with payments",
 		"See and act on the payment screens at all. Without it the screen is "
 		"read-only, whoever may eventually send or approve a run."),

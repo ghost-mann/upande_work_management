@@ -152,6 +152,24 @@ def wm_assigner(**kwargs):
             frappe.db.get_single_value("Work Management Settings", "max_backdate_days")) or 7
     WMG_GM = 1 if (("General Manager" in MY_ROLES) or ("System Manager" in MY_ROLES)) else 0
 
+    # WHICH FARMS THIS PERSON MANAGES (2026-11-12). A farm manager acts on their own
+    # farm's work only; the HR head and the GM on every farm.
+    wmg_fm = []
+    for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+        if _role_ in MY_ROLES: wmg_fm.append(_farm_)
+    WMG_HR = 1 if (any(_r_ in MY_ROLES for _r_ in HR_HEAD_ROLES)) else 0
+
+
+    def wmg_farm_err(farm, verb):
+        """"" when this person may act on `farm`'s work, else the refusal."""
+        if WMG_GM or WMG_HR:
+            return ""
+        if farm and str(farm).strip() in wmg_fm:
+            return ""
+        return ("Only " + str(farm or "that farm") + "'s farm manager, the HR head or the GM may " +
+                verb + ".")
+
+
 
     def wmg_backdate_err(start):
         """An error message when `start` is further back than allowed for this
@@ -199,6 +217,28 @@ def wm_assigner(**kwargs):
     # empty FARMS means the site is unconfigured, not that this person is permitted
     # nothing: the pickers are empty there anyway, so there is nothing to defend and
     # a guard that fired would only break a fresh install.
+    # WRITES ARE POST-ONLY, AND EACH NEEDS ITS CAPABILITY (2026-11-12). A link opened
+    # from an email or chat is a GET, and a GET skips Frappe's CSRF check -- so it
+    # cannot be allowed to approve, purge or re-price anything. Reads stay GET. The
+    # capability named against an action is the Settings grant it needs; "" means
+    # the action makes its own role and farm checks further down.
+    WMG_WRITES = {
+        "a_add_crew": "", "a_fm_approve": "", "a_gm_approve": "", "a_hr_approve": "",
+        "a_reject": "", "a_release": "", "a_submit": "", "a_substitute": ""
+    }
+    WMG_DENY = ""
+    if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
+        if frappe.request and frappe.request.method != "POST":
+            WMG_DENY = ("This changes data, so it has to be sent from the screen (as a POST), "
+                        "not opened as a link.")
+        elif WMG_WRITES.get(action):
+            wmg_need = WMG_WRITES.get(action)
+            wmg_held = frappe.get_roles()
+            if "System Manager" not in wmg_held and not [r for r in (CAPABILITIES.get(wmg_need) or []) if r in wmg_held]:
+                WMG_DENY = ("You are not allowed to do this. It needs the '" + wmg_need +
+                            "' permission in Work Management Settings.")
+
+
     FARM_ASKED = (frappe.form_dict.get("farm") or "").strip()
     FARM_DENIED = ""
     if FARM_ASKED and FARMS and FARM_ASKED not in FARMS:
@@ -210,6 +250,8 @@ def wm_assigner(**kwargs):
 
     if FARM_DENIED:
         out["error"] = FARM_DENIED
+    elif WMG_DENY:
+        out["error"] = WMG_DENY
     elif action == "a_approved_planners":
         # How many plans the picker offers, applied at the END -- after the ones
         # already assigned, closed early or fully delivered have been dropped.
@@ -856,6 +898,13 @@ def wm_assigner(**kwargs):
         cur_ws = frappe.db.get_value("Work Management Assigner", nm, "workflow_state")
         if cur_ws not in ("Pending Farm Manager","Pending HR Head","Pending GM"):
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
+        elif cur_ws == "Pending Farm Manager" and wmg_farm_err(
+                frappe.db.get_value("Work Management Assigner", nm, "farm"), "reject it"):
+            out["error"] = wmg_farm_err(frappe.db.get_value("Work Management Assigner", nm, "farm"), "reject it")
+        elif cur_ws == "Pending HR Head" and not (WMG_HR or WMG_GM):
+            out["error"] = "Only the HR head (or the GM) can reject at this step."
+        elif cur_ws == "Pending GM" and not WMG_GM:
+            out["error"] = "Only the GM can reject at this step."
         else:
             frappe.db.set_value("Work Management Assigner", nm, "workflow_state", "Rejected", update_modified=False)
             frappe.db.set_value("Work Management Assigner", nm, "approved_by", None, update_modified=False)
@@ -1011,6 +1060,8 @@ def wm_assigner(**kwargs):
                 add_from = d.from_date
             if not err:
                 err = wmg_backdate_err(add_from) or None
+            if not err:
+                err = wmg_farm_err(d.farm, "add a worker to this farm's work") or None
             if not err and str(add_from) > str(d.to_date):
                 err = ("They cannot start on " + str(add_from) + " -- this assignment ends " +
                     str(d.to_date) + ".")
@@ -1176,6 +1227,8 @@ def wm_assigner(**kwargs):
             d = frappe.get_doc("Work Management Assigner", nm)
             if d.workflow_state != "Assigned":
                 err = "Workers can only be released from an approved (Assigned) assignment"
+            if not err:
+                err = wmg_farm_err(d.farm, "release a worker from this farm's work") or None
         if err:
             out["error"] = err
         else:
@@ -1244,6 +1297,9 @@ def wm_assigner(**kwargs):
         err = None
         if not nm or not outgoing or not replacement: err = "Outgoing, replacement, and dates are required"
         if not left_date or not start_date: err = "Both the left date and the replacement start date are required"
+        if not err:
+            err = wmg_farm_err(frappe.db.get_value("Work Management Assigner", nm, "farm"),
+                               "swap a worker on this farm's work") or None
         if not err:
             err = wmg_backdate_err(start_date) or None
         d = None

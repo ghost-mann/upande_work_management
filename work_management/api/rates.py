@@ -98,6 +98,31 @@ def wm_rates(**kwargs):
     # ==================================================================
     # A farm this caller is not offered is not a farm they may ask about. Same guard
     # the other screens carry -- this one reads a farm on `recalc` and had none.
+    # WRITES ARE POST-ONLY, AND EACH NEEDS ITS CAPABILITY (2026-11-12). A link opened
+    # from an email or chat is a GET, and a GET skips Frappe's CSRF check -- so it
+    # cannot be allowed to approve, purge or re-price anything. Reads stay GET. The
+    # capability named against an action is the Settings grant it needs; "" means
+    # the action makes its own role and farm checks further down.
+    WMG_WRITES = {
+        "apply_wage": "set_rates", "backfill": "set_rates", "classify": "set_rates",
+        "correct_apply": "set_rates", "new_rate": "set_rates", "recalc": "set_rates",
+        "reverse": "set_rates", "revert_periods": "set_rates", "sync_doc_rates": "set_rates",
+        "sync_planner_rates": "set_rates", "sync_task_rates": "set_rates",
+        "unit_change_apply": "set_rates"
+    }
+    WMG_DENY = ""
+    if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
+        if frappe.request and frappe.request.method != "POST":
+            WMG_DENY = ("This changes data, so it has to be sent from the screen (as a POST), "
+                        "not opened as a link.")
+        elif WMG_WRITES.get(action):
+            wmg_need = WMG_WRITES.get(action)
+            wmg_held = frappe.get_roles()
+            if "System Manager" not in wmg_held and not [r for r in (CAPABILITIES.get(wmg_need) or []) if r in wmg_held]:
+                WMG_DENY = ("You are not allowed to do this. It needs the '" + wmg_need +
+                            "' permission in Work Management Settings.")
+
+
     FARM_ASKED = (frappe.form_dict.get("farm") or "").strip()
     FARM_DENIED = ""
     if FARM_ASKED and FARMS and FARM_ASKED not in FARMS:
@@ -107,6 +132,8 @@ def wm_rates(**kwargs):
 
     if FARM_DENIED:
         out["error"] = FARM_DENIED
+    elif WMG_DENY:
+        out["error"] = WMG_DENY
     elif action == "meta":
         today = frappe.utils.today()
         out["today"] = today

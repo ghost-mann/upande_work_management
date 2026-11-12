@@ -59,11 +59,12 @@ def settings(*pairs):
 
 
 class TestTheCatalogue(unittest.TestCase):
-	def test_the_five_are_there(self):
+	def test_the_six_are_there(self):
+		"""repair_payments added 2026-11-12 with the write lock-down."""
 		keys = {c.key for c in capabilities.CATALOGUE}
 		self.assertEqual(keys, {
 			"edit_master_plan", "set_rates", "send_payment",
-			"enter_work", "handle_payments",
+			"enter_work", "handle_payments", "repair_payments",
 		})
 
 	def test_every_capability_defaults_to_system_manager_alone(self):

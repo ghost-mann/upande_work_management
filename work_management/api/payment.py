@@ -193,6 +193,34 @@ def wm_payment(**kwargs):
     # empty FARMS means the site is unconfigured, not that this person is permitted
     # nothing: the pickers are empty there anyway, so there is nothing to defend and
     # a guard that fired would only break a fresh install.
+    # WRITES ARE POST-ONLY, AND EACH NEEDS ITS CAPABILITY (2026-11-12). A link opened
+    # from an email or chat is a GET, and a GET skips Frappe's CSRF check -- so it
+    # cannot be allowed to approve, purge or re-price anything. Reads stay GET. The
+    # capability named against an action is the Settings grant it needs; "" means
+    # the action makes its own role and farm checks further down.
+    WMG_WRITES = {
+        "pay_bulk_review": "", "pay_bulk_submit": "send_payment",
+        "pay_bulk_withdraw": "send_payment", "pay_fix_duplicates": "repair_payments",
+        "pay_fix_orphan_refs": "repair_payments", "pay_fix_unvalued": "repair_payments",
+        "pay_purge_queue": "repair_payments", "pay_recalc_wages": "repair_payments",
+        "pay_release_inactive": "repair_payments", "pay_round_amounts": "repair_payments",
+        "pay_run_withdraw": "send_payment", "pay_submit": "send_payment",
+        "pay_worker_edit_day": "send_payment", "pay_worker_edit_days": "send_payment",
+        "pay_worker_review": "", "pay_worker_submit": "send_payment"
+    }
+    WMG_DENY = ""
+    if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
+        if frappe.request and frappe.request.method != "POST":
+            WMG_DENY = ("This changes data, so it has to be sent from the screen (as a POST), "
+                        "not opened as a link.")
+        elif WMG_WRITES.get(action):
+            wmg_need = WMG_WRITES.get(action)
+            wmg_held = frappe.get_roles()
+            if "System Manager" not in wmg_held and not [r for r in (CAPABILITIES.get(wmg_need) or []) if r in wmg_held]:
+                WMG_DENY = ("You are not allowed to do this. It needs the '" + wmg_need +
+                            "' permission in Work Management Settings.")
+
+
     FARM_ASKED = (frappe.form_dict.get("farm") or "").strip()
     FARM_DENIED = ""
     if FARM_ASKED and FARMS and FARM_ASKED not in FARMS:
@@ -204,6 +232,8 @@ def wm_payment(**kwargs):
 
     if FARM_DENIED:
         out["error"] = FARM_DENIED
+    elif WMG_DENY:
+        out["error"] = WMG_DENY
     elif action == "pay_confirmed":
         rows = frappe.db.get_all("Work Management Actuals",
             filters={"workflow_state":"CONFIRMED","paid":0},

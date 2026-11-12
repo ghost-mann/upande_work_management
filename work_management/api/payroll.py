@@ -48,10 +48,27 @@ def wm_payroll(**kwargs):
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
+    # Who may do what. In the app port_app.py rebuilds this from Settings.
+
+    # These tools rewrite payment states and dates (2026-11-12): System Manager or the
+    # repair_payments grant, sent as a POST. migrate_state never targets Paid or
+    # Cancelled and never touches a payment that has an Additional Salary.
+    WMG_DENY = ""
+    if action in ("migrate_state", "backfill_fields") and frappe.utils.cint(frappe.form_dict.get("dry_run") or 1) == 0:
+        wmg_held = frappe.get_roles()
+        if frappe.request and frappe.request.method != "POST":
+            WMG_DENY = "This changes data, so it has to be sent as a POST, not opened as a link."
+        elif "System Manager" not in wmg_held and not [r for r in (CAPABILITIES.get("repair_payments") or []) if r in wmg_held]:
+            WMG_DENY = "You are not allowed to repair payments."
+        elif action == "migrate_state" and (frappe.form_dict.get("new") or "") in ("Paid", "Cancelled"):
+            WMG_DENY = "A payment becomes Paid or Cancelled through payroll, never by a state migration."
+
     # how far back to walk looking for a working day before giving up
     MAX_LOOKBACK = 21
 
-    if action == "meta":
+    if WMG_DENY:
+        out["error"] = WMG_DENY
+    elif action == "meta":
         out["component"] = frappe.db.get_single_value(
             "Work Management Settings", "salary_component")
         out["payments"] = frappe.db.count("Work Management Payment")
