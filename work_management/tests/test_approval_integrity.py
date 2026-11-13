@@ -143,3 +143,12 @@ class TestTheDeskPath(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestTheAssignmentChainEndsWhereSettingsSay(unittest.TestCase):
+	"""2026-11-13: live switched the assignment HR and GM steps off; the farm
+	manager's approval must then finalise the assignment."""
+
+	def test_fm_and_hr_steps_finalise_when_they_end_the_chain(self):
+		self.assertIn('wmg_asg_finalise(nm, STAGE_NEXT["assigner_farm_manager"])', block("assigner", "a_fm_approve"))
+		self.assertIn('wmg_asg_finalise(nm, STAGE_NEXT["assigner_hr_head"])', block("assigner", "a_hr_approve"))

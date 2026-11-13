@@ -170,6 +170,19 @@ def wm_assigner(**kwargs):
                 verb + ".")
 
 
+    def wmg_asg_finalise(nm, state):
+        """Whichever step ends the assignment chain finalises it, as the GM step always
+        has: submitted, and its approver recorded (payment lines carry it). On live
+        the HR and GM steps were switched off on 2026-11-13, so this is the farm
+        manager's step there."""
+        if state != "Assigned":
+            return
+        frappe.db.set_value("Work Management Assigner", nm, {"docstatus": 1, "approved_by": frappe.session.user,
+            "approval_date": frappe.utils.today()}, update_modified=False)
+        for kid in frappe.db.get_all("Work Assignment Employee", filters={"parent": nm}, pluck="name"):
+            frappe.db.set_value("Work Assignment Employee", kid, "docstatus", 1, update_modified=False)
+
+
     def wmg_left_err(asg, emp, left_date):
         """Why `emp` cannot be released from `asg` on `left_date`, or "". Not in the
         future, not after the assignment ends, not before they started on it, and not
@@ -969,6 +982,7 @@ def wm_assigner(**kwargs):
                 frappe.db.set_value("Work Management Assigner", nm, "fm_approval_date", frappe.utils.today(), update_modified=False)
             except Exception:
                 pass
+            wmg_asg_finalise(nm, STAGE_NEXT["assigner_farm_manager"])
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_farm_manager"]
 
     elif action == "a_hr_approve":
@@ -995,6 +1009,7 @@ def wm_assigner(**kwargs):
                 frappe.db.set_value("Work Management Assigner", nm, "hr_approval_date", frappe.utils.today(), update_modified=False)
             except Exception:
                 pass
+            wmg_asg_finalise(nm, STAGE_NEXT["assigner_hr_head"])
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_hr_head"]
 
     elif action == "a_gm_approve":
