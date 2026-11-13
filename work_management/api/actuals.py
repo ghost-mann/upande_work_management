@@ -441,10 +441,25 @@ def wm_actuals(**kwargs):
             WMG_SI.append((wmg_r.stage, str(wmg_r.farm or "").strip()))
 
 
-    def wmg_si(stage, farm):
-        """1 when this person is a listed stand-in for `stage` on `farm`."""
+    WMG_SI_ROLE = {"actuals_fm": "actuals_farm_manager", "actuals_hr": "actuals_hr_head", "actuals_gm": "actuals_gm",
+                   "assigner_fm": "assigner_farm_manager", "assigner_hr": "assigner_hr_head", "assigner_gm": "assigner_gm",
+                   "planner_fm": "planner_farm_approval"}
+
+
+    def wmg_si(stage, farm, others=None):
+        """1 when this person is a listed stand-in for `stage` on `farm` -- and, when
+        `others` is given, only where one of them (the enterer or the previous
+        approver) holds the step's own role: a stand-in covers a conflicted usual
+        approver, not the step in general (final review, 2026-11-12)."""
+        listed = 0
         for wmg_s in WMG_SI:
             if wmg_s[0] == stage and (not wmg_s[1] or wmg_s[1] == str(farm or "").strip()):
+                listed = 1
+        if not listed or others is None:
+            return listed
+        role = STAGE_ROLE.get(WMG_SI_ROLE.get(stage)) if WMG_SI_ROLE.get(stage) else None
+        for o in others:
+            if o and o != frappe.session.user and role and role in frappe.get_roles(o):
                 return 1
         return 0
 
@@ -478,6 +493,12 @@ def wm_actuals(**kwargs):
                     filters={"parenttype": "Work Management Settings", "stage": stage}, fields=["user", "farm"]):
                 if r.user != me and (not r.farm or str(r.farm).strip() == str(farm or "").strip()):
                     sis.append(r.user)
+        if not sis:
+            # nobody to hand it to yet: let it through rather than stall the farm, and say
+            # so on the record -- the payroll check raises it for the GM to acknowledge
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Same person at " + stage + " (" + me + "): no stand-in is listed for this step yet.")
+            return ""
         return ("You already acted on this record (you entered it or took the step before), so somebody else "
                 "must take this step" + (": " + ", ".join(sis) + "." if sis else
                 ". Add a stand-in under Work Management Settings > Approval stand-ins."))
@@ -1801,12 +1822,12 @@ def wm_actuals(**kwargs):
         elif not STAGE_ON["actuals_farm_manager"]:
             out["error"] = "The Farm Manager step is switched off for this project."
         elif not (STAGE_ROLE["actuals_farm_manager"] in MY_ROLES
-                  or "System Manager" in MY_ROLES or fmbypass or fmallowed or wmg_si("actuals_fm", cur.farm)):
+                  or "System Manager" in MY_ROLES or fmbypass or fmallowed or wmg_si("actuals_fm", cur.farm, [cur.entered_by or cur.owner])):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_farm_manager"]) + " can take this step."
                             " You do not hold it.")
         elif cur.workflow_state != STAGE_STATE["actuals_farm_manager"]:
             out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
-        elif not fmbypass and cur.farm not in fmallowed and not wmg_si("actuals_fm", cur.farm):
+        elif not fmbypass and cur.farm not in fmallowed and not wmg_si("actuals_fm", cur.farm, [cur.entered_by or cur.owner]):
             if not fmallowed:
                 out["error"] = "You have no farm assigned for approvals. Ask an admin to grant you a farm-specific Farm Manager role."
             else:
@@ -1843,7 +1864,7 @@ def wm_actuals(**kwargs):
         if not STAGE_ON["actuals_hr_head"]:
             out["error"] = "The HR Head step is switched off for this project."
         elif not (STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES
-                  or wmg_si("actuals_hr", wmg_h.get("farm"))):
+                  or wmg_si("actuals_hr", wmg_h.get("farm"), [wmg_h.get("entered_by") or wmg_h.get("owner"), wmg_h.get("fm_approved_by")])):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_hr_head"]) + " can take this step."
                             " You do not hold it.")
         elif cur_ws != STAGE_STATE["actuals_hr_head"]:
@@ -1869,7 +1890,7 @@ def wm_actuals(**kwargs):
         if not STAGE_ON["actuals_gm"]:
             out["error"] = "The GM step is switched off for this project."
         elif not (STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES
-                  or (cur and wmg_si("actuals_gm", cur.farm))):
+                  or (cur and wmg_si("actuals_gm", cur.farm, [cur.entered_by or cur.owner, cur.hr_approved_by]))):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_gm"]) + " can take this step."
                             " You do not hold it.")
         elif not cur or cur.workflow_state != STAGE_STATE["actuals_gm"]:
@@ -2187,7 +2208,11 @@ def wm_actuals(**kwargs):
                 # somebody refused -- and a draft is confirmed only when the GM ticked it
                 if ar.ws == "Rejected":
                     continue
-                if ar.ws == "Draft" and ar.nm not in [x.strip() for x in str(frappe.form_dict.get("confirm_drafts") or "").split(",")]:
+                # A draft below target can only ever be confirmed here, so a clean one is
+                # confirmed as before; the GM can leave named drafts out (skip_drafts).
+                # (Final review 2026-11-12: requiring a tick nobody could give stranded
+                # the work unpaid and blocked every payroll check over its dates.)
+                if ar.ws == "Draft" and ar.nm in [x.strip() for x in str(frappe.form_dict.get("skip_drafts") or "").split(",")]:
                     close_skipped.append(ar.nm)
                     continue
                 if wmg_doc_err(ar.nm):

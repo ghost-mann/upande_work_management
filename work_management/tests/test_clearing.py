@@ -18,7 +18,7 @@ class TestTheIssueTable(unittest.TestCase):
 		src = defined("payment", "wmi_issues")
 		table = source("payment")
 		want = {"qty_outlier_hard": ("block", "farm"), "rate_mismatch": ("block", "HR"),
-			"left_but_earning": ("block", "HR"), "off_crew": ("block", "farm"),
+			"left_but_earning": ("block", "HR"), "off_crew": ("ack", "HR"),
 			"qty_outlier": ("ack", "farm"), "absent_paid": ("ack", "farm"), "ghost_days": ("ack", "farm"),
 			"leave_paid": ("ack", "farm"), "off_paid": ("ack", "farm"), "late_entry": ("ack", "farm"),
 			"approval_gap": ("ack", "GM"), "self_approved": ("ack", "GM"), "backdated": ("ack", "GM")}
@@ -87,3 +87,33 @@ class TestDuplicates(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestFinalReviewFixes(unittest.TestCase):
+	def test_record_acks_are_tied_to_who_approved(self):
+		self.assertIn("def wmi_doc_print(total, entered, fm, hr, gm):", source("payment"))
+
+	def test_the_self_approver_cannot_acknowledge_it(self):
+		self.assertIn("so somebody else must acknowledge it", block("payment", "chk_ack"))
+
+	def test_zeroing_only_while_still_unsent(self):
+		body = defined("payment", "wmpc_zero")
+		self.assertIn("WHERE name = %s AND IFNULL(payment_ref, '') = '' AND IFNULL(paid, 0) = 0", body)
+
+	def test_a_sent_copy_is_always_the_one_kept(self):
+		self.assertIn("keepers = sent", block("payment", "chk_dup_group_fix"))
+		self.assertIn("so that is the one kept", block("payment", "chk_fix_dup"))
+
+	def test_copies_held_by_another_check_are_left_alone(self):
+		self.assertIn('cx.payroll_check in ("", pc.name)', block("payment", "chk_dup_group_fix"))
+
+	def test_ack_and_fix_rejudge_only_their_rows(self):
+		self.assertIn("wmi_issues(pc, None, ak_keys)", block("payment", "chk_ack"))
+		self.assertIn("wmi_issues(pc, None, [fr_row])", block("payment", "chk_fix_row"))
+
+	def test_rate_periods_are_not_mismatches(self):
+		self.assertIn("prate", defined("payment", "wmi_issues"))
+
+	def test_a_leavers_last_week_is_paid_on_the_relieving_date(self):
+		src = source("payment")
+		self.assertEqual(src.count("_pay_on = wm_emp.relieving_date") + src.count("_pay_on = bw_emp.relieving_date"), 2)

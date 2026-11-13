@@ -16,7 +16,10 @@ def execute():
 	label = "Repair payments and pay rows"
 	have = {(r.capability, r.role) for r in settings.get("capabilities") or []}
 	added = 0
-	for role in ("HOD HR", "System Manager"):
+	from work_management.api.config import get_config
+
+	hr_roles = list(get_config().get("hr_head_roles") or ["HOD HR"])
+	for role in hr_roles + ["System Manager"]:
 		if not frappe.db.exists("Role", role):
 			continue
 		if (label, role) in have or ("repair_payments", role) in have:

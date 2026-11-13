@@ -59,11 +59,28 @@ def recompute(doc):
 		want = round(qty * rate, 2) if row.count_in_payroll else 0.0
 		have = float(row.amount or 0)
 		if abs(have - want) > max(0.01, 0.01 * want):
-			row.amount = want
+			# a rate recalculation prices rows by the period in force on their date
+			# without changing the record's rate: that amount stands too
+			prate = period_rate(doc.get("task"), row.work_date)
+			want2 = round(qty * prate, 2) if (row.count_in_payroll and prate) else want
+			if abs(have - want2) > max(0.01, 0.01 * want2):
+				row.amount = want
 		total_qty += qty
 		total_pay += float(row.amount or 0)
 	doc.total_actual_qty = total_qty
 	doc.total_payment = round(total_pay, 2)
+
+
+def period_rate(task, day):
+	"""The Work Task Rate in force for `task` on `day`, or 0."""
+	if not (task and day):
+		return 0.0
+	r = frappe.db.sql(
+		"""SELECT rate FROM `tabWork Task Rate` WHERE task = %s AND valid_from <= %s
+		   AND (valid_to IS NULL OR valid_to >= %s) ORDER BY valid_from DESC LIMIT 1""",
+		(task, day, day),
+	)
+	return float(r[0][0]) if r else 0.0
 
 
 def dates_err(doc):

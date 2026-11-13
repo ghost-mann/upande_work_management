@@ -42,8 +42,14 @@ class TestTwoPairsOfEyes(unittest.TestCase):
 		self.assertIn("somebody else", msg)
 		self.assertIn("peter@x", msg)
 
+	def test_with_no_stand_in_listed_it_passes_and_says_so(self):
+		"""Deploy day: no stand-ins yet must not stall a farm (final review)."""
+		fn, comments = step_err("fm@x")
+		self.assertEqual(fn("actuals_fm", "Vale", ["fm@x"], "Work Management Actuals", "WMAC-1"), "")
+		self.assertIn("no stand-in is listed", comments[0])
+
 	def test_a_system_manager_needs_a_reason_and_it_is_logged(self):
-		fn, comments = step_err("admin@x", roles=["System Manager"])
+		fn, comments = step_err("admin@x", roles=["System Manager"], standins=[{"user": "peter@x", "farm": None}])
 		self.assertTrue(fn("actuals_hr", None, ["admin@x"], "Work Management Actuals", "WMAC-1"))
 		fn, comments = step_err("admin@x", roles=["System Manager"], form={"override_reason": "only approver on leave"})
 		self.assertEqual(fn("actuals_hr", None, ["admin@x"], "Work Management Actuals", "WMAC-1"), "")
@@ -80,10 +86,12 @@ class TestEditingMidApproval(unittest.TestCase):
 
 
 class TestEarlyCloseAndTheEndOfTheChain(unittest.TestCase):
-	def test_rejected_is_never_revived_and_drafts_need_a_tick(self):
+	def test_rejected_is_never_revived_and_clean_drafts_are_confirmed(self):
+		"""Final review: requiring a tick nobody could give stranded drafts unpaid."""
 		b = block("actuals", "act_close_confirm")
 		self.assertIn('if ar.ws == "Rejected":', b)
-		self.assertIn('frappe.form_dict.get("confirm_drafts")', b)
+		self.assertIn('frappe.form_dict.get("skip_drafts")', b)
+		self.assertNotIn("confirm_drafts", b)
 
 	def test_the_last_step_submits_the_record(self):
 		self.assertIn('wmg_finalise(nm, STAGE_NEXT["actuals_hr_head"])', block("actuals", "act_hr_approve"))
@@ -152,3 +160,21 @@ class TestTheAssignmentChainEndsWhereSettingsSay(unittest.TestCase):
 	def test_fm_and_hr_steps_finalise_when_they_end_the_chain(self):
 		self.assertIn('wmg_asg_finalise(nm, STAGE_NEXT["assigner_farm_manager"])', block("assigner", "a_fm_approve"))
 		self.assertIn('wmg_asg_finalise(nm, STAGE_NEXT["assigner_hr_head"])', block("assigner", "a_hr_approve"))
+
+
+class TestStandInsCoverAConflict(unittest.TestCase):
+	def si(self, others_roles):
+		fake = types.SimpleNamespace(session=types.SimpleNamespace(user="peter@x"),
+			get_roles=lambda u=None: others_roles.get(u, []))
+		scope = {"frappe": fake, "WMG_SI": [("actuals_gm", "")],
+			"WMG_SI_ROLE": {"actuals_gm": "actuals_gm"}, "STAGE_ROLE": {"actuals_gm": "General Manager"}}
+		return nested("actuals", "wmg_si", scope)
+
+	def test_only_when_the_usual_approver_is_conflicted(self):
+		self.assertEqual(self.si({"koskey@x": ["General Manager"]})("actuals_gm", "Vale", ["clerk@x", "koskey@x"]), 1)
+		self.assertEqual(self.si({"hro@x": ["HOD HR"]})("actuals_gm", "Vale", ["clerk@x", "hro@x"]), 0)
+
+	def test_a_gm_stand_in_on_the_check_gets_only_the_gm_step(self):
+		src = source("payment")
+		self.assertIn("pc_gm_si = wmg_si(\"check_gm\", None)", src)
+		self.assertIn("not (pc_gm or pc_gm_si)", block("payment", "chk_hr_approve"))
