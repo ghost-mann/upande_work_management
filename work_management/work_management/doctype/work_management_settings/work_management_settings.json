@@ -37,6 +37,7 @@
   "tab_attendance",
   "sb_att",
   "att_block_absent",
+  "att_absent_never",
   "att_block_leave",
   "att_block_off",
   "off_day_requests",
@@ -811,6 +812,13 @@
    "label": "Stand-ins",
    "options": "Work Management Approval Stand In",
    "description": "One row per stand-in: the step, the farm (empty for every farm) and the person. They may take that step without holding its role, but only when the usual approver already acted on the record."
+  },
+  {
+   "fieldname": "att_absent_never",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Never record work on a day marked Absent",
+   "description": "On: actuals for a worker marked Absent that day are refused outright -- no override, not even the farm manager's -- and any already recorded must be fixed in the payroll check before payroll. Correct the attendance first if they did work. Off: an Absent day needs the farm manager's logged override."
   }
  ],
  "idx": 0,

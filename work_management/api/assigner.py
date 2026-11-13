@@ -1102,6 +1102,11 @@ def wm_assigner(**kwargs):
         # to reach it.
         out["is_hr_head"] = ("System Manager" in rl) or any(_r_ in rl for _r_ in HR_HEAD_ROLES)
         out["is_gm"] = "General Manager" in rl
+        # which approval steps are on, so the screen shows only those queues (live switched
+        # the assignment HR and GM steps off on 2026-11-13)
+        out["stage_on"] = {"fm": 1 if STAGE_ON["assigner_farm_manager"] else 0,
+                           "hr": 1 if STAGE_ON["assigner_hr_head"] else 0,
+                           "gm": 1 if STAGE_ON["assigner_gm"] else 0}
         out["is_accounts"] = 1 if (("System Manager" in rl) or any(
             r in rl for r in (CAPABILITIES.get("handle_payments") or []))) else 0
         out["is_farm_manager"] = ("Farm Manager" in rl) or any(_r_ in rl for _r_ in FARM_APPROVER_ROLE.values())

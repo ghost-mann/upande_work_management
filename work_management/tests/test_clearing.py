@@ -19,7 +19,7 @@ class TestTheIssueTable(unittest.TestCase):
 		table = source("payment")
 		want = {"qty_outlier_hard": ("block", "farm"), "rate_mismatch": ("block", "HR"),
 			"left_but_earning": ("block", "HR"), "off_crew": ("ack", "HR"),
-			"qty_outlier": ("ack", "farm"), "absent_paid": ("ack", "farm"), "ghost_days": ("ack", "farm"),
+			"qty_outlier": ("ack", "farm"), "ghost_days": ("ack", "farm"),
 			"leave_paid": ("ack", "farm"), "off_paid": ("ack", "farm"), "late_entry": ("ack", "farm"),
 			"approval_gap": ("ack", "GM"), "self_approved": ("ack", "GM"), "backdated": ("ack", "GM")}
 		for code, (cls, owner) in want.items():

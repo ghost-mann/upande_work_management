@@ -144,11 +144,13 @@
     if(name==="aappr") renderApprovals();
   }
   function apprQueues(){
+    // only the steps switched on in Work Management Settings
+    var on=(ST.roles&&ST.roles.stage_on)||{};
     return [
       {key:"fm",label:"Farm Manager",stage:"Pending Farm Manager",action:"a_fm_approve"},
       {key:"hr",label:"HR Head",stage:"Pending HR Head",action:"a_hr_approve"},
       {key:"gm",label:"GM",stage:"Pending GM",action:"a_gm_approve"}
-    ];
+    ].filter(function(q){ return on[q.key]!==0; });
   }
   function renderApprovals(){
     var queues=apprQueues();

@@ -1190,6 +1190,7 @@ def wm_actuals(**kwargs):
             # quantity recorded for a worker who is marked Absent, on approved
             # leave, or on their off day ON THAT EXACT DATE needs a logged override.
             att_conflicts = []
+            att_absent_never = 0
             att_override = frappe.form_dict.get("att_override")
             gate_absent = 1
             gate_leave = 1
@@ -1197,6 +1198,12 @@ def wm_actuals(**kwargs):
             gate_noscan = 1
             try:
                 gate_absent = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_absent"))
+                # NO WORK ON AN ABSENT DAY (2026-11-13): with this on, a day marked Absent
+                # takes no actuals at all -- no override, not even the farm manager's
+                if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                    AND field = 'att_absent_never' AND value = '1' LIMIT 1"""):
+                    gate_absent = 1
+                    att_absent_never = 1
                 gate_leave = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_leave"))
                 gate_off = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_off"))
                 gate_noscan = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_noscan_actuals"))
@@ -1390,6 +1397,12 @@ def wm_actuals(**kwargs):
                     can_override = 0
             if not wmg_err and ep_err:
                 wmg_err = ep_err
+            if not wmg_err and att_absent_never and has_absent_conflict:
+                ab_names = [cx["name"] for cx in att_conflicts
+                            if [rr for rr in cx.get("reasons", []) if "marked Absent" in rr]]
+                wmg_err = ("Not saved: no work can be recorded on a day the worker is marked Absent (" +
+                           ", ".join(ab_names[:8]) + (" and more" if len(ab_names) > 8 else "") +
+                           "). Correct the attendance first if they did work.")
             if not wmg_err and wmg_bad:
                 wmg_err = "Not saved: " + "; ".join(wmg_bad[:8]) + (" and more" if len(wmg_bad) > 8 else "") + "."
             if not wmg_err and wmg_qty_flagged and not wmg_qty_reason:

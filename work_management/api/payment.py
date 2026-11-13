@@ -4013,7 +4013,9 @@ def wm_payment(**kwargs):
             "left_but_earning": ("block", "HR", "Work after the employee left the company"),
             "off_crew": ("ack", "HR", "Not on that assignment's crew that day"),
             "qty_outlier": ("ack", "farm", "Quantity well above the daily target"),
-            "absent_paid": ("ack", "farm", "Paid on a day marked Absent"),
+            "absent_paid": ("block" if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                AND field = 'att_absent_never' AND value = '1' LIMIT 1""") else "ack",
+                            "farm", "Paid on a day marked Absent"),
             "ghost_days": ("ack", "farm", "No scan and no attendance that day"),
             "leave_paid": ("ack", "farm", "Paid on approved leave"),
             "off_paid": ("ack", "farm", "Paid on an off day or holiday"),

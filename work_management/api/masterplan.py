@@ -487,6 +487,20 @@ def wm_masterplan(**kwargs):
                 sv_err = "Period To cannot be before Period From"
             elif not sv_rows:
                 sv_err = "A master plan needs at least one activity"
+            if not sv_err:
+                # ONE ROW PER ACTIVITY (2026-11-13): a second row for the same activity
+                # splits its budget in two and lets plans draw on both
+                sv_seen = {}
+                sv_dup = []
+                for sv_r in sv_rows:
+                    sv_t = str((sv_r or {}).get("task") or "").strip()
+                    if sv_t and sv_t in sv_seen and sv_t not in sv_dup:
+                        sv_dup.append(sv_t)
+                    sv_seen[sv_t] = 1
+                if sv_dup:
+                    sv_err = ("Each activity may appear only once in a master plan. Listed more than once: " +
+                              ", ".join([str(frappe.db.get_value("Task", x, "subject") or x) for x in sv_dup[:6]]) +
+                              ". Merge them into one row.")
             sv_state = None
             sv_review = 0
             sv_post = 0
