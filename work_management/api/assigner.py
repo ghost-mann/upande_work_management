@@ -762,6 +762,16 @@ def wm_assigner(**kwargs):
                 frappe.db.set_value("Work Management Assigner", nm, "fm_approval_date", frappe.utils.today(), update_modified=False)
             except Exception:
                 pass
+            # THE STEP THAT ENDS THE CHAIN FINALISES IT (2026-11-15). Live switched the
+            # HR and GM steps off on 2026-11-13, so the farm manager's approval became the
+            # last one -- but only the GM step submitted the assignment and recorded its
+            # approval date. With no approval_date the actuals list (newest approval
+            # first, 200 shown) dropped every one of them: 32 at Vale and Endebess.
+            if STAGE_NEXT["assigner_farm_manager"] == "Assigned":
+                frappe.db.set_value("Work Management Assigner", nm, {"docstatus": 1, "approved_by": frappe.session.user,
+                    "approval_date": frappe.utils.today()}, update_modified=False)
+                for kid in frappe.db.get_all("Work Assignment Employee", filters={"parent": nm}, pluck="name"):
+                    frappe.db.set_value("Work Assignment Employee", kid, "docstatus", 1, update_modified=False)
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_farm_manager"]
 
     elif action == "a_hr_approve":
@@ -781,6 +791,16 @@ def wm_assigner(**kwargs):
                 frappe.db.set_value("Work Management Assigner", nm, "hr_approval_date", frappe.utils.today(), update_modified=False)
             except Exception:
                 pass
+            # THE STEP THAT ENDS THE CHAIN FINALISES IT (2026-11-15). Live switched the
+            # HR and GM steps off on 2026-11-13, so the farm manager's approval became the
+            # last one -- but only the GM step submitted the assignment and recorded its
+            # approval date. With no approval_date the actuals list (newest approval
+            # first, 200 shown) dropped every one of them: 32 at Vale and Endebess.
+            if STAGE_NEXT["assigner_hr_head"] == "Assigned":
+                frappe.db.set_value("Work Management Assigner", nm, {"docstatus": 1, "approved_by": frappe.session.user,
+                    "approval_date": frappe.utils.today()}, update_modified=False)
+                for kid in frappe.db.get_all("Work Assignment Employee", filters={"parent": nm}, pluck="name"):
+                    frappe.db.set_value("Work Assignment Employee", kid, "docstatus", 1, update_modified=False)
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["assigner_hr_head"]
 
     elif action == "a_gm_approve":
