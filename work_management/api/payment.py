@@ -15,6 +15,7 @@ def wm_payment(**kwargs):
     _cfg = get_config()
     FARM_PROJECT = _cfg["farm_project"]
     DEFAULT_COMPANY = _cfg["default_company"]
+    DEFAULT_WORKER_TYPE = _cfg["default_worker_employment_type"]
     FARMS = _cfg["farms"]
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
@@ -95,7 +96,7 @@ def wm_payment(**kwargs):
             TW_CLAUSES.append("twe." + tw_col + " IN (" + ", ".join(tw_vals) + ")")
     if not TW_CLAUSES:
         # never leave the gate wide open if Settings is blank or unusable
-        TW_CLAUSES = ["twe.employment_type = 'Task Worker'"]
+        TW_CLAUSES = ["twe.employment_type = " + frappe.db.escape(DEFAULT_WORKER_TYPE)]
     TW_ONLY = (" AND EXISTS (SELECT 1 FROM `tabEmployee` twe WHERE twe.name = we.employee"
                "             AND (" + " OR ".join(TW_CLAUSES) + "))")
 
@@ -966,8 +967,8 @@ def wm_payment(**kwargs):
         """, tuple(aparams), as_dict=True)
         out["assigned_workers"] = frappe.utils.cint(asg[0].c) if asg else 0
         # workforce pool: active Task Workers -> available = pool - assigned
-        pconds = "status='Active' AND employment_type='Task Worker'"
-        pparams = []
+        pconds = "status='Active' AND employment_type=%s"
+        pparams = [DEFAULT_WORKER_TYPE]
         if farm:
             pconds = pconds + " AND custom_farm = %s"
             pparams.append(farm)
@@ -2741,9 +2742,9 @@ def wm_payment(**kwargs):
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             INNER JOIN `tabEmployee` emp ON emp.name = we.employee
             WHERE """ + npconds + """
-              AND emp.employment_type = 'Task Worker'
+              AND emp.employment_type = %s
             ORDER BY we.work_date DESC LIMIT 300
-        """, tuple(npparams), as_dict=True):
+        """, tuple(npparams) + (DEFAULT_WORKER_TYPE,), as_dict=True):
             wd = str(r.wdate)
             b_nopay.append({"employee": r.employee, "employee_name": r.employee_name,
                             "farm": r.farm, "task": r.task, "actuals": r.actuals,
@@ -2909,11 +2910,11 @@ def wm_payment(**kwargs):
                     errors.append({"rowname": rn, "error": "doc not CONFIRMED or has no rate"})
                     continue
                 etype = frappe.db.get_value("Employee", row.employee, "employment_type")
-                if etype != "Task Worker":
-                    errors.append({"rowname": rn, "error": "worker is not a Task Worker (" + str(etype) + ")"})
+                if etype != DEFAULT_WORKER_TYPE:
+                    errors.append({"rowname": rn, "error": "worker is not a " + DEFAULT_WORKER_TYPE + " (" + str(etype) + ")"})
                     continue
                 new_amt = round(frappe.utils.flt(row.actual_quantity) * frappe.utils.flt(pinfo.rate), 2)
-                frappe.db.set_value("Work Actuals Employee", rn, "employment_type", "Task Worker", update_modified=False)
+                frappe.db.set_value("Work Actuals Employee", rn, "employment_type", DEFAULT_WORKER_TYPE, update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "count_in_payroll", 1, update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "amount", new_amt, update_modified=False)
                 frappe.db.set_value("Work Actuals Employee", rn, "custom_reviewed", 0, update_modified=False)
@@ -2956,18 +2957,20 @@ def wm_payment(**kwargs):
         # WAGE-DRIFT REPAIR: many plan rates were rounded to 2dp (e.g. 340/150 =
         # 2.2667 stored as 2.27), so a full day pays 340.50 / 339.96 / 342 instead
         # of the intended 340. For every plan whose implied daily wage
-        # (rate x daily_target) is within 1% of 340 but not exactly 340, revalue
-        # UNPAID confirmed payroll rows to qty x (340 / daily_target).
+        # (rate x daily_target) is within 1% of the current daily wage (Settings) but not exactly it, revalue
+        # UNPAID confirmed payroll rows to qty x (wage / daily_target).
         # dry_run=1 reports what would change without touching anything.
         # Chunked (max 800 rows per call) — repeat until remaining = 0.
         recalc_dry = frappe.utils.cint(frappe.form_dict.get("dry_run"))
-        WAGE = 340.0
-        BAND = 3.4
+        # Settings current_daily_wage; 0 when unset, in which case nothing is repaired
+        WAGE = frappe.utils.flt(frappe.db.get_single_value(
+            "Work Management Settings", "current_daily_wage"))
+        BAND = WAGE * 0.01
         bad_plans = {}
-        for r in frappe.db.sql("""
+        for r in (frappe.db.sql("""
             SELECT name, rate, daily_target FROM `tabWork Management Planner`
             WHERE IFNULL(rate,0) > 0 AND IFNULL(daily_target,0) > 0
-        """, as_dict=True):
+        """, as_dict=True) if WAGE > 0 else []):
             dw = frappe.utils.flt(r.rate) * frappe.utils.flt(r.daily_target)
             if abs(dw - WAGE) <= BAND and abs(dw - WAGE) > 0.001:
                 bad_plans[r.name] = frappe.utils.flt(r.daily_target)

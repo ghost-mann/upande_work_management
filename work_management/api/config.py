@@ -209,6 +209,9 @@ def get_config():
 		"farm_approver_role": {},
 		"hr_head_roles": [],
 		"default_company": _default_company(),
+		# Who counts as a task worker when Settings lists none. Overridden below
+		# from Settings `default_worker_employment_type`.
+		"default_worker_employment_type": "Task Worker",
 		"block_exclude": list(DEFAULT_BLOCK_EXCLUDE),
 		# The shipped names, not {}: a site whose Settings will not load still
 		# has to give the screens something to print. They fall back to their
@@ -284,6 +287,8 @@ def get_config():
 		cfg["standard_day"]["sunday"] = float(sunday)
 	if settings.get("default_company"):
 		cfg["default_company"] = settings.default_company
+	if settings.get("default_worker_employment_type"):
+		cfg["default_worker_employment_type"] = settings.default_worker_employment_type
 	if settings.get("block_exclude"):
 		keywords = [k.strip() for k in settings.block_exclude.split(",") if k.strip()]
 		if keywords:

@@ -15,6 +15,7 @@ def wm_actuals(**kwargs):
     _cfg = get_config()
     FARM_PROJECT = _cfg["farm_project"]
     DEFAULT_COMPANY = _cfg["default_company"]
+    DEFAULT_WORKER_TYPE = _cfg["default_worker_employment_type"]
     FARMS = _cfg["farms"]
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
@@ -80,7 +81,7 @@ def wm_actuals(**kwargs):
             TW_CLAUSES.append("e." + tw_col + " IN (" + ", ".join(tw_vals) + ")")
     if not TW_CLAUSES:
         # never leave the gate wide open if Settings is blank or unusable
-        TW_CLAUSES = ["e.employment_type = 'Task Worker'"]
+        TW_CLAUSES = ["e.employment_type = " + frappe.db.escape(DEFAULT_WORKER_TYPE)]
     TW_MATCH = "(" + " OR ".join(TW_CLAUSES) + ")"
 
     # The approval chain this screen advances. Where the chain comes from differs by
@@ -1173,7 +1174,7 @@ def wm_actuals(**kwargs):
                 # WAGE SNAP: a rate stored with too few decimals makes a full day pay
                 # 340.50 / 387.60 instead of the intended wage. Snap to the wage the
                 # task's rate period is actually derived from — the old code hardcoded
-                # 340, which silently became wrong the day the wage moved to 387.
+                # a wage, which silently became wrong the day the wage moved to 387.
                 # Rates are stored at 6dp since 2026-08-04, so this normally no-ops.
                 if pinfo0 and frappe.utils.flt(pinfo0.daily_target) > 0 and rate > 0:
                     dw0 = rate * frappe.utils.flt(pinfo0.daily_target)
@@ -1190,8 +1191,10 @@ def wm_actuals(**kwargs):
                         if wrow and frappe.utils.flt(wrow[0].b) > 0:
                             snap_wage = frappe.utils.flt(wrow[0].b)
                     if not snap_wage:
-                        snap_wage = 340.0
-                    if abs(dw0 - snap_wage) <= snap_wage * 0.01 and abs(dw0 - snap_wage) > 0.001:
+                        # Settings' current wage; 0 when unset, which skips the snap
+                        snap_wage = frappe.utils.flt(frappe.db.get_single_value(
+                            "Work Management Settings", "current_daily_wage"))
+                    if snap_wage > 0 and abs(dw0 - snap_wage) <= snap_wage * 0.01 and abs(dw0 - snap_wage) > 0.001:
                         unit_value = snap_wage / frappe.utils.flt(pinfo0.daily_target)
             edit_doc = frappe.form_dict.get("edit_doc")  # approver editing a pending doc in place
             # ONE doc per assignment: resume existing Draft/Rejected, else create new.

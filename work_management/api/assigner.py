@@ -15,6 +15,7 @@ def wm_assigner(**kwargs):
     _cfg = get_config()
     FARM_PROJECT = _cfg["farm_project"]
     DEFAULT_COMPANY = _cfg["default_company"]
+    DEFAULT_WORKER_TYPE = _cfg["default_worker_employment_type"]
     FARMS = _cfg["farms"]
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
@@ -80,7 +81,7 @@ def wm_assigner(**kwargs):
             TW_CLAUSES.append("e." + tw_col + " IN (" + ", ".join(tw_vals) + ")")
     if not TW_CLAUSES:
         # never leave the gate wide open if Settings is blank or unusable
-        TW_CLAUSES = ["e.employment_type = 'Task Worker'"]
+        TW_CLAUSES = ["e.employment_type = " + frappe.db.escape(DEFAULT_WORKER_TYPE)]
     TW_MATCH = "(" + " OR ".join(TW_CLAUSES) + ")"
 
     # The approval chain this screen advances. Where the chain comes from differs by

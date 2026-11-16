@@ -15,6 +15,7 @@ def wm_dashboard(**kwargs):
     _cfg = get_config()
     FARM_PROJECT = _cfg["farm_project"]
     DEFAULT_COMPANY = _cfg["default_company"]
+    DEFAULT_WORKER_TYPE = _cfg["default_worker_employment_type"]
     FARMS = _cfg["farms"]
     BLOCK_EXCLUDE = _cfg["block_exclude"]
     FARM_APPROVER_ROLE = _cfg["farm_approver_role"]
@@ -1019,12 +1020,12 @@ def wm_dashboard(**kwargs):
         wf_farm = {}
         for r in (frappe.db.sql("""
             SELECT TRIM(custom_farm) farm,
-                   CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END k,
+                   CASE WHEN employment_type = %s THEN 'tw' ELSE 'perm' END k,
                    COUNT(*) n
             FROM `tabEmployee`
             WHERE status = 'Active' AND TRIM(IFNULL(custom_farm,'')) IN %s
-            GROUP BY TRIM(custom_farm), CASE WHEN employment_type = 'Task Worker' THEN 'tw' ELSE 'perm' END
-        """, (FARM_TUPLE,), as_dict=True) if FARM_TUPLE else []):
+            GROUP BY TRIM(custom_farm), CASE WHEN employment_type = %s THEN 'tw' ELSE 'perm' END
+        """, (DEFAULT_WORKER_TYPE, FARM_TUPLE, DEFAULT_WORKER_TYPE), as_dict=True) if FARM_TUPLE else []):
             fmw = wf_farm.get(r.farm)
             if fmw is None:
                 fmw = {"tw": 0, "perm": 0}
@@ -3829,9 +3830,9 @@ def wm_dashboard(**kwargs):
                 INNER JOIN `tabEmployee` emp ON emp.name = we.employee
                 WHERE ac.entered_by = %s AND ac.workflow_state = 'CONFIRMED'
                   AND we.actual_quantity > 0 AND IFNULL(we.amount,0) <= 0
-                  AND IFNULL(ac.rate,0) > 0 AND emp.employment_type = 'Task Worker'
+                  AND IFNULL(ac.rate,0) > 0 AND emp.employment_type = %s
                   AND DATE(ac.creation) BETWEEN %s AND %s
-            """, (kpwho, kpfrom, kpto), as_dict=True)
+            """, (kpwho, DEFAULT_WORKER_TYPE, kpfrom, kpto), as_dict=True)
             n_rej = 0
             tq = 0
             tv = 0
@@ -3886,7 +3887,7 @@ def wm_dashboard(**kwargs):
         tl_rl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         tl_all = 0
         for tl_r in tl_rl:
-            if (tl_r in ("System Manager", "General Manager", "HOD HR", "HR Manager Kaitet")
+            if (tl_r in ("System Manager", "General Manager", "HOD HR", "HR Manager")
                     or tl_r.startswith("Farm Manager")):
                 tl_all = 1
         tl_from = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -55))
