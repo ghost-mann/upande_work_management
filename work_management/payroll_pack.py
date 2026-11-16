@@ -1,6 +1,6 @@
-"""Send the payroll approval pack when HR sends Kaitet task pay to Accounts.
+"""Send the payroll approval pack when HR sends task pay to Accounts.
 
-When a Kaitet Ltd. Payroll Entry that pays Work Management task pay moves to
+When a Payroll Entry of the pack company (Settings `payroll_pack_company`) that pays Work Management task pay moves to
 "Pending Accounts", the approvers get the whole pack (a short summary and the
 workbook) and each farm manager gets a pack cut down to their own farm. The
 rules for what goes in a pack live in payroll_pack_book; this module loads the
@@ -36,7 +36,6 @@ from work_management.payroll_pack_book import (
 	split_addresses, subject, workbook_bytes,
 )
 
-TASK_PAY_COMPANY = "Kaitet Ltd."
 TRIGGER_STATE = "Pending Accounts"
 PACK_SUBJECT_PREFIX = "Task pay for approval"
 
@@ -49,8 +48,22 @@ MAX_RANGE_DAYS = 92
 DEAD_STATES = ("Cancelled", "Rejected")
 
 
+def pack_company():
+	"""The company whose task-pay Payroll Entries get a pack.
+
+	Settings `payroll_pack_company`; blank means the Settings default company,
+	and failing that the site's own default company.
+	"""
+	company = (frappe.db.get_single_value(SETTINGS, "payroll_pack_company")
+		or frappe.db.get_single_value(SETTINGS, "default_company"))
+	if not company:
+		from work_management.api.config import _default_company
+		company = _default_company()
+	return company
+
+
 def should_send(company, state_changed, new_state, has_wm, enabled):
-	return bool(company == TASK_PAY_COMPANY and state_changed and new_state == TRIGGER_STATE
+	return bool(company and company == pack_company() and state_changed and new_state == TRIGGER_STATE
 		and has_wm and enabled)
 
 
@@ -143,7 +156,7 @@ def has_task_pay(entry_name):
 
 
 def entries_in_range(from_date, to_date):
-	"""Submitted, live Kaitet task-pay Payroll Entries overlapping [from_date, to_date]."""
+	"""Submitted, live task-pay Payroll Entries overlapping [from_date, to_date]."""
 	# An entry with no state (made before the workflow) is not a dead one.
 	state = ("and (workflow_state is null or workflow_state not in %(dead)s)"
 		if _has_workflow_state() else "")
@@ -152,7 +165,7 @@ def entries_in_range(from_date, to_date):
 		where company = %(company)s and docstatus = 1 {state}
 			and start_date <= %(to_date)s and end_date >= %(from_date)s
 		order by start_date, name
-	""", {"company": TASK_PAY_COMPANY, "dead": DEAD_STATES,
+	""", {"company": pack_company(), "dead": DEAD_STATES,
 		"from_date": from_date, "to_date": to_date})
 	return [r[0] for r in names if has_task_pay(r[0])]
 
@@ -215,7 +228,7 @@ def on_payroll_entry_update(doc, method=None):
 	company, state = doc.get("company"), doc.get("workflow_state")
 	changed = doc.has_value_changed("workflow_state")
 	enabled = _enabled()
-	worth_a_look = company == TASK_PAY_COMPANY and state == TRIGGER_STATE and changed and enabled
+	worth_a_look = bool(company) and company == pack_company() and state == TRIGGER_STATE and changed and enabled
 	if not should_send(company, changed, state,
 			worth_a_look and has_task_pay(doc.name), enabled):
 		return

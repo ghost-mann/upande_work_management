@@ -26,11 +26,18 @@ class Refused(Exception):
 _translate = mock.patch.object(payroll_pack, "_", lambda text: text, create=True)
 
 
+# The pack company is a Settings field now; these tests use "Kaitet Ltd." as the example.
+_REAL_PACK_COMPANY = payroll_pack.pack_company
+_pack_company = mock.patch.object(payroll_pack, "pack_company", lambda: "Kaitet Ltd.")
+
+
 def setUpModule():
 	_translate.start()
+	_pack_company.start()
 
 
 def tearDownModule():
+	_pack_company.stop()
 	_translate.stop()
 
 ENTRIES = [{"name": ENTRY, "start_date": "2026-10-12", "end_date": "2026-10-18",
@@ -128,6 +135,20 @@ class TestShouldSend(unittest.TestCase):
 		]:
 			with self.subTest(args=args):
 				self.assertFalse(should_send(*args))
+
+
+class TestPackCompany(unittest.TestCase):
+	def company(self, settings):
+		with mock.patch.object(payroll_pack, "frappe") as frappe, \
+				mock.patch.object(payroll_pack, "pack_company", _REAL_PACK_COMPANY):
+			frappe.db.get_single_value.side_effect = lambda dt, f: settings.get(f)
+			return payroll_pack.pack_company()
+
+	def test_own_field_wins(self):
+		self.assertEqual(self.company({"payroll_pack_company": "A", "default_company": "B"}), "A")
+
+	def test_blank_falls_back_to_the_settings_default_company(self):
+		self.assertEqual(self.company({"default_company": "B"}), "B")
 
 
 class FakeDoc:

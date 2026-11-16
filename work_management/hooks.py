@@ -77,7 +77,7 @@ doc_events = {
 		"on_submit": "work_management.api.payment.on_salary_slip_submit",
 		"on_cancel": "work_management.api.payment.on_salary_slip_cancel",
 	},
-	# Payroll approval pack: when HR moves a Kaitet task-pay Payroll Entry to
+	# Payroll approval pack: when HR moves a task-pay Payroll Entry to
 	# Pending Accounts, the approvers and each farm manager are mailed what is
 	# in it. The entry is submitted by then, so the workflow change arrives as
 	# on_update_after_submit. See work_management/payroll_pack.py.
