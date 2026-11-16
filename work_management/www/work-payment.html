@@ -609,6 +609,7 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
   
 
   <nav class="tabs" id="pay-tabs">
+    <button data-tab="checks" aria-selected="false">Payroll checks <span class="cnt" id="tab-pc-cnt" style="display:none">0</span></button>
     <button data-tab="build" aria-selected="true">Pay workers</button>
     <button data-tab="accounts" aria-selected="false">Awaiting payroll <span class="cnt" id="tab-acc-cnt" style="display:none">0</span></button>
     <button data-tab="issues" aria-selected="false">Issues <span class="cnt" id="tab-iss-cnt" style="display:none">0</span></button>
@@ -616,6 +617,12 @@ button.wm-avatar:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgb
     <button data-tab="audit" aria-selected="false">Audit</button>
     <button data-tab="insights" aria-selected="false">Insights</button>
   </nav>
+
+  <!-- ═══════════ PAYROLL CHECKS ═══════════ -->
+  <div class="panel" id="p-checks">
+    <div class="sech">Payroll checks &mdash; farm managers, HR and the GM approve the dates before they are paid</div>
+    <div id="pc-body" class="loading">Loading&hellip;</div>
+  </div>
 
   <!-- ═══════════ BUILD A RUN ═══════════ -->
   <div class="panel on" id="p-build">

@@ -67,6 +67,7 @@ doc_events = {
 	# Editing a rate in the Task list records a rate period effective today, so
 	# history writes itself rather than depending on anyone maintaining it.
 	"Task": {
+		"validate": "work_management.rates.task_validate",
 		"on_update": "work_management.rates.task_on_update",
 	},
 	# Payroll linkage: the Additional Salary a payment run raises only actually
@@ -82,6 +83,12 @@ doc_events = {
 	# on_update_after_submit. See work_management/payroll_pack.py.
 	"Payroll Entry": {
 		"on_update_after_submit": "work_management.payroll_pack.on_payroll_entry_update",
+	},
+	# One worker, one day, one task, for saves that bypass the Actuals screen
+	# (desk form, import). See work_management/duplicate_guard.py.
+	"Work Management Actuals": {
+		"validate": "work_management.duplicate_guard.validate_actuals",
+		"on_update": "work_management.duplicate_guard.on_actuals_update",
 	},
 	"Work Management Payment": {
 		# Not on_cancel: this doctype's docstatus never leaves 0 by design, so

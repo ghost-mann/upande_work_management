@@ -31,8 +31,13 @@
 
   function call(args, method){
     var ep = "/api/method/" + (method || "wm_planner");
+    // Every action the server treats as a write (WMG_WRITES in wm_planner,
+    // wm_masterplan, wm_rates): those refuse anything but a POST.
     var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1,
-                  save:1, submit_for_review:1, decide_line:1, gm_approve:1, set_leaders:1};
+                  save:1, submit_for_review:1, decide_line:1, gm_approve:1, set_leaders:1,
+                  decide_bulk:1, headroom:1, plans_bulk:1, return_to_consultant:1, send_to_gm:1, tl_save:1,
+                  apply_wage:1, backfill:1, classify:1, correct_apply:1, new_rate:1, recalc:1, reverse:1,
+                  revert_periods:1, sync_doc_rates:1, sync_planner_rates:1, sync_task_rates:1, unit_change_apply:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
@@ -492,14 +497,14 @@
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
                 edited_lines:d.edited_lines, ok_lines:d.ok_lines,
                 leader_options:d.leader_options||[], stand_ins:d.stand_ins||[],
-                can_set_leaders:d.can_set_leaders};
+                can_set_leaders:d.can_set_leaders, missing_leaders:d.missing_leaders||0};
       }).catch(function(){ return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:[],
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
                 edited_lines:d.edited_lines, ok_lines:d.ok_lines,
                 leader_options:d.leader_options||[], stand_ins:d.stand_ins||[],
-                can_set_leaders:d.can_set_leaders}; });
+                can_set_leaders:d.can_set_leaders, missing_leaders:d.missing_leaders||0}; });
     }).then(function(res){
       if(!res) return;
       var p=res.p, acts=res.acts;
@@ -626,10 +631,16 @@
         tlOpts.forEach(function(o){
           if(o.user===cur) seen=true;
           s+='<option value="'+esc(o.user)+'"'+(o.user===cur?' selected':'')+'>'+esc(o.full_name||o.user)+
-             (o.on_farm?'':' (other farm)')+'</option>';
+             (o.on_farm?'':' (not on the list)')+'</option>';
         });
         if(cur && !seen) s+='<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option>';
         return s+'</select>';
+      }
+      if(res.missing_leaders){
+        h+='<div class="mpf-clash" style="margin:0 0 10px"><b>'+fmt(res.missing_leaders)+' activit'+
+           (res.missing_leaders===1?'y has':'ies have')+' no team leader.</b> Every activity needs one. '+
+           (res.can_set_leaders ? 'Pick them in the Team leader column and press <b>Save team leaders</b>.'
+                                : 'Ask the farm manager or the GM to name them.')+'</div>';
       }
       h+='<div class="mpf-tablewrap"><table><thead><tr><th>Activity</th><th>Team leader</th><th class="n">Man days</th><th class="n">Days</th>'+
          '<th class="n">Work</th><th>Unit</th><th class="n">Rate</th><th class="n">Cost</th>'+
@@ -638,8 +649,8 @@
         var exhausted = (a.remaining_qty!=null && a.remaining_qty<=0.005) ||
                         (a.remaining_cost!=null && a.remaining_cost<=0.005);
         h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(taskName(a.task))+'</td>'+
-           '<td>'+(res.can_set_leaders ? tlSelect("mp-tl", 'data-ti="'+i+'"', a.team_leader)
-                                       : (a.team_leader ? esc(tlLabel(a.team_leader)) : '<span class="hint">—</span>'))+'</td>'+
+           '<td>'+(res.can_set_leaders ? tlSelect("mp-tl"+(a.team_leader?"":" mpf-need"), 'data-ti="'+i+'"', a.team_leader, "— pick —")
+                                       : (a.team_leader ? esc(tlLabel(a.team_leader)) : '<span class="mp-notl">No team leader</span>'))+'</td>'+
            '<td class="n m">'+fmt(a.man_days)+'</td>'+
            '<td class="n m">'+fmt(a.days)+'</td><td class="n m">'+fmt(a.work_qty)+'</td>'+
            '<td>'+esc(a.uom||"")+'</td><td class="n m">'+fmt(a.rate,6)+'</td>'+
@@ -873,7 +884,8 @@
   // on Period From (falling back to Task.custom_rate) -- never sent here,
   // only mirrored so the budget is visible before Save. man_days/days are
   // reporting fields only: nothing below treats them as a ceiling.
-  var MPF = { editing:null, rows:[], catalog:[], catalogState:"nofarm", filter:"", clash:null, onSaved:null };
+  var MPF = { editing:null, rows:[], catalog:[], catalogState:"nofarm", filter:"", clash:null, onSaved:null,
+              leaders:[], leadersFarm:null, leadersState:"nofarm" };
 
   function mpStateTag(st){
     var k={"Draft":"draft","Pending Consultant":"consultant","Pending GM":"gm",
@@ -900,6 +912,39 @@
     });
     return h;
   }
+  // TEAM LEADER PICKER: only the farm's active team leaders (Team leaders tab).
+  // A name the plan already carries stays selectable even if it has left the list;
+  // the server refuses it on save, and the message says why.
+  function mpLeaderOptions(selected){
+    var top=esc(TX("top_singular","Farm")).toLowerCase();
+    var lbl={nofarm:"— choose a "+top+" first —", loading:"— loading… —", error:"— could not load —",
+             empty:"— none set up —"}[MPF.leadersState] || "— pick —";
+    var h='<option value="">'+lbl+'</option>', seen=false;
+    MPF.leaders.forEach(function(l){
+      if(l.user===selected) seen=true;
+      h+='<option value="'+esc(l.user)+'"'+(l.user===selected?' selected':'')+'>'+esc(l.full_name||l.user)+'</option>';
+    });
+    if(selected && !seen) h+='<option value="'+esc(selected)+'" selected>'+esc(selected)+' (not on the list)</option>';
+    return h;
+  }
+  function mpRefreshLeaders(){
+    var fs=el("mpf-farm"); if(!fs) return;
+    var farm=fs.value;
+    if(!farm){ MPF.leaders=[]; MPF.leadersFarm=null; MPF.leadersState="nofarm"; mpRenderRows(); return; }
+    if(MPF.leadersFarm===farm && MPF.leadersState==="ok") return;
+    MPF.leadersState="loading"; MPF.leadersFarm=farm; mpRenderRows();
+    call({action:"tl_list", farm:farm}, "wm_masterplan").then(function(d){
+      if(el("mpf-farm") && el("mpf-farm").value!==farm) return;   // farm changed meanwhile
+      if(d.error){ MPF.leaders=[]; MPF.leadersState="error"; toast(d.error); }
+      else {
+        MPF.leaders=(d.leaders||[]).filter(function(l){ return l.active && l.enabled; });
+        MPF.leadersState=MPF.leaders.length?"ok":"empty";
+      }
+      mpRenderRows();
+      var nb=el("mpf-tlnote");
+      if(nb) nb.style.display = MPF.leadersState==="empty" ? "" : "none";
+    }).catch(function(){ MPF.leaders=[]; MPF.leadersState="error"; mpRenderRows(); });
+  }
   function mpCatalogEntry(task){
     for(var i=0;i<MPF.catalog.length;i++){ if(MPF.catalog[i].name===task) return MPF.catalog[i]; }
     return null;
@@ -910,6 +955,7 @@
     var cost=(r.work_qty||0)*rate;
     return '<tr data-i="'+i+'">'+
       '<td><select class="mpf-r-task" data-i="'+i+'">'+mpTaskOptions(r.task)+'</select></td>'+
+      '<td><select class="mpf-r-tl'+(r.task&&!r.team_leader?' mpf-need':'')+'" data-i="'+i+'">'+mpLeaderOptions(r.team_leader)+'</select></td>'+
       '<td><input type="number" class="mpf-r-md" data-i="'+i+'" min="0" step="any" placeholder="0" value="'+(r.man_days||"")+'">'+
         (c&&c.daily_target?('<span class="mpf-std">'+fmt(c.daily_target)+' '+esc(c.uom||"")+'/day</span>'):
                             (c?'<span class="mpf-std">no daily target set</span>':''))+'</td>'+
@@ -932,7 +978,7 @@
     }
     tb.innerHTML=MPF.rows.length
       ? MPF.rows.map(mpRowMarkup).join("")
-      : '<tr><td colspan="8"><div class="mpf-empty"><b>No activities yet</b>'+
+      : '<tr><td colspan="9"><div class="mpf-empty"><b>No activities yet</b>'+
         'Add the activities this '+esc(TX("top_singular","Farm")).toLowerCase()+' may plan in this period, and how much work each may cover.</div></td></tr>';
     mpWireRows();
     mpUpdateTotals();
@@ -958,6 +1004,10 @@
     var tb=el("mpf-rows"); if(!tb) return;
     tb.querySelectorAll(".mpf-r-task").forEach(function(s){
       s.onchange=function(){ var i=parseInt(this.getAttribute("data-i"),10); MPF.rows[i].task=this.value; mpRenderRowCalc(i); mpUpdateTotals(); };
+    });
+    tb.querySelectorAll(".mpf-r-tl").forEach(function(s){
+      s.onchange=function(){ var i=parseInt(this.getAttribute("data-i"),10); MPF.rows[i].team_leader=this.value;
+        this.classList.toggle("mpf-need", !this.value); };
     });
     tb.querySelectorAll(".mpf-r-md").forEach(function(s){
       s.oninput=function(){ var i=parseInt(this.getAttribute("data-i"),10);
@@ -1039,6 +1089,9 @@
           '<div><label class="fl" for="mpf-to">Period to</label><input type="date" id="mpf-to"></div>'+
         '</div>'+
         '<div class="mpf-clash" id="mpf-clash" style="display:none"></div>'+
+        '<div class="mpf-clash" id="mpf-tlnote" style="display:none"><b>This '+esc(TX("top_singular","Farm")).toLowerCase()+
+          ' has no team leaders set up.</b> Every activity needs one. Ask the farm manager or the GM to add them in the '+
+          '<b>Team leaders</b> tab.</div>'+
         '<div class="mpf-sechrow">'+
           '<div class="sech">Activities &amp; budget</div>'+
           '<div class="mpf-find">'+
@@ -1048,13 +1101,14 @@
         '</div>'+
         '<div class="mpf-tablewrap">'+
           '<table><thead><tr>'+
-            '<th style="width:34%">Activity</th>'+
-            '<th class="n" style="width:9%">Man days</th>'+
+            '<th style="width:26%">Activity</th>'+
+            '<th style="width:16%">Team leader</th>'+
+            '<th class="n" style="width:8%">Man days</th>'+
             '<th class="n" style="width:8%">Days</th>'+
-            '<th class="n" style="width:12%">Work qty</th>'+
-            '<th style="width:8%">Unit</th>'+
-            '<th class="n" style="width:12%">Rate</th>'+
-            '<th class="n" style="width:15%">Cost</th>'+
+            '<th class="n" style="width:10%">Work qty</th>'+
+            '<th style="width:7%">Unit</th>'+
+            '<th class="n" style="width:10%">Rate</th>'+
+            '<th class="n" style="width:13%">Cost</th>'+
             '<th style="width:34px"></th>'+
           '</tr></thead><tbody id="mpf-rows"></tbody></table>'+
         '</div>'+
@@ -1080,7 +1134,7 @@
   function mpCollectPayload(){
     var farm=el("mpf-farm").value, from=el("mpf-from").value, to=el("mpf-to").value;
     var acts=MPF.rows.filter(function(r){ return r.task; }).map(function(r){
-      return { task:r.task, man_days:r.man_days||0, days:r.days||0, work_qty:r.work_qty||0 };
+      return { task:r.task, team_leader:r.team_leader||"", man_days:r.man_days||0, days:r.days||0, work_qty:r.work_qty||0 };
     });
     return { farm:farm, period_from:from, period_to:to, acts:acts,
              plan_name:((el("mpf-plan-name")||{}).value||"").trim() };
@@ -1091,6 +1145,8 @@
     if(!p.farm) missing.push("select a "+TX("top_singular","Farm").toLowerCase());
     if(!p.period_from || !p.period_to) missing.push("set the period");
     if(!p.acts.length) missing.push("add at least one activity with a task");
+    var noTl=p.acts.filter(function(a){ return !a.team_leader; }).length;
+    if(noTl) missing.push("pick a team leader for "+noTl+" activit"+(noTl===1?"y":"ies"));
     if(missing.length){ toast("To save: "+missing.join(" · ")); return; }
     saveBtn.disabled=true; submitBtn.disabled=true;
     var args={ action:"save", farm:p.farm, plan_name:p.plan_name,
@@ -1129,6 +1185,7 @@
     var dlg=el("mp-formdialog"); if(!dlg) return;
     MPF.editing=existingName||null;
     MPF.rows=[]; MPF.catalog=[]; MPF.filter=""; MPF.clash=null; MPF.seedTouch=false;
+    MPF.leaders=[]; MPF.leadersFarm=null; MPF.leadersState="nofarm";
     MPF.state=null;   // the workflow state of the plan being edited, once known
     MPF.onSaved=onSaved||loadMasterPlans;
     dlg.innerHTML=mpFormShell();
@@ -1139,8 +1196,8 @@
     function shut(){ mpCloseForm(); }
     el("mpf-x").onclick=shut; el("mpf-cancel").onclick=shut;
     dlg.onclick=function(ev){ if(ev.target===dlg) shut(); };
-    el("mpf-addrow").onclick=function(){ MPF.rows.push({task:"",man_days:0,days:0,work_qty:0}); mpRenderRows(); };
-    fs.onchange=function(){ mpRefreshCatalog(); chkPeriod(); };
+    el("mpf-addrow").onclick=function(){ MPF.rows.push({task:"",team_leader:"",man_days:0,days:0,work_qty:0}); mpRenderRows(); };
+    fs.onchange=function(){ mpRefreshCatalog(); mpRefreshLeaders(); chkPeriod(); };
     var chkPeriod=function(){
       var fm=el("mpf-farm").value, a=el("mpf-from").value, b=el("mpf-to").value;
       var bar=el("mpf-clash"); if(!bar) return;
@@ -1212,14 +1269,15 @@
         el("mpf-from").value=isodate(p.period_from);
         el("mpf-to").value=isodate(p.period_to);
         MPF.rows=(d.activities||[]).map(function(a){
-          return { task:a.task, man_days:a.man_days||0, days:a.days||0, work_qty:a.work_qty||0 };
+          return { task:a.task, team_leader:a.team_leader||"", man_days:a.man_days||0, days:a.days||0, work_qty:a.work_qty||0 };
         });
         MPF.seedTouch=true;
         mpRefreshCatalog();
+        mpRefreshLeaders();
       }).catch(function(){ toast("Could not load plan for editing"); shut(); });
     } else {
       el("mpf-title").textContent="New master plan";
-      MPF.rows=[{task:"",man_days:0,days:0,work_qty:0}];
+      MPF.rows=[{task:"",team_leader:"",man_days:0,days:0,work_qty:0}];
       mpRenderRows();
     }
   }
@@ -1463,6 +1521,7 @@
     if(ST.roles && ST.roles.is_approver) tabs.push(["appr","Approvals"]);
     tabs.push(["mp","Master plan"]);
     if(ST.canRates) tabs.push(["rates","Rates"]);
+    if(ST.canTL) tabs.push(["tl","Team leaders"]);
     var nav=el("wp-tabs"); nav.innerHTML="";
     tabs.forEach(function(t){
       var b=document.createElement("button");
@@ -1473,13 +1532,14 @@
     showTab("new");
   }
   function showTab(name){
-    ["new","mine","rej","appr","week","mp","rates"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
+    ["new","mine","rej","appr","week","mp","rates","tl"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on", n===name); });
     document.querySelectorAll("#wp-tabs button").forEach(function(b){ b.setAttribute("aria-selected", b.getAttribute("data-tab")===name); });
     if(name==="mine") loadMine();
     if(name==="rej") loadRejected();
     if(name==="appr") loadAppr();
     if(name==="mp") loadMasterPlans();
     if(name==="rates") loadRates();
+    if(name==="tl") loadTeamLeaders();
   }
 
   function initNew(meta){
@@ -2008,6 +2068,97 @@
     });
   }
 
+  // TEAM LEADERS TAB. Each farm's list of team leaders: the only people a master
+  // plan activity on that farm can be given. Kept by the farm's manager and the GM.
+  // Taking someone off keeps the record, so plans already naming them keep the name.
+  var TL = { farm:"" };
+  function loadTeamLeaders(){
+    var box=el("tl-body"), fs=el("tl-farm");
+    if(!box || !fs) return;
+    if(!fs.options.length){
+      box.innerHTML='<div class="loading">Loading…</div>';
+      call({action:"tl_list"}, "wm_masterplan").then(function(d){
+        if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+        var farms=d.manage_farms||[];
+        fs.innerHTML='<option value="">— select '+esc(TX("top_singular","Farm")).toLowerCase()+' —</option>';
+        farms.forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
+        if(farms.length===1) fs.value=farms[0];
+        fs.onchange=function(){ TL.farm=this.value; renderTeamLeaders(); };
+        TL.farm=fs.value;
+        renderTeamLeaders();
+      }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e&&e.message||"")+'</div>'; });
+      return;
+    }
+    renderTeamLeaders();
+  }
+  function renderTeamLeaders(){
+    var box=el("tl-body");
+    box.className="";
+    if(!TL.farm){ box.innerHTML='<div class="empty">Pick a '+esc(TX("top_singular","Farm")).toLowerCase()+' to see its team leaders.</div>'; return; }
+    box.innerHTML='<div class="loading">Loading…</div>';
+    var farm=TL.farm;
+    call({action:"tl_list", farm:farm}, "wm_masterplan").then(function(d){
+      if(TL.farm!==farm) return;
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      var rows=d.leaders||[], cands=d.candidates||[];
+      var act=rows.filter(function(r){ return r.active; });
+      var h='<div class="note" style="margin-bottom:10px">Only the people listed here as <b>active</b> can be picked as team leader '+
+            '(or stand-in) on '+esc(farm)+'’s master plans. A person can lead on one '+esc(TX("top_singular","Farm")).toLowerCase()+' only.</div>';
+      if(d.can_manage){
+        h+='<div class="tl-add"><div style="flex:1;min-width:220px"><label class="fl" for="tl-pick">Add a team leader</label>'+
+           '<select id="tl-pick"><option value="">— pick someone working on '+esc(farm)+' —</option>';
+        cands.forEach(function(c){
+          h+='<option value="'+esc(c.user)+'"'+(c.elsewhere?' disabled':'')+'>'+esc(c.full_name||c.user)+
+             (c.designation?' · '+esc(c.designation):'')+(c.elsewhere?' — already leads on '+esc(c.elsewhere):'')+'</option>';
+        });
+        h+='</select></div><button type="button" class="btn solid" id="tl-addbtn">Add</button></div>';
+        if(!cands.length) h+='<div class="hint" style="margin:-4px 0 10px">Nobody else on '+esc(farm)+' has a system login to add.</div>';
+      }
+      h+='<div class="mpf-tablewrap"><table><thead><tr><th>Team leader</th><th>Login</th><th>Status</th><th>Added</th><th>Last change</th>'+
+         (d.can_manage?'<th></th>':'')+'</tr></thead><tbody>';
+      if(!rows.length){
+        h+='<tr><td colspan="6" class="hint">No team leaders yet. Master plans on '+esc(farm)+' cannot be saved until at least one is added.</td></tr>';
+      }
+      rows.forEach(function(r){
+        var st = !r.enabled ? '<span class="mp-notl">Login disabled</span>'
+               : (r.active ? '<span class="mps approved">Active</span>' : '<span class="mps draft">Removed</span>');
+        h+='<tr><td><b>'+esc(r.full_name||r.user)+'</b></td><td class="m" style="font-size:11px">'+esc(r.user)+'</td><td>'+st+'</td>'+
+           '<td style="font-size:11px">'+esc(String(r.added_on||"").slice(0,10))+(r.added_by?' · '+esc(String(r.added_by).split("@")[0]):'')+'</td>'+
+           '<td style="font-size:11px">'+esc(String(r.changed_on||"").slice(0,10))+(r.changed_by?' · '+esc(String(r.changed_by).split("@")[0]):'')+'</td>'+
+           (d.can_manage ? '<td>'+(r.active
+              ? '<button type="button" class="btn sm tl-set" data-u="'+esc(r.user)+'" data-a="0">Remove</button>'
+              : (r.enabled ? '<button type="button" class="btn sm tl-set" data-u="'+esc(r.user)+'" data-a="1">Restore</button>' : ''))+'</td>' : '')+
+           '</tr>';
+      });
+      h+='</tbody></table></div>';
+      h+='<div class="hint" style="margin-top:8px">'+fmt(act.length)+' active team leader'+(act.length===1?'':'s')+' on '+esc(farm)+'.</div>';
+      box.innerHTML=h;
+      function setTL(user, active, btn){
+        if(btn) btn.disabled=true;
+        call({action:"tl_save", farm:farm, user:user, active:active}, "wm_masterplan").then(function(r){
+          if(r.error){ toast(r.error); if(btn) btn.disabled=false; return; }
+          toast(active ? "Added as team leader on "+farm
+                       : ("Removed from "+farm+"’s list"+(r.still_named?(" — still named on "+r.still_named+
+                          " activit"+(r.still_named===1?"y":"ies")+" in current plans; change them there"):"")));
+          renderTeamLeaders();
+        }).catch(function(e){ toast("Could not save: "+(e&&e.message||"")); if(btn) btn.disabled=false; });
+      }
+      var addBtn=el("tl-addbtn");
+      if(addBtn) addBtn.onclick=function(){
+        var u=el("tl-pick").value;
+        if(!u){ toast("Pick someone to add"); return; }
+        setTL(u, 1, addBtn);
+      };
+      box.querySelectorAll(".tl-set").forEach(function(b){
+        b.onclick=function(){
+          var a=parseInt(b.getAttribute("data-a"),10);
+          if(!a && !window.confirm("Take "+b.getAttribute("data-u")+" off "+farm+"’s team leader list? Plans that already name them keep the name.")) return;
+          setTL(b.getAttribute("data-u"), a, b);
+        };
+      });
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e&&e.message||"")+'</div>'; });
+  }
+
   function loadRates(){
     var sel=el("rt-task");
     if(sel && !sel.options.length){
@@ -2215,11 +2366,15 @@
       ST.roles=roles;
       el("wp-who").textContent=(roles.user||"")+(roles.is_approver?" · Approver":"");
       initNew(meta);
+      // the Team leaders tab is for whoever keeps a farm's list (farm manager, GM)
+      var tlMeta = call({action:"meta"}, "wm_masterplan").then(function(d){
+        ST.canTL = !!(d && d.tl_manage);
+      }).catch(function(){ ST.canTL=false; });
       call({action:"rate_meta"}, "wm_rates").then(function(d){
         ST.canRates = !!(d && d.can_edit);
         ST.rateTasks = (d && d.tasks) || [];
-        buildTabs();
-      }).catch(function(){ ST.canRates=false; buildTabs(); });
+        return tlMeta.then(buildTabs);
+      }).catch(function(){ ST.canRates=false; tlMeta.then(buildTabs); });
     }).catch(function(e){
       el("wp-who").textContent="Load error: "+(e&&e.message?e.message:e);
     });

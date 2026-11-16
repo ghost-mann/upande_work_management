@@ -19,6 +19,8 @@
   "sb_approvals",
   "approval_stages",
   "stage_approvers",
+  "sb_stand_ins",
+  "approval_stand_ins",
   "tab_taxonomy",
   "sb_taxonomy",
   "tax_bu_enabled",
@@ -35,6 +37,7 @@
   "tab_attendance",
   "sb_att",
   "att_block_absent",
+  "att_absent_never",
   "att_block_leave",
   "att_block_off",
   "off_day_requests",
@@ -93,6 +96,12 @@
   "pay_day",
   "allow_part_week_send",
   "allow_day_range",
+  "section_payroll_check",
+  "payroll_check_required",
+  "payroll_check_notify",
+  "max_backdate_days",
+  "qty_flag_multiple",
+  "qty_refuse_multiple",
   "sb_payroll_pack",
   "payroll_pack_enabled",
   "payroll_pack_sender",
@@ -388,7 +397,8 @@
    "fieldtype": "Check",
    "default": "0",
    "label": "Allow a worker's day to be split between tasks",
-   "description": "Off: a worker already on a live assignment over these dates cannot be put on another one, which is how it has always worked.\n\nOn: they can. Release them from one task's crew — their recorded work and pay stay exactly as they are — and assign them to another, recording work against both on the same day. Hours are then typed on each row, so the day counts once however many tasks it spanned.\n\nOff by default: with it off no figure on any site changes."
+   "description": "Retired 2026-11-12: one worker, one day, one task. Kept hidden so old code paths read it as off.",
+   "hidden": 1
   },
   {
    "fieldname": "std_hours_weekday",
@@ -748,6 +758,67 @@
    "fieldtype": "Data",
    "label": "Cost grouping (plural)",
    "description": "Default: Sections."
+  },
+  {
+   "fieldname": "section_payroll_check",
+   "fieldtype": "Section Break",
+   "label": "Payroll check",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "payroll_check_required",
+   "fieldtype": "Check",
+   "label": "Only pay dates in a GM-approved payroll check",
+   "default": "0",
+   "description": "On: a worker-day is paid only once it is in a payroll check that every farm manager, HR and the GM have approved. Off: payroll checks can be run but payment does not wait for them. Switch on after the first check has been through."
+  },
+  {
+   "fieldname": "payroll_check_notify",
+   "fieldtype": "Small Text",
+   "label": "Payroll check emails to",
+   "description": "Comma-separated emails of HR, told when every farm has approved and when the GM approves. Empty: the Settings approvers for Actuals: HR Head."
+  },
+  {
+   "fieldname": "max_backdate_days",
+   "fieldtype": "Int",
+   "label": "Days an assignment may start in the past",
+   "default": "7",
+   "description": "A worker may be put on an assignment starting at most this many days ago. Earlier needs the GM, with a reason."
+  },
+  {
+   "fieldname": "qty_flag_multiple",
+   "fieldtype": "Float",
+   "label": "Ask for a reason above this many times the daily target",
+   "default": "2",
+   "description": "A worker's quantity for one day above this multiple of the plan's daily target needs a reason when it is saved, and is raised again in the payroll check."
+  },
+  {
+   "fieldname": "qty_refuse_multiple",
+   "fieldtype": "Float",
+   "label": "Refuse above this many times the daily target",
+   "default": "3",
+   "description": "A worker's quantity for one day above this multiple of the plan's daily target is refused outright: almost always a typo (88 for 8)."
+  },
+  {
+   "fieldname": "sb_stand_ins",
+   "fieldtype": "Section Break",
+   "label": "Approval stand-ins",
+   "collapsible": 1,
+   "description": "Nobody approves their own entry or takes two steps on one record. When the usual approver did, a stand-in listed here takes the step instead."
+  },
+  {
+   "fieldname": "approval_stand_ins",
+   "fieldtype": "Table",
+   "label": "Stand-ins",
+   "options": "Work Management Approval Stand In",
+   "description": "One row per stand-in: the step, the farm (empty for every farm) and the person. They may take that step without holding its role, but only when the usual approver already acted on the record."
+  },
+  {
+   "fieldname": "att_absent_never",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Never record work on a day marked Absent",
+   "description": "On: actuals for a worker marked Absent that day are refused outright -- no override, not even the farm manager's -- and any already recorded must be fixed in the payroll check before payroll. Correct the attendance first if they did work. Off: an Absent day needs the farm manager's logged override."
   }
  ],
  "idx": 0,

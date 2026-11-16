@@ -59,7 +59,23 @@ def wm_payroll_recompute(**kwargs):
     rc_to = frappe.form_dict.get("to_date")
     out = {}
 
-    if not (rc_emp or rc_doc or (rc_from and rc_to)):
+    # Who may do what. In the app port_app.py rebuilds this from Settings.
+
+
+    # Writing re-decides whether old work is payable (2026-11-12): only the
+    # repair_payments grant, sent as a POST, and never a paid or sent row.
+    rc_deny = ""
+    if rc_apply:
+        rc_held = frappe.get_roles()
+        if frappe.request and frappe.request.method != "POST":
+            rc_deny = "This changes data, so it has to be sent as a POST, not opened as a link."
+        elif "System Manager" not in rc_held and not [r for r in (CAPABILITIES.get("repair_payments") or []) if r in rc_held]:
+            rc_deny = "You are not allowed to recompute payroll rows."
+
+    if rc_deny:
+        out["error"] = rc_deny
+        return out
+    elif not (rc_emp or rc_doc or (rc_from and rc_to)):
         out["error"] = "Give an employee, a doc, or a from_date and to_date."
         return out
     else:
@@ -96,6 +112,7 @@ def wm_payroll_recompute(**kwargs):
         rc_rows = frappe.db.sql("""
             SELECT we.name, we.parent, we.employee, we.employee_name, we.work_date,
                    we.actual_quantity, we.amount, ac.rate, IFNULL(ac.paid,0) doc_paid,
+                   IFNULL(we.paid,0) row_paid, IFNULL(we.payment_ref,'') row_ref,
                    ac.workflow_state, ac.planned_cost""" + \
                    (", " + D_COLS if D_COLS else "") + """
             FROM `tabWork Actuals Employee` we
@@ -110,6 +127,10 @@ def wm_payroll_recompute(**kwargs):
         for rc_r in rc_rows:
             if frappe.utils.cint(rc_r.doc_paid):
                 rc_skip["document already paid"] = rc_skip.get("document already paid", 0) + 1
+                continue
+            if frappe.utils.cint(rc_r.row_paid) or rc_r.row_ref:
+                # a row already paid or sent is history: re-deciding it pays it again
+                rc_skip["row already paid or sent"] = rc_skip.get("row already paid or sent", 0) + 1
                 continue
             rc_pass = 0
             for rc_col in ("employment_type", "designation", "custom_category"):

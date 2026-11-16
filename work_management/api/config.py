@@ -256,7 +256,8 @@ def get_config():
 	# `settings.get(...)` rather than an attribute: a Settings doc saved before
 	# this field existed has no such key, and an attribute would raise.
 	cfg["allow_concurrent_master_plans"] = bool(settings.get("allow_concurrent_master_plans"))
-	cfg["allow_split_day"] = bool(settings.get("allow_split_day"))
+	# One worker, one day, one task (2026-11-12): never read from Settings.
+	cfg["allow_split_day"] = False
 	# HOW LONG A DAY IS, read defensively, because zero is what an unset field
 	# actually holds here.
 	#

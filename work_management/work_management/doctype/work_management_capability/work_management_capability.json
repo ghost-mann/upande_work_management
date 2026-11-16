@@ -18,7 +18,7 @@
    "in_list_view": 1,
    "label": "Capability",
    "reqd": 1,
-   "options": "Create and edit a master plan\nSet task rates\nSend a payment run\nEnter work\nWork with payments",
+   "options": "Create and edit a master plan\nSet task rates\nSend a payment run\nRepair payments and pay rows\nEnter work\nWork with payments",
    "description": "What this row grants. Add another row with the same capability to grant it to a second role."
   },
   {

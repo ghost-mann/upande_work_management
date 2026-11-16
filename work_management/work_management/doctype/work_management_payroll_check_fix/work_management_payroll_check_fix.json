@@ -1,0 +1,178 @@
+{
+ "actions": [],
+ "creation": "2026-11-12 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "custom": 0,
+ "field_order": [
+  "payroll_check",
+  "kind",
+  "employee",
+  "employee_name",
+  "work_date",
+  "farm",
+  "column_break_rows",
+  "kept_row",
+  "kept_actuals",
+  "zeroed_row",
+  "zeroed_actuals",
+  "section_amounts",
+  "qty_before",
+  "amount_before",
+  "payments",
+  "column_break_who",
+  "fixed_by",
+  "fixed_at",
+  "reason",
+  "issue",
+  "row_hash"
+ ],
+ "fields": [
+  {
+   "fieldname": "payroll_check",
+   "fieldtype": "Link",
+   "label": "Payroll Check",
+   "options": "Work Management Payroll Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "duplicate\npaid twice\ndraft completed\nrejected deleted\nacknowledged\nzeroed\nrecomputed\nedited\nslip mismatch",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Employee Name"
+  },
+  {
+   "fieldname": "work_date",
+   "fieldtype": "Date",
+   "label": "Work Date",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "farm",
+   "fieldtype": "Data",
+   "label": "Farm",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_rows",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "kept_row",
+   "fieldtype": "Data",
+   "label": "Kept Row"
+  },
+  {
+   "fieldname": "kept_actuals",
+   "fieldtype": "Data",
+   "label": "Kept Actuals"
+  },
+  {
+   "fieldname": "zeroed_row",
+   "fieldtype": "Data",
+   "label": "Zeroed Row"
+  },
+  {
+   "fieldname": "zeroed_actuals",
+   "fieldtype": "Data",
+   "label": "Zeroed Actuals"
+  },
+  {
+   "fieldname": "section_amounts",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "qty_before",
+   "fieldtype": "Float",
+   "label": "Quantity Before"
+  },
+  {
+   "fieldname": "amount_before",
+   "fieldtype": "Currency",
+   "label": "Amount Before",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "payments",
+   "fieldtype": "Small Text",
+   "label": "Payments"
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fixed_by",
+   "fieldtype": "Link",
+   "label": "By",
+   "options": "User"
+  },
+  {
+   "fieldname": "fixed_at",
+   "fieldtype": "Datetime",
+   "label": "At"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "issue",
+   "fieldtype": "Data",
+   "label": "Issue",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "row_hash",
+   "fieldtype": "Data",
+   "label": "Row fingerprint",
+   "read_only": 1,
+   "description": "The acknowledged row's quantity, amount, date and worker. An acknowledgement stops counting once the row changes."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-12 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Payroll Check Fix",
+ "owner": "Administrator",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "hash",
+ "title_field": "employee_name",
+ "in_create": 1,
+ "description": "Every duplicate fixed through a payroll check, and every worker-day found paid twice. Recorded only; nothing here recovers money.",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ]
+}

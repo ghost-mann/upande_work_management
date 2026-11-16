@@ -48,7 +48,14 @@
   }
 
   // GET/POST to the single wm_payment endpoint. Writes go as POST with the CSRF token.
+  // Every action the server treats as a write (WMG_WRITES in wm_payment and
+  // wm_actuals): those refuse anything but a POST, whatever the caller passed.
+  var WRITES={pay_bulk_submit:1,pay_bulk_withdraw:1,pay_run_withdraw:1,pay_worker_submit:1,pay_worker_edit_day:1,
+    pay_worker_edit_days:1,pay_submit:1,pay_bulk_review:1,pay_worker_review:1,pay_fix_duplicates:1,pay_fix_orphan_refs:1,
+    pay_fix_unvalued:1,pay_purge_queue:1,pay_recalc_wages:1,pay_release_inactive:1,pay_round_amounts:1,
+    ws_notify:1,ws_delete_rejected:1};
   function call(args, isWrite, method){
+    if(WRITES[args.action] || (/^chk_/.test(args.action||"") && !/^chk_(list|detail|issues|dup_groups|dup_detail)$/.test(args.action))) isWrite=true;
     // `method` names another screen's script -- only wm_dashboard, for its
     // task_names map. It is the third argument rather than the second because
     // the second already means isWrite here, unlike the other screens.
@@ -87,12 +94,13 @@
     // taken out of the screen. Its code below still loads and its four server
     // actions still answer, so restoring it is putting the tab back -- but
     // nothing reaches it from the UI now.
-    ["build","accounts","issues","mine","insights"].forEach(function(n){
+    ["checks","build","accounts","issues","mine","insights"].forEach(function(n){
       var p=el("p-"+n); if(p) p.classList.toggle("on", n===name);
     });
     document.querySelectorAll("#pay-tabs button").forEach(function(b){
       b.setAttribute("aria-selected", b.getAttribute("data-tab")===name);
     });
+    if(name==="checks")   loadChecks();
     if(name==="build")    loadPayable();
     if(name==="accounts") loadAccounts();
     if(name==="issues")   loadIssues();
@@ -313,6 +321,18 @@
         renderFarmChips();
         renderPayable(d);
         renderBuildKpis(d);
+        // work not yet in an approved payroll check is not sent, whatever the list
+        // shows -- say which farms, and how much is held back
+        var aw=d.awaiting_check||[];
+        if(aw.length){
+          var tot=0; aw.forEach(function(x){ tot+=x.amount||0; });
+          var note=document.createElement("div");
+          note.className="err"; note.style.marginBottom="10px";
+          note.innerHTML='<b>'+money(tot)+' is not in an approved payroll check and will not be sent:</b> '+aw.map(function(x){
+              return esc(x.farm)+' '+fmt(x.worker_days)+' worker-days, '+esc(x.date_from)+' → '+esc(x.date_to)+' ('+money(x.amount)+')'; }).join(" · ")+
+            '. See the Payroll checks tab.';
+          box.insertBefore(note, box.firstChild);
+        }
       })
       .catch(function(e){
         box.innerHTML='<div class="err">Could not load payable workers: '+esc(e.message)+'. Check the <code>wm_payment</code> server script is enabled.</div>';
@@ -2491,6 +2511,389 @@
     })]);
   }
 
+  // ===================================================================
+  // PAYROLL CHECKS. HR picks the dates to pay and starts a check. Each farm
+  // manager fixes their farm's duplicate days and unfinished records and
+  // approves it; HR clears what crosses farms; the GM approves; only then do
+  // those worker-days go to payroll. One worker, one day, one task.
+  // ===================================================================
+  var PC={ open:"", farm:"", me:{}, d:null, list:null };
+  var PC_STEPS=["Farm Review","HR Review","GM Review","Approved","Sent"];
+  function pcStyle(){
+    if(el("pc-style")) return;
+    var s=document.createElement("style"); s.id="pc-style";
+    s.textContent=
+      "#wpay .pc-new{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:6px 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#fff}"+
+      "#wpay .pc-new label{display:block;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin-bottom:3px}"+
+      "#wpay .pc-list{display:grid;gap:8px;margin-bottom:16px}"+
+      "#wpay .pc-item{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:#fff;cursor:pointer}"+
+      "#wpay .pc-item:hover{border-color:var(--ink)}#wpay .pc-item.on{border-color:var(--ink);box-shadow:var(--shm)}"+
+      "#wpay .pc-item b{font-size:13px}#wpay .pc-item .pc-sub{color:var(--mute);font-size:11.5px}"+
+      "#wpay .pc-chip{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--wash);color:var(--mute)}"+
+      "#wpay .pc-chip.ok{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}#wpay .pc-chip.wait{background:#fffbeb;border-color:#fde68a;color:#a16207}"+
+      "#wpay .pc-chip.bad{background:#fef2f2;border-color:#fecaca;color:#b91c1c}"+
+      "#wpay .pc-steps{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0 12px}"+
+      "#wpay .pc-step{font-size:10px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--wash);color:var(--mute);border:1px solid var(--line)}"+
+      "#wpay .pc-step.done{background:#f0fdf4;color:#15803d;border-color:#bbf7d0}#wpay .pc-step.now{background:var(--ink);color:#fff;border-color:var(--ink)}"+
+      "#wpay .pc-farms{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin:8px 0 14px}"+
+      "#wpay .pc-farm{padding:11px 13px;border:1px solid var(--line);border-radius:12px;background:#fff}"+
+      "#wpay .pc-farm h4{margin:0 0 6px;font-size:13px;display:flex;justify-content:space-between;gap:6px;align-items:center}"+
+      "#wpay .pc-farm .pc-n{font-size:11.5px;color:var(--mute);line-height:1.6}#wpay .pc-farm .pc-n b{color:var(--ink)}"+
+      "#wpay .pc-farm .pc-n b.bad{color:#b91c1c}"+
+      "#wpay .pc-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}"+
+      "#wpay .pc-reason{flex:1;min-width:220px;font-family:inherit;font-size:12.5px;padding:8px 11px;border:1px solid var(--line);border-radius:8px}"+
+      "#wpay .pc-sec{margin:18px 0 6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}"+
+      "#wpay .pc-copy{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0}"+
+      "#wpay .pc-copy.keep{font-weight:600}#wpay .pc-copy.zero{color:var(--mute)}"+
+      "#wpay .pc-note{padding:9px 13px;border:1px dashed var(--line);border-radius:10px;font-size:12px;color:var(--mute);margin:6px 0}"+
+      "#wpay .pc-back{padding:10px 13px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;font-size:12.5px;margin:6px 0}"+
+      "@media(max-width:640px){#wpay .pc-farms{grid-template-columns:1fr}}";
+    document.head.appendChild(s);
+  }
+  function pcChip(st){
+    var k=(st==="Approved"||st==="Sent")?"ok":(st==="Cancelled"?"bad":"wait");
+    return '<span class="pc-chip '+k+'">'+esc(st)+'</span>';
+  }
+  function pcDates(c){ return esc(c.period_from)+' → '+esc(c.period_to)+(c.is_top_up?' · top-up':''); }
+  function pcMine(c, me){
+    // does this check wait on me right now?
+    if(c.status==="Farm Review") return (c.farms||[]).some(function(f){ return f.status!=="Approved" && (me.gm || (me.fm_farms||[]).indexOf(f.farm)>=0); });
+    if(c.status==="HR Review") return !!me.hr;
+    if(c.status==="GM Review") return !!me.gm;
+    if(c.status==="Approved") return !!me.can_send;
+    return false;
+  }
+  function pcBadge(){
+    call({action:"chk_list"}).then(function(d){
+      if(d.error) return;
+      var me=d.me||{}, n=(d.checks||[]).filter(function(c){ return pcMine(c, me); }).length;
+      var b=el("tab-pc-cnt"); if(b){ b.textContent=n; b.style.display=n?"":"none"; }
+    }).catch(function(){});
+  }
+  function loadChecks(){
+    pcStyle();
+    var box=el("pc-body"); box.className="loading"; box.innerHTML="Loading…";
+    call({action:"chk_list"}).then(function(d){
+      box.className="";
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      PC.me=d.me||{}; PC.list=d;
+      var me=PC.me, h='';
+      if(!me.gate) h+='<div class="pc-note">Payment does not wait for payroll checks yet (Settings → Payroll check). Run checks now; once the first one has been through, switch the gate on so nothing is paid without one.</div>';
+      if(me.hr){
+        var y=new Date(); y.setDate(y.getDate()-1);
+        h+='<div class="pc-new"><div><label for="pc-from">Pay from</label><input type="date" id="pc-from"></div>'+
+           '<div><label for="pc-to">Pay to</label><input type="date" id="pc-to" max="'+iso(y)+'"></div>'+
+           '<label style="display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;font-size:12px;color:var(--ink);margin:0 0 8px"><input type="checkbox" id="pc-top"> Top-up (late work inside dates already sent)</label>'+
+           '<button class="btn solid" id="pc-create">Start payroll check</button></div>';
+      }
+      var late=d.late||[];
+      if(late.length){
+        var lt=0; late.forEach(function(x){ lt+=x.amount||0; });
+        h+='<div class="pc-note"><b>Late work waiting for a top-up check: '+money(lt)+'</b> — '+late.map(function(x){
+          return esc(x.farm)+' '+fmt(x.worker_days)+' worker-days ('+esc(x.date_from)+' → '+esc(x.date_to)+')'; }).join(" · ")+'</div>';
+      }
+      var cs=d.checks||[];
+      if(!cs.length) h+='<div class="empty">No payroll checks yet.'+(me.hr?' Pick the dates to pay above.':' HR starts one before each payroll.')+'</div>';
+      else{
+        h+='<div class="pc-list">';
+        cs.forEach(function(c){
+          var fa=(c.farms||[]).map(function(f){ return esc(f.farm)+(f.status==="Approved"?' ✓':''); }).join(' · ');
+          h+='<div class="pc-item'+(PC.open===c.name?' on':'')+'" data-pc="'+esc(c.name)+'"><b>'+esc(c.name)+'</b><span>'+pcDates(c)+'</span>'+pcChip(c.status)+
+             (pcMine(c, me)?'<span class="pc-chip bad">your turn</span>':'')+
+             '<span class="pc-sub">'+fa+(c.worker_days?' · '+fmt(c.worker_days)+' worker-days · '+money(c.amount):'')+
+             (c.dups_fixed?' · '+fmt(c.dups_fixed)+' duplicate days fixed ('+money(c.amount_zeroed)+')':'')+'</span></div>';
+        });
+        h+='</div>';
+      }
+      h+='<div id="pc-open"></div>';
+      box.innerHTML=h;
+      if(el("pc-create")) el("pc-create").onclick=pcCreate;
+      box.querySelectorAll("[data-pc]").forEach(function(x){ x.onclick=function(){ PC.open=x.getAttribute("data-pc"); PC.farm="";
+        box.querySelectorAll("[data-pc]").forEach(function(o){ o.classList.toggle("on", o===x); }); openCheck(); }; });
+      var first=PC.open || (cs.filter(function(c){ return pcMine(c, me); })[0]||cs.filter(function(c){ return c.status!=="Cancelled"&&c.status!=="Sent"; })[0]||{}).name;
+      if(first){ PC.open=first; var it=box.querySelector('[data-pc="'+first+'"]'); if(it) it.classList.add("on"); openCheck(); }
+      var n=cs.filter(function(c){ return pcMine(c, me); }).length, b=el("tab-pc-cnt"); if(b){ b.textContent=n; b.style.display=n?"":"none"; }
+    }).catch(function(e){ box.className=""; box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+  function pcCreate(){
+    var f=el("pc-from").value, t=el("pc-to").value, top=el("pc-top").checked?1:0;
+    if(!f||!t){ toast("Pick the dates to pay","bad"); return; }
+    var b=el("pc-create"); b.disabled=true;
+    call({action:"chk_create", from_date:f, to_date:t, top_up:top}, true).then(function(r){
+      b.disabled=false;
+      if(r.error){ toast(r.error,"bad"); return; }
+      toast("Payroll check "+r.name+" started; farm managers have been told");
+      PC.open=r.name; loadChecks();
+    }).catch(function(e){ b.disabled=false; toast(e.message,"bad"); });
+  }
+  function pcReason(){ var r=el("pc-reason"); var v=(r&&r.value||"").trim(); if(!v){ toast("Write the reason in the box first","bad"); if(r) r.focus(); } return v; }
+  function pcDo(args, okMsg){
+    args.check=PC.open;
+    return call(args, true).then(function(r){
+      if(r.error){ toast(r.error,"bad"); return; }
+      toast(okMsg); loadChecks();
+    }).catch(function(e){ toast(e.message,"bad"); });
+  }
+  function openCheck(){
+    var box=el("pc-open"); if(!box) return;
+    box.innerHTML='<div class="loading">Loading '+esc(PC.open)+'…</div>';
+    call({action:"chk_detail", check:PC.open, farm:PC.farm||""}).then(function(d){
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      PC.d=d; renderCheck(d);
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+  // ── ISSUES: everything in these dates that must be fixed or acknowledged ──
+  var PCI={ code:"", sel:{} };
+  function pcIssues(c, me){
+    var box=el("pc-iss"); if(!box) return;
+    box.innerHTML='<div class="loading">Checking every worker-day in these dates…</div>';
+    call({action:"chk_issues", check:c.name, farm:PC.farm||""}).then(function(d){
+      if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      var counts=d.counts||[], iss=d.issues||[], h='';
+      var open=counts.reduce(function(a,x){ return a+x.open; },0);
+      h+='<div class="pc-sec">Issues to clear ('+fmt(open)+' open)</div>';
+      if(!counts.length){ box.innerHTML=h+'<div class="pc-note">Nothing to clear: no quantity, rate, attendance or approval problems in these dates.</div>'; return; }
+      h+='<div class="pc-bar" style="flex-wrap:wrap">';
+      counts.forEach(function(x){
+        var k=x.owner+"|"+x.code, on=(PCI.code===k);
+        h+='<button class="btn sm'+(on?' solid':'')+'" data-pck="'+esc(k)+'" title="'+esc(x.title)+'">'+
+           esc(x.owner)+' · '+esc(x.title)+' <b>'+fmt(x.open)+'</b>'+(x.cleared?' <span style="opacity:.6">('+fmt(x.cleared)+' cleared)</span>':'')+
+           (x.cls==="block"?' <span class="pc-chip bad">must fix</span>':' <span class="pc-chip wait">acknowledge</span>')+'</button>';
+      });
+      h+='</div>';
+      if(!PCI.code){ PCI.code=(counts.filter(function(x){ return x.open; })[0]||counts[0]).owner+"|"+(counts.filter(function(x){ return x.open; })[0]||counts[0]).code; }
+      var parts=PCI.code.split("|"), shown=iss.filter(function(i){ return i.owner===parts[0] && i.code===parts[1]; });
+      var cls=(shown[0]||{}).cls, mine=shown.length && (me.gm || (parts[0]==="HR"&&me.hr) || (parts[0]!=="GM"&&parts[0]!=="HR"&&(me.hr||(me.fm_farms||[]).indexOf(parts[0])>=0)));
+      var fixOps={rate_mismatch:[["recompute","Recompute"]], left_but_earning:[["zero","Zero"]], off_crew:[["zero","Zero"]],
+        qty_outlier_hard:[["set_qty","Correct qty"],["zero","Zero"]], qty_outlier:[["set_qty","Correct qty"],["zero","Zero"]],
+        absent_paid:[["zero","Zero"]], ghost_days:[["zero","Zero"]], leave_paid:[["zero","Zero"]], off_paid:[["zero","Zero"]]};
+      if(mine && cls==="ack") h+='<div class="pc-bar"><button class="btn sm good" id="pci-ack">Acknowledge selected</button><label style="font-size:12px"><input type="checkbox" id="pci-all"> select all '+fmt(shown.filter(function(i){return !i.acked;}).length)+'</label><span style="font-size:11px;color:var(--mute)">Uses the reason box above; logged per row.</span></div>';
+      h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+(cls==="ack"&&mine?'<th></th>':'')+'<th>Worker</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Record</th><th>Detail</th><th class="n">KES</th><th>State</th><th></th></tr></thead><tbody>';
+      shown.forEach(function(i){
+        var ops=(fixOps[i.code]||[]).map(function(o){ return o[0]==="set_qty"?
+            '<input type="number" min="0" step="any" style="width:70px" data-pciq="'+esc(i.row)+'" placeholder="qty"> <button class="btn sm" data-pcio="set_qty" data-pcir="'+esc(i.row)+'">Correct</button>' :
+            '<button class="btn sm" data-pcio="'+o[0]+'" data-pcir="'+esc(i.row)+'">'+o[1]+'</button>'; }).join(" ");
+        h+='<tr>'+(cls==="ack"&&mine?'<td>'+(i.acked?'':'<input type="checkbox" data-pcis="'+esc(i.key)+'">')+'</td>':'')+
+           '<td>'+esc(i.employee_name||i.employee||"")+'</td><td>'+esc(i.work_date)+'</td><td>'+esc(i.farm||"")+'</td>'+
+           '<td><a href="/app/work-management-actuals/'+esc(i.doc)+'" target="_blank" rel="noopener">'+esc(i.doc)+'</a></td><td>'+esc(i.detail)+'</td>'+
+           '<td class="n m">'+money(i.amount)+'</td><td>'+(i.acked?'<span class="pc-chip ok" title="'+esc(i.ack_reason||"")+'">acknowledged by '+esc(i.acked_by||"")+'</span>':(i.cls==="block"?'<span class="pc-chip bad">open</span>':'<span class="pc-chip wait">open</span>'))+'</td>'+
+           '<td>'+(mine&&!i.acked&&i.key===i.row?ops:'')+'</td></tr>';
+      });
+      h+='</tbody></table></div></div>';
+      if((d.issues_total||0)>iss.length) h+='<div class="pc-note">Showing the first '+fmt(iss.length)+' of '+fmt(d.issues_total)+'.</div>';
+      box.innerHTML=h;
+      box.querySelectorAll("[data-pck]").forEach(function(b){ b.onclick=function(){ PCI.code=b.getAttribute("data-pck"); pcIssues(c, me); }; });
+      if(el("pci-all")) el("pci-all").onchange=function(){ var on=this.checked; box.querySelectorAll("[data-pcis]").forEach(function(x){ x.checked=on; }); };
+      if(el("pci-ack")) el("pci-ack").onclick=function(){
+        var r=pcReason(); if(!r) return;
+        var keys=[]; box.querySelectorAll("[data-pcis]").forEach(function(x){ if(x.checked) keys.push(x.getAttribute("data-pcis")); });
+        if(!keys.length){ toast("Tick the rows to acknowledge","bad"); return; }
+        this.disabled=true;
+        call({action:"chk_ack", check:c.name, code:parts[1], keys:keys.join(","), reason:r}, true).then(function(x){
+          if(x.error){ toast(x.error,"bad"); pcIssues(c, me); return; }
+          toast(fmt(x.acknowledged)+" acknowledged and logged"); openCheck(); });
+      };
+      box.querySelectorAll("[data-pcio]").forEach(function(b){ b.onclick=function(){
+        var r=pcReason(); if(!r) return;
+        var op=b.getAttribute("data-pcio"), row=b.getAttribute("data-pcir"), args={action:"chk_fix_row", check:c.name, code:parts[1], row:row, op:op, reason:r};
+        if(op==="set_qty"){ var q=box.querySelector('[data-pciq="'+row+'"]'); if(!q||q.value===""){ toast("Type the correct quantity","bad"); return; } args.qty=q.value; }
+        b.disabled=true;
+        call(args, true).then(function(x){ if(x.error){ toast(x.error,"bad"); b.disabled=false; return; } toast("Fixed and logged: KES "+fmt(x.amount,2)); openCheck(); });
+      }; });
+    }).catch(function(e){ box.innerHTML='<div class="empty">Could not load issues: '+esc(e.message)+'</div>'; });
+  }
+
+  // ── DUPLICATES, GROUPED by the assignments (or records) behind them ──
+  function pcGroups(c, me){
+    var box=el("pc-grp"); if(!box) return;
+    call({action:"chk_dup_groups", check:c.name, farm:PC.farm||""}).then(function(d){
+      var gs=d.groups||[]; if(!gs.length){ box.innerHTML=""; return; }
+      var h='<div class="pc-sec">Duplicates by the work behind them ('+fmt(gs.length)+')</div><div class="pc-note">Usually a whole crew was put on two assignments. Decide once which one holds the days; every unpaid extra copy on the others is zeroed and logged.</div>';
+      gs.forEach(function(g){
+        var may=c.status!=="Sent"&&c.status!=="Cancelled"&&(g.owner==="HR"?me.hr:(me.hr||(me.fm_farms||[]).indexOf(g.owner)>=0));
+        h+='<div class="pc-item" style="cursor:default"><b>'+fmt(g.workers)+' workers × '+fmt(g.days)+' day'+(g.days>1?'s':'')+'</b><span class="pc-sub">'+esc(g.from)+(g.to!==g.from?' → '+esc(g.to):'')+' · extra '+money(g.excess)+' · '+esc(g.owner)+'</span>';
+        g.assignments.forEach(function(a){
+          h+='<span class="pc-sub">'+esc(a)+' — '+esc((g.tasks||{})[a]||"")+' (created '+esc((g.created||{})[a]||"?")+')</span>'+
+             (may?'<button class="btn sm good" data-pcgk="'+esc(g.key)+'" data-pcgv="'+esc(a)+'">Keep '+esc(a)+'</button>':'');
+        });
+        h+='</div>';
+      });
+      box.innerHTML=h;
+      box.querySelectorAll("[data-pcgk]").forEach(function(b){ b.onclick=function(){
+        var r=pcReason(); if(!r) return; b.disabled=true;
+        call({action:"chk_dup_group_fix", check:c.name, key:b.getAttribute("data-pcgk"), keep:b.getAttribute("data-pcgv"), reason:r}, true).then(function(x){
+          if(x.error){ toast(x.error,"bad"); b.disabled=false; return; } toast(fmt(x.zeroed)+" extra copies zeroed and logged"); openCheck(); });
+      }; });
+    }).catch(function(){ box.innerHTML=""; });
+  }
+
+  // ── ONE DUPLICATE DAY, OPENED UP: everything needed to judge which copy is real ──
+  function pcDupDetail(c, me, emp, day){
+    var m=el("pc-modal");
+    if(!m){ m=document.createElement("div"); m.id="pc-modal"; m.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:30px 12px"; (el("wpay")||document.body).appendChild(m); }
+    m.innerHTML='<div style="background:#fff;border-radius:14px;max-width:1100px;width:100%;padding:18px" id="pc-mbody"><div class="loading">Loading…</div></div>';
+    m.onclick=function(e){ if(e.target===m) m.remove(); };
+    call({action:"chk_dup_detail", check:c.name, employee:emp, work_date:day}).then(function(d){
+      var b=el("pc-mbody"); if(!b) return;
+      if(d.error){ b.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      var w=d.worker||{}, dy=d.day||{}, cps=d.copies||[];
+      var qsum=cps.reduce(function(a,x){ return a+(x.amount||0); },0);
+      var h='<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">'+esc(w.employee_name||emp)+' · '+esc(day)+'</h3><button class="btn sm" id="pc-mclose">Close</button></div>';
+      h+='<div class="pc-farms" style="margin-top:10px">'+
+         '<div class="pc-farm"><div class="pc-n"><b>Worker</b><br>'+esc(w.employee)+' · '+esc(w.designation||"")+'<br>'+esc(w.employment_type||"")+' · '+esc(w.farm||"")+' · '+esc(w.status||"")+'</div></div>'+
+         '<div class="pc-farm"><div class="pc-n"><b>That day on site</b><br>Attendance: '+esc(dy.attendance||"none")+'<br>Scans: '+((dy.scans||[]).map(function(s){ return esc(s.time)+(s.type?' '+esc(s.type):'')+(s.device?' ('+esc(s.device)+')':''); }).join(", ")||"none")+'</div></div>'+
+         '<div class="pc-farm"><div class="pc-n"><b>Recorded</b><br>'+fmt(cps.length)+' records · '+money(qsum)+'<br>extra beyond one: '+money(d.excess)+'</div></div></div>';
+      h+='<div class="pc-farms">';
+      cps.forEach(function(x){
+        var flag=function(t){ return '<div style="color:#b91c1c;font-size:11.5px">⚑ '+esc(t)+'</div>'; };
+        var paid=x.paid?'paid '+esc(x.payment_ref||""):(x.payment_ref?'in run '+esc(x.payment_ref):'not paid yet');
+        h+='<div class="pc-farm" style="'+(x.keep?'border:2px solid #f59e0b':'')+'"><h4>'+esc(x.doc)+(x.keep?'<span class="pc-chip wait">suggested keep</span>':'')+'</h4><div class="pc-n">'+
+           '<b>'+esc(x.task_name||x.task||"")+'</b> · '+esc(x.block||"")+'<br>'+
+           'Assignment '+esc(x.assignment||"—")+': '+esc(x.asg_from||"")+' → '+esc(x.asg_to||"")+'<br>created '+esc(x.asg_created||"")+' by '+esc(x.asg_by||"")+
+           (x.backdated?flag("assignment created long after it started"):'')+
+           '<br>On the crew: '+((x.window||[]).map(function(v){ return esc(v.start)+' → '+esc(v.left||"…")+' ('+esc(v.status)+')'; }).join("; ")||"—")+
+           '<br>Entered '+esc(x.entered_at||"")+' by '+esc(x.entered_by||"")+(x.late_days>14?flag("entered "+x.late_days+" days after the work"):'')+
+           '<br>FM '+esc(x.fm||"—")+' · HR '+esc(x.hr||"—")+' · GM '+esc(x.gm||"—")+(x.self_approved?flag("approved by the person who entered it"):'')+((!x.fm||!x.hr)?flag("an approval step is missing"):'')+
+           '<br>Team leader: '+esc(x.team_leader||"—")+
+           '<br>'+fmt(x.qty,2)+' '+esc(x.pay_basis||"")+' · '+fmt(x.hours,1)+' h · rate '+fmt(x.rate,3)+' · <b>'+money(x.amount)+'</b>'+
+           '<br>'+paid+
+           '<br>Plan: '+fmt(x.plan_done,1)+' of '+fmt(x.plan_qty,1)+' delivered → '+fmt(x.plan_after_zero,1)+' if this copy is zeroed'+
+           '</div>'+((x.paid||x.payment_ref)?'':'<div class="pc-bar"><button class="btn sm good" data-pckeep="'+esc(x.row)+'">Keep this one</button></div>')+'</div>';
+      });
+      h+='</div><div class="pc-sec">Their days around it</div><div class="pc-bar">';
+      (d.around||[]).forEach(function(a){
+        h+='<span class="pc-chip'+(a.records.length>1?' bad':'')+'" title="'+esc(a.records.map(function(r){ return r.doc+" "+(r.task_name||""); }).join(", "))+'">'+esc(a.date.slice(5))+' · '+(a.records.length?a.records.map(function(r){ return esc((r.task_name||r.task||"").slice(0,18)); }).join(" + "):'—')+'</span>';
+      });
+      h+='</div><div class="pc-bar"><select id="pc-mwhy" class="pc-reason" style="flex:0 0 auto"><option>Entered twice by mistake</option><option>Backdated assignment</option><option>Worker moved mid-day</option><option>Other</option></select><input id="pc-mnote" class="pc-reason" placeholder="Note (logged)"></div>';
+      b.innerHTML=h;
+      el("pc-mclose").onclick=function(){ m.remove(); };
+      b.querySelectorAll("[data-pckeep]").forEach(function(k){ k.onclick=function(){
+        var why=el("pc-mwhy").value+(el("pc-mnote").value?": "+el("pc-mnote").value:"");
+        k.disabled=true;
+        call({action:"chk_fix_dup", check:c.name, keep_row:k.getAttribute("data-pckeep"), reason:why}, true).then(function(x){
+          if(x.error){ toast(x.error,"bad"); k.disabled=false; return; } toast(fmt(x.zeroed)+" other copies zeroed and logged"); m.remove(); openCheck(); });
+      }; });
+    }).catch(function(e){ var b=el("pc-mbody"); if(b) b.innerHTML='<div class="empty">Could not load: '+esc(e.message)+'</div>'; });
+  }
+
+  function renderCheck(d){
+    var box=el("pc-open"), c=d.check, me=d.me||{}, fm=me.fm_farms||[];
+    var h='<div class="sech">'+esc(c.name)+' · '+pcDates(c)+' '+pcChip(c.status)+'</div><div class="pc-steps">';
+    var at=PC_STEPS.indexOf(c.status);
+    PC_STEPS.forEach(function(s,i){ h+='<span class="pc-step'+(c.status==="Cancelled"?'':(i<at?' done':(i===at?' now':'')))+'">'+esc(s)+'</span>'; });
+    h+='</div>';
+    if(c.sent_back_reason && c.status==="Farm Review") h+='<div class="pc-back"><b>Sent back</b> by '+esc(c.sent_back_by)+' ('+esc(String(c.sent_back_at||"").slice(0,16))+'): '+esc(c.sent_back_reason)+'</div>';
+    h+='<div class="pc-farms">';
+    (d.farms||[]).forEach(function(f){
+      var can=c.status==="Farm Review" && f.status!=="Approved" && (me.gm || fm.indexOf(f.farm)>=0);
+      var clean=!f.dups && !f.unfinished;
+      h+='<div class="pc-farm"><h4>'+esc(f.farm)+pcChip(f.status)+'</h4><div class="pc-n">'+
+         '<b>'+fmt(f.worker_days)+'</b> worker-days · <b>'+money(f.amount)+'</b><br>'+
+         'Duplicate days: <b class="'+(f.dups?'bad':'')+'">'+fmt(f.dups)+'</b> · Unfinished: <b class="'+(f.unfinished?'bad':'')+'">'+fmt(f.unfinished)+'</b>'+
+         (f.absent_paid?'<br>Paid on a marked-Absent day: <b class="bad">'+fmt(f.absent_paid)+'</b> (check, not blocking)':'')+
+         (f.approved_by?'<br>Approved by '+esc(f.approved_by)+' '+esc(String(f.approved_at||"").slice(0,16)):'')+'</div>'+
+         '<div class="pc-bar"><button class="btn sm" data-pcf="'+esc(f.farm)+'">Show '+esc(f.farm)+'</button>'+
+         (can?'<button class="btn sm good" data-pca="'+esc(f.farm)+'"'+(clean?'':' disabled title="Fix its duplicate days and unfinished records first"')+'>Approve '+esc(f.farm)+'</button>':'')+'</div></div>';
+    });
+    h+='</div>';
+    if(d.hr_dups) h+='<div class="pc-note"><b>'+fmt(d.hr_dups)+' duplicate day(s) cross two farms.</b> HR fixes these; they do not hold up a farm manager.</div>';
+    // the action bar: a reason box shared by every action that needs one
+    var acts='';
+    if(c.status==="HR Review" && me.hr) acts+='<button class="btn good" id="pc-hr">HR approve</button>';
+    if(c.status==="GM Review" && me.gm) acts+='<button class="btn good" id="pc-gm">GM approve</button>';
+    if(c.status==="Approved" && me.can_send) acts+='<button class="btn pay" id="pc-send">Send to payroll</button>';
+    if(c.status==="Approved" && me.hr) acts+='<button class="btn" id="pc-close" title="Some days went to payroll and the rest cannot: take the rest out for a top-up check">Close as sent</button>';
+    var reviewer=me.hr || (d.farms||[]).some(function(f){ return fm.indexOf(f.farm)>=0; });
+    if(c.status!=="Sent" && c.status!=="Cancelled" && reviewer) acts+='<button class="btn" id="pc-back">Send back</button>';
+    if(c.status!=="Sent" && c.status!=="Cancelled" && me.hr) acts+='<button class="btn" id="pc-cancel">Cancel check</button>';
+    h+='<div class="pc-bar"><input class="pc-reason" id="pc-reason" placeholder="Reason (needed to fix a duplicate, send back, cancel or delete)">'+acts+'</div>';
+    // duplicates
+    var dups=(d.duplicates||[]).filter(function(x){ return !x.paid_twice; });
+    var twice=(d.duplicates||[]).filter(function(x){ return x.paid_twice; });
+    h+='<div id="pc-iss"></div><div id="pc-grp"></div>';
+    h+='<div class="pc-sec">Duplicate days'+(PC.farm?' · '+esc(PC.farm):'')+' ('+fmt(dups.length)+')'+(PC.farm?' <a href="#" id="pc-allfarms">show all</a>':'')+'</div>';
+    if(!dups.length) h+='<div class="pc-note">None — every worker has at most one payable record per day here.</div>';
+    else{
+      var fixFarm=PC.farm || (fm.length===1?fm[0]:"");
+      if(c.status!=="Sent" && c.status!=="Cancelled" && ((fixFarm && (me.hr||fm.indexOf(fixFarm)>=0)) || me.hr))
+        h+='<div class="pc-bar"><button class="btn sm" id="pc-fixall">Zero every extra copy'+(fixFarm?' on '+esc(fixFarm):' (all farms)')+'</button><span class="pc-sub" style="font-size:11px;color:var(--mute)">Keeps the copy marked ★: the one recorded first (a backdated copy is never picked), or the one already paid.</span></div>';
+      h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr><th>Worker</th><th>Date</th><th>Fix by</th><th>Records</th><th class="n">Extra</th></tr></thead><tbody>';
+      dups.forEach(function(x){
+        var cp=x.copies.map(function(k){
+          var keep=k.row===x.keep, paid=+k.paid, inRun=!paid&&k.payment_ref;
+          var mayZero=!keep && !paid && !inRun && c.status!=="Sent" && c.status!=="Cancelled" &&
+                      (x.owner==="HR" ? me.hr : (me.hr || fm.indexOf(x.owner)>=0));
+          return '<div class="pc-copy'+(keep?' keep':'')+'">'+(keep?'★ ':'')+esc(k.doc)+' · '+esc(taskName(k.task))+' · '+esc(k.farm)+' · '+esc(k.state==="CONFIRMED"?"Confirmed":k.state)+
+                 ' · '+money(k.amount)+(paid?' · <span class="pc-chip ok">paid '+esc(k.payment_ref||"")+'</span>':'')+
+                 (inRun?' · <span class="pc-chip wait">in run '+esc(k.payment_ref)+' — withdraw it on Awaiting accounts to zero</span>':'')+
+                 (mayZero?' <button class="btn sm" data-pcz="'+esc(k.row)+'">Zero this</button>':'')+'</div>';
+        }).join("");
+        h+='<tr><td>'+esc(x.employee_name||x.employee)+'<div class="pc-sub" style="font-size:10.5px;color:var(--mute)">'+esc(x.employee)+'</div><button class="btn sm" data-pcv="'+esc(x.employee)+'|'+esc(x.work_date)+'">View</button></td><td>'+esc(x.work_date)+'</td><td>'+esc(x.owner)+'</td><td>'+cp+'</td><td class="n m">'+money(x.excess)+'</td></tr>';
+      });
+      h+='</tbody></table></div></div>';
+      if((d.duplicates_total||0)>(d.duplicates||[]).length) h+='<div class="pc-note">Showing the first '+fmt((d.duplicates||[]).length)+' of '+fmt(d.duplicates_total)+'. Fix these and the rest load.</div>';
+    }
+    // unfinished
+    var uf=d.unfinished||[];
+    h+='<div class="pc-sec">Unfinished records ('+fmt(uf.length)+')</div>';
+    if(!uf.length) h+='<div class="pc-note">None — nothing in these dates is still a draft, rejected or being approved.</div>';
+    else{
+      h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr><th>Record</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Activity</th><th>State</th><th>Entered by</th><th>Dates</th><th></th></tr></thead><tbody>';
+      uf.forEach(function(u){
+        var mine=me.gm || fm.indexOf(u.farm)>=0, btn='';
+        if(mine && u.workflow_state==="Draft") btn='<button class="btn sm" data-pcn="'+esc(u.name)+'">Remind clerk</button>';
+        if(mine && u.workflow_state==="Rejected") btn='<button class="btn sm" data-pcd="'+esc(u.name)+'">Delete (logged)</button>';
+        if(u.workflow_state.indexOf("Pending")===0) btn='<span class="pc-sub" style="font-size:11px;color:var(--mute)">approve or reject it on Actuals</span>';
+        h+='<tr><td><a href="/work-actuals" target="_blank" rel="noopener">'+esc(u.name)+'</a></td><td>'+esc(u.farm)+'</td><td>'+esc(u.task_name||taskName(u.task))+'</td><td>'+pcChip(u.workflow_state)+'</td><td>'+esc(u.entered_by||"")+'</td><td>'+esc(u.from_date)+' → '+esc(u.to_date)+'</td><td>'+btn+'</td></tr>';
+      });
+      h+='</tbody></table></div></div>';
+    }
+    // audit history for this check
+    var fx=d.fixes||[];
+    h+='<div class="pc-sec">Audit log ('+fmt(fx.length)+')</div>';
+    if(twice.length) h+='<div class="pc-note"><b>'+fmt(twice.length)+' worker-day(s) in these dates were already paid twice</b> ('+money(twice.reduce(function(a,x){ return a+(x.excess||0); },0))+'). Recorded below; nothing is recovered here — management decides.</div>';
+    if(!fx.length) h+='<div class="pc-note">Nothing fixed yet.</div>';
+    else{
+      h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr><th>When</th><th>Kind</th><th>Worker</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Kept</th><th>Zeroed / paid again</th><th class="n">Amount</th><th>By</th><th>Reason</th></tr></thead><tbody>';
+      fx.forEach(function(x){
+        h+='<tr><td>'+esc(String(x.fixed_at||"").slice(0,16))+'</td><td>'+pcChip(x.kind)+'</td><td>'+esc(x.employee_name||x.employee)+'</td><td>'+esc(x.work_date)+'</td><td>'+esc(x.farm||"")+'</td><td>'+esc(x.kept_actuals||"")+'</td><td>'+esc(x.zeroed_actuals||"")+(x.payments?' ('+esc(x.payments)+')':'')+'</td><td class="n m">'+money(x.amount_before)+'</td><td>'+esc(x.fixed_by||"")+'</td><td>'+esc(x.reason||"")+'</td></tr>';
+      });
+      h+='</tbody></table></div></div>';
+    }
+    box.innerHTML=h;
+    box.querySelectorAll("[data-pcf]").forEach(function(b){ b.onclick=function(){ PC.farm=b.getAttribute("data-pcf"); openCheck(); }; });
+    box.querySelectorAll("[data-pcv]").forEach(function(b){ b.onclick=function(){ var p=b.getAttribute("data-pcv").split("|"); pcDupDetail(c, me, p[0], p[1]); }; });
+    pcIssues(c, me); pcGroups(c, me);
+    if(el("pc-allfarms")) el("pc-allfarms").onclick=function(e){ e.preventDefault(); PC.farm=""; openCheck(); };
+    box.querySelectorAll("[data-pca]").forEach(function(b){ b.onclick=function(){ b.disabled=true;
+      pcDo({action:"chk_farm_approve", farm:b.getAttribute("data-pca")}, b.getAttribute("data-pca")+" approved"); }; });
+    box.querySelectorAll("[data-pcz]").forEach(function(b){ b.onclick=function(){ var r=pcReason(); if(!r) return; b.disabled=true;
+      pcDo({action:"chk_fix_dup", zero_row:b.getAttribute("data-pcz"), reason:r}, "Duplicate day zeroed and logged"); }; });
+    if(el("pc-fixall")) el("pc-fixall").onclick=function(){ var r=pcReason(); if(!r) return; this.disabled=true;
+      var f=PC.farm || (fm.length===1?fm[0]:"");
+      pcDo({action:"chk_fix_dup", all:1, farm:f, reason:r}, "Extra copies zeroed and logged"); };
+    if(el("pc-hr")) el("pc-hr").onclick=function(){ this.disabled=true; pcDo({action:"chk_hr_approve"}, "Approved for the GM"); };
+    if(el("pc-gm")) el("pc-gm").onclick=function(){ this.disabled=true; pcDo({action:"chk_gm_approve"}, "Approved: HR can send it to payroll"); };
+    if(el("pc-back")) el("pc-back").onclick=function(){ var r=pcReason(); if(!r) return; this.disabled=true; pcDo({action:"chk_send_back", reason:r}, "Sent back to the farm managers"); };
+    if(el("pc-close")) el("pc-close").onclick=function(){ var r=pcReason(); if(!r) return; this.disabled=true; pcDo({action:"chk_close_sent", reason:r}, "Closed: unsent days released for a top-up check"); };
+    if(el("pc-cancel")) el("pc-cancel").onclick=function(){ var r=pcReason(); if(!r) return; this.disabled=true; pcDo({action:"chk_cancel", reason:r}, "Check cancelled"); };
+    if(el("pc-send")) el("pc-send").onclick=function(){
+      // the Pay workers tab sends; with the gate on, only this check's days are payable there
+      pwSetMode(true);
+      if(el("pf-from-v")) el("pf-from-v").value=c.period_from;
+      if(el("pf-to-v")) el("pf-to-v").value=c.period_to;
+      el("pf-from").value=c.period_from; el("pf-to").value=c.period_to;
+      showTab("build");
+      toast("Showing "+c.period_from+" → "+c.period_to+": review and send as usual");
+    };
+    box.querySelectorAll("[data-pcn]").forEach(function(b){ b.onclick=function(){ b.disabled=true;
+      call({action:"ws_notify", name:b.getAttribute("data-pcn")}, true, "wm_actuals").then(function(r){
+        if(r.error){ toast(r.error,"bad"); b.disabled=false; return; } toast("Reminder sent to "+r.sent_to); }); }; });
+    box.querySelectorAll("[data-pcd]").forEach(function(b){ b.onclick=function(){ var r=pcReason(); if(!r) return; b.disabled=true;
+      call({action:"ws_delete_rejected", name:b.getAttribute("data-pcd"), reason:r}, true, "wm_actuals").then(function(x){
+        if(x.error){ toast(x.error,"bad"); b.disabled=false; return; } toast(x.deleted+" deleted; logged as "+x.log); openCheck(); }); }; });
+  }
+
   function init(){
     var names = taskNamesReady();
     // the pay window is a WEEK; default to the most recent completed one
@@ -2549,6 +2952,7 @@
     }).then(function(){
       refreshAccountsCount();
       loadIssues();       // seeds the Issues tab badge even before it's opened
+      pcBadge();          // payroll checks waiting on this person
       showTab("build");
     });
   }

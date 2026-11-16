@@ -1,0 +1,142 @@
+{
+ "actions": [],
+ "autoname": "format:WMDA-{#####}",
+ "creation": "2026-11-02 14:00:00.000000",
+ "custom": 0,
+ "description": "A rejected actuals record that a farm manager deleted, kept so the deletion can be traced.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "actuals",
+  "farm",
+  "task",
+  "assignment",
+  "from_date",
+  "to_date",
+  "entered_by",
+  "column_break_del",
+  "deleted_by",
+  "deleted_on",
+  "reason",
+  "worker_days",
+  "amount",
+  "section_snap",
+  "snapshot"
+ ],
+ "fields": [
+  {
+   "fieldname": "actuals",
+   "fieldtype": "Data",
+   "label": "Actuals Record",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "farm",
+   "fieldtype": "Link",
+   "label": "Farm",
+   "options": "Farm",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "label": "Task",
+   "options": "Task"
+  },
+  {
+   "fieldname": "assignment",
+   "fieldtype": "Data",
+   "label": "Assignment"
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "label": "From"
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "To"
+  },
+  {
+   "fieldname": "entered_by",
+   "fieldtype": "Link",
+   "label": "Entered By",
+   "options": "User"
+  },
+  {
+   "fieldname": "column_break_del",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "deleted_by",
+   "fieldtype": "Link",
+   "label": "Deleted By",
+   "options": "User",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "deleted_on",
+   "fieldtype": "Datetime",
+   "label": "Deleted On",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "reqd": 1
+  },
+  {
+   "fieldname": "worker_days",
+   "fieldtype": "Int",
+   "label": "Worker Days"
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "label": "Amount"
+  },
+  {
+   "fieldname": "section_snap",
+   "fieldtype": "Section Break",
+   "label": "What was deleted"
+  },
+  {
+   "fieldname": "snapshot",
+   "fieldtype": "Long Text",
+   "label": "Snapshot (JSON)",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-02 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Deleted Actuals",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "actuals",
+ "track_changes": 1
+}

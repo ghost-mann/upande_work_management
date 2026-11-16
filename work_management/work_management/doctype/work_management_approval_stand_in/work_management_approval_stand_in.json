@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "creation": "2026-11-12 18:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "custom": 0,
+ "istable": 1,
+ "editable_grid": 1,
+ "description": "Who may take an approval step when the usual approver entered the record or took the step before it.",
+ "field_order": [
+  "stage",
+  "farm",
+  "user"
+ ],
+ "fields": [
+  {
+   "fieldname": "stage",
+   "fieldtype": "Select",
+   "label": "Step",
+   "in_list_view": 1,
+   "reqd": 1,
+   "options": "actuals_fm\nactuals_hr\nactuals_gm\nassigner_fm\nassigner_hr\nassigner_gm\nplanner_fm\ncheck_hr\ncheck_gm"
+  },
+  {
+   "fieldname": "farm",
+   "fieldtype": "Link",
+   "label": "Farm",
+   "options": "Farm",
+   "in_list_view": 1,
+   "description": "Empty: every farm."
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "Stand-in",
+   "options": "User",
+   "in_list_view": 1,
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-12 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Work Management",
+ "name": "Work Management Approval Stand In",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

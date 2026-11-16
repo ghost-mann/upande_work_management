@@ -146,6 +146,364 @@ def wm_actuals(**kwargs):
             WHERE doctype = 'Work Management Settings' AND field = 'off_day_requests'""")
         OD_ON = frappe.utils.cint(od_sw[0][0]) if od_sw else 0
 
+    # WEEK SIGN-OFF AND HISTORY. A farm manager signs off their farm's pay week once
+    # nothing in it is left as a draft, rejected, or waiting for them; payment then
+    # includes that farm-week (when Settings asks it to wait). History shows a farm's
+    # work for all time and every status. Farm managers act on their own farm; the GM
+    # and System Manager on every farm; the HR head views every farm.
+    ws_fm_farms = []
+    for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+        if _role_ in MY_ROLES: ws_fm_farms.append(_farm_)
+    WS_ALL = 1 if (("System Manager" in MY_ROLES) or ("General Manager" in MY_ROLES)) else 0
+    WS_HR = 1 if (any(_r_ in MY_ROLES for _r_ in HR_HEAD_ROLES)) else 0
+    WS_MANAGE_FARMS = [f for f in FARMS if (WS_ALL or f in ws_fm_farms)]
+    WS_VIEW_FARMS = [f for f in FARMS if (WS_ALL or WS_HR or f in ws_fm_farms)]
+    # who is copied on draft reminders: the payroll-check Settings list, else the
+    # approvers named for the actuals HR Head and GM steps
+    ws_notify_raw = ""
+    if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                        AND field = 'payroll_check_notify' LIMIT 1"""):
+        ws_notify_raw = frappe.db.get_single_value("Work Management Settings", "payroll_check_notify") or ""
+    WS_NOTIFY = []
+    for ws_e in str(ws_notify_raw).replace(";", ",").split(","):
+        if ws_e.strip() and ws_e.strip() not in WS_NOTIFY:
+            WS_NOTIFY.append(ws_e.strip())
+    if not WS_NOTIFY:
+        for ws_e in frappe.db.sql("""SELECT DISTINCT user FROM `tabWork Management Stage Approver`
+                WHERE parent = 'Work Management Settings'
+                  AND stage_label IN ('Actuals: HR Head', 'Actuals: GM') AND IFNULL(user, '') != ''""") \
+                if frappe.db.exists("DocType", "Work Management Stage Approver") else []:
+            WS_NOTIFY.append(ws_e[0])
+    WS_SENDER = frappe.db.get_single_value("Work Management Settings", "payroll_pack_sender") \
+        if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                            AND field = 'payroll_pack_sender' LIMIT 1""") else None
+
+    # HOW FAR BACK A WORKER MAY BE PUT ON WORK (one worker, one day, one task).
+    # WMA-863710 was created on 23 Oct covering 28 Sep - 11 Oct, beside the
+    # assignment that already held those days, and they were paid twice. A start
+    # more than max_backdate_days ago is refused unless the GM (or System Manager)
+    # does it with a reason, which is logged on the assignment.
+    WMG_BACKDATE_DAYS = 7
+    if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                        AND field = 'max_backdate_days' LIMIT 1"""):
+        WMG_BACKDATE_DAYS = frappe.utils.cint(
+            frappe.db.get_single_value("Work Management Settings", "max_backdate_days")) or 7
+    WMG_GM = 1 if (("General Manager" in MY_ROLES) or ("System Manager" in MY_ROLES)) else 0
+
+    # WHICH FARMS THIS PERSON MANAGES (2026-11-12). A farm manager acts on their own
+    # farm's work only; the HR head and the GM on every farm.
+    wmg_fm = []
+    for _farm_, _role_ in FARM_APPROVER_ROLE.items():
+        if _role_ in MY_ROLES: wmg_fm.append(_farm_)
+    WMG_HR = 1 if (any(_r_ in MY_ROLES for _r_ in HR_HEAD_ROLES)) else 0
+
+
+    def wmg_farm_err(farm, verb):
+        """"" when this person may act on `farm`'s work, else the refusal."""
+        if WMG_GM or WMG_HR:
+            return ""
+        if farm and str(farm).strip() in wmg_fm:
+            return ""
+        return ("Only " + str(farm or "that farm") + "'s farm manager, the HR head or the GM may " +
+                verb + ".")
+
+
+    def wmg_left_err(asg, emp, left_date):
+        """Why `emp` cannot be released from `asg` on `left_date`, or "". Not in the
+        future, not after the assignment ends, not before they started on it, and not
+        before the last day they have work recorded on it -- a release backdated past
+        recorded work frees days that are already paid for."""
+        if not (asg and emp and left_date):
+            return ""
+        a = frappe.db.get_value("Work Management Assigner", asg, ["from_date", "to_date"], as_dict=True)
+        nm = frappe.db.get_value("Employee", emp, "employee_name") or emp
+        if str(left_date) > str(frappe.utils.today()):
+            return nm + " cannot be released on " + str(left_date) + ": that day has not come yet."
+        if a and str(left_date) > str(a.to_date):
+            return nm + " cannot be released after the assignment ends (" + str(a.to_date) + ")."
+        st = frappe.db.sql("""SELECT MIN(COALESCE(start_date, %s)) FROM `tabWork Assignment Employee`
+                              WHERE parent = %s AND employee = %s""", (a.from_date if a else None, asg, emp))
+        if st and st[0][0] and str(left_date) < str(st[0][0]):
+            return nm + " cannot be released on " + str(left_date) + ", before they started (" + str(st[0][0]) + ")."
+        last = frappe.db.sql("""
+            SELECT MAX(we.work_date) FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+            WHERE ac.assignment = %s AND we.employee = %s AND IFNULL(ac.workflow_state, '') != 'Rejected'
+              AND ac.docstatus < 2 AND (IFNULL(we.actual_quantity, 0) > 0 OR IFNULL(we.amount, 0) > 0)
+        """, (asg, emp))
+        if last and last[0][0] and str(left_date) < str(last[0][0]):
+            return (nm + " has work recorded here up to " + str(last[0][0]) + ", so the release date must be "
+                    "that day or later.")
+        return ""
+
+
+
+    def wmg_backdate_err(start):
+        """An error message when `start` is further back than allowed for this
+        caller, else "". The GM passes only with a `backdate_reason`."""
+        if not start:
+            return ""
+        oldest = frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)
+        if str(start) >= str(oldest):
+            return ""
+        if not WMG_GM:
+            return ("A worker cannot be put on work starting " + str(start) + ": that is more than " +
+                    str(WMG_BACKDATE_DAYS) + " days ago. Ask the GM, who can do it with a reason.")
+        if not (frappe.form_dict.get("backdate_reason") or "").strip():
+            return ("Starting " + str(start) + " is more than " + str(WMG_BACKDATE_DAYS) +
+                    " days ago. Give a reason (backdate_reason) and it will be logged on the assignment.")
+        return ""
+
+
+    def wmg_log_backdate(asg_name, start):
+        """Record a GM backdate on the assignment, once the start is known to be old."""
+        reason = (frappe.form_dict.get("backdate_reason") or "").strip()
+        if asg_name and reason and str(start) < str(frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)):
+            frappe.get_doc("Work Management Assigner", asg_name).add_comment("Comment",
+                "Backdated to " + str(start) + " by " + str(frappe.session.user) + ": " + reason)
+
+
+    # ONE WORKER, ONE DAY, ONE TASK (2026-11-12). A worker may have one payable
+    # row per calendar date across every task, assignment and farm; there is no
+    # override. Checked when actuals are saved, again at every approval, and when
+    # a plan is closed early -- a record clean when saved can clash with one
+    # approved later. Rejected and zeroed rows never clash.
+    WMG_PC_DT = 1 if frappe.db.exists("DocType", "Work Management Payroll Check") else 0
+
+
+    def wmg_day_clashes(pairs, exclude_doc):
+        """{(employee, date): {doc, task, farm, state}} for every (employee, date) in
+        `pairs` already holding a payable row on another live actuals record."""
+        hits = {}
+        if not pairs:
+            return hits
+        emps = {}
+        days = {}
+        for p in pairs:
+            emps[p[0]] = 1
+            days[str(p[1])] = 1
+        rows = frappe.db.sql("""
+            SELECT we.employee emp, we.work_date d, ac.name doc, ac.task task, ac.farm farm,
+                   ac.workflow_state state
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            WHERE we.parenttype = 'Work Management Actuals'
+              AND IFNULL(ac.workflow_state, '') != 'Rejected' AND ac.docstatus < 2
+              AND (IFNULL(we.actual_quantity, 0) > 0 OR IFNULL(we.amount, 0) > 0)
+              AND ac.name != %s
+              AND we.employee IN %s AND we.work_date IN %s
+        """, (exclude_doc or "__none__", tuple(emps.keys()), tuple(days.keys())), as_dict=True)
+        want = {}
+        for p in pairs:
+            want[(p[0], str(p[1]))] = 1
+        for r in rows:
+            key = (r.emp, str(r.d))
+            if key in want and key not in hits:
+                hits[key] = {"doc": r.doc, "task": r.task, "farm": r.farm, "state": r.state}
+        return hits
+
+
+    def wmg_off_assignment(assignment, pairs):
+        """The (employee, date) pairs outside that worker's own window on this
+        assignment: before they started on it, or after they left it."""
+        bad = []
+        if not (assignment and pairs):
+            return bad
+        a = frappe.db.get_value("Work Management Assigner", assignment, ["from_date", "to_date"], as_dict=True)
+        if not a:
+            return bad
+        win = {}
+        for r in frappe.db.sql("""
+            SELECT employee, start_date, left_date, IFNULL(status, 'Active') status
+            FROM `tabWork Assignment Employee` WHERE parent = %s
+        """, (assignment,), as_dict=True):
+            s = str(r.start_date or a.from_date)
+            e = str(r.left_date) if (r.status == "Left" and r.left_date) else str(a.to_date)
+            # a worker released and added back has two rows: either window counts
+            win.setdefault(r.employee, []).append((s, e))
+        for p in pairs:
+            d = str(p[1])
+            ok = 0
+            for w in win.get(p[0], []):
+                if w[0] <= d <= w[1]:
+                    ok = 1
+            if not ok:
+                bad.append((p[0], d))
+        return bad
+
+
+    def wmg_locked(farm, dates):
+        """The payroll check that has locked any of `dates` for `farm`, else "".
+        A check locks a farm's dates once that farm is approved in it, and every
+        farm's once it has gone past the farm managers. A Sent check no longer
+        locks: late work there is allowed and goes into a top-up check."""
+        if not (WMG_PC_DT and farm and dates):
+            return ""
+        ds = [str(x) for x in dates]
+        for c in frappe.db.sql("""
+            SELECT pc.name, pc.period_from f, pc.period_to t FROM `tabWork Management Payroll Check` pc
+            WHERE pc.status NOT IN ('Cancelled', 'Sent')
+              AND pc.period_from <= %(t)s AND pc.period_to >= %(f)s
+              AND (pc.status IN ('HR Review', 'GM Review', 'Approved')
+                   OR EXISTS (SELECT 1 FROM `tabWork Management Payroll Check Farm` cf
+                              WHERE cf.parent = pc.name AND cf.farm = %(farm)s AND cf.status = 'Approved'))
+        """, {"f": min(ds), "t": max(ds), "farm": farm}, as_dict=True):
+            for d in ds:
+                if str(c.f) <= d <= str(c.t):
+                    return c.name
+        return ""
+
+
+    def wmg_guard_err(assignment, farm, pairs, exclude_doc):
+        """The one-worker-one-day refusal for these rows, or "" when they are clean."""
+        if not pairs:
+            return ""
+        lk = wmg_locked(farm, [p[1] for p in pairs])
+        if lk:
+            return ("These dates are locked by payroll check " + lk + ", which " + str(farm) +
+                    " has already approved. Ask HR or the GM to send the check back first.")
+        clash = wmg_day_clashes(pairs, exclude_doc)
+        if clash:
+            msgs = []
+            for key in sorted(clash.keys()):
+                c = clash[key]
+                nm = frappe.db.get_value("Employee", key[0], "employee_name") or key[0]
+                tsub = frappe.db.get_value("Task", c["task"], "subject") if c["task"] else None
+                msgs.append(str(nm) + " on " + key[1] + " (already on " + str(tsub or c["task"] or "?") +
+                            ", " + str(c["farm"] or "") + ", " + str(c["doc"]) + ")")
+            return ("One worker, one day, one task. Already recorded elsewhere: " + "; ".join(msgs[:8]) +
+                    (" and " + str(len(msgs) - 8) + " more" if len(msgs) > 8 else "") +
+                    ". Remove them here, or correct the other record.")
+        off = wmg_off_assignment(assignment, pairs)
+        if off:
+            msgs = []
+            for p in off[:8]:
+                nm = frappe.db.get_value("Employee", p[0], "employee_name") or p[0]
+                msgs.append(str(nm) + " on " + p[1])
+            return ("Not on this assignment on that day (before they started on it or after they left): " +
+                    "; ".join(msgs) + (" and " + str(len(off) - 8) + " more" if len(off) > 8 else "") + ".")
+        return ""
+
+
+    def wmg_doc_pairs(docname):
+        """(employee, date) for each payable row an actuals record holds."""
+        return [(r.employee, str(r.work_date)) for r in frappe.db.sql("""
+            SELECT employee, work_date FROM `tabWork Actuals Employee`
+            WHERE parent = %s AND parenttype = 'Work Management Actuals'
+              AND (IFNULL(actual_quantity, 0) > 0 OR IFNULL(amount, 0) > 0)
+              AND employee IS NOT NULL AND work_date IS NOT NULL
+        """, (docname,), as_dict=True)]
+
+
+    def wmg_cap_err(docname):
+        """The plan-target refusal for a record about to move on, or "". Every record
+        on the plan that is past Draft counts, this one included -- two crews each
+        entered up to the full target while both sat with the farm manager used to
+        pay the plan twice over."""
+        asg = frappe.db.get_value("Work Management Actuals", docname, "assignment")
+        pr = frappe.db.get_value("Work Management Assigner", asg, "planner_request") if asg else None
+        target = frappe.utils.flt(frappe.db.get_value("Work Management Planner", pr, "quantity")) if pr else 0
+        if target <= 0:
+            return ""
+        tot = frappe.db.sql("""
+            SELECT COALESCE(SUM(ac.total_actual_qty), 0) q
+            FROM `tabWork Management Actuals` ac
+            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            WHERE a2.planner_request = %s
+              AND (ac.workflow_state IN ('Pending Farm Manager', 'Pending HR Head', 'Pending GM', 'CONFIRMED')
+                   OR ac.name = %s)
+        """, (pr, docname), as_dict=True)
+        done = frappe.utils.flt(tot[0].q) if tot else 0
+        if done > target + 0.0001:
+            return ("The plan's target is " + str(target) + " and " + str(done) + " is now recorded across its "
+                    "records -- " + str(round(done - target, 2)) + " over. Correct the quantities before approving.")
+        return ""
+
+
+    def wmg_doc_err(docname):
+        """wmg_guard_err() and the plan cap for a saved actuals record, as it stands."""
+        h = frappe.db.get_value("Work Management Actuals", docname, ["assignment", "farm"], as_dict=True)
+        if not h:
+            return ""
+        return wmg_guard_err(h.assignment, h.farm, wmg_doc_pairs(docname), docname) or wmg_cap_err(docname)
+
+
+    # STAND-INS AND TWO PAIRS OF EYES (2026-11-12). Nobody approves their own entry,
+    # and nobody takes two steps on one record. When the usual approver is the one
+    # who already acted, a stand-in listed in Settings takes the step -- they may
+    # take it without holding the step's role. A System Manager may override with a
+    # reason, which is logged on the record and raised in the payroll check.
+    WMG_SI = []
+    if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+        for wmg_r in frappe.db.get_all("Work Management Approval Stand In",
+                filters={"parenttype": "Work Management Settings", "user": frappe.session.user},
+                fields=["stage", "farm"]):
+            WMG_SI.append((wmg_r.stage, str(wmg_r.farm or "").strip()))
+
+
+    WMG_SI_ROLE = {"actuals_fm": "actuals_farm_manager", "actuals_hr": "actuals_hr_head", "actuals_gm": "actuals_gm",
+                   "assigner_fm": "assigner_farm_manager", "assigner_hr": "assigner_hr_head", "assigner_gm": "assigner_gm",
+                   "planner_fm": "planner_farm_approval"}
+
+
+    def wmg_si(stage, farm, others=None):
+        """1 when this person is a listed stand-in for `stage` on `farm` -- and, when
+        `others` is given, only where one of them (the enterer or the previous
+        approver) holds the step's own role: a stand-in covers a conflicted usual
+        approver, not the step in general (final review, 2026-11-12)."""
+        listed = 0
+        for wmg_s in WMG_SI:
+            if wmg_s[0] == stage and (not wmg_s[1] or wmg_s[1] == str(farm or "").strip()):
+                listed = 1
+        if not listed or others is None:
+            return listed
+        role = STAGE_ROLE.get(WMG_SI_ROLE.get(stage)) if WMG_SI_ROLE.get(stage) else None
+        for o in others:
+            if o and o != frappe.session.user and role and role in frappe.get_roles(o):
+                return 1
+        return 0
+
+
+
+    def wmg_finalise(nm, state):
+        """Whichever step ends the chain submits the record, as the GM step always
+        has. With the GM step switched off, HR's approval wrote CONFIRMED at
+        docstatus 0, which payment paid while it could still be edited."""
+        if state != "CONFIRMED":
+            return
+        frappe.db.set_value("Work Management Actuals", nm, "docstatus", 1, update_modified=False)
+        for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
+            frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 1, update_modified=False)
+
+
+    def wmg_step_err(stage, farm, others, doctype, name):
+        """The refusal when this person already acted on the record (entered it, or
+        took the step before), else "". A System Manager's logged override passes."""
+        me = frappe.session.user
+        if me not in [o for o in others if o]:
+            return ""
+        reason = (frappe.form_dict.get("override_reason") or "").strip()
+        if "System Manager" in frappe.get_roles() and reason:
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Two-pairs-of-eyes override at " + stage + " by " + me + ": " + reason)
+            return ""
+        sis = []
+        if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+            for r in frappe.db.get_all("Work Management Approval Stand In",
+                    filters={"parenttype": "Work Management Settings", "stage": stage}, fields=["user", "farm"]):
+                if r.user != me and (not r.farm or str(r.farm).strip() == str(farm or "").strip()):
+                    sis.append(r.user)
+        if not sis:
+            # nobody to hand it to yet: let it through rather than stall the farm, and say
+            # so on the record -- the payroll check raises it for the GM to acknowledge
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Same person at " + stage + " (" + me + "): no stand-in is listed for this step yet.")
+            return ""
+        return ("You already acted on this record (you entered it or took the step before), so somebody else "
+                "must take this step" + (": " + ", ".join(sis) + "." if sis else
+                ". Add a stand-in under Work Management Settings > Approval stand-ins."))
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -197,6 +555,30 @@ def wm_actuals(**kwargs):
     # empty FARMS means the site is unconfigured, not that this person is permitted
     # nothing: the pickers are empty there anyway, so there is nothing to defend and
     # a guard that fired would only break a fresh install.
+    # WRITES ARE POST-ONLY, AND EACH NEEDS ITS CAPABILITY (2026-11-12). A link opened
+    # from an email or chat is a GET, and a GET skips Frappe's CSRF check -- so it
+    # cannot be allowed to approve, purge or re-price anything. Reads stay GET. The
+    # capability named against an action is the Settings grant it needs; "" means
+    # the action makes its own role and farm checks further down.
+    WMG_WRITES = {
+        "a_substitute": "", "act_close_confirm": "", "act_close_reject": "",
+        "act_close_request": "", "act_fm_approve": "", "act_gm_approve": "",
+        "act_hr_approve": "", "act_reject": "", "act_reopen": "", "act_submit": "",
+        "od_decide": "", "od_request": "", "ws_delete_rejected": "", "ws_notify": ""
+    }
+    WMG_DENY = ""
+    if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
+        if frappe.request and frappe.request.method != "POST":
+            WMG_DENY = ("This changes data, so it has to be sent from the screen (as a POST), "
+                        "not opened as a link.")
+        elif WMG_WRITES.get(action):
+            wmg_need = WMG_WRITES.get(action)
+            wmg_held = frappe.get_roles()
+            if "System Manager" not in wmg_held and not [r for r in (CAPABILITIES.get(wmg_need) or []) if r in wmg_held]:
+                WMG_DENY = ("You are not allowed to do this. It needs the '" + wmg_need +
+                            "' permission in Work Management Settings.")
+
+
     FARM_ASKED = (frappe.form_dict.get("farm") or "").strip()
     FARM_DENIED = ""
     if FARM_ASKED and FARMS and FARM_ASKED not in FARMS:
@@ -208,6 +590,8 @@ def wm_actuals(**kwargs):
 
     if FARM_DENIED:
         out["error"] = FARM_DENIED
+    elif WMG_DENY:
+        out["error"] = WMG_DENY
     elif OD_BLOCK:
         out["error"] = OD_BLOCK
     elif action == "act_assigned":
@@ -730,6 +1114,20 @@ def wm_actuals(**kwargs):
         submit_now = frappe.form_dict.get("submit_now")
         err = None
         if not assignment: err = "Assignment is required"
+        # WHO MAY RECORD WORK (2026-11-12): the enter_work grant, or the farm manager of
+        # the assignment's own farm. The farm is read from the assignment, never from
+        # the request, so a clerk cannot record work on another farm.
+        if not err:
+            sub_farm = frappe.db.get_value("Work Management Assigner", assignment, "farm")
+            sub_held = frappe.get_roles()
+            sub_ok = ("System Manager" in sub_held) or bool(
+                [r for r in (CAPABILITIES.get("enter_work") or []) if r in sub_held])
+            if not sub_farm:
+                err = "No such assignment: " + str(assignment)
+            elif FARMS and str(sub_farm).strip() not in FARMS:
+                err = str(sub_farm) + " is not a farm you are working."
+            elif not sub_ok and wmg_farm_err(sub_farm, "record work"):
+                err = wmg_farm_err(sub_farm, "record work")
         # Submitting crosses a workflow transition; recording the work does not, and
         # stays open to whoever enters it. The step's own configured role gates the
         # submit and System Manager bypasses -- may_take_step()'s rule, which every
@@ -746,8 +1144,15 @@ def wm_actuals(**kwargs):
         # already does when the target is not complete: the grid is a worker-by-day
         # entry that must not be thrown away because the person who typed it may not be
         # the one to submit it. The actuals land as a Draft and the toast says why.
+        # A farm manager may also submit work on their own farm: finishing a draft a
+        # clerk left behind is part of closing the week. It then waits in their own
+        # Farm Manager queue and is approved like any other record.
+        sub_fm = 0
+        if assignment and ws_fm_farms:
+            if frappe.db.get_value("Work Management Assigner", assignment, "farm") in ws_fm_farms:
+                sub_fm = 1
         if submit_now and not (STAGE_ROLE["actuals_submit"] in MY_ROLES
-                               or "System Manager" in MY_ROLES):
+                               or "System Manager" in MY_ROLES or sub_fm):
             submit_now = 0
             out["submit_blocked"] = ("Saved as a draft: only " + str(STAGE_ROLE["actuals_submit"]) +
                                      " can submit actuals for approval. Ask somebody holding "
@@ -797,6 +1202,24 @@ def wm_actuals(**kwargs):
                 filters={"assignment": assignment, "workflow_state": ["in", ["Pending Farm Manager","Pending HR Head","Pending GM","CONFIRMED"]]},
                 pluck="name", limit=1)
             editing_pending = 0
+            # EDITING A RECORD MID-APPROVAL (2026-11-12): only the approver of the step it
+            # is at (the farm's manager at the FM step), only on its own assignment, and
+            # a change in pay sends it back to the farm manager with the old and new totals.
+            ep_before = None
+            ep_err = None
+            if edit_doc and frappe.db.exists("Work Management Actuals", edit_doc):
+                ep_before = frappe.db.get_value("Work Management Actuals", edit_doc,
+                    ["assignment", "farm", "workflow_state", "total_payment", "fm_approved_by", "hr_approved_by"], as_dict=True)
+                if ep_before.assignment != assignment:
+                    ep_err = "That record belongs to another assignment (" + str(ep_before.assignment) + ")."
+                elif ep_before.workflow_state == STAGE_STATE["actuals_farm_manager"]:
+                    ep_err = wmg_farm_err(ep_before.farm, "change this record") or None
+                elif ep_before.workflow_state == STAGE_STATE["actuals_hr_head"] and not (
+                        STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
+                    ep_err = "Only " + str(STAGE_ROLE["actuals_hr_head"]) + " can change a record waiting for HR."
+                elif ep_before.workflow_state == STAGE_STATE["actuals_gm"] and not (
+                        STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
+                    ep_err = "Only " + str(STAGE_ROLE["actuals_gm"]) + " can change a record waiting for the GM."
             if edit_doc and frappe.db.exists("Work Management Actuals", edit_doc):
                 estate = frappe.db.get_value("Work Management Actuals", edit_doc, "workflow_state")
                 if estate in ("Pending Farm Manager","Pending HR Head","Pending GM"):
@@ -805,6 +1228,7 @@ def wm_actuals(**kwargs):
             # quantity recorded for a worker who is marked Absent, on approved
             # leave, or on their off day ON THAT EXACT DATE needs a logged override.
             att_conflicts = []
+            att_absent_never = 0
             att_override = frappe.form_dict.get("att_override")
             gate_absent = 1
             gate_leave = 1
@@ -812,6 +1236,12 @@ def wm_actuals(**kwargs):
             gate_noscan = 1
             try:
                 gate_absent = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_absent"))
+                # NO WORK ON AN ABSENT DAY (2026-11-13): with this on, a day marked Absent
+                # takes no actuals at all -- no override, not even the farm manager's
+                if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                    AND field = 'att_absent_never' AND value = '1' LIMIT 1"""):
+                    gate_absent = 1
+                    att_absent_never = 1
                 gate_leave = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_leave"))
                 gate_off = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_off"))
                 gate_noscan = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_noscan_actuals"))
@@ -919,50 +1349,72 @@ def wm_actuals(**kwargs):
                                 seenr[rr] = 1
                                 rlist.append(rr)
                         att_conflicts.append({"employee": ce, "name": cnm, "reasons": rlist[:6]})
-            # DUPLICATE-DAY GUARD: the same worker + the same task + the same date
-            # already recorded in ANOTHER live actuals document means double pay
-            # (two overlapping assignments for one task). Needs an explicit,
-            # logged override.
-            if payload and assignment:
-                cur_task = frappe.db.get_value("Work Management Assigner", assignment, "task")
-                pairs2 = []
-                demps2 = {}
-                ddates2 = {}
-                for c2 in payload.split("|"):
-                    bits2 = c2.split("~")
-                    if len(bits2) >= 3 and bits2[0] and bits2[1] and frappe.utils.flt(bits2[2]) > 0:
-                        pairs2.append((bits2[0], bits2[1]))
-                        demps2[bits2[0]] = 1
-                        ddates2[bits2[1]] = 1
-                if pairs2 and cur_task:
-                    dup_hits = frappe.db.sql("""
-                        SELECT we.employee, we.work_date d, ac.name doc
-                        FROM `tabWork Actuals Employee` we
-                        INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-                        WHERE ac.workflow_state IN ('Draft','Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
-                          AND ac.task = %s AND ac.assignment != %s
-                          AND we.actual_quantity > 0
-                          AND we.employee IN %s AND we.work_date IN %s
-                    """, (cur_task, assignment, tuple(demps2.keys()), tuple(ddates2.keys())), as_dict=True)
-                    dupmap = {}
-                    for r2 in dup_hits:
-                        dupmap.setdefault((r2.employee, str(r2.d)), r2.doc)
-                    dup_reasons = {}
-                    for (pe2, pd2) in pairs2:
-                        hit = dupmap.get((pe2, pd2))
-                        if hit:
-                            dup_reasons.setdefault(pe2, []).append("already has " + str(cur_task) + " recorded on " + pd2 + " in " + hit + " — double pay")
-                    if dup_reasons:
-                        merged = {}
-                        for cx in att_conflicts:
-                            merged[cx["employee"]] = cx
-                        for pe2 in dup_reasons:
-                            cx = merged.get(pe2)
-                            if cx:
-                                cx["reasons"] = cx["reasons"] + dup_reasons[pe2]
-                            else:
-                                nm2 = frappe.db.get_value("Employee", pe2, "employee_name") or pe2
-                                att_conflicts.append({"employee": pe2, "name": nm2, "reasons": dup_reasons[pe2]})
+            # ONE WORKER, ONE DAY, ONE TASK: refused outright, never overridden. The
+            # record being rewritten is left out, so editing your own draft never
+            # clashes with itself. Also refused: a day outside the worker's own
+            # window on this assignment, and dates a payroll check has locked.
+            wmg_pairs = []
+            for c2 in (payload.split("|") if payload else []):
+                bits2 = c2.split("~")
+                if len(bits2) >= 3 and bits2[0] and bits2[1] and frappe.utils.flt(bits2[2]) > 0:
+                    wmg_pairs.append((bits2[0], bits2[1]))
+            # QUANTITY AND DATE SANITY (2026-11-12): no work dated after today, and a day's
+            # quantity far above the plan's daily target is refused (a slipped 88 for
+            # 8 was paid 4,257). Between the two thresholds it needs a reason, kept on
+            # the row and raised again in the payroll check.
+            wmg_qty_flagged = {}
+            wmg_qty_reason = (frappe.form_dict.get("qty_reason") or "").strip()
+            wmg_pi = frappe.db.get_value("Work Management Planner",
+                frappe.db.get_value("Work Management Assigner", assignment, "planner_request"),
+                ["daily_target", "uom"], as_dict=True) if assignment else None
+            wmg_tgt = frappe.utils.flt(wmg_pi.daily_target) if wmg_pi else 0
+            wmg_hourly = 1 if (wmg_pi and str(wmg_pi.uom or "").strip().lower() in ("hour", "hours", "hr", "hrs")) else 0
+            wmg_flag_x = 2.0
+            wmg_refuse_x = 3.0
+            for wmg_f, wmg_dflt in (("qty_flag_multiple", 2.0), ("qty_refuse_multiple", 3.0)):
+                wmg_v = frappe.db.sql("""SELECT value FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                                         AND field = %s""", (wmg_f,))
+                # a field added to an already-saved Single reads "0" until somebody sets it
+                wmg_v = (frappe.utils.flt(wmg_v[0][0]) if wmg_v and wmg_v[0][0] else 0) or wmg_dflt
+                if wmg_f == "qty_flag_multiple":
+                    wmg_flag_x = wmg_v
+                else:
+                    wmg_refuse_x = wmg_v
+            wmg_emp_cache = {}
+
+            def wmg_emp_dates(emp, day):
+                """Why `emp` cannot have work on `day` (before joining / after leaving), or ""."""
+                if emp not in wmg_emp_cache:
+                    wmg_emp_cache[emp] = frappe.db.get_value("Employee", emp,
+                        ["date_of_joining", "relieving_date"], as_dict=True) or {}
+                e = wmg_emp_cache[emp]
+                if e.get("date_of_joining") and str(day) < str(e.get("date_of_joining")):
+                    return "before they joined (" + str(e.get("date_of_joining")) + ")"
+                if e.get("relieving_date") and str(day) > str(e.get("relieving_date")):
+                    return "after they left the company (" + str(e.get("relieving_date")) + ")"
+                return ""
+
+            wmg_bad = []
+            for c3 in (payload.split("|") if payload else []):
+                b3 = c3.split("~")
+                if len(b3) < 3 or not b3[0] or not b3[1] or frappe.utils.flt(b3[2]) <= 0:
+                    continue
+                q3 = frappe.utils.flt(b3[2])
+                n3 = frappe.db.get_value("Employee", b3[0], "employee_name") or b3[0]
+                if str(b3[1]) > str(frappe.utils.today()):
+                    wmg_bad.append(n3 + " on " + b3[1] + ": that day has not happened yet")
+                elif wmg_emp_dates(b3[0], b3[1]):
+                    wmg_bad.append(n3 + " on " + b3[1] + ": " + wmg_emp_dates(b3[0], b3[1]))
+                elif wmg_tgt > 0 and q3 > wmg_refuse_x * wmg_tgt:
+                    wmg_bad.append(n3 + " on " + b3[1] + ": " + str(q3) + " is more than " + str(wmg_refuse_x) +
+                                   "x the daily target of " + str(wmg_tgt))
+                elif wmg_tgt > 0 and q3 > wmg_flag_x * wmg_tgt:
+                    wmg_qty_flagged[(b3[0], str(b3[1]))] = (n3 + " on " + b3[1] + ": " + str(q3) +
+                                                           " against a daily target of " + str(wmg_tgt))
+            wmg_self = edit_doc if editing_pending else (existing[0] if existing else None)
+            wmg_err = wmg_guard_err(assignment,
+                frappe.db.get_value("Work Management Assigner", assignment, "farm") if assignment else None,
+                wmg_pairs, wmg_self)
             # ABSENT-day entries are a Farm Manager decision: only the farm's
             # approver role (or GM / System Manager) may override those. Other
             # conflicts (leave / off / no-scan) keep the normal logged override.
@@ -981,7 +1433,24 @@ def wm_actuals(**kwargs):
                     allowed = True
                 if not allowed:
                     can_override = 0
-            if att_conflicts and att_override and not can_override:
+            if not wmg_err and ep_err:
+                wmg_err = ep_err
+            if not wmg_err and att_absent_never and has_absent_conflict:
+                ab_names = [cx["name"] for cx in att_conflicts
+                            if [rr for rr in cx.get("reasons", []) if "marked Absent" in rr]]
+                wmg_err = ("Not saved: no work can be recorded on a day the worker is marked Absent (" +
+                           ", ".join(ab_names[:8]) + (" and more" if len(ab_names) > 8 else "") +
+                           "). Correct the attendance first if they did work.")
+            if not wmg_err and wmg_bad:
+                wmg_err = "Not saved: " + "; ".join(wmg_bad[:8]) + (" and more" if len(wmg_bad) > 8 else "") + "."
+            if not wmg_err and wmg_qty_flagged and not wmg_qty_reason:
+                out["needs_qty_reason"] = 1
+                out["qty_flagged"] = [wmg_qty_flagged[k] for k in sorted(wmg_qty_flagged.keys())]
+                wmg_err = ("Unusually high quantities -- say why before saving: " +
+                           "; ".join(out["qty_flagged"][:6]) + ".")
+            if wmg_err:
+                out["error"] = wmg_err
+            elif att_conflicts and att_override and not can_override:
                 out["error"] = ("These entries include workers marked Absent — only the Farm Manager "
                                 "(or GM) can approve recording actuals on an absent day. Ask them to "
                                 "enter or approve this, or fix the attendance first.")
@@ -1013,6 +1482,8 @@ def wm_actuals(**kwargs):
                 # actual; the workflow validator's check_permission("read") would throw. Doc-level
                 # flag makes validation skip the caller's row-access enforcement.
                 d.flags.ignore_permissions = True
+                # tells the save hook this came through the screen's own checks
+                d.flags.wm_screen = 1
                 d.rate = rate
                 total_qty = 0
                 total_pay = 0
@@ -1067,6 +1538,9 @@ def wm_actuals(**kwargs):
                     row.hours = hrs
                     row.count_in_payroll = in_pay
                     row.amount = amt
+                    if (emp, str(wdate)) in wmg_qty_flagged:
+                        row.qty_flag = (wmg_qty_flagged[(emp, str(wdate))] + ". Reason: " + wmg_qty_reason +
+                                        " (" + frappe.session.user + ")")[:500]
                     # RECORDED AFTER THEY WERE RELEASED. Warned, never refused: a
                     # clerk may be entering a day that genuinely predates the
                     # release, or correcting one, and blocking that would cost more
@@ -1111,6 +1585,11 @@ def wm_actuals(**kwargs):
                 d.payroll_people = len(seen_pay_people)
                 d.total_payment = total_pay
                 d.cost_variance = total_pay - frappe.utils.flt(d.planned_cost)
+                if (sub_fm and d.entered_by and d.entered_by != frappe.session.user
+                        and frappe.db.exists("Work Management Actuals", d.name)):
+                    # the farm manager finishing somebody else's draft: say whose it was
+                    d.add_comment("Comment", "Completed by farm manager " + str(frappe.session.user) +
+                                  " on behalf of " + str(d.entered_by))
                 d.entered_by = frappe.session.user
                 if released_after:
                     out["released_warning"] = ("Work recorded for a worker already released from "
@@ -1185,8 +1664,20 @@ def wm_actuals(**kwargs):
                     if is_new:
                         d.insert(ignore_permissions=True)
                     elif editing_pending:
-                        # keep the current workflow_state (approver edit-in-place)
+                        # keep the current workflow_state (approver edit-in-place) -- unless the
+                        # pay changed after somebody approved it: then it starts again
                         d.save(ignore_permissions=True)
+                        if ep_before and abs(frappe.utils.flt(d.total_payment) - frappe.utils.flt(ep_before.total_payment)) > 0.5 \
+                                and (ep_before.fm_approved_by or ep_before.hr_approved_by) \
+                                and ep_before.workflow_state != STAGE_STATE["actuals_farm_manager"]:
+                            frappe.db.set_value("Work Management Actuals", d.name, {
+                                "workflow_state": STAGE_STATE["actuals_farm_manager"],
+                                "fm_approved_by": None, "hr_approved_by": None}, update_modified=False)
+                            d.workflow_state = STAGE_STATE["actuals_farm_manager"]
+                            d.add_comment("Comment", "Changed by " + frappe.session.user + " while " +
+                                str(ep_before.workflow_state) + ": pay " + str(frappe.utils.flt(ep_before.total_payment)) +
+                                " -> " + str(frappe.utils.flt(d.total_payment)) + ". Sent back to the farm manager.")
+                            out["sent_back_to_fm"] = 1
                     else:
                         d.workflow_state = "Draft"
                         d.save(ignore_permissions=True)
@@ -1360,6 +1851,7 @@ def wm_actuals(**kwargs):
 
     elif action == "act_fm_approve":
         nm = frappe.form_dict.get("name")
+        wmg_e = wmg_doc_err(nm) if nm else ""  # one worker, one day, one task -- again at every step
         # QUALITY. The Farm Manager scores the work while approving it: 1 Good,
         # 2 Fair, 3 Rework. Rework flags work to be redone; it does not stop the
         # approval or the pay. The team leader's quality KPI is counted from this.
@@ -1368,7 +1860,9 @@ def wm_actuals(**kwargs):
                    "1 - Good": "1 - Good", "2 - Fair": "2 - Fair", "3 - Rework": "3 - Rework"}
         fm_qv = fm_qmap.get(fm_q)
         fm_qnote = (frappe.form_dict.get("quality_note") or "").strip()
-        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","farm"], as_dict=True)
+        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","farm","entered_by","owner"], as_dict=True)
+        wmg_se = wmg_step_err("actuals_fm", cur.farm, [cur.entered_by or cur.owner],
+                              "Work Management Actuals", nm) if cur else ""
         fmrl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
         fmallowed = []
         for _farm_, _role_ in FARM_APPROVER_ROLE.items():
@@ -1379,20 +1873,24 @@ def wm_actuals(**kwargs):
         elif not STAGE_ON["actuals_farm_manager"]:
             out["error"] = "The Farm Manager step is switched off for this project."
         elif not (STAGE_ROLE["actuals_farm_manager"] in MY_ROLES
-                  or "System Manager" in MY_ROLES or fmbypass or fmallowed):
+                  or "System Manager" in MY_ROLES or fmbypass or fmallowed or wmg_si("actuals_fm", cur.farm, [cur.entered_by or cur.owner])):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_farm_manager"]) + " can take this step."
                             " You do not hold it.")
         elif cur.workflow_state != STAGE_STATE["actuals_farm_manager"]:
             out["error"] = "Not at Farm Manager stage (state: " + str(cur.workflow_state) + ")"
-        elif not fmbypass and cur.farm not in fmallowed:
+        elif not fmbypass and cur.farm not in fmallowed and not wmg_si("actuals_fm", cur.farm, [cur.entered_by or cur.owner]):
             if not fmallowed:
                 out["error"] = "You have no farm assigned for approvals. Ask an admin to grant you a farm-specific Farm Manager role."
             else:
                 out["error"] = "You can only approve records for your farm(s): " + ", ".join(fmallowed) + ". This record is for " + str(cur.farm) + "."
+        elif wmg_se:
+            out["error"] = wmg_se
         elif not fm_qv:
             out["error"] = "Score the quality of this work before approving it: 1 Good, 2 Fair or 3 Rework."
         elif fm_qv == "3 - Rework" and not fm_qnote:
             out["error"] = "Say what has to be redone. The team leader sees this note."
+        elif wmg_e:
+            out["error"] = wmg_e
         else:
             frappe.db.set_value("Work Management Actuals", nm, {
                 "workflow_state": STAGE_NEXT["actuals_farm_manager"],
@@ -1401,35 +1899,57 @@ def wm_actuals(**kwargs):
                 "fm_approval_date": frappe.utils.today()}, update_modified=False)
             frappe.get_doc("Work Management Actuals", nm).add_comment(
                 "Comment", "Farm Manager approved. Quality: " + fm_qv + (" -- " + fm_qnote if fm_qnote else ""))
+            wmg_finalise(nm, STAGE_NEXT["actuals_farm_manager"])
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["actuals_farm_manager"]
             out["quality_score"] = fm_qv
 
     elif action == "act_hr_approve":
         nm = frappe.form_dict.get("name")
+        wmg_e = wmg_doc_err(nm) if nm else ""  # one worker, one day, one task -- again at every step
         cur_ws = frappe.db.get_value("Work Management Actuals", nm, "workflow_state")
+        wmg_h = frappe.db.get_value("Work Management Actuals", nm,
+            ["farm", "entered_by", "owner", "fm_approved_by"], as_dict=True) or {}
+        wmg_se = wmg_step_err("actuals_hr", wmg_h.get("farm"),
+            [wmg_h.get("entered_by") or wmg_h.get("owner"), wmg_h.get("fm_approved_by")],
+            "Work Management Actuals", nm) if wmg_h else ""
         if not STAGE_ON["actuals_hr_head"]:
             out["error"] = "The HR Head step is switched off for this project."
-        elif not (STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES):
+        elif not (STAGE_ROLE["actuals_hr_head"] in MY_ROLES or "System Manager" in MY_ROLES
+                  or wmg_si("actuals_hr", wmg_h.get("farm"), [wmg_h.get("entered_by") or wmg_h.get("owner"), wmg_h.get("fm_approved_by")])):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_hr_head"]) + " can take this step."
                             " You do not hold it.")
         elif cur_ws != STAGE_STATE["actuals_hr_head"]:
             out["error"] = "Not at HR stage (state: " + str(cur_ws) + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
+        elif wmg_e:
+            out["error"] = wmg_e
         else:
             frappe.db.set_value("Work Management Actuals", nm, "workflow_state", STAGE_NEXT["actuals_hr_head"], update_modified=False)
             frappe.db.set_value("Work Management Actuals", nm, "hr_approved_by", frappe.session.user, update_modified=False)
             frappe.db.set_value("Work Management Actuals", nm, "hr_approval_date", frappe.utils.today(), update_modified=False)
+            wmg_finalise(nm, STAGE_NEXT["actuals_hr_head"])
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["actuals_hr_head"]
 
     elif action == "act_gm_approve":
         nm = frappe.form_dict.get("name")
-        cur = frappe.db.get_value("Work Management Actuals", nm, ["workflow_state","assignment"], as_dict=True)
+        wmg_e = wmg_doc_err(nm) if nm else ""  # one worker, one day, one task -- again at every step
+        cur = frappe.db.get_value("Work Management Actuals", nm,
+            ["workflow_state", "assignment", "farm", "entered_by", "owner", "hr_approved_by"], as_dict=True)
+        wmg_se = wmg_step_err("actuals_gm", cur.farm, [cur.entered_by or cur.owner, cur.hr_approved_by],
+                              "Work Management Actuals", nm) if cur else ""
         if not STAGE_ON["actuals_gm"]:
             out["error"] = "The GM step is switched off for this project."
-        elif not (STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES):
+        elif not (STAGE_ROLE["actuals_gm"] in MY_ROLES or "System Manager" in MY_ROLES
+                  or (cur and wmg_si("actuals_gm", cur.farm, [cur.entered_by or cur.owner, cur.hr_approved_by]))):
             out["error"] = ("Only " + str(STAGE_ROLE["actuals_gm"]) + " can take this step."
                             " You do not hold it.")
         elif not cur or cur.workflow_state != STAGE_STATE["actuals_gm"]:
             out["error"] = "Not at GM stage (state: " + str(cur.workflow_state if cur else "not found") + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
+        elif wmg_e:
+            out["error"] = wmg_e
         else:
             # move to CONFIRMED (a docstatus=1 workflow state) via direct DB writes, bypassing the
             # get_doc doctype-access gate and the workflow engine. Trusted script; GM stage verified above.
@@ -1514,6 +2034,17 @@ def wm_actuals(**kwargs):
                 rej_role = STAGE_ROLE["actuals_gm"]
             if not (rej_role in MY_ROLES or "System Manager" in MY_ROLES):
                 rej_err = "Only " + str(rej_role) + " can reject at this stage. You do not hold it."
+        if not rej_err and cur:
+            # a payroll check's locked dates stay as approved, and a row already in a
+            # check or paid cannot be rejected from under it
+            rj_lock = wmg_locked(cur.farm, [p[1] for p in wmg_doc_pairs(nm)])
+            if rj_lock:
+                rej_err = ("These dates are locked by payroll check " + rj_lock +
+                           ". Ask HR or the GM to send the check back first.")
+            elif frappe.db.sql("""SELECT 1 FROM `tabWork Actuals Employee` WHERE parent = %s
+                                  AND (IFNULL(paid, 0) = 1 OR IFNULL(payment_ref, '') != ''""" + (" OR IFNULL(payroll_check, '') != ''" if WMG_PC_DT else "") +
+                               """) LIMIT 1""", (nm,)):
+                rej_err = nm + " has worker-days already in a payment run, a payroll check or paid, so it cannot be rejected."
         if rej_err:
             out["error"] = rej_err
         else:
@@ -1718,8 +2249,25 @@ def wm_actuals(**kwargs):
                       )
             """, (plan,), as_dict=True)
             finalised = 0
+            close_skipped = []
             for ar in open_acts:
                 if frappe.utils.flt(ar.q) <= 0:
+                    continue
+                # one worker, one day, one task: a closing GM confirms only clean records;
+                # a clashing one stays open and turns up in the payroll check
+                # a rejected record stays rejected -- an early close is no way to pay work
+                # somebody refused -- and a draft is confirmed only when the GM ticked it
+                if ar.ws == "Rejected":
+                    continue
+                # A draft below target can only ever be confirmed here, so a clean one is
+                # confirmed as before; the GM can leave named drafts out (skip_drafts).
+                # (Final review 2026-11-12: requiring a tick nobody could give stranded
+                # the work unpaid and blocked every payroll check over its dates.)
+                if ar.ws == "Draft" and ar.nm in [x.strip() for x in str(frappe.form_dict.get("skip_drafts") or "").split(",")]:
+                    close_skipped.append(ar.nm)
+                    continue
+                if wmg_doc_err(ar.nm):
+                    close_skipped.append(ar.nm)
                     continue
                 # The doctype has a Workflow that only allows Pending GM -> CONFIRMED. There is NO
                 # Draft/Rejected/Pending* -> CONFIRMED transition, so doc.save() with a CONFIRMED state
@@ -1795,6 +2343,7 @@ def wm_actuals(**kwargs):
             out["plan"] = plan
             out["close_state"] = "Closed"
             out["finalised_actuals"] = finalised
+            out["skipped_duplicates"] = close_skipped
             out["workers_released"] = released
             out["fulfilled_qty"] = fulfilled
             out["remaining_qty"] = remaining
@@ -1984,8 +2533,8 @@ def wm_actuals(**kwargs):
                 INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
-                  AND IFNULL(we.status,'Active') = 'Active'
-                  AND a.from_date <= %s AND a.to_date >= %s
+                  AND COALESCE(we.start_date, a.from_date) <= %s
+                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
             """, (nm, adates.to_date, adates.from_date), as_dict=True)
             for r in busyrows:
                 busy_map[r.emp] = 1
@@ -2009,6 +2558,17 @@ def wm_actuals(**kwargs):
         err = None
         if not nm or not outgoing or not replacement: err = "Outgoing, replacement, and dates are required"
         if not left_date or not start_date: err = "Both the left date and the replacement start date are required"
+        if not err:
+            err = wmg_farm_err(frappe.db.get_value("Work Management Assigner", nm, "farm"),
+                               "swap a worker on this farm's work") or None
+        if not err:
+            err = wmg_left_err(nm, outgoing, left_date) or None
+        if not err and str(start_date) < str(left_date):
+            err = "The replacement cannot start before the worker they replace leaves (" + str(left_date) + ")."
+        if not err and frappe.db.get_value("Employee", replacement, "status") != "Active":
+            err = "The replacement is not an active employee."
+        if not err:
+            err = wmg_backdate_err(start_date) or None
         d = None
         if not err:
             d = frappe.get_doc("Work Management Assigner", nm)
@@ -2038,11 +2598,12 @@ def wm_actuals(**kwargs):
                     INNER JOIN `tabWork Management Assigner` a ON we.parent = a.name
                     WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                       AND a.name != %s
-                      AND IFNULL(we.status,'Active') = 'Active'
                       AND we.employee = %s
-                      AND a.from_date <= %s AND a.to_date >= %s
+                      AND COALESCE(we.start_date, a.from_date) <= %s
+                      AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
                     LIMIT 1
-                """, (nm, replacement, rdates.to_date, rdates.from_date), as_dict=True)
+                """, (nm, replacement, rdates.to_date,
+                      str(start_date) if start_date and str(start_date) > str(rdates.from_date) else rdates.from_date), as_dict=True)
                 if clash:
                     err = "Replacement is already assigned elsewhere for an overlapping period (" + str(clash[0].asg) + "). Pick someone else."
         if err:
@@ -2059,6 +2620,7 @@ def wm_actuals(**kwargs):
                 # This assignment is SUBMITTED (docstatus=1). doc.save() is blocked on submitted docs,
                 # so we edit the child rows + parent counts via direct DB writes (allowed, no re-approval).
                 rep_name = frappe.db.get_value("Employee", replacement, "employee_name")
+                wmg_log_backdate(nm, start_date)
                 # 1) mark outgoing row Left + left_date
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "status", "Left", update_modified=False)
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "left_date", left_date, update_modified=False)
@@ -2088,6 +2650,261 @@ def wm_actuals(**kwargs):
                 out["substituted"] = outgoing
                 out["replacement"] = replacement
                 out["active_count"] = active
+
+    elif action == "hist_meta":
+        # which farms this person sees in History, and where the pay week starts
+        out["available"] = 1
+        out["manage_farms"] = WS_MANAGE_FARMS
+        out["view_farms"] = WS_VIEW_FARMS
+        out["week_starts_on"] = frappe.db.get_single_value("Work Management Settings", "pay_week_starts_on") or "Sunday"
+
+    # ---------------------------------------------------------------------
+    # CLEAN-UP (ws_) -- what a farm manager clears in a payroll check: remind
+    # whoever left a draft, or remove a rejected record that will never be fixed.
+    # (The weekly sign-off these once served was replaced by the payroll check.)
+    # ---------------------------------------------------------------------
+    elif action == "ws_notify" or action == "ws_delete_rejected":
+        # The clean-up a farm manager does before signing off: remind whoever left a
+        # draft, or remove a rejected record that will never be fixed.
+        wn_name = frappe.form_dict.get("name")
+        wn = frappe.db.get_value("Work Management Actuals", wn_name,
+            ["name", "workflow_state", "docstatus", "farm", "task", "assignment", "block_section",
+             "entered_by", "owner", "from_date", "to_date", "entry_date"], as_dict=True) if wn_name else None
+        if not wn:
+            out["error"] = "no such actuals record: " + str(wn_name)
+        elif wn.farm not in WS_MANAGE_FARMS:
+            out["error"] = "Only " + str(wn.farm) + "'s farm manager or the GM can do that."
+        elif action == "ws_notify":
+            wn_to = wn.entered_by or wn.owner
+            if wn.workflow_state != "Draft":
+                out["error"] = "Only a draft can be sent back to the person entering it."
+            elif not wn_to or not frappe.db.get_value("User", wn_to, "enabled"):
+                out["error"] = "Whoever entered " + wn.name + " has no active login. Complete it yourself."
+            else:
+                wn_me = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
+                wn_task = frappe.db.get_value("Task", wn.task, "subject") or wn.task
+                wn_url = frappe.utils.get_url("/work-actuals")
+                frappe.sendmail(recipients=[wn_to], cc=[x for x in WS_NOTIFY if x != wn_to],
+                    sender=WS_SENDER or None,
+                    subject="Please finish your actuals: " + str(wn_task) + " (" + str(wn.farm) + ")",
+                    message=("<p>" + frappe.utils.escape_html(wn_me) + " is closing " +
+                             frappe.utils.escape_html(str(wn.farm)) + "'s pay week and found this "
+                             "actuals record still saved as a draft:</p><ul>"
+                             "<li><b>" + frappe.utils.escape_html(str(wn_task)) + "</b> · " +
+                             frappe.utils.escape_html(str(wn.block_section or "")) + "</li>"
+                             "<li>" + str(wn.from_date) + " to " + str(wn.to_date) + " (" + wn.name + ")</li></ul>"
+                             "<p>Workers are not paid for this work until it is submitted and approved. "
+                             "Please finish entering it and press <b>Submit for Approval</b>: "
+                             "<a href=\"" + wn_url + "\">open Actuals</a>.</p>"))
+                frappe.get_doc("Work Management Actuals", wn.name).add_comment("Comment",
+                    "Reminder sent to " + str(wn_to) + " by " + str(frappe.session.user) +
+                    (" (cc " + ", ".join(WS_NOTIFY) + ")" if WS_NOTIFY else ""))
+                frappe.db.commit()
+                out["sent_to"] = wn_to
+                out["cc"] = WS_NOTIFY
+        else:
+            wn_reason = (frappe.form_dict.get("reason") or "").strip()
+            if wn.workflow_state != "Rejected" or frappe.utils.cint(wn.docstatus) != 0:
+                out["error"] = "Only a rejected record can be deleted (" + wn.name + " is " + str(wn.workflow_state) + ")."
+            elif not wn_reason:
+                out["error"] = "Say why it is being deleted."
+            elif frappe.db.sql("""SELECT 1 FROM `tabWork Actuals Employee` WHERE parent = %(p)s
+                                  AND (IFNULL(paid, 0) = 1 OR IFNULL(payment_ref, '') != '') LIMIT 1""",
+                               {"p": wn.name}):
+                out["error"] = wn.name + " has rows already in a payment, so it cannot be deleted."
+            else:
+                wn_doc = frappe.get_doc("Work Management Actuals", wn.name)
+                wn_rows = wn_doc.get("employees") or []
+                wn_log = frappe.new_doc("Work Management Deleted Actuals")
+                wn_log.actuals = wn.name
+                wn_log.farm = wn.farm
+                wn_log.task = wn.task
+                wn_log.assignment = wn.assignment
+                wn_log.from_date = wn.from_date
+                wn_log.to_date = wn.to_date
+                wn_log.entered_by = wn.entered_by or wn.owner
+                wn_log.deleted_by = frappe.session.user
+                wn_log.deleted_on = frappe.utils.now()
+                wn_log.reason = wn_reason
+                wn_log.worker_days = len([x for x in wn_rows if frappe.utils.flt(x.actual_quantity) > 0
+                                          or frappe.utils.flt(x.amount) > 0])
+                wn_log.amount = sum(frappe.utils.flt(x.amount) for x in wn_rows)
+                wn_log.snapshot = frappe.as_json({
+                    "name": wn.name, "farm": wn.farm, "task": wn.task, "assignment": wn.assignment,
+                    "block_section": wn.block_section, "from_date": str(wn.from_date),
+                    "to_date": str(wn.to_date), "entered_by": wn.entered_by,
+                    "rows": [{"employee": x.employee, "employee_name": x.employee_name,
+                              "work_date": str(x.work_date), "actual_quantity": x.actual_quantity,
+                              "hours": x.hours, "amount": x.amount,
+                              "count_in_payroll": x.count_in_payroll} for x in wn_rows]})
+                wn_log.insert(ignore_permissions=True)
+                frappe.delete_doc("Work Management Actuals", wn.name, ignore_permissions=True)
+                frappe.db.commit()
+                out["deleted"] = wn.name
+                out["log"] = wn_log.name
+
+    # ---------------------------------------------------------------------
+    # HISTORY (hist_) -- one farm, all time, every status
+    # ---------------------------------------------------------------------
+    elif (action == "hist_people" or action == "hist_tasks" or action == "hist_employee"
+          or action == "hist_activity" or action == "hist_calendar"):
+        hs_farm = (frappe.form_dict.get("farm") or "").strip()
+        hs_from = frappe.form_dict.get("from_date") or "2000-01-01"
+        hs_to = frappe.form_dict.get("to_date") or "2999-12-31"
+        if not hs_farm:
+            out["error"] = "Pick a farm."
+        elif hs_farm not in WS_VIEW_FARMS:
+            out["error"] = "You do not see " + hs_farm + "'s history."
+        elif action == "hist_people":
+            hs_q = "%" + (frappe.form_dict.get("q") or "").strip() + "%"
+            out["people"] = frappe.db.sql("""
+                SELECT w.employee, MAX(w.employee_name) employee_name,
+                       COUNT(DISTINCT w.work_date) days, MAX(w.work_date) last_day
+                FROM `tabWork Actuals Employee` w
+                INNER JOIN `tabWork Management Actuals` ac ON ac.name = w.parent
+                WHERE ac.farm = %(farm)s AND w.parenttype = 'Work Management Actuals'
+                  AND (w.employee LIKE %(q)s OR w.employee_name LIKE %(q)s)
+                GROUP BY w.employee ORDER BY employee_name LIMIT 400
+            """, {"farm": hs_farm, "q": hs_q}, as_dict=True)
+        elif action == "hist_tasks":
+            out["tasks"] = frappe.db.sql("""
+                SELECT ac.task, MAX(t.subject) subject, COUNT(DISTINCT ac.name) records,
+                       MAX(ac.to_date) last_day
+                FROM `tabWork Management Actuals` ac LEFT JOIN `tabTask` t ON t.name = ac.task
+                WHERE ac.farm = %(farm)s AND IFNULL(ac.task, '') != ''
+                GROUP BY ac.task ORDER BY subject
+            """, {"farm": hs_farm}, as_dict=True)
+        elif action == "hist_employee":
+            hs_emp = frappe.form_dict.get("employee")
+            if not hs_emp:
+                out["error"] = "Pick a worker."
+            else:
+                out["employee"] = frappe.db.get_value("Employee", hs_emp,
+                    ["name", "employee_name", "designation", "employment_type", "status",
+                     "custom_farm", "date_of_joining"], as_dict=True)
+                out["days"] = frappe.db.sql("""
+                    SELECT w.work_date, ac.name actuals, ac.workflow_state, ac.task, t.subject task_name,
+                           ac.block_section, ac.assignment, ac.team_leader, ac.entered_by,
+                           w.actual_quantity qty, w.hours, w.amount, w.count_in_payroll,
+                           w.paid, w.payment_ref
+                    FROM `tabWork Actuals Employee` w
+                    INNER JOIN `tabWork Management Actuals` ac ON ac.name = w.parent
+                    LEFT JOIN `tabTask` t ON t.name = ac.task
+                    WHERE ac.farm = %(farm)s AND w.parenttype = 'Work Management Actuals'
+                      AND w.employee = %(e)s AND w.work_date BETWEEN %(f)s AND %(t)s
+                    ORDER BY w.work_date DESC, ac.name
+                """, {"farm": hs_farm, "e": hs_emp, "f": hs_from, "t": hs_to}, as_dict=True)
+                # deleted rejected records, from the log's snapshot
+                hs_del = []
+                if frappe.db.exists("DocType", "Work Management Deleted Actuals"):
+                    for hs_l in frappe.db.get_all("Work Management Deleted Actuals",
+                            filters={"farm": hs_farm}, fields=["actuals", "task", "deleted_by",
+                                                               "deleted_on", "reason", "snapshot"]):
+                        hs_snap = json.loads(hs_l.snapshot or "{}")
+                        for hs_r in hs_snap.get("rows") or []:
+                            if hs_r.get("employee") == hs_emp and hs_from <= str(hs_r.get("work_date")) <= hs_to:
+                                hs_del.append({"work_date": hs_r.get("work_date"), "actuals": hs_l.actuals,
+                                               "workflow_state": "Deleted", "task": hs_l.task,
+                                               "task_name": frappe.db.get_value("Task", hs_l.task, "subject"),
+                                               "block_section": hs_snap.get("block_section"),
+                                               "qty": hs_r.get("actual_quantity"), "hours": hs_r.get("hours"),
+                                               "amount": hs_r.get("amount"), "paid": 0,
+                                               "deleted_by": hs_l.deleted_by, "reason": hs_l.reason})
+                out["deleted"] = hs_del
+        elif action == "hist_activity":
+            hs_task = frappe.form_dict.get("task")
+            if not hs_task:
+                out["error"] = "Pick an activity."
+            else:
+                out["task_name"] = frappe.db.get_value("Task", hs_task, "subject") or hs_task
+                out["days"] = frappe.db.sql("""
+                    SELECT w.work_date, ac.workflow_state,
+                           COUNT(DISTINCT w.employee) workers,
+                           COALESCE(SUM(w.actual_quantity), 0) qty,
+                           COALESCE(SUM(w.amount), 0) amount,
+                           COALESCE(SUM(CASE WHEN IFNULL(w.paid, 0) = 1 THEN w.amount ELSE 0 END), 0) paid,
+                           GROUP_CONCAT(DISTINCT ac.team_leader) leaders,
+                           GROUP_CONCAT(DISTINCT ac.block_section SEPARATOR ', ') blocks,
+                           GROUP_CONCAT(DISTINCT ac.name) records
+                    FROM `tabWork Actuals Employee` w
+                    INNER JOIN `tabWork Management Actuals` ac ON ac.name = w.parent
+                    WHERE ac.farm = %(farm)s AND w.parenttype = 'Work Management Actuals'
+                      AND ac.task = %(task)s AND w.work_date BETWEEN %(f)s AND %(t)s
+                      AND (IFNULL(w.actual_quantity, 0) > 0 OR IFNULL(w.amount, 0) > 0)
+                    GROUP BY w.work_date, ac.workflow_state
+                    ORDER BY w.work_date DESC
+                """, {"farm": hs_farm, "task": hs_task, "f": hs_from, "t": hs_to}, as_dict=True)
+                out["workers"] = frappe.db.sql("""
+                    SELECT w.employee, MAX(w.employee_name) employee_name,
+                           COUNT(DISTINCT w.work_date) days, COALESCE(SUM(w.actual_quantity), 0) qty,
+                           COALESCE(SUM(w.amount), 0) amount
+                    FROM `tabWork Actuals Employee` w
+                    INNER JOIN `tabWork Management Actuals` ac ON ac.name = w.parent
+                    WHERE ac.farm = %(farm)s AND w.parenttype = 'Work Management Actuals'
+                      AND ac.task = %(task)s AND w.work_date BETWEEN %(f)s AND %(t)s
+                      AND ac.workflow_state = 'CONFIRMED'
+                    GROUP BY w.employee ORDER BY days DESC LIMIT 500
+                """, {"farm": hs_farm, "task": hs_task, "f": hs_from, "t": hs_to}, as_dict=True)
+        else:
+            # one month, a cell per day: who worked, what it cost, and what is wrong
+            hs_month = (frappe.form_dict.get("month") or frappe.utils.today()[:7])[:7]
+            hs_m1 = frappe.utils.getdate(hs_month + "-01")
+            hs_m2 = frappe.utils.add_days(frappe.utils.add_months(hs_m1, 1), -1)
+            hs_days = {}
+            for hs_r in frappe.db.sql("""
+                SELECT w.work_date d, ac.workflow_state st,
+                       COUNT(DISTINCT w.employee) workers, COUNT(DISTINCT ac.name) records,
+                       COALESCE(SUM(w.amount), 0) amount,
+                       COALESCE(SUM(CASE WHEN IFNULL(w.paid, 0) = 1 THEN w.amount ELSE 0 END), 0) paid
+                FROM `tabWork Actuals Employee` w
+                INNER JOIN `tabWork Management Actuals` ac ON ac.name = w.parent
+                WHERE ac.farm = %(farm)s AND w.parenttype = 'Work Management Actuals'
+                  AND ac.docstatus < 2 AND w.work_date BETWEEN %(f)s AND %(t)s
+                  AND (IFNULL(w.actual_quantity, 0) > 0 OR IFNULL(w.amount, 0) > 0)
+                GROUP BY w.work_date, ac.workflow_state
+            """, {"farm": hs_farm, "f": hs_m1, "t": hs_m2}, as_dict=True):
+                hs_k = str(hs_r.d)
+                hs_c = hs_days.get(hs_k) or {"date": hs_k, "workers": 0, "confirmed_amount": 0, "paid": 0,
+                                              "drafts": 0, "rejected": 0, "pending": 0, "dup_workers": 0}
+                if hs_r.st == "CONFIRMED":
+                    hs_c["workers"] = hs_c["workers"] + hs_r.workers
+                    hs_c["confirmed_amount"] = hs_c["confirmed_amount"] + frappe.utils.flt(hs_r.amount)
+                    hs_c["paid"] = hs_c["paid"] + frappe.utils.flt(hs_r.paid)
+                elif hs_r.st == "Draft":
+                    hs_c["drafts"] = hs_c["drafts"] + hs_r.records
+                elif hs_r.st == "Rejected":
+                    hs_c["rejected"] = hs_c["rejected"] + hs_r.records
+                else:
+                    hs_c["pending"] = hs_c["pending"] + hs_r.records
+                hs_days[hs_k] = hs_c
+            # the same worker on two records the same day (the Endebess duplicates)
+            for hs_r in frappe.db.sql("""
+                SELECT x.d, COUNT(*) n FROM (
+                  SELECT w.work_date d, w.employee
+                  FROM `tabWork Actuals Employee` w
+                  INNER JOIN `tabWork Management Actuals` ac ON ac.name = w.parent
+                  WHERE ac.farm = %(farm)s AND w.parenttype = 'Work Management Actuals'
+                    AND ac.workflow_state NOT IN ('Rejected') AND ac.docstatus < 2
+                    AND w.work_date BETWEEN %(f)s AND %(t)s AND IFNULL(w.amount, 0) > 0
+                  GROUP BY w.work_date, w.employee HAVING COUNT(DISTINCT ac.name) > 1) x
+                GROUP BY x.d
+            """, {"farm": hs_farm, "f": hs_m1, "t": hs_m2}, as_dict=True):
+                hs_k = str(hs_r.d)
+                if hs_days.get(hs_k):
+                    hs_days[hs_k]["dup_workers"] = hs_r.n
+            out["month"] = hs_month
+            out["from"] = str(hs_m1)
+            out["to"] = str(hs_m2)
+            out["days"] = [hs_days[k] for k in sorted(hs_days.keys())]
+            # the payroll checks over this month, with this farm's own review state
+            out["checks"] = frappe.db.sql("""
+                SELECT pc.name, pc.period_from, pc.period_to, pc.status, pc.is_top_up,
+                       cf.status farm_status, cf.approved_by
+                FROM `tabWork Management Payroll Check` pc
+                LEFT JOIN `tabWork Management Payroll Check Farm` cf ON cf.parent = pc.name AND cf.farm = %(farm)s
+                WHERE pc.status != 'Cancelled' AND pc.period_to >= %(f)s AND pc.period_from <= %(t)s
+                ORDER BY pc.period_from
+            """, {"farm": hs_farm, "f": hs_m1, "t": hs_m2}, as_dict=True) if WMG_PC_DT else []
 
     else:
         out["error"] = "unknown action: " + str(action)

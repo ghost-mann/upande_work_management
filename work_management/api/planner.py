@@ -94,6 +94,135 @@ def wm_planner(**kwargs):
                                  pluck="role")
 
 
+    # Who may do what. In the app port_app.py rebuilds this from Settings.
+
+
+    # HOW FAR BACK A WORKER MAY BE PUT ON WORK (one worker, one day, one task).
+    # WMA-863710 was created on 23 Oct covering 28 Sep - 11 Oct, beside the
+    # assignment that already held those days, and they were paid twice. A start
+    # more than max_backdate_days ago is refused unless the GM (or System Manager)
+    # does it with a reason, which is logged on the assignment.
+    WMG_BACKDATE_DAYS = 7
+    if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                        AND field = 'max_backdate_days' LIMIT 1"""):
+        WMG_BACKDATE_DAYS = frappe.utils.cint(
+            frappe.db.get_single_value("Work Management Settings", "max_backdate_days")) or 7
+    WMG_GM = 1 if (("General Manager" in MY_ROLES) or ("System Manager" in MY_ROLES)) else 0
+
+
+    def wmg_backdate_err(start):
+        """An error message when `start` is further back than allowed for this
+        caller, else "". The GM passes only with a `backdate_reason`."""
+        if not start:
+            return ""
+        oldest = frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)
+        if str(start) >= str(oldest):
+            return ""
+        if not WMG_GM:
+            return ("A worker cannot be put on work starting " + str(start) + ": that is more than " +
+                    str(WMG_BACKDATE_DAYS) + " days ago. Ask the GM, who can do it with a reason.")
+        if not (frappe.form_dict.get("backdate_reason") or "").strip():
+            return ("Starting " + str(start) + " is more than " + str(WMG_BACKDATE_DAYS) +
+                    " days ago. Give a reason (backdate_reason) and it will be logged on the assignment.")
+        return ""
+
+
+    def wmg_log_backdate(asg_name, start):
+        """Record a GM backdate on the assignment, once the start is known to be old."""
+        reason = (frappe.form_dict.get("backdate_reason") or "").strip()
+        if asg_name and reason and str(start) < str(frappe.utils.add_days(frappe.utils.today(), -WMG_BACKDATE_DAYS)):
+            frappe.get_doc("Work Management Assigner", asg_name).add_comment("Comment",
+                "Backdated to " + str(start) + " by " + str(frappe.session.user) + ": " + reason)
+
+
+
+    # WHAT AN ACTIVITY PAYS ON A GIVEN DAY (2026-11-12). A plan used to be priced at
+    # the Task's rate as of today, so a plan raised after a wage change for days
+    # before it paid every day at the new rate. The rate period covering the day
+    # answers it; the Task's own fields are the fallback where no period exists.
+    def wmg_task_terms(task, day):
+        """{custom_daily_target, custom_rate, custom_uom} for `task` on `day`."""
+        t = frappe.db.get_value("Task", task, ["custom_daily_target", "custom_rate", "custom_uom"], as_dict=True)
+        if not t:
+            return None
+        if day and frappe.db.exists("DocType", "Work Task Rate"):
+            p = frappe.db.sql("""
+                SELECT rate, daily_target, uom FROM `tabWork Task Rate`
+                WHERE task = %(t)s AND valid_from <= %(d)s AND (valid_to IS NULL OR valid_to >= %(d)s)
+                ORDER BY valid_from DESC LIMIT 1
+            """, {"t": task, "d": day}, as_dict=True)
+            if p and frappe.utils.flt(p[0].rate) > 0:
+                t["custom_rate"] = p[0].rate
+                if frappe.utils.flt(p[0].daily_target) > 0:
+                    t["custom_daily_target"] = p[0].daily_target
+                if p[0].uom:
+                    t["custom_uom"] = p[0].uom
+        return t
+
+    # STAND-INS AND TWO PAIRS OF EYES (2026-11-12). Nobody approves their own entry,
+    # and nobody takes two steps on one record. When the usual approver is the one
+    # who already acted, a stand-in listed in Settings takes the step -- they may
+    # take it without holding the step's role. A System Manager may override with a
+    # reason, which is logged on the record and raised in the payroll check.
+    WMG_SI = []
+    if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+        for wmg_r in frappe.db.get_all("Work Management Approval Stand In",
+                filters={"parenttype": "Work Management Settings", "user": frappe.session.user},
+                fields=["stage", "farm"]):
+            WMG_SI.append((wmg_r.stage, str(wmg_r.farm or "").strip()))
+
+
+    WMG_SI_ROLE = {"actuals_fm": "actuals_farm_manager", "actuals_hr": "actuals_hr_head", "actuals_gm": "actuals_gm",
+                   "assigner_fm": "assigner_farm_manager", "assigner_hr": "assigner_hr_head", "assigner_gm": "assigner_gm",
+                   "planner_fm": "planner_farm_approval"}
+
+
+    def wmg_si(stage, farm, others=None):
+        """1 when this person is a listed stand-in for `stage` on `farm` -- and, when
+        `others` is given, only where one of them (the enterer or the previous
+        approver) holds the step's own role: a stand-in covers a conflicted usual
+        approver, not the step in general (final review, 2026-11-12)."""
+        listed = 0
+        for wmg_s in WMG_SI:
+            if wmg_s[0] == stage and (not wmg_s[1] or wmg_s[1] == str(farm or "").strip()):
+                listed = 1
+        if not listed or others is None:
+            return listed
+        role = STAGE_ROLE.get(WMG_SI_ROLE.get(stage)) if WMG_SI_ROLE.get(stage) else None
+        for o in others:
+            if o and o != frappe.session.user and role and role in frappe.get_roles(o):
+                return 1
+        return 0
+
+
+    def wmg_step_err(stage, farm, others, doctype, name):
+        """The refusal when this person already acted on the record (entered it, or
+        took the step before), else "". A System Manager's logged override passes."""
+        me = frappe.session.user
+        if me not in [o for o in others if o]:
+            return ""
+        reason = (frappe.form_dict.get("override_reason") or "").strip()
+        if "System Manager" in frappe.get_roles() and reason:
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Two-pairs-of-eyes override at " + stage + " by " + me + ": " + reason)
+            return ""
+        sis = []
+        if frappe.db.exists("DocType", "Work Management Approval Stand In"):
+            for r in frappe.db.get_all("Work Management Approval Stand In",
+                    filters={"parenttype": "Work Management Settings", "stage": stage}, fields=["user", "farm"]):
+                if r.user != me and (not r.farm or str(r.farm).strip() == str(farm or "").strip()):
+                    sis.append(r.user)
+        if not sis:
+            # nobody to hand it to yet: let it through rather than stall the farm, and say
+            # so on the record -- the payroll check raises it for the GM to acknowledge
+            frappe.get_doc(doctype, name).add_comment("Comment",
+                "Same person at " + stage + " (" + me + "): no stand-in is listed for this step yet.")
+            return ""
+        return ("You already acted on this record (you entered it or took the step before), so somebody else "
+                "must take this step" + (": " + ", ".join(sis) + "." if sis else
+                ". Add a stand-in under Work Management Settings > Approval stand-ins."))
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -115,6 +244,27 @@ def wm_planner(**kwargs):
     # empty FARMS means the site is unconfigured, not that this person is permitted
     # nothing: the pickers are empty there anyway, so there is nothing to defend and
     # a guard that fired would only break a fresh install.
+    # WRITES ARE POST-ONLY, AND EACH NEEDS ITS CAPABILITY (2026-11-12). A link opened
+    # from an email or chat is a GET, and a GET skips Frappe's CSRF check -- so it
+    # cannot be allowed to approve, purge or re-price anything. Reads stay GET. The
+    # capability named against an action is the Settings grant it needs; "" means
+    # the action makes its own role and farm checks further down.
+    WMG_WRITES = {
+        "approve": "", "reject": "", "submit": "", "week_approve": "", "week_return": ""
+    }
+    WMG_DENY = ""
+    if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
+        if frappe.request and frappe.request.method != "POST":
+            WMG_DENY = ("This changes data, so it has to be sent from the screen (as a POST), "
+                        "not opened as a link.")
+        elif WMG_WRITES.get(action):
+            wmg_need = WMG_WRITES.get(action)
+            wmg_held = frappe.get_roles()
+            if "System Manager" not in wmg_held and not [r for r in (CAPABILITIES.get(wmg_need) or []) if r in wmg_held]:
+                WMG_DENY = ("You are not allowed to do this. It needs the '" + wmg_need +
+                            "' permission in Work Management Settings.")
+
+
     FARM_ASKED = (frappe.form_dict.get("farm") or "").strip()
     FARM_DENIED = ""
     if FARM_ASKED and FARMS and FARM_ASKED not in FARMS:
@@ -126,6 +276,8 @@ def wm_planner(**kwargs):
 
     if FARM_DENIED:
         out["error"] = FARM_DENIED
+    elif WMG_DENY:
+        out["error"] = WMG_DENY
     elif action == "meta":
         out["farms"] = FARMS
         out["company"] = DEFAULT_COMPANY
@@ -451,6 +603,17 @@ def wm_planner(**kwargs):
         if not task: err = "Task is required"
         if qty <= 0: err = "Quantity must be greater than zero"
         if not from_date or not to_date: err = "Date range is required"
+        if not err and str(to_date) < str(from_date): err = "The plan ends before it starts."
+        # a plan whose days span a change in what the activity pays cannot carry one
+        # rate: split it at the change
+        if not err and task and frappe.db.exists("DocType", "Work Task Rate") and frappe.db.sql("""
+                SELECT 1 FROM `tabWork Task Rate` WHERE task = %(t)s
+                  AND valid_from > %(f)s AND valid_from <= %(to)s LIMIT 1""",
+                {"t": task, "f": from_date, "to": to_date}):
+            err = ("What this activity pays changes during these dates. Split the plan at the change, "
+                   "so each part carries the rate of its own days.")
+        if not err and not plan_name:
+            err = wmg_backdate_err(from_date) or None
         # Submitting crosses a workflow transition; saving a draft does not, and
         # stays open to whoever may raise the plan. The step's own configured role
         # gates it and System Manager bypasses -- may_take_step()'s rule, which
@@ -557,8 +720,7 @@ def wm_planner(**kwargs):
                     # when the line is already over-consumed -- clamping to 0 would make
                     # a genuine overrun look like an exact fit, and would disagree with
                     # what headroom() reports for the same line at the same moment.
-                    cap_tinfo = frappe.db.get_value("Task", task,
-                        ["custom_daily_target", "custom_rate"], as_dict=True)
+                    cap_tinfo = wmg_task_terms(task, from_date)
                     cap_rate = frappe.utils.flt(cap_tinfo.custom_rate) if cap_tinfo else 0
                     # identical arithmetic to d.total_cost = qty * rate below -- the cap
                     # must check the same figure the document is saved with, unrounded.
@@ -577,7 +739,7 @@ def wm_planner(**kwargs):
                 out["error"] = cap_err
             else:
                 out["master_plan"] = cap_mp[0].name
-                tinfo = frappe.db.get_value("Task", task, ["custom_daily_target","custom_rate","custom_uom"], as_dict=True)
+                tinfo = wmg_task_terms(task, from_date)
                 tgt = frappe.utils.flt(tinfo.custom_daily_target) if tinfo else 0
                 rate = frappe.utils.flt(tinfo.custom_rate) if tinfo else 0
                 uom = tinfo.custom_uom if tinfo else None
@@ -662,11 +824,13 @@ def wm_planner(**kwargs):
     elif action == "approve":
         nm = frappe.form_dict.get("name")
         ap_doc = frappe.db.get_value("Work Management Planner", nm,
-            ["workflow_state", "farm"], as_dict=True)
+            ["workflow_state", "farm", "requested_by", "owner"], as_dict=True)
+        wmg_se = wmg_step_err("planner_fm", ap_doc.farm, [ap_doc.requested_by or ap_doc.owner],
+                              "Work Management Planner", nm) if ap_doc else ""
         cur_ws = ap_doc.workflow_state if ap_doc else None
         if not ap_doc:
             out["error"] = "no such plan: " + str(nm)
-        elif not AP_BYPASS and ap_doc.farm not in AP_FARMS:
+        elif not AP_BYPASS and ap_doc.farm not in AP_FARMS and not wmg_si("planner_fm", ap_doc.farm, [ap_doc.requested_by or ap_doc.owner]):
             out["error"] = ("You cannot approve plans for " + str(ap_doc.farm) +
                             ". A farm manager decides their own farm; the general manager "
                             "and the HR head decide any farm.")
@@ -674,6 +838,8 @@ def wm_planner(**kwargs):
             out["error"] = "The Farm Approval step is switched off for this project."
         elif cur_ws != STAGE_STATE["planner_farm_approval"]:
             out["error"] = "Not awaiting approval (state: " + str(cur_ws) + ")"
+        elif wmg_se:
+            out["error"] = wmg_se
         else:
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", STAGE_NEXT["planner_farm_approval"], update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "docstatus", 1, update_modified=False)

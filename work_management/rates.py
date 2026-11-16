@@ -162,6 +162,41 @@ def sync_active_periods():
 # ----------------------------------------------------------------- reverse hook
 
 
+def task_validate(doc, method=None):
+	"""Only somebody granted set_rates may change what a Task pays (2026-11-12).
+
+	A Task's rate is copied onto every plan raised against it, so an edit in the
+	desk Task list re-prices future work at once. It used to need nothing more
+	than write access to Task. A rate that matches no wage tier is allowed but
+	said out loud, so a slipped decimal is seen when it is typed.
+	"""
+	if frappe.flags.get("wm_rate_sync") or doc.is_new():
+		return
+	before = doc.get_doc_before_save()
+	if not before:
+		return
+	if all(_same(before.get(field), doc.get(field)) for field in TASK_RATE_FIELDS):
+		return
+	from work_management import capabilities
+	from work_management.api.config import get_config
+
+	if not capabilities.may("set_rates", frappe.get_roles(), get_config().get("capabilities")):
+		frappe.throw(
+			frappe._("Changing what an activity pays needs the 'Set task rates' permission "
+				"in Work Management Settings."),
+			frappe.PermissionError,
+		)
+	rate = flt(doc.get("custom_rate"))
+	if rate:
+		verdict, implied, _wage = classify(rate, flt(doc.get("custom_daily_target")))
+		if verdict != "derived":
+			frappe.msgprint(
+				frappe._("This rate does not match any daily wage: {0} a day at the daily target. "
+					"Check it before plans are raised.").format(implied),
+				indicator="orange", alert=True,
+			)
+
+
 def task_on_update(doc, method=None):
 	"""Record a rate period whenever a Task's rate fields change.
 
