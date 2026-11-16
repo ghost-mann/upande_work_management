@@ -23,14 +23,39 @@ from frappe.utils import add_days, flt, getdate, nowdate
 #: Rate fields mirrored between Task and Work Task Rate.
 TASK_RATE_FIELDS = ("custom_rate", "custom_uom", "custom_daily_target")
 
-#: The daily wage in force before the 2026-07-21 rate card.
-LEGACY_DAILY_WAGE = 340.0
+SETTINGS = "Work Management Settings"
 
-#: Daily wage tiers that legitimately existed before the rate card. 340 is the
-#: general wage; 350 is a distinct tier covering packhouse, greenhouse, QC and
-#: reliever work. Both rise to 387, so both classify as wage-derived — a task
-#: is measured against whichever tier it sits closest to.
-KNOWN_DAILY_WAGES = (340.0, 350.0)
+
+def known_wages():
+	"""Daily wage tiers this site recognises, from Settings `known_daily_wages`.
+
+	A comma- or space-separated list of numbers, e.g. "340, 350". Anything that
+	is not a positive number is ignored. Empty when nothing is configured, and
+	callers then recognise no tier rather than assuming one.
+	"""
+	raw = frappe.db.get_single_value(SETTINGS, "known_daily_wages") or ""
+	wages = []
+	for part in raw.replace(";", ",").replace("\n", ",").replace(" ", ",").split(","):
+		part = part.strip()
+		if not part:
+			continue
+		try:
+			value = float(part)
+		except ValueError:
+			continue
+		if value > 0 and value not in wages:
+			wages.append(value)
+	return tuple(wages)
+
+
+def fallback_wage():
+	"""The wage to assume when a rate period does not name its own.
+
+	Settings `current_daily_wage`; 0.0 when it is empty, which callers read as
+	"no wage known, do not snap".
+	"""
+	return flt(frappe.db.get_single_value(SETTINGS, "current_daily_wage"))
+
 
 #: Within this fraction of the wage, a rate is treated as wage-derived outright.
 EXACT_BAND = 0.01
@@ -41,7 +66,7 @@ EXACT_BAND = 0.01
 REVIEW_BAND = 0.10
 
 #: Band comparisons are inclusive; this absorbs float representation error at
-#: the exact edge (340 * 1.10 == 374.00000000000006).
+#: the exact edge (340 * 1.10 == 374.00000000000006, for example).
 BAND_EPSILON = 1e-6
 
 
@@ -284,8 +309,8 @@ def classify(rate, daily_target, wages=None):
 
 	Returns ``(verdict, implied_daily_wage, matched_wage)`` where verdict is one
 	of ``derived`` / ``borderline`` / ``not_derived`` / ``unknown``. The rate is
-	measured against whichever known tier it sits closest to, so both the 340
-	and 350 populations are recognised.
+	measured against whichever known tier it sits closest to, so every tier in
+	Settings `known_daily_wages` is recognised.
 
 	``borderline`` is never decided automatically. The stored data is noisy —
 	337.50, 339.99, 340.05, 340.50, 345.00 all appear — and no numeric rule
@@ -298,7 +323,11 @@ def classify(rate, daily_target, wages=None):
 		return "unknown", None, None
 
 	implied = rate * daily_target
-	wage = min(wages or KNOWN_DAILY_WAGES, key=lambda w: abs(implied - w))
+	tiers = wages if wages else known_wages()
+	if not tiers:
+		# no tier configured: nothing to measure against, so do not guess
+		return "unknown", implied, None
+	wage = min(tiers, key=lambda w: abs(implied - w))
 	drift = abs(implied - wage)
 	# Bands are inclusive. The epsilon matters: 340 * 1.10 evaluates to
 	# 374.00000000000006, so an exact-boundary task would otherwise fall out of

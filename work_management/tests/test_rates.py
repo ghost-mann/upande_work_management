@@ -15,7 +15,18 @@ Every case below is a real row from the Kaitet live Task master as at
 import os
 import unittest
 
-from work_management.rates import KNOWN_DAILY_WAGES, LEGACY_DAILY_WAGE, classify
+from unittest import mock
+
+from work_management import rates
+from work_management.rates import classify as _classify
+
+# The tiers Kaitet's rate card used; the app no longer assumes them, so the tests
+# say them. (Settings `known_daily_wages` carries them on a running site.)
+KNOWN_DAILY_WAGES = (340.0, 350.0)
+
+
+def classify(rate, target, wages=None):
+	return _classify(rate, target, wages or KNOWN_DAILY_WAGES)
 
 
 class TestClassify(unittest.TestCase):
@@ -226,6 +237,30 @@ class TestNoWriteSendsNullToANotNullColumn(unittest.TestCase):
 		verdict, implied, _nearest = classify(15.0, 20.0)
 		self.assertEqual(verdict, "not_derived")
 		self.assertEqual(implied, 300.0)
+
+
+class TestSettingsDriven(unittest.TestCase):
+	def settings(self, value):
+		patcher = mock.patch.object(rates, "frappe")
+		fr = patcher.start()
+		self.addCleanup(patcher.stop)
+		fr.db.get_single_value.return_value = value
+
+	def test_list_is_parsed(self):
+		self.settings("340, 350")
+		self.assertEqual(rates.known_wages(), (340.0, 350.0))
+		self.settings("340 350;387\nx, -1, 0, 340")
+		self.assertEqual(rates.known_wages(), (340.0, 350.0, 387.0))
+
+	def test_empty_means_no_tiers_and_nothing_is_guessed(self):
+		self.settings(None)
+		self.assertEqual(rates.known_wages(), ())
+		self.assertEqual(_classify(340.0, 1)[0], "unknown")
+		self.assertEqual(rates.fallback_wage(), 0.0)
+
+	def test_fallback_wage_reads_current_daily_wage(self):
+		self.settings(387)
+		self.assertEqual(rates.fallback_wage(), 387.0)
 
 
 if __name__ == "__main__":

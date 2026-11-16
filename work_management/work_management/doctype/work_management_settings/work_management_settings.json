@@ -7,6 +7,7 @@
   "tab_general",
   "sb_general",
   "default_company",
+  "default_worker_employment_type",
   "block_exclude",
   "tab_farms",
   "farms_section",
@@ -76,6 +77,7 @@
   "tab_rates",
   "sb_rates",
   "current_daily_wage",
+  "known_daily_wages",
   "rate_periods_html",
   "sb_recalc",
   "rate_recalc_from",
@@ -104,6 +106,7 @@
   "qty_refuse_multiple",
   "sb_payroll_pack",
   "payroll_pack_enabled",
+  "payroll_pack_company",
   "payroll_pack_sender",
   "payroll_pack_to",
   "payroll_pack_bcc",
@@ -122,6 +125,13 @@
    "label": "Default Company",
    "options": "Company",
    "description": "Used on new plans, assignments and payments. Falls back to the site's own default company when empty."
+  },
+  {
+   "fieldname": "default_worker_employment_type",
+   "fieldtype": "Link",
+   "label": "Default Worker Employment Type",
+   "options": "Employment Type",
+   "description": "The employment type treated as a task worker when the Who Pays lists are not filled in (blank means Task Worker), and the one used for workforce counts and zero-value checks."
   },
   {
    "description": "Comma-separated keywords. Warehouses whose name contains any of these are hidden from the block picker (e.g. Store, Mill, Tank).",
@@ -448,6 +458,12 @@
    "read_only": 1
   },
   {
+   "fieldname": "known_daily_wages",
+   "fieldtype": "Small Text",
+   "label": "Known Daily Wages",
+   "description": "Comma-separated daily wage tiers this site has used, e.g. 340, 350. A task rate is classed as wage-derived when rate x daily target is within a few percent of one of these. Leave empty to recognise no tier."
+  },
+  {
    "fieldname": "rate_periods_html",
    "fieldtype": "HTML",
    "label": "Rate Coverage",
@@ -551,6 +567,13 @@
    "label": "Email the payroll approval pack",
    "default": "0",
    "description": "Email the pack when a task-pay Payroll Entry goes to Accounts. Arrives off: send a test first (send_test_pack), then tick this."
+  },
+  {
+   "fieldname": "payroll_pack_company",
+   "fieldtype": "Link",
+   "label": "Payroll Pack Company",
+   "options": "Company",
+   "description": "Only Payroll Entries of this company send the approval pack. Leave empty to use the Default Company."
   },
   {
    "fieldname": "payroll_pack_sender",

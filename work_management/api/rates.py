@@ -7,6 +7,7 @@ import json
 
 import frappe
 
+from work_management import rates as _rates
 from work_management.api.config import get_config
 
 
@@ -54,12 +55,13 @@ def wm_rates(**kwargs):
     # `NameError: name 'FARM_PROJECT' is not defined` on live from the day it was
     # added. Invisible from the app, where the port supplies it from get_config().
 
-    # Daily wage tiers that legitimately existed before the 2026-07-21 rate card.
-    # 340 is the general wage; 350 is a distinct tier covering packhouse, greenhouse,
-    # QC and reliever work. Both rise to 387, so both count as wage-derived — a task
-    # is measured against whichever tier it sits closest to.
-    LEGACY_DAILY_WAGE = 340.0
-    KNOWN_DAILY_WAGES = [340.0, 350.0]
+    # Daily wage tiers this site recognises come from Work Management Settings
+    # `known_daily_wages` (comma-separated, e.g. "340, 350"); a rate is measured against
+    # whichever tier it sits closest to. LEGACY_DAILY_WAGE is Settings
+    # `current_daily_wage`, the fallback when a period names no wage. Both are empty
+    # (no tiers / 0) until configured, and nothing is then assumed.
+    LEGACY_DAILY_WAGE = _rates.fallback_wage()
+    KNOWN_DAILY_WAGES = list(_rates.known_wages())
 
     # Within 1% of the wage -> wage-derived outright.
     # Within 10% -> borderline, needs a human decision and is NEVER auto-applied.
@@ -193,7 +195,8 @@ def wm_rates(**kwargs):
                 continue
             r = frappe.utils.flt(t.rate)
             g = frappe.utils.flt(t.tgt)
-            if not r or not g:
+            if not r or not g or not bf_tiers:
+                # no rate, no target, or no wage tier configured: nothing to measure
                 verdict = "unknown"
                 implied = 0
             else:
@@ -304,7 +307,7 @@ def wm_rates(**kwargs):
                     c_basis = frappe.utils.flt(
                         frappe.utils.flt(row.rate) * frappe.utils.flt(row.daily_target), 6)
                 else:
-                    c_basis = frappe.utils.flt(c_wage_in or LEGACY_DAILY_WAGE)
+                    c_basis = frappe.utils.flt(c_wage_in or LEGACY_DAILY_WAGE) or None
                 frappe.db.set_value("Work Task Rate", cn, {
                     "derived": 1 if c_derived else 0,
                     "daily_wage_basis": c_basis,
