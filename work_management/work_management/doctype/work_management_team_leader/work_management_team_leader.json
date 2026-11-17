@@ -20,19 +20,18 @@
  "fields": [
   {
    "fieldname": "user",
-   "fieldtype": "Link",
-   "options": "User",
+   "fieldtype": "Data",
    "label": "Team Leader",
    "reqd": 1,
    "unique": 1,
    "in_list_view": 1,
-   "set_only_once": 1
+   "set_only_once": 1,
+   "description": "Login (email) of someone with one, otherwise their Employee ID."
   },
   {
    "fieldname": "full_name",
    "fieldtype": "Data",
    "label": "Full Name",
-   "fetch_from": "user.full_name",
    "read_only": 1,
    "in_list_view": 1
   },
@@ -87,7 +86,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-02 12:00:00.000000",
+ "modified": "2026-11-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Team Leader",

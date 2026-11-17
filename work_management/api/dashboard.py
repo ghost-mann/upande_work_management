@@ -4046,7 +4046,8 @@ def wm_dashboard(**kwargs):
         for tl_u in list(tl_people.keys()) + list(tl_mp.keys()):
             if tl_names.get(tl_u):
                 continue
-            tl_names[tl_u] = frappe.db.get_value("User", tl_u, "full_name") or tl_u
+            tl_names[tl_u] = (frappe.db.get_value("User", tl_u, "full_name")
+                              or frappe.db.get_value("Employee", tl_u, "employee_name") or tl_u)
             tl_b = tl_people.get(tl_u) or {"plans": 0, "pmd": 0.0, "emd": 0.0, "amd": 0.0, "pc": 0.0,
                                            "ec": 0.0, "ac": 0.0, "good": 0, "fair": 0, "rework": 0}
             tl_m = tl_mp.get(tl_u) or {"activities": 0, "target_cost": 0.0, "done_cost": 0.0,
@@ -4072,7 +4073,8 @@ def wm_dashboard(**kwargs):
         out["window"] = {"from": tl_from, "to": tl_to}
         if tl_who:
             out["team_leader"] = tl_who
-            out["full_name"] = frappe.db.get_value("User", tl_who, "full_name") or tl_who
+            out["full_name"] = (frappe.db.get_value("User", tl_who, "full_name")
+                                or frappe.db.get_value("Employee", tl_who, "employee_name") or tl_who)
             tl_series = []
             for tl_wk in sorted(tl_weeks.keys()):
                 tl_b = tl_weeks[tl_wk]

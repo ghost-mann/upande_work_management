@@ -166,18 +166,17 @@
   },
   {
    "fieldname": "team_leader",
-   "fieldtype": "Link",
-   "options": "User",
+   "fieldtype": "Data",
    "label": "Team Leader",
    "in_list_view": 1,
    "columns": 2,
-   "description": "Who runs this activity: raises its weekly plans, assigns its crew and enters its actuals. Their KPIs are counted from the work they run."
+   "description": "Who runs this activity: raises its weekly plans, assigns its crew and enters its actuals. Their KPIs are counted from the work they run. Login (email) of someone with one, otherwise their Employee ID."
   }
  ],
  "idx": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-11-01 12:00:00.000000",
+ "modified": "2026-11-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Master Plan Activity",

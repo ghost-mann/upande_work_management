@@ -397,11 +397,15 @@ def wm_masterplan(**kwargs):
                 gl_opts = []
                 gl_seen = {}
                 if TL_DT:
+                    # a team leader is their login when they have one, else their
+                    # Employee ID (2026-11-17: workers without a login can lead too)
                     gl_src = frappe.db.sql("""
-                        SELECT t.user user, IFNULL(t.full_name, u.full_name) full_name
+                        SELECT t.user user, COALESCE(t.full_name, u.full_name, e.employee_name) full_name
                         FROM `tabWork Management Team Leader` t
-                        INNER JOIN `tabUser` u ON u.name = t.user
-                        WHERE t.farm = %(f)s AND t.active = 1 AND u.enabled = 1
+                        LEFT JOIN `tabUser` u ON u.name = t.user
+                        LEFT JOIN `tabEmployee` e ON e.name = t.user
+                        WHERE t.farm = %(f)s AND t.active = 1
+                          AND (u.enabled = 1 OR e.status = 'Active')
                         ORDER BY full_name
                     """, {"f": mp.farm}, as_dict=True)
                 else:
@@ -429,7 +433,8 @@ def wm_masterplan(**kwargs):
                     if gl_u and not gl_seen.get(gl_u):
                         gl_seen[gl_u] = 1
                         gl_opts.append({"user": gl_u, "on_farm": 0,
-                            "full_name": frappe.db.get_value("User", gl_u, "full_name") or gl_u})
+                            "full_name": frappe.db.get_value("User", gl_u, "full_name")
+                                         or frappe.db.get_value("Employee", gl_u, "employee_name") or gl_u})
                 out["leader_options"] = gl_opts
                 out["can_set_leaders"] = 1 if (CAN_EDIT and mp.workflow_state != "Rejected") else 0
                 # an approved plan is editable only by the accounts named in Settings,
@@ -602,8 +607,10 @@ def wm_masterplan(**kwargs):
                 if TL_DT:
                     for sx in frappe.db.sql("""
                         SELECT t.user FROM `tabWork Management Team Leader` t
-                        INNER JOIN `tabUser` u ON u.name = t.user
-                        WHERE t.farm = %(f)s AND t.active = 1 AND u.enabled = 1
+                        LEFT JOIN `tabUser` u ON u.name = t.user
+                        LEFT JOIN `tabEmployee` e ON e.name = t.user
+                        WHERE t.farm = %(f)s AND t.active = 1
+                          AND (u.enabled = 1 OR e.status = 'Active')
                     """, {"f": sv_farm}, as_dict=True):
                         sv_ok_tl[sx.user] = 1
                 sv_no_tl = []
@@ -862,8 +869,9 @@ def wm_masterplan(**kwargs):
                 sl_v = sl_leaders.get(sl_r.task) if sl_r.task in sl_leaders else sl_r.team_leader
                 sl_owner[sl_r.task] = sl_v or None
             for sl_u in sl_owner.values():
-                if sl_u and not frappe.db.get_value("User", sl_u, "enabled"):
-                    sl_err = str(sl_u) + " is not an active user."
+                if sl_u and not (frappe.db.get_value("User", sl_u, "enabled")
+                                 or frappe.db.get_value("Employee", {"name": sl_u, "status": "Active"}, "name")):
+                    sl_err = str(sl_u) + " is neither an active login nor an active employee."
                     break
             # the farm's active team leaders; a name the plan already carries may stay
             # even if it has since left the list, but nobody new comes from outside it
@@ -911,8 +919,10 @@ def wm_masterplan(**kwargs):
                     sl_err = "Stand-in row " + str(sl_i) + ": the To date is before the From date."
                 elif not sl_named.get(sl_tl):
                     sl_err = "Stand-in row " + str(sl_i) + ": " + str(sl_tl) + " leads no activity on this plan."
-                elif not frappe.db.get_value("User", sl_si, "enabled"):
-                    sl_err = "Stand-in row " + str(sl_i) + ": " + str(sl_si) + " is not an active user."
+                elif not (frappe.db.get_value("User", sl_si, "enabled")
+                          or frappe.db.get_value("Employee", {"name": sl_si, "status": "Active"}, "name")):
+                    sl_err = ("Stand-in row " + str(sl_i) + ": " + str(sl_si) +
+                              " is neither an active login nor an active employee.")
                 elif (TL_DT and not sl_ok_tl.get(sl_si) and not sl_si_had.get(
                         str(sl_tl) + "|" + str(sl_si) + "|" + str(sl_fd) + "|" + str(sl_td))):
                     # a stand-in comes from the same farm list as the team leaders
@@ -999,32 +1009,42 @@ def wm_masterplan(**kwargs):
             out["leaders"] = []
             out["candidates"] = []
             if tll_farm:
+                # `user` is the login, or the Employee ID of someone without one;
+                # `enabled` is the login's, or whether the employee is still Active
                 out["leaders"] = frappe.db.sql("""
-                    SELECT t.user, IFNULL(t.full_name, u.full_name) full_name, t.active,
-                           u.enabled, t.added_by, t.added_on, t.changed_by, t.changed_on
+                    SELECT t.user, COALESCE(t.full_name, u.full_name, e.employee_name) full_name, t.active,
+                           IF(u.name IS NOT NULL, u.enabled, IF(e.status = 'Active', 1, 0)) enabled,
+                           IF(u.name IS NOT NULL, 1, 0) has_login,
+                           t.added_by, t.added_on, t.changed_by, t.changed_on
                     FROM `tabWork Management Team Leader` t
-                    INNER JOIN `tabUser` u ON u.name = t.user
+                    LEFT JOIN `tabUser` u ON u.name = t.user
+                    LEFT JOIN `tabEmployee` e ON e.name = t.user
                     WHERE t.farm = %(f)s
                     ORDER BY t.active DESC, full_name
                 """, {"f": tll_farm}, as_dict=True)
             if tll_farm and out["can_manage"]:
-                # who can be added: people working this farm who have a login. Anyone
-                # already on a list is marked, because a person leads on one farm only.
+                # who can be added: everyone working this farm (2026-11-17), with or
+                # without a login. Someone with an enabled login is added as that login,
+                # anyone else by their Employee ID. Anyone already on a list is marked,
+                # because a person leads on one farm only.
                 for tll_e in frappe.db.sql("""
-                    SELECT e.user_id user, e.employee_name full_name, e.designation,
+                    SELECT IF(u.enabled = 1, e.user_id, e.name) user, e.name employee,
+                           e.employee_name full_name, e.designation,
+                           IF(u.enabled = 1, 1, 0) has_login,
                            t.farm tl_farm, t.active tl_active
                     FROM `tabEmployee` e
-                    INNER JOIN `tabUser` u ON u.name = e.user_id
-                    LEFT JOIN `tabWork Management Team Leader` t ON t.user = e.user_id
+                    LEFT JOIN `tabUser` u ON u.name = e.user_id
+                    LEFT JOIN `tabWork Management Team Leader` t
+                           ON t.user = IF(u.enabled = 1, e.user_id, e.name)
                     WHERE e.custom_farm = %(f)s AND e.status = 'Active'
-                      AND IFNULL(e.user_id, '') != '' AND u.enabled = 1
                     ORDER BY e.employee_name
                 """, {"f": tll_farm}, as_dict=True):
                     if tll_e.tl_farm == tll_farm:
                         continue
                     out["candidates"].append({
                         "user": tll_e.user, "full_name": tll_e.full_name,
-                        "designation": tll_e.designation,
+                        "designation": tll_e.designation, "employee": tll_e.employee,
+                        "has_login": tll_e.has_login,
                         "elsewhere": tll_e.tl_farm if (tll_e.tl_farm and tll_e.tl_active) else None})
 
     elif action == "tl_save":
@@ -1042,8 +1062,9 @@ def wm_masterplan(**kwargs):
         elif tls_farm not in TL_MANAGE_FARMS:
             tls_err = ("Only " + str(tls_farm) + "'s farm manager or the general manager can "
                        "change its team leaders.")
-        elif tls_active and not frappe.db.get_value("User", tls_user, "enabled"):
-            tls_err = str(tls_user) + " is not an active user."
+        elif tls_active and not (frappe.db.get_value("User", tls_user, "enabled")
+                                 or frappe.db.get_value("Employee", {"name": tls_user, "status": "Active"}, "name")):
+            tls_err = str(tls_user) + " is neither an active login nor an active employee."
         tls_rec = None
         if not tls_err:
             tls_rec = frappe.db.get_value("Work Management Team Leader", tls_user,
@@ -1068,7 +1089,8 @@ def wm_masterplan(**kwargs):
             tls_doc.farm = tls_farm
             tls_doc.active = tls_active
             if not tls_doc.full_name:
-                tls_doc.full_name = frappe.db.get_value("User", tls_user, "full_name")
+                tls_doc.full_name = (frappe.db.get_value("User", tls_user, "full_name")
+                                     or frappe.db.get_value("Employee", tls_user, "employee_name"))
             if tls_rec:
                 tls_doc.save(ignore_permissions=True)
             else:

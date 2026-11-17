@@ -2109,20 +2109,20 @@
            '<select id="tl-pick"><option value="">— pick someone working on '+esc(farm)+' —</option>';
         cands.forEach(function(c){
           h+='<option value="'+esc(c.user)+'"'+(c.elsewhere?' disabled':'')+'>'+esc(c.full_name||c.user)+
-             (c.designation?' · '+esc(c.designation):'')+(c.elsewhere?' — already leads on '+esc(c.elsewhere):'')+'</option>';
+             (c.designation?' · '+esc(c.designation):'')+(c.has_login?'':' · no login')+(c.elsewhere?' — already leads on '+esc(c.elsewhere):'')+'</option>';
         });
         h+='</select></div><button type="button" class="btn solid" id="tl-addbtn">Add</button></div>';
-        if(!cands.length) h+='<div class="hint" style="margin:-4px 0 10px">Nobody else on '+esc(farm)+' has a system login to add.</div>';
+        if(!cands.length) h+='<div class="hint" style="margin:-4px 0 10px">Everyone working on '+esc(farm)+' is already on the list.</div>';
       }
-      h+='<div class="mpf-tablewrap"><table><thead><tr><th>Team leader</th><th>Login</th><th>Status</th><th>Added</th><th>Last change</th>'+
+      h+='<div class="mpf-tablewrap"><table><thead><tr><th>Team leader</th><th>Login / employee</th><th>Status</th><th>Added</th><th>Last change</th>'+
          (d.can_manage?'<th></th>':'')+'</tr></thead><tbody>';
       if(!rows.length){
         h+='<tr><td colspan="6" class="hint">No team leaders yet. Master plans on '+esc(farm)+' cannot be saved until at least one is added.</td></tr>';
       }
       rows.forEach(function(r){
-        var st = !r.enabled ? '<span class="mp-notl">Login disabled</span>'
+        var st = !r.enabled ? '<span class="mp-notl">'+(r.has_login?'Login disabled':'No longer employed')+'</span>'
                : (r.active ? '<span class="mps approved">Active</span>' : '<span class="mps draft">Removed</span>');
-        h+='<tr><td><b>'+esc(r.full_name||r.user)+'</b></td><td class="m" style="font-size:11px">'+esc(r.user)+'</td><td>'+st+'</td>'+
+        h+='<tr><td><b>'+esc(r.full_name||r.user)+'</b></td><td class="m" style="font-size:11px">'+esc(r.user)+(r.has_login?'':' <span class="hint">(no login)</span>')+'</td><td>'+st+'</td>'+
            '<td style="font-size:11px">'+esc(String(r.added_on||"").slice(0,10))+(r.added_by?' · '+esc(String(r.added_by).split("@")[0]):'')+'</td>'+
            '<td style="font-size:11px">'+esc(String(r.changed_on||"").slice(0,10))+(r.changed_by?' · '+esc(String(r.changed_by).split("@")[0]):'')+'</td>'+
            (d.can_manage ? '<td>'+(r.active
