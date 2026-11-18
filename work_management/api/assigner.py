@@ -471,7 +471,7 @@ def wm_assigner(**kwargs):
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
                   AND COALESCE(we.start_date, a.from_date) <= %s
-                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
+                  AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
             """, (exclude_asg, pt, pf), as_dict=True)
             for r in rows:
                 if r.emp and r.emp not in allocated:
@@ -760,7 +760,7 @@ def wm_assigner(**kwargs):
                     WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                       AND a.name != %s
                       AND COALESCE(we.start_date, a.from_date) <= %s
-                      AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
+                      AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
                       AND we.employee IN %s
                 """, (asg_name or "__none__", p_dates.to_date, p_dates.from_date, tuple(emp_list)), as_dict=True)
                 if clash:
@@ -1186,7 +1186,7 @@ def wm_assigner(**kwargs):
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
                   AND COALESCE(we.start_date, a.from_date) <= %s
-                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
+                  AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
             """, (nm, adates.to_date, adates.from_date), as_dict=True)
             for r in busyrows:
                 busy_map[r.emp] = 1
@@ -1291,7 +1291,7 @@ def wm_assigner(**kwargs):
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
                   AND COALESCE(we.start_date, a.from_date) <= %s
-                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
+                  AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
                   AND we.employee IN %s
             """, (nm, d.to_date, add_from, tuple(add_who)), as_dict=True)
             busy_names = []
@@ -1527,7 +1527,7 @@ def wm_assigner(**kwargs):
                       AND a.name != %s
                       AND we.employee = %s
                       AND COALESCE(we.start_date, a.from_date) <= %s
-                      AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
+                      AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
                     LIMIT 1
                 """, (nm, replacement, rdates.to_date,
                       str(start_date) if start_date and str(start_date) > str(rdates.from_date) else rdates.from_date), as_dict=True)

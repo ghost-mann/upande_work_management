@@ -71,7 +71,8 @@ class TestBusyIncludesReleasedWorkers(unittest.TestCase):
 				with self.subTest(module=module):
 					self.assertNotIn("IFNULL(we.status,'Active') = 'Active'", q)
 					self.assertIn("COALESCE(we.start_date, a.from_date) <= %s", q)
-					self.assertIn("THEN we.left_date END, a.to_date) >= %s", q)
+					# ...up to the left date, but never past the assignment's own end
+					self.assertIn("THEN we.left_date END, a.to_date), a.to_date) >= %s", q)
 
 	def test_a_substitute_is_bounded_by_the_replacements_start(self):
 		for module in ("assigner", "actuals"):

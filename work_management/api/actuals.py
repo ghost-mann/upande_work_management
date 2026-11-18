@@ -1989,14 +1989,19 @@ def wm_actuals(**kwargs):
                 if target_r > 0 and fulfilled >= (target_r - 0.0001) and cstate_r != "Closed":
                     today_r = frappe.utils.today()
                     free_r = frappe.db.sql("""
-                        SELECT we.name row_id
+                        SELECT we.name row_id, a2.to_date td
                         FROM `tabWork Assignment Employee` we
                         INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
                         WHERE a2.planner_request = %s AND IFNULL(we.status,'Active') = 'Active'
                     """, (asg,), as_dict=True)
                     for fr in free_r:
+                        # released no later than the assignment's last day: actuals entered after
+                        # the work ended must not keep the crew "assigned elsewhere" until today
+                        rel_day = today_r
+                        if fr.td and str(fr.td) < str(rel_day):
+                            rel_day = str(fr.td)
                         frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
-                        frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", today_r, update_modified=False)
+                        frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", rel_day, update_modified=False)
                         released_auto = released_auto + 1
                     # mark the plan complete so it drops out of the pickers (target kept)
                     frappe.db.set_value("Work Management Planner", asg, "custom_close_state", "Completed", update_modified=False)
@@ -2329,15 +2334,20 @@ def wm_actuals(**kwargs):
             released = 0
             close_day = frappe.utils.today()
             freerows = frappe.db.sql("""
-                SELECT we.name row_id
+                SELECT we.name row_id, a2.to_date td
                 FROM `tabWork Assignment Employee` we
                 INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
                 WHERE a2.planner_request = %s
                   AND IFNULL(we.status,'Active') = 'Active'
             """, (plan,), as_dict=True)
             for fr in freerows:
+                # released no later than the assignment's last day: actuals entered after
+                # the work ended must not keep the crew "assigned elsewhere" until today
+                rel_day = close_day
+                if fr.td and str(fr.td) < str(rel_day):
+                    rel_day = str(fr.td)
                 frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
-                frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", close_day, update_modified=False)
+                frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", rel_day, update_modified=False)
                 released = released + 1
             frappe.db.commit()
             out["plan"] = plan
@@ -2534,7 +2544,7 @@ def wm_actuals(**kwargs):
                 WHERE a.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','Assigned')
                   AND a.name != %s
                   AND COALESCE(we.start_date, a.from_date) <= %s
-                  AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
+                  AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
             """, (nm, adates.to_date, adates.from_date), as_dict=True)
             for r in busyrows:
                 busy_map[r.emp] = 1
@@ -2600,7 +2610,7 @@ def wm_actuals(**kwargs):
                       AND a.name != %s
                       AND we.employee = %s
                       AND COALESCE(we.start_date, a.from_date) <= %s
-                      AND COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date) >= %s
+                      AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
                     LIMIT 1
                 """, (nm, replacement, rdates.to_date,
                       str(start_date) if start_date and str(start_date) > str(rdates.from_date) else rdates.from_date), as_dict=True)
