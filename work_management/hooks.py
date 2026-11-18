@@ -99,6 +99,12 @@ doc_events = {
 	"Additional Salary": {
 		"on_cancel": "work_management.api.payment.on_additional_salary_cancel",
 	},
+	# No pay on a day marked Absent, whenever the Absent arrives -- the Actuals
+	# screen can only refuse what is already marked. See work_management/absent_pay.py.
+	"Attendance": {
+		"on_submit": "work_management.absent_pay.on_attendance_submit",
+		"on_cancel": "work_management.absent_pay.on_attendance_cancel",
+	},
 }
 
 override_whitelisted_methods = {
@@ -117,6 +123,7 @@ scheduler_events = {
 	# start date.
 	"daily": [
 		"work_management.rates.sync_active_periods",
+		"work_management.absent_pay.sweep",
 	],
 }
 
