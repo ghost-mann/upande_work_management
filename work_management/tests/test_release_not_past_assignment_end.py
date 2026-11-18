@@ -50,5 +50,37 @@ class TestActualsReleasesStopAtTheAssignmentEnd(unittest.TestCase):
 		self.assertEqual(rel("2026-11-17", None), "2026-11-17")
 
 
+class TestTheLastStepCompletesThePlan(unittest.TestCase):
+	"""With the GM step off, HR or the farm manager ends the chain. Progress and the
+	release on reaching the target used to run in the GM step alone, so 66 plans that
+	met their target kept 379 workers on them and showed 0 done."""
+
+	def setUp(self):
+		self.src = (API / "actuals.py").read_text()
+
+	def fn(self, name):
+		i = self.src.index("    def " + name + "(")
+		j = self.src.index("\n    def ", i + 10)
+		return self.src[i:j]
+
+	def test_finalise_completes_the_plan(self):
+		body = self.fn("wmg_finalise")
+		self.assertIn('if state != "CONFIRMED":', body)
+		self.assertIn("wmg_plan_done(nm)", body)
+
+	def test_the_gm_step_uses_the_same_helper(self):
+		i = self.src.index('action == "act_gm_approve"')
+		j = self.src.index('action == "act_reject"')
+		gm = self.src[i:j]
+		self.assertIn("wmg_plan_done(nm)", gm)
+		self.assertNotIn("free_r", gm)
+
+	def test_the_helper_updates_progress_and_releases(self):
+		body = self.fn("wmg_plan_done")
+		for s in ('"fulfilled_qty"', '"remaining_qty"', '"fulfilment_pct"', '"custom_close_state", "Completed"',
+				'"status", "Left"', "for fr in free_r:"):
+			self.assertIn(s, body)
+
+
 if __name__ == "__main__":
 	unittest.main()

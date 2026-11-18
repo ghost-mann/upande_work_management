@@ -465,6 +465,61 @@ def wm_actuals(**kwargs):
 
 
 
+    def wmg_plan_done(nm):
+        """Once an actual is CONFIRMED: update its plan's progress and, when the plan
+        has reached its target, release the crew. Run by whichever step ends the chain;
+        it used to live in the GM step alone, so with the GM step off, plans that met
+        their target kept their crews and showed 0 done."""
+        cur = frappe.db.get_value("Work Management Actuals", nm, ["assignment"], as_dict=True)
+        fulfilled = 0
+        remaining = 0
+        asg = cur and cur.assignment and frappe.db.get_value("Work Management Assigner", cur.assignment, "planner_request")
+        if asg:
+            conf = frappe.db.sql("""
+                SELECT COALESCE(SUM(ac.total_actual_qty),0) q
+                FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                WHERE a2.planner_request = %s AND ac.workflow_state = 'CONFIRMED'
+            """, (asg,), as_dict=True)
+            fulfilled = frappe.utils.flt(conf[0].q) if conf else 0
+            target = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
+            remaining = target - fulfilled
+            pct = (fulfilled / target * 100) if target > 0 else 0
+            over = 1 if fulfilled > target else 0
+            frappe.db.set_value("Work Management Planner", asg, "fulfilled_qty", fulfilled, update_modified=False)
+            frappe.db.set_value("Work Management Planner", asg, "remaining_qty", remaining, update_modified=False)
+            frappe.db.set_value("Work Management Planner", asg, "fulfilment_pct", pct, update_modified=False)
+            frappe.db.set_value("Work Management Planner", asg, "over_target", over, update_modified=False)
+        # AUTO-RELEASE ON FULL FULFILMENT: when a plan reaches its target, the work is done,
+        # so free every still-Active worker on the plan (mark Left, left_date=today) so they
+        # can be assigned elsewhere. Confirmed work + pay are untouched. Only runs once: skip
+        # if already released or the plan was closed early.
+        released_auto = 0
+        if asg:
+            target_r = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
+            cstate_r = frappe.db.get_value("Work Management Planner", asg, "custom_close_state") or ""
+            if target_r > 0 and fulfilled >= (target_r - 0.0001) and cstate_r != "Closed":
+                today_r = frappe.utils.today()
+                free_r = frappe.db.sql("""
+                    SELECT we.name row_id, a2.to_date td
+                    FROM `tabWork Assignment Employee` we
+                    INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
+                    WHERE a2.planner_request = %s AND IFNULL(we.status,'Active') = 'Active'
+                """, (asg,), as_dict=True)
+                for fr in free_r:
+                    # released no later than the assignment's last day: actuals entered after
+                    # the work ended must not keep the crew "assigned elsewhere" until today
+                    rel_day = today_r
+                    if fr.td and str(fr.td) < str(rel_day):
+                        rel_day = str(fr.td)
+                    frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
+                    frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", rel_day, update_modified=False)
+                    released_auto = released_auto + 1
+                # mark the plan complete so it drops out of the pickers (target kept)
+                frappe.db.set_value("Work Management Planner", asg, "custom_close_state", "Completed", update_modified=False)
+        return {"fulfilled": fulfilled, "remaining": remaining, "released": released_auto}
+
+
     def wmg_finalise(nm, state):
         """Whichever step ends the chain submits the record, as the GM step always
         has. With the GM step switched off, HR's approval wrote CONFIRMED at
@@ -474,6 +529,7 @@ def wm_actuals(**kwargs):
         frappe.db.set_value("Work Management Actuals", nm, "docstatus", 1, update_modified=False)
         for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
             frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 1, update_modified=False)
+        wmg_plan_done(nm)
 
 
     def wmg_step_err(stage, farm, others, doctype, name):
@@ -1959,52 +2015,10 @@ def wm_actuals(**kwargs):
                 frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 1, update_modified=False)
             frappe.db.set_value("Work Management Actuals", nm, "gm_approved_by", frappe.session.user, update_modified=False)
             frappe.db.set_value("Work Management Actuals", nm, "gm_approval_date", frappe.utils.today(), update_modified=False)
-            fulfilled = 0
-            remaining = 0
-            asg = cur.assignment and frappe.db.get_value("Work Management Assigner", cur.assignment, "planner_request")
-            if asg:
-                conf = frappe.db.sql("""
-                    SELECT COALESCE(SUM(ac.total_actual_qty),0) q
-                    FROM `tabWork Management Actuals` ac
-                    INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
-                    WHERE a2.planner_request = %s AND ac.workflow_state = 'CONFIRMED'
-                """, (asg,), as_dict=True)
-                fulfilled = frappe.utils.flt(conf[0].q) if conf else 0
-                target = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
-                remaining = target - fulfilled
-                pct = (fulfilled / target * 100) if target > 0 else 0
-                over = 1 if fulfilled > target else 0
-                frappe.db.set_value("Work Management Planner", asg, "fulfilled_qty", fulfilled, update_modified=False)
-                frappe.db.set_value("Work Management Planner", asg, "remaining_qty", remaining, update_modified=False)
-                frappe.db.set_value("Work Management Planner", asg, "fulfilment_pct", pct, update_modified=False)
-                frappe.db.set_value("Work Management Planner", asg, "over_target", over, update_modified=False)
-            # AUTO-RELEASE ON FULL FULFILMENT: when a plan reaches its target, the work is done,
-            # so free every still-Active worker on the plan (mark Left, left_date=today) so they
-            # can be assigned elsewhere. Confirmed work + pay are untouched. Only runs once: skip
-            # if already released or the plan was closed early.
-            released_auto = 0
-            if asg:
-                target_r = frappe.utils.flt(frappe.db.get_value("Work Management Planner", asg, "quantity"))
-                cstate_r = frappe.db.get_value("Work Management Planner", asg, "custom_close_state") or ""
-                if target_r > 0 and fulfilled >= (target_r - 0.0001) and cstate_r != "Closed":
-                    today_r = frappe.utils.today()
-                    free_r = frappe.db.sql("""
-                        SELECT we.name row_id, a2.to_date td
-                        FROM `tabWork Assignment Employee` we
-                        INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
-                        WHERE a2.planner_request = %s AND IFNULL(we.status,'Active') = 'Active'
-                    """, (asg,), as_dict=True)
-                    for fr in free_r:
-                        # released no later than the assignment's last day: actuals entered after
-                        # the work ended must not keep the crew "assigned elsewhere" until today
-                        rel_day = today_r
-                        if fr.td and str(fr.td) < str(rel_day):
-                            rel_day = str(fr.td)
-                        frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
-                        frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", rel_day, update_modified=False)
-                        released_auto = released_auto + 1
-                    # mark the plan complete so it drops out of the pickers (target kept)
-                    frappe.db.set_value("Work Management Planner", asg, "custom_close_state", "Completed", update_modified=False)
+            wmg_done = wmg_plan_done(nm)
+            fulfilled = wmg_done["fulfilled"]
+            remaining = wmg_done["remaining"]
+            released_auto = wmg_done["released"]
             out["name"] = nm
             out["workflow_state"] = "CONFIRMED"
             out["fulfilled_qty"] = fulfilled
