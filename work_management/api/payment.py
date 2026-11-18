@@ -4328,6 +4328,9 @@ def wm_payment(**kwargs):
                 SELECT ac.farm, COUNT(*) n, COALESCE(SUM(we.amount), 0) a,
                        SUM(CASE WHEN EXISTS (SELECT 1 FROM `tabAttendance` att WHERE att.employee = we.employee
                              AND att.attendance_date = we.work_date AND att.docstatus = 1 AND att.status = 'Absent')
+                             AND NOT EXISTS (SELECT 1 FROM `tabAttendance` pp WHERE pp.employee = we.employee
+                             AND pp.attendance_date = we.work_date AND pp.docstatus = 1
+                             AND pp.status IN ('Present', 'Half Day', 'Work From Home'))
                            THEN 1 ELSE 0 END) absent_paid
                 FROM `tabWork Actuals Employee` we
                 INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
@@ -4353,6 +4356,11 @@ def wm_payment(**kwargs):
                         "zeroed_actuals", "amount_before", "payments", "fixed_by", "fixed_at", "reason"],
                 order_by="fixed_at desc", limit=500)
             out["me"] = {"fm_farms": pc_fm, "hr": pc_hr, "gm": pc_gm, "can_send": CAN_SEND, "gate": PC_GATE}
+            # paid on an Absent day holds the farm's approval when "never record work on a
+            # day marked Absent" is on (it is then a "block" issue, see WMI_CLASS); the
+            # screen says which, rather than always "not blocking"
+            out["absent_blocks"] = 1 if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
+                AND field = 'att_absent_never' AND value = '1' LIMIT 1""") else 0
             if not pc_hr:
                 out["farms"] = [x for x in out["farms"] if x["farm"] in pc_fm]
                 out["fixes"] = [x for x in out["fixes"] if x.farm in pc_fm]
