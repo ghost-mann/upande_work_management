@@ -3688,6 +3688,21 @@ def wm_payment(**kwargs):
         pc_fm = []
         for _farm_, _role_ in FARM_APPROVER_ROLE.items():
             if _role_ in pc_roles: pc_fm.append(_farm_)
+        # pc_fm_appr: whose farm part this person may APPROVE (the farm manager).
+        # pc_fm: whose part they may see, fix and acknowledge -- since 2026-11-19
+        # everyone on the farm (its Farm user permission), so the clerks and
+        # section heads who entered the work clear its issues; a user with no farm
+        # restriction sees every farm. Approval stays with the FM, HR and the GM.
+        pc_fm_appr = list(pc_fm)
+        pc_uperm = frappe.db.sql("""SELECT DISTINCT for_value FROM `tabUser Permission`
+            WHERE user = %s AND allow = 'Farm'""", (frappe.session.user,))
+        pc_uperm = [x[0] for x in pc_uperm if x[0] in FARMS]
+        if not frappe.db.sql("""SELECT 1 FROM `tabUser Permission` WHERE user = %s AND allow = 'Farm' LIMIT 1""",
+                             (frappe.session.user,)) and frappe.session.user != "Guest":
+            pc_uperm = list(FARMS)
+        for pc_uf in pc_uperm:
+            if pc_uf not in pc_fm:
+                pc_fm.append(pc_uf)
         pc_gm = 1 if (("General Manager" in pc_roles) or ("System Manager" in pc_roles)) else 0
         # a GM stand-in may give the check's GM approval, and nothing more
         pc_gm_si = wmg_si("check_gm", None)
@@ -4017,6 +4032,11 @@ def wm_payment(**kwargs):
                                 AND field = 'att_absent_never' AND value = '1' LIMIT 1""") else "ack",
                             "farm", "Paid on a day marked Absent"),
             "ghost_days": ("ack", "farm", "No scan and no attendance that day"),
+            # confirmed present by hand when the work was saved (no scan yet): HR checks
+            # it against the biometric. If attendance then says Absent, HR decides too --
+            # it does not block the farm, whose clerk gave their word on the screen.
+            "presence_confirmed": ("ack", "HR", "Confirmed present by hand, still no scan"),
+            "confirmed_absent": ("ack", "HR", "Confirmed present by hand, attendance says Absent"),
             "leave_paid": ("ack", "farm", "Paid on approved leave"),
             "off_paid": ("ack", "farm", "Paid on an off day or holiday"),
             "late_entry": ("ack", "farm", "Entered more than 14 days after the work"),
@@ -4068,6 +4088,7 @@ def wm_payment(**kwargs):
                        ac.fm_approved_by, ac.hr_approved_by, ac.gm_approved_by, ac.total_payment,
                        ac.assignment, a.creation asg_created, a.from_date asg_from,
                        IFNULL(pl.daily_target, 0) tgt, IFNULL(pl.uom, '') uom,
+                       IFNULL(we.presence_confirmed_by, '') pcb,
                        (SELECT rr.rate FROM `tabWork Task Rate` rr WHERE rr.task = ac.task AND rr.valid_from <= we.work_date
                           AND (rr.valid_to IS NULL OR rr.valid_to >= we.work_date)
                         ORDER BY rr.valid_from DESC LIMIT 1) prate,
@@ -4140,8 +4161,12 @@ def wm_payment(**kwargs):
                     add("left_but_earning", r.row, r, "left the company " + str(r.relieving_date), fp)
                 if r.assignment and not frappe.utils.cint(r.on_crew):
                     add("off_crew", r.row, r, "not on " + str(r.assignment) + "'s crew on that day", fp)
-                if frappe.utils.cint(r.absent):
+                if frappe.utils.cint(r.absent) and r.pcb:
+                    add("confirmed_absent", r.row, r, "confirmed present by " + str(r.pcb) + "; attendance says Absent", fp)
+                elif frappe.utils.cint(r.absent):
                     add("absent_paid", r.row, r, "attendance says Absent", fp)
+                elif not frappe.utils.cint(r.present) and not frappe.utils.cint(r.scanned) and r.pcb:
+                    add("presence_confirmed", r.row, r, "confirmed present by " + str(r.pcb) + "; still no scan", fp)
                 elif not frappe.utils.cint(r.present) and not frappe.utils.cint(r.scanned):
                     add("ghost_days", r.row, r, "no scan and no Present attendance", fp)
                 if frappe.utils.cint(r.on_leave):
@@ -4222,8 +4247,8 @@ def wm_payment(**kwargs):
                                     AND we.work_date BETWEEN o.period_from AND o.period_to)
                 GROUP BY ac.farm ORDER BY ac.farm
             """, as_dict=True)
-            out["me"] = {"fm_farms": pc_fm, "hr": pc_hr, "gm": pc_gm, "can_send": CAN_SEND,
-                         "gate": PC_GATE, "user": frappe.session.user}
+            out["me"] = {"fm_farms": pc_fm, "approve_farms": pc_fm_appr, "hr": pc_hr, "gm": pc_gm,
+                         "can_send": CAN_SEND, "gate": PC_GATE, "user": frappe.session.user}
 
         elif action == "chk_create":
             cf = frappe.form_dict.get("from_date")
@@ -4326,7 +4351,7 @@ def wm_payment(**kwargs):
                     by[x.farm]["unfinished"] = by[x.farm]["unfinished"] + 1
             for x in frappe.db.sql("""
                 SELECT ac.farm, COUNT(*) n, COALESCE(SUM(we.amount), 0) a,
-                       SUM(CASE WHEN EXISTS (SELECT 1 FROM `tabAttendance` att WHERE att.employee = we.employee
+                       SUM(CASE WHEN IFNULL(we.presence_confirmed_by, '') = '' AND EXISTS (SELECT 1 FROM `tabAttendance` att WHERE att.employee = we.employee
                              AND att.attendance_date = we.work_date AND att.docstatus = 1 AND att.status = 'Absent')
                              AND NOT EXISTS (SELECT 1 FROM `tabAttendance` pp WHERE pp.employee = we.employee
                              AND pp.attendance_date = we.work_date AND pp.docstatus = 1
@@ -4355,7 +4380,8 @@ def wm_payment(**kwargs):
                 fields=["name", "kind", "employee", "employee_name", "work_date", "farm", "kept_actuals",
                         "zeroed_actuals", "amount_before", "payments", "fixed_by", "fixed_at", "reason"],
                 order_by="fixed_at desc", limit=500)
-            out["me"] = {"fm_farms": pc_fm, "hr": pc_hr, "gm": pc_gm, "can_send": CAN_SEND, "gate": PC_GATE}
+            out["me"] = {"fm_farms": pc_fm, "approve_farms": pc_fm_appr, "hr": pc_hr, "gm": pc_gm,
+                         "can_send": CAN_SEND, "gate": PC_GATE}
             # paid on an Absent day holds the farm's approval when "never record work on a
             # day marked Absent" is on (it is then a "block" issue, see WMI_CLASS); the
             # screen says which, rather than always "not blocking"
@@ -4436,7 +4462,7 @@ def wm_payment(**kwargs):
                 aerr = af + " is not in this check."
             elif arow[0].status == "Approved":
                 aerr = af + " is already approved."
-            elif not (pc_gm or af in pc_fm):
+            elif not (pc_gm or af in pc_fm_appr):
                 aerr = "Only " + af + "'s farm manager or the GM can approve it."
             if not aerr:
                 dl = [x for x in wmpc_duplicates(pc.period_from, pc.period_to, af) if not x["paid_twice"]]
@@ -4514,7 +4540,7 @@ def wm_payment(**kwargs):
 
         elif action == "chk_send_back":
             serr = None
-            mine = pc_hr or [f for f in pc.farms if f.farm in pc_fm]
+            mine = pc_hr or [f for f in pc.farms if f.farm in pc_fm_appr]
             if pc.status in ("Sent", "Cancelled"):
                 serr = "This check is " + pc.status + "."
             elif not mine:
@@ -4655,7 +4681,7 @@ def wm_payment(**kwargs):
             fr_op = frappe.form_dict.get("op")
             fr_qty = frappe.utils.flt(frappe.form_dict.get("qty"))
             fr_ops = {"zero": ("qty_outlier_hard", "qty_outlier", "left_but_earning", "off_crew", "absent_paid",
-                               "ghost_days", "leave_paid", "off_paid"),
+                               "ghost_days", "leave_paid", "off_paid", "presence_confirmed", "confirmed_absent"),
                       "recompute": ("rate_mismatch",),
                       "set_qty": ("qty_outlier_hard", "qty_outlier")}
             fr_err = None

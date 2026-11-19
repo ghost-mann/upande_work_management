@@ -33,7 +33,7 @@
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep = "/api/method/" + (method || "wm_assigner");
     var writes = {a_submit:1, a_fm_approve:1, a_hr_approve:1, a_gm_approve:1, a_reject:1,
-                  a_substitute:1, a_release:1, a_add_crew:1};
+                  a_substitute:1, a_release:1, a_add_crew:1, a_delete:1};
     var isWrite = writes[args.action] === 1;
     var p = new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k, args[k]); }
@@ -73,10 +73,11 @@
   // The close workflow lives in the wm_actuals script (single source of truth),
   // so we POST there directly rather than duplicating the logic here. GM closes
   // instantly; Farm Manager / Section Head sends a request for the GM to confirm.
-  function closeCall(action, assignment, reason){
+  function closeCall(action, assignment, reason, rating){
     var token = (typeof frappe!=="undefined" && frappe.csrf_token) ? frappe.csrf_token : "";
     var p=new URLSearchParams();
     p.append("action", action); p.append("assignment", assignment); p.append("reason", reason);
+    if(rating) p.append("rating", rating);
     return fetch("/api/method/wm_actuals", {
       method:"POST",
       headers:{ "Content-Type":"application/x-www-form-urlencoded", "X-Frappe-CSRF-Token":token, "Accept":"application/json" },
@@ -100,6 +101,8 @@
           '<div style="font-size:12px;color:#444;margin-bottom:10px">'+esc(desc)+(planName?(' <span style="color:#777">Plan <b>'+esc(planName)+'</b>.</span>'):'')+'</div>'+
           '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">Reason (required)</label>'+
           '<textarea id="wac-reason" rows="3" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;width:100%;background:#fff;color:var(--ink);resize:vertical" placeholder="e.g. crop finished early, '+esc(TX("unit_singular","block").toLowerCase())+' cleared ahead of target"></textarea>'+
+          '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:10px 0 5px">Rating of the work done (required)</label>'+
+          '<select id="wac-rating" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:7px 10px;background:#fff"><option value="">— rate it —</option><option>1 - Good</option><option>2 - Fair</option><option>3 - Rework</option></select>'+
         '</div>'+
         '<div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--faint)">'+
           '<button type="button" class="btn" id="wac-cancel">Cancel</button>'+
@@ -115,8 +118,10 @@
     go.onclick=function(){
       var reason=(ta.value||"").trim();
       if(!reason){ toast("A reason is required"); return; }
+      var rating=el("wac-rating").value;
+      if(!rating){ toast("Rate the work done first"); return; }
       go.disabled=true;
-      closeCall(isGm?"act_close_confirm":"act_close_request", assignment, reason).then(function(d){
+      closeCall(isGm?"act_close_confirm":"act_close_request", assignment, reason, rating).then(function(d){
         if(d.error){ toast("Error: "+d.error); go.disabled=false; return; }
         shut();
         toast(isGm ? "Plan closed" : "Close request sent to GM");
@@ -634,7 +639,7 @@
       var sts={}; rows.forEach(function(r){ if(r.workflow_state) sts[r.workflow_state]=1; });
       var hasDates=false; rows.forEach(function(r){ if(r.from_date) hasDates=true; });
       b.className="";
-      b.innerHTML='<div class="note" style="margin-bottom:8px">Draft/Rejected → click <b>Edit</b>. Approved (Assigned) → click <b>Manage crew</b> to swap a worker mid-period or release workers who’ve finished so they can be assigned elsewhere.</div>'
+      b.innerHTML='<div class="note" style="margin-bottom:8px">Draft/Rejected → click <b>Edit</b>. <b>Manage crew</b> → swap a worker (once approved) or release workers who’ve finished, at any stage, so they can be assigned elsewhere. <b>Delete</b> removes a duplicate assignment that has no actuals.</div>'
         + fbar(rows,{dates:hasDates,statuses:Object.keys(sts).sort(),ph:"Search ref, plan, "+TX("top_singular","Farm").toLowerCase()+", "+TX("unit_singular","Block").toLowerCase()+", task…"});
       fwire(b, rows, function(r){
         return {farm:r.farm||"", status:r.workflow_state||"", date:isodate(r.from_date),
@@ -644,13 +649,27 @@
         var h='<table><thead><tr><th>Ref</th><th>Plan</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th>Status</th><th></th></tr></thead><tbody>';
         list.forEach(function(r){
           var editable = (r.workflow_state==="Draft"||r.workflow_state==="Rejected"||r.workflow_state==="Pending HR Head");
-          var canSub = (r.workflow_state==="Assigned");
-          var actionBtn = editable ? '<button class="btn" data-edit="'+esc(r.name)+'">Edit</button>' : (canSub ? '<button class="btn solid" data-sub="'+esc(r.name)+'">Manage crew</button>' : '');
+          var canSub = (r.workflow_state && r.workflow_state!=="Rejected" && r.workflow_state!=="Cancelled" && r.workflow_state!=="Draft");
+          var actionBtn = (editable ? '<button class="btn" data-edit="'+esc(r.name)+'">Edit</button> ' : '')+
+            (canSub ? '<button class="btn solid" data-sub="'+esc(r.name)+'">Manage crew</button> ' : '')+
+            '<button class="btn" data-del="'+esc(r.name)+'" title="Delete this assignment (e.g. a duplicate). Only when no actuals are recorded on it.">Delete</button>';
           h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.planner_request)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td>'+stateTag(r.workflow_state)+'</td><td>'+actionBtn+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll("[data-edit]").forEach(function(btn){ btn.onclick=function(){ openAsgForEdit(btn.getAttribute("data-edit")); }; });
-        body.querySelectorAll("[data-sub]").forEach(function(btn){ btn.onclick=function(){ openSubstitute(btn.getAttribute("data-sub")); }; });
+        body.querySelectorAll("[data-sub]").forEach(function(btn){ btn.onclick=function(ev){ if(ev) ev.stopPropagation(); openSubstitute(btn.getAttribute("data-sub")); }; });
+        body.querySelectorAll("[data-del]").forEach(function(btn){ btn.onclick=function(ev){
+          if(ev) ev.stopPropagation();
+          var nm=btn.getAttribute("data-del");
+          var why=window.prompt("Delete assignment "+nm+"? Its crew is freed and the deletion is noted on the plan.\n\nWhy (e.g. duplicate of WMA-…)?");
+          if(why==null) return;
+          if(!why.trim()){ toast("A reason is needed"); return; }
+          btn.disabled=true;
+          call({action:"a_delete", assignment:nm, reason:why.trim()}).then(function(r){
+            if(r.error){ toast("Error: "+r.error); btn.disabled=false; return; }
+            toast(nm+" deleted"); loadMine();
+          }).catch(function(){ toast("Delete failed"); btn.disabled=false; });
+        }; });
         wireExpandAsg(body, 10);
       });
     });
@@ -695,7 +714,7 @@
   function openSubstitute(name){
     call({action:"a_detail", assignment:name}).then(function(d){
       var a=d.detail;
-      if(!a || !a.can_substitute){ toast("Substitution only on an approved plan"); return; }
+      if(!a || !(a.can_substitute || a.can_crew)){ toast("This assignment's crew cannot be changed"); return; }
       // active workers = candidates to be substituted OUT
       var actives=(a.workers||[]).filter(function(w){ return (w.status||"Active")==="Active"; });
       call({action:"a_sub_candidates", assignment:name}).then(function(cd){
@@ -728,7 +747,8 @@
         '<div style="height:10px;background:#eee;border:1px solid #cfcfcf;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+barPct+'%;background:#0a0a0a"></div></div>'+
         '<div style="font-size:10px;color:#777;margin-top:4px;text-align:right">'+fmt(pct,0)+'% fulfilled</div>'+
       '</div>';
-    var canRelease = ST.roles && (ST.roles.is_farm_manager || ST.roles.is_hr_head || ST.roles.is_gm);
+    // everyone working on the farm's plans may release (the server decides, per assignment)
+    var canRelease = a.can_crew!=null ? !!a.can_crew : (ST.roles && (ST.roles.is_farm_manager || ST.roles.is_hr_head || ST.roles.is_gm));
     var relDefault = a.to_date; // clamp today into [from_date, to_date] for the "last day" field
     (function(){ var t=isoTodayA(); if(t < a.from_date) relDefault=a.from_date; else if(t > a.to_date) relDefault=a.to_date; else relDefault=t; })();
     var rosterRows=(a.workers||[]).map(function(w){
@@ -748,8 +768,8 @@
       '<div class="rel-box">'+
         '<div class="sub-h" style="margin-top:14px">Release finished workers</div>'+
         '<div class="rel-note">Tick workers above who have finished, then release them so they can be assigned to other tasks. Their recorded days and pay stay exactly as they are — releasing only frees them for the remaining days.</div>'+
-        '<label>Last day worked (release date)</label>'+
-        '<input type="date" id="rel-date" min="'+esc(a.from_date)+'" max="'+esc(a.to_date)+'" value="'+esc(relDefault)+'">'+
+        '<label>Last day worked (leave empty: each worker’s last recorded day, so they are free today)</label>'+
+        '<input type="date" id="rel-date" min="'+esc(a.from_date)+'" max="'+esc(a.to_date)+'" value="">'+
         '<div class="rel-actions"><span id="rel-count" class="rel-count">0 selected</span><button class="btn solid" id="rel-confirm" disabled>Release selected</button></div>'+
       '</div>'
     ) : '';
@@ -858,15 +878,14 @@
       relBtn.onclick=function(){
         var sel=chks().filter(function(c){ return c.checked; }).map(function(c){ return c.value; });
         if(!sel.length){ toast("Tick at least one worker to release"); return; }
-        var reld=el("rel-date").value;
-        if(!reld){ toast("Pick the last day worked"); return; }
+        var reld=el("rel-date").value||"";
         var msg = sel.length===1 ? "Release this worker so they can be assigned elsewhere? Their recorded pay stays untouched."
                                   : ("Release these "+sel.length+" workers so they can be assigned elsewhere? Their recorded pay stays untouched.");
         if(!window.confirm(msg)) return;
         relBtn.disabled=true;
         call({action:"a_release", assignment:a.name, employees:sel.join(","), release_date:reld}).then(function(r){
           if(r.error){ toast("Error: "+r.error); relBtn.disabled=false; return; }
-          toast("Released "+r.released_count+" · "+r.active_count+" still active");
+          toast(r.message||("Released "+r.released_count+" · "+r.active_count+" still active"));
           close(); loadMine();
         }).catch(function(e){ toast("Release failed"); relBtn.disabled=false; });
       };

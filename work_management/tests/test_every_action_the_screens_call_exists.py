@@ -131,12 +131,14 @@ class TestTheReleaseContractMatches(TestTheMirrorIsCheckedOut):
 
 	def test_it_enforces_the_role_gate_itself(self):
 		"""The screen hides the controls from everybody else. A gate that lives
-		only in the browser is not a gate."""
-		self.assertIn("Farm Manager", self.block)
-		self.assertRegex(self.block, r"frappe\.get_roles")
+		only in the browser is not a gate. Since 2026-11-19 the gate is everyone
+		working on the farm's plans (wmg_crew_err), not only FM/HR/GM."""
+		self.assertIn("wmg_crew_err(d,", self.block)
 
-	def test_it_only_releases_from_an_approved_assignment(self):
-		self.assertIn("Assigned", self.block)
+	def test_it_releases_from_any_live_stage(self):
+		"""Not only once Assigned: a crew can be freed while still awaiting approval."""
+		self.assertNotIn('d.workflow_state != "Assigned"', self.block)
+		self.assertIn('("Rejected", "Cancelled")', self.block)
 
 	def test_it_keeps_what_was_recorded(self):
 		"""The whole premise: releasing must not touch the work already recorded.

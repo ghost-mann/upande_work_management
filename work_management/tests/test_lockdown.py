@@ -107,10 +107,14 @@ class TestFarmScope(unittest.TestCase):
 		return src[start:end if end > 0 else len(src)]
 
 	def test_crew_changes_check_the_assignments_farm(self):
-		for action, verb in (("a_add_crew", "add a worker"), ("a_release", "release a worker"),
-				("a_substitute", "swap a worker")):
+		for action, verb in (("a_add_crew", "add a worker"), ("a_substitute", "swap a worker")):
 			with self.subTest(action=action):
 				self.assertIn("wmg_farm_err(", self.block("assigner", action))
+		# release is open to everyone on the farm's plans; wmg_crew_err starts from the farm check
+		self.assertIn("wmg_crew_err(", self.block("assigner", "a_release"))
+		src = source("assigner")
+		i = src.index("def wmg_crew_err(")
+		self.assertIn("wmg_farm_err(d.farm", src[i:i + 600])
 		self.assertIn("wmg_farm_err(", self.block("actuals", "a_substitute"))
 
 	def test_farm_managers_are_listed_per_farm(self):

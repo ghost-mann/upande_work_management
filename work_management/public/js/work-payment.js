@@ -2557,7 +2557,7 @@
   function pcDates(c){ return esc(c.period_from)+' → '+esc(c.period_to)+(c.is_top_up?' · top-up':''); }
   function pcMine(c, me){
     // does this check wait on me right now?
-    if(c.status==="Farm Review") return (c.farms||[]).some(function(f){ return f.status!=="Approved" && (me.gm || (me.fm_farms||[]).indexOf(f.farm)>=0); });
+    if(c.status==="Farm Review") return (c.farms||[]).some(function(f){ return f.status!=="Approved" && (me.gm || (me.approve_farms||me.fm_farms||[]).indexOf(f.farm)>=0); });
     if(c.status==="HR Review") return !!me.hr;
     if(c.status==="GM Review") return !!me.gm;
     if(c.status==="Approved") return !!me.can_send;
@@ -2666,7 +2666,7 @@
       var cls=(shown[0]||{}).cls, mine=shown.length && (me.gm || (parts[0]==="HR"&&me.hr) || (parts[0]!=="GM"&&parts[0]!=="HR"&&(me.hr||(me.fm_farms||[]).indexOf(parts[0])>=0)));
       var fixOps={rate_mismatch:[["recompute","Recompute"]], left_but_earning:[["zero","Zero"]], off_crew:[["zero","Zero"]],
         qty_outlier_hard:[["set_qty","Correct qty"],["zero","Zero"]], qty_outlier:[["set_qty","Correct qty"],["zero","Zero"]],
-        absent_paid:[["zero","Zero"]], ghost_days:[["zero","Zero"]], leave_paid:[["zero","Zero"]], off_paid:[["zero","Zero"]]};
+        absent_paid:[["zero","Zero"]], ghost_days:[["zero","Zero"]], presence_confirmed:[["zero","Zero"]], confirmed_absent:[["zero","Zero"]], leave_paid:[["zero","Zero"]], off_paid:[["zero","Zero"]]};
       if(mine && cls==="ack") h+='<div class="pc-bar"><button class="btn sm good" id="pci-ack">Acknowledge selected</button><label style="font-size:12px"><input type="checkbox" id="pci-all"> select all '+fmt(shown.filter(function(i){return !i.acked;}).length)+'</label><span style="font-size:11px;color:var(--mute)">Uses the reason box above; logged per row.</span></div>';
       h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+(cls==="ack"&&mine?'<th></th>':'')+'<th>Worker</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Record</th><th>Detail</th><th class="n">KES</th><th>State</th><th></th></tr></thead><tbody>';
       shown.forEach(function(i){
@@ -2785,7 +2785,7 @@
     if(c.sent_back_reason && c.status==="Farm Review") h+='<div class="pc-back"><b>Sent back</b> by '+esc(c.sent_back_by)+' ('+esc(String(c.sent_back_at||"").slice(0,16))+'): '+esc(c.sent_back_reason)+'</div>';
     h+='<div class="pc-farms">';
     (d.farms||[]).forEach(function(f){
-      var can=c.status==="Farm Review" && f.status!=="Approved" && (me.gm || fm.indexOf(f.farm)>=0);
+      var can=c.status==="Farm Review" && f.status!=="Approved" && (me.gm || (me.approve_farms||fm).indexOf(f.farm)>=0);
       var clean=!f.dups && !f.unfinished && !(d.absent_blocks && f.absent_paid);
       h+='<div class="pc-farm"><h4>'+esc(f.farm)+pcChip(f.status)+'</h4><div class="pc-n">'+
          '<b>'+fmt(f.worker_days)+'</b> worker-days · <b>'+money(f.amount)+'</b><br>'+
@@ -2803,7 +2803,7 @@
     if(c.status==="GM Review" && me.gm) acts+='<button class="btn good" id="pc-gm">GM approve</button>';
     if(c.status==="Approved" && me.can_send) acts+='<button class="btn pay" id="pc-send">Send to payroll</button>';
     if(c.status==="Approved" && me.hr) acts+='<button class="btn" id="pc-close" title="Some days went to payroll and the rest cannot: take the rest out for a top-up check">Close as sent</button>';
-    var reviewer=me.hr || (d.farms||[]).some(function(f){ return fm.indexOf(f.farm)>=0; });
+    var reviewer=me.hr || (d.farms||[]).some(function(f){ return (me.approve_farms||fm).indexOf(f.farm)>=0; });
     if(c.status!=="Sent" && c.status!=="Cancelled" && reviewer) acts+='<button class="btn" id="pc-back">Send back</button>';
     if(c.status!=="Sent" && c.status!=="Cancelled" && me.hr) acts+='<button class="btn" id="pc-cancel">Cancel check</button>';
     h+='<div class="pc-bar"><input class="pc-reason" id="pc-reason" placeholder="Reason (needed to fix a duplicate, send back, cancel or delete)">'+acts+'</div>';

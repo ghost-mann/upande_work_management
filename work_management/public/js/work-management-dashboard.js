@@ -1667,6 +1667,217 @@
       '</div>';
   }
 
+  // ===== PEOPLE (2026-11-19): who is on which activity, who is free, every live
+  // activity with its crew, and the month's attendance beside the work recorded =====
+  var PP={tab:"on", tw:true, data:null, month:null, q:""};
+  function ppStyle(){
+    if(el("pp-style")) return;
+    var st=document.createElement("style"); st.id="pp-style";
+    st.textContent=
+      "#wm-pp table{width:100%;border-collapse:collapse;font-size:12px}"+
+      "#wm-pp th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--wash);position:sticky;top:0;z-index:1}"+
+      "#wm-pp td{padding:5px 8px;border-bottom:1px solid var(--faint,#eee);vertical-align:top}"+
+      "#wm-pp .pp-scroll{max-height:560px;overflow:auto;border:1px solid var(--line);border-radius:10px}"+
+      "#wm-pp .pp-b{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;margin-right:3px;white-space:nowrap}"+
+      "#wm-pp .b-in{background:#dcfce7;color:#166534}#wm-pp .b-ab{background:#fee2e2;color:#991b1b}"+
+      "#wm-pp .b-lv{background:#dbeafe;color:#1e40af}#wm-pp .b-no{background:#fef3c7;color:#92400e}#wm-pp .b-st{background:#f1f5f9;color:#475569}"+
+      "#wm-pp .pp-ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}"+
+      "#wm-pp .pp-kpis{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 10px}"+
+      "#wm-pp .pp-kpi{border:1px solid var(--line);border-radius:10px;padding:6px 12px;min-width:110px}"+
+      "#wm-pp .pp-kpi b{display:block;font-size:18px}#wm-pp .pp-kpi span{font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}"+
+      "#wm-pp .pp-act{border:1px solid var(--line);border-radius:10px;margin-bottom:8px}"+
+      "#wm-pp .pp-act summary{cursor:pointer;padding:8px 12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px}"+
+      "#wm-pp .pp-act .crew{padding:4px 12px 10px;display:flex;flex-wrap:wrap;gap:4px}"+
+      "#wm-pp .pp-act .crew span{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:2px 8px}"+
+      "#wm-pp table.pp-m td,#wm-pp table.pp-m th{padding:3px 2px;text-align:center;font-size:10.5px;min-width:22px}"+
+      "#wm-pp table.pp-m td.nm,#wm-pp table.pp-m th.nm{text-align:left;min-width:170px;position:sticky;left:0;background:#fff;z-index:2;padding-left:8px}"+
+      "#wm-pp table.pp-m th.nm{background:var(--wash);z-index:3}"+
+      "#wm-pp .m-P{background:#dcfce7;color:#166534}#wm-pp .m-HD{background:#ecfccb;color:#3f6212}#wm-pp .m-A{background:#fee2e2;color:#991b1b}"+
+      "#wm-pp .m-L{background:#dbeafe;color:#1e40af}#wm-pp .m-O{background:#f1f5f9;color:#94a3b8}#wm-pp .m-Q{background:#fef3c7;color:#92400e}"+
+      "#wm-pp .m-w{font-weight:800;text-decoration:underline}#wm-pp .m-flag{outline:2px solid #dc2626;outline-offset:-2px}"+
+      "#wm-pp .m-conf{outline:2px dashed #7c3aed;outline-offset:-2px}"+
+      "#wm-pp .pp-leg{display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px;color:var(--mute);margin:6px 0 10px}"+
+      "#wm-pp .pp-leg i{font-style:normal;display:inline-block;min-width:20px;text-align:center;border-radius:4px;margin-right:3px;font-weight:700}";
+    document.head.appendChild(st);
+  }
+  function ppToday(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  function ppPresence(p){
+    if(p.leave) return '<span class="pp-b b-lv">'+esc(p.leave)+'</span>';
+    if(p.scan) return '<span class="pp-b b-in">in '+esc(p.scan)+'</span>';
+    if(p.att==="Present"||p.att==="Work From Home") return '<span class="pp-b b-in">present</span>';
+    if(p.att==="Half Day") return '<span class="pp-b b-in">half day</span>';
+    if(p.att==="Absent") return '<span class="pp-b b-ab">absent</span>';
+    return '<span class="pp-b b-no">no scan yet</span>';
+  }
+  function ppHere(p){ return !!(p.scan || p.att==="Present" || p.att==="Half Day" || p.att==="Work From Home"); }
+  function initPeople(){
+    ppStyle();
+    var box=el("wm-pp"); if(!box) return;
+    box.innerHTML=
+      '<div class="pp-ctl">'+
+        '<div><div class="tl-lab">Date</div><input type="date" id="pp-date" class="tl-in" value="'+ppToday()+'"></div>'+
+        '<div><div class="tl-lab">'+esc(TX("top_singular","Farm"))+'</div><select id="pp-farm" class="tl-in">'+farmOptions("")+'</select></div>'+
+        '<div id="pp-month-w" style="display:none"><div class="tl-lab">Month</div><input type="month" id="pp-month" class="tl-in" value="'+ppToday().slice(0,7)+'"></div>'+
+        '<label style="font-size:12px;margin-bottom:6px"><input type="checkbox" id="pp-tw" checked> task workers only</label>'+
+        '<input type="text" id="pp-q" class="tl-in" placeholder="Search name, ID, activity…" style="flex:1;min-width:160px">'+
+        '<button type="button" class="refresh" id="pp-csv" style="display:none">Download CSV</button>'+
+      '</div>'+
+      '<div class="subtabs" id="pp-tabs">'+
+        '<button type="button" class="subtab on" data-pp="on">People tracker</button>'+
+        '<button type="button" class="subtab" data-pp="free">Free people</button>'+
+        '<button type="button" class="subtab" data-pp="acts">Activities &amp; crews</button>'+
+        '<button type="button" class="subtab" data-pp="month">Monthly attendance</button>'+
+      '</div>'+
+      '<div id="pp-body"><div class="loading">Reading who is where&hellip;</div></div>';
+    box.querySelectorAll("[data-pp]").forEach(function(b){
+      b.onclick=function(){
+        box.querySelectorAll("[data-pp]").forEach(function(x){ x.classList.toggle("on", x===b); });
+        PP.tab=b.getAttribute("data-pp");
+        el("pp-month-w").style.display = PP.tab==="month" ? "" : "none";
+        el("pp-date").parentNode.style.display = PP.tab==="month" ? "none" : "";
+        el("pp-csv").style.display = PP.tab==="month" ? "" : "none";
+        if(PP.tab==="month") ppLoadMonth(); else ppPaint();
+      };
+    });
+    el("pp-date").onchange=ppLoad; el("pp-farm").onchange=function(){ if(PP.tab==="month") ppLoadMonth(); else ppLoad(); };
+    el("pp-month").onchange=ppLoadMonth;
+    el("pp-tw").onchange=function(){ PP.tw=el("pp-tw").checked; if(PP.tab==="month") ppLoadMonth(); else ppPaint(); };
+    el("pp-q").oninput=function(){ PP.q=(el("pp-q").value||"").toLowerCase().trim(); if(PP.tab==="month") ppPaintMonth(); else ppPaint(); };
+    el("pp-csv").onclick=ppCsv;
+    ppLoad();
+  }
+  function ppLoad(){
+    var b=el("pp-body"); if(!b) return;
+    if(PP.tab!=="month") b.innerHTML='<div class="loading">Reading who is where&hellip;</div>';
+    call({action:"people_board", date:el("pp-date").value, farm:el("pp-farm").value}).then(function(d){
+      if(d.error){ b.innerHTML='<div class="err">'+esc(d.error)+'</div>'; return; }
+      PP.data=d;
+      var fs=el("pp-farm"); if(fs && fs.options.length<2 && FARM_LIST.length) fs.innerHTML=farmOptions(fs.value);
+      if(PP.tab!=="month") ppPaint();
+    }).catch(function(e){ b.innerHTML='<div class="err">Could not load: '+esc(e&&e.message||e)+'</div>'; });
+  }
+  function ppMatch(p){
+    if(!PP.q) return true;
+    var hay=(p.name+" "+p.emp+" "+(p.farm||"")+" "+(p.designation||"")+" "+(p.acts||[]).map(function(a){ return a.task_label+" "+(a.block||"")+" "+a.asg+" "+(a.plan||""); }).join(" ")).toLowerCase();
+    return hay.indexOf(PP.q)>=0;
+  }
+  function ppPaint(){
+    var b=el("pp-body"), d=PP.data; if(!b||!d) return;
+    var ppl=(d.people||[]).filter(function(p){ return !PP.tw || p.tw; });
+    var on=ppl.filter(function(p){ return (p.acts||[]).length; });
+    var free=ppl.filter(function(p){ return !(p.acts||[]).length; });
+    var freeHere=free.filter(function(p){ return ppHere(p) && !p.leave; });
+    var twice=on.filter(function(p){ return p.acts.length>1; });
+    var acts=d.activities||[];
+    var h='<div class="pp-kpis">'+
+      '<div class="pp-kpi"><b>'+fmt(ppl.length)+'</b><span>'+(PP.tw?'task workers':'people')+'</span></div>'+
+      '<div class="pp-kpi"><b>'+fmt(on.length)+'</b><span>on an activity</span></div>'+
+      '<div class="pp-kpi"><b>'+fmt(free.length)+'</b><span>free</span></div>'+
+      '<div class="pp-kpi" title="free, and scanned in or marked present today"><b style="color:#166534">'+fmt(freeHere.length)+'</b><span>free &amp; at work</span></div>'+
+      '<div class="pp-kpi"><b>'+fmt(acts.length)+'</b><span>live activities</span></div>'+
+      (twice.length?'<div class="pp-kpi" title="on two activities the same day"><b style="color:#991b1b">'+fmt(twice.length)+'</b><span>on two at once</span></div>':'')+
+      '</div>';
+    if(PP.tab==="on"){
+      var rows=on.filter(ppMatch);
+      h+='<div class="pp-scroll"><table><thead><tr><th>Worker</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Activity</th><th>Assignment / plan</th><th>Team leader</th><th>'+esc(d.date)+'</th></tr></thead><tbody>'+
+        (rows.map(function(p){
+          return p.acts.map(function(a,i){
+            return '<tr'+(p.acts.length>1?' style="background:#fff7ed"':'')+'>'+
+              (i===0?'<td rowspan="'+p.acts.length+'"><b>'+esc(p.name)+'</b><div style="font-size:10px;color:var(--mute)">'+esc(p.emp)+(p.designation?' · '+esc(p.designation):'')+(p.other_farm?' · from '+esc(p.farm):'')+'</div></td>':'')+
+              '<td>'+esc(a.farm)+'</td><td>'+esc(a.task_label||taskName(a.task))+(a.block?'<div style="font-size:10px;color:var(--mute)">'+esc(lbl(a.block))+'</div>':'')+'</td>'+
+              '<td>'+esc(a.asg)+'<div style="font-size:10px;color:var(--mute)">'+esc(a.plan||"")+' · '+esc(a.state)+'</div></td>'+
+              '<td>'+esc(ppTl(a.asg))+'</td>'+
+              (i===0?'<td rowspan="'+p.acts.length+'">'+ppPresence(p)+'</td>':'')+'</tr>';
+          }).join("");
+        }).join("")||'<tr><td colspan="6" class="empty">Nobody matches.</td></tr>')+
+        '</tbody></table></div>';
+    } else if(PP.tab==="free"){
+      var fr=free.filter(ppMatch).sort(function(x,y){ return (ppHere(y)?1:0)-(ppHere(x)?1:0) || String(x.name).localeCompare(String(y.name)); });
+      h+='<div class="note" style="font-size:11.5px;color:var(--mute);margin-bottom:6px">Not on any live assignment on '+esc(d.date)+'. Those scanned in or marked present come first: they are at work with nothing assigned.</div>'+
+        '<div class="pp-scroll"><table><thead><tr><th>Worker</th><th>ID</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Designation</th><th>'+esc(d.date)+'</th></tr></thead><tbody>'+
+        (fr.map(function(p){
+          return '<tr><td><b>'+esc(p.name)+'</b></td><td>'+esc(p.emp)+'</td><td>'+esc(p.farm)+'</td><td>'+esc(p.designation||"")+'</td><td>'+ppPresence(p)+'</td></tr>';
+        }).join("")||'<tr><td colspan="5" class="empty">Nobody free.</td></tr>')+'</tbody></table></div>';
+    } else if(PP.tab==="acts"){
+      var al=acts.filter(function(a){
+        if(!PP.q) return true;
+        return (a.task_label+" "+(a.block||"")+" "+a.asg+" "+(a.plan||"")+" "+a.farm+" "+(a.tl_name||"")+" "+a.crew.map(function(c){ return c.name+" "+c.emp; }).join(" ")).toLowerCase().indexOf(PP.q)>=0;
+      });
+      h+=(al.map(function(a){
+        return '<details class="pp-act"><summary><b>'+esc(a.task_label||taskName(a.task))+'</b><span style="color:var(--mute)">'+esc(lbl(a.block||""))+'</span>'+
+          '<span class="pp-b b-st">'+esc(a.farm)+'</span><span class="pp-b b-st">'+esc(a.asg)+' · '+esc(a.state)+'</span>'+
+          '<span style="font-size:11px;color:var(--mute)">'+esc(a.from_date)+' → '+esc(a.to_date)+'</span>'+
+          (a.tl_name?'<span style="font-size:11px">TL: '+esc(a.tl_name)+'</span>':'')+
+          '<span style="margin-left:auto;font-size:11.5px"><b>'+fmt(a.crew.length)+'</b> on crew · <b style="color:#166534">'+fmt(a.present)+'</b> here'+(a.pct?' · '+fmt(a.pct,0)+'% done':'')+'</span></summary>'+
+          '<div class="crew">'+a.crew.map(function(c){
+            var here=c.scan||c.att==="Present"||c.att==="Half Day";
+            return '<span title="'+esc(c.emp)+' · on this crew since '+esc(c.since)+'" style="'+(here?'border-color:#86efac':(c.att==="Absent"?'border-color:#fca5a5':''))+'">'+esc(c.name)+(c.scan?' <small style="color:#166534">'+esc(c.scan)+'</small>':(c.att==="Absent"?' <small style="color:#991b1b">absent</small>':(c.leave?' <small style="color:#1e40af">leave</small>':'')))+'</span>';
+          }).join("")+'</div></details>';
+      }).join("")||'<div class="empty">No live activities on this date.</div>');
+    }
+    b.innerHTML=h;
+  }
+  function ppTl(asg){
+    var a=((PP.data&&PP.data.activities)||[]).filter(function(x){ return x.asg===asg; })[0];
+    return a ? (a.tl_name||"—") : "—";
+  }
+  function ppLoadMonth(){
+    var b=el("pp-body"); if(!b) return;
+    b.innerHTML='<div class="loading">Building the attendance sheet&hellip;</div>';
+    call({action:"attendance_month", month:el("pp-month").value, farm:el("pp-farm").value, tw_only:PP.tw?1:0}).then(function(d){
+      if(d.error){ b.innerHTML='<div class="err">'+esc(d.error)+'</div>'; return; }
+      PP.month=d; ppPaintMonth();
+    }).catch(function(e){ b.innerHTML='<div class="err">Could not load: '+esc(e&&e.message||e)+'</div>'; });
+  }
+  var PP_CODE={P:"P",HD:"½",A:"A",L:"L",O:"·","?":"?","":""};
+  function ppPaintMonth(){
+    var b=el("pp-body"), d=PP.month; if(!b||!d) return;
+    var rows=(d.rows||[]).filter(function(r){ return !PP.q || (r.name+" "+r.emp+" "+(r.designation||"")).toLowerCase().indexOf(PP.q)>=0; });
+    var T={present:0,absent:0,worked:0,pay:0,flag:0,idle:0};
+    rows.forEach(function(r){ T.present+=r.tot.present; T.absent+=r.tot.absent; T.worked+=r.tot.worked; T.pay+=r.tot.pay; T.flag+=r.tot.worked_no_presence; T.idle+=r.tot.present_no_work; });
+    var h='<div class="pp-kpis">'+
+      '<div class="pp-kpi"><b>'+fmt(rows.length)+'</b><span>'+(PP.tw?'task workers':'people')+'</span></div>'+
+      '<div class="pp-kpi"><b>'+fmt(T.present)+'</b><span>days present</span></div>'+
+      '<div class="pp-kpi"><b>'+fmt(T.absent)+'</b><span>days absent</span></div>'+
+      '<div class="pp-kpi"><b>'+fmt(T.worked)+'</b><span>days with work</span></div>'+
+      '<div class="pp-kpi"><b>'+money(T.pay)+'</b><span>pay recorded KES</span></div>'+
+      '<div class="pp-kpi" title="work recorded on a day with no scan, no Present attendance, or marked Absent/leave — and not confirmed by hand"><b style="color:#991b1b">'+fmt(T.flag)+'</b><span>work, no presence</span></div>'+
+      '<div class="pp-kpi" title="present but no work recorded that day"><b style="color:#92400e">'+fmt(T.idle)+'</b><span>present, no work</span></div>'+
+      '</div>'+
+      '<div class="pp-leg"><span><i class="m-P">P</i>scan / present</span><span><i class="m-HD">½</i>half day</span><span><i class="m-A">A</i>absent</span><span><i class="m-L">L</i>leave</span><span><i class="m-O">·</i>off day</span><span><i class="m-Q">?</i>no record</span>'+
+      '<span><i class="m-w" style="background:#f1f5f9">P</i>underlined = work recorded</span><span><i class="m-flag">A</i>red box = work with no presence</span><span><i class="m-conf">?</i>dashed = confirmed present by hand</span></div>'+
+      '<div class="pp-scroll"><table class="pp-m"><thead><tr><th class="nm">Worker</th>'+
+      d.days.map(function(x){ var dt=new Date(x+"T00:00:00"); return '<th title="'+esc(x)+'">'+x.slice(8)+'<div style="font-size:8px">'+"SMTWTFS".charAt(dt.getDay())+'</div></th>'; }).join("")+
+      '<th>P</th><th>A</th><th>L</th><th>?</th><th>Work days</th><th>Pay</th><th title="work, no presence">⚠</th><th title="present, no work">idle</th></tr></thead><tbody>'+
+      rows.map(function(r){
+        return '<tr><td class="nm"><b>'+esc(r.name)+'</b><div style="font-size:9.5px;color:var(--mute)">'+esc(r.emp)+(r.designation?' · '+esc(r.designation):'')+'</div></td>'+
+          r.cells.map(function(c,i){
+            var code=c.c||"", cls="m-"+(code==="?"?"Q":code);
+            if(c.work!=null) cls+=" m-w";
+            if(c.flag) cls+=" m-flag"; else if(c.conf) cls+=" m-conf";
+            var tip=d.days[i]+": "+({P:"present",HD:"half day",A:"absent",L:"leave",O:"off day","?":"no scan or attendance","":"—"}[code]||code)+
+              (c["in"]?" · in "+c["in"]:"")+(c.out?" out "+c.out:"")+(c.leave?" · "+c.leave:"")+
+              (c.work!=null?" · work: "+(c.tasks||"")+" KES "+fmt(c.work)+(c.pending?" (in approval)":""):"")+(c.conf?" · confirmed present by "+c.conf:"");
+            return '<td class="'+cls+'" title="'+esc(tip)+'">'+PP_CODE[code]+'</td>';
+          }).join("")+
+          '<td>'+r.tot.present+'</td><td>'+r.tot.absent+'</td><td>'+r.tot.leave+'</td><td>'+r.tot.unknown+'</td><td>'+r.tot.worked+'</td><td>'+fmt(r.tot.pay)+'</td>'+
+          '<td style="'+(r.tot.worked_no_presence?'color:#991b1b;font-weight:700':'')+'">'+r.tot.worked_no_presence+'</td><td>'+r.tot.present_no_work+'</td></tr>';
+      }).join("")+'</tbody></table></div>';
+    b.innerHTML=h;
+  }
+  function ppCsv(){
+    var d=PP.month; if(!d){ toast("Load the month first"); return; }
+    var lines=[["Employee","Name","Farm","Designation"].concat(d.days).concat(["Present","Absent","Leave","No record","Work days","Pay KES","Work no presence","Present no work"])];
+    (d.rows||[]).forEach(function(r){
+      lines.push([r.emp,r.name,r.farm,r.designation||""].concat(r.cells.map(function(c){ return (c.c||"")+(c.work!=null?"+W":"")+(c.flag?"!":""); }))
+        .concat([r.tot.present,r.tot.absent,r.tot.leave,r.tot.unknown,r.tot.worked,r.tot.pay,r.tot.worked_no_presence,r.tot.present_no_work]));
+    });
+    var csv=lines.map(function(l){ return l.map(function(v){ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(","); }).join("\n");
+    var a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+    a.download="task-worker-attendance-"+d.month+(el("pp-farm").value?"-"+el("pp-farm").value:"")+".csv";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
   function render(D){
     el("wm-body").innerHTML=
       // ===== delivery timeline, first: its Graph dropdown carries the cost graphs =====
@@ -1715,6 +1926,11 @@
           '</div>'+
         '</div></div>'+
       '</div>'+
+      // ===== people: who is where, who is free, crews, the month's attendance =====
+      '<div class="sech">People &mdash; who is where, who is free &amp; attendance</div>'+
+      '<div class="card"><div class="hd"><h3>Every worker, every activity</h3>'+
+        '<div class="cap">who is on which activity on a day &middot; who is free &middot; each live activity with its crew &middot; the month&rsquo;s attendance beside the work recorded</div></div>'+
+        '<div class="bd" id="wm-pp"><div class="loading">Reading who is where&hellip;</div></div></div>'+
       // ===== how much of each plan actually happened =====
       '<div class="sech">Master plans &mdash; progress &amp; money</div>'+
       '<div class="card"><div class="hd"><h3>How each master plan is going</h3>'+
@@ -1803,6 +2019,7 @@
     initQueues(D);
     initTimeline();
     initFieldIntel();
+    initPeople();
   }
 
   // ============ APPROVAL SPEED (step by step) ============

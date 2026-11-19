@@ -5061,6 +5061,222 @@ def wm_dashboard(**kwargs):
             """, {"f": as_p.farm, "t": as_a.task,
                   "plan": as_a.parent, "pfrom": as_p.period_from, "pto": as_p.period_to}, as_dict=True)
 
+    elif action == "people_board" or action == "attendance_month":
+        # PEOPLE (2026-11-19): who is on which activity on a day, who is free, every
+        # live activity with its crew -- and, for a month, each task worker's
+        # attendance beside the work recorded for them, so the clerks see at a glance
+        # who worked without being marked present (and the reverse).
+        pb_farm = (frappe.form_dict.get("farm") or "").strip()
+        pb_farms = [pb_farm] if pb_farm in FARMS else list(FARMS)
+        pb_my = [x[0] for x in frappe.db.sql("""SELECT DISTINCT for_value FROM `tabUser Permission`
+            WHERE user = %s AND allow = 'Farm'""", (frappe.session.user,))]
+        if pb_my:
+            pb_farms = [f for f in pb_farms if f in pb_my] or ["__none__"]
+        # who is paid by the task: the payable lists in Settings, else 'Task Worker'
+        pb_tw = []
+        for pb_col, pb_child, pb_cf in (("employment_type", "Work Management Payable Employment Type", "employment_type"),
+                                        ("designation", "Work Management Payable Designation", "designation"),
+                                        ("custom_category", "Work Management Payable Category", "category")):
+            if not frappe.get_meta("Employee").get_field(pb_col) or not frappe.db.exists("DocType", pb_child):
+                continue
+            pb_vals = [str(r.get(pb_cf) or "").strip() for r in frappe.get_all(pb_child,
+                filters={"parenttype": "Work Management Settings"}, fields=[pb_cf])]
+            pb_vals = [v for v in pb_vals if v]
+            if pb_vals:
+                pb_tw.append("e." + pb_col + " IN (" + ", ".join(["'" + v.replace("'", "''") + "'" for v in pb_vals]) + ")")
+        pb_tw_sql = "(" + (" OR ".join(pb_tw) if pb_tw else "e.employment_type = 'Task Worker'") + ")"
+        pb_cat = "e.custom_category" if frappe.get_meta("Employee").get_field("custom_category") else "''"
+        pb_emps = frappe.db.sql("""
+            SELECT e.name emp, e.employee_name name, TRIM(e.custom_farm) farm, e.designation, e.employment_type etype,
+                   """ + pb_cat + """ cat, e.holiday_list hl,
+                   CASE WHEN """ + pb_tw_sql + """ THEN 1 ELSE 0 END tw
+            FROM `tabEmployee` e
+            WHERE e.status = 'Active' AND TRIM(IFNULL(e.custom_farm, '')) IN %s
+            ORDER BY TRIM(e.custom_farm), e.employee_name
+        """, (tuple(pb_farms),), as_dict=True)
+        out["farms"] = pb_farms
+
+        if action == "people_board":
+            pb_day = str(frappe.form_dict.get("date") or frappe.utils.today())
+            pb_rows = frappe.db.sql("""
+                SELECT we.employee emp, we.employee_name name, a.name asg, a.planner_request plan, a.farm,
+                       a.task, IFNULL(tk.subject, a.task) task_name, a.block_section block, a.workflow_state state,
+                       a.from_date, a.to_date, COALESCE(we.start_date, a.from_date) since,
+                       IFNULL(pl.team_leader, '') tl, IFNULL(pl.uom, '') uom, IFNULL(pl.daily_target, 0) tgt,
+                       IFNULL(pl.fulfilment_pct, 0) pct
+                FROM `tabWork Assignment Employee` we
+                INNER JOIN `tabWork Management Assigner` a ON a.name = we.parent
+                LEFT JOIN `tabWork Management Planner` pl ON pl.name = a.planner_request
+                LEFT JOIN `tabTask` tk ON tk.name = a.task
+                WHERE a.workflow_state IN ('Pending Farm Manager', 'Pending HR Head', 'Pending GM', 'Assigned')
+                  AND a.docstatus < 2 AND a.farm IN %(f)s
+                  AND a.from_date <= %(d)s AND a.to_date >= %(d)s
+                  AND COALESCE(we.start_date, a.from_date) <= %(d)s
+                  AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %(d)s
+                ORDER BY a.farm, task_name, we.employee_name
+            """, {"f": tuple(pb_farms), "d": pb_day}, as_dict=True)
+            pb_scan = {}
+            pb_att = {}
+            pb_leave = {}
+            if pb_day <= str(frappe.utils.today()):
+                for r in frappe.db.sql("""SELECT employee, MIN(`time`) t1, MAX(`time`) t2 FROM `tabEmployee Checkin`
+                        WHERE `time` >= %s AND `time` < DATE_ADD(%s, INTERVAL 1 DAY) GROUP BY employee""", (pb_day, pb_day), as_dict=True):
+                    pb_scan[r.employee] = str(r.t1)[11:16] + ("–" + str(r.t2)[11:16] if r.t2 and r.t2 != r.t1 else "")
+                for r in frappe.db.sql("""SELECT employee, status FROM `tabAttendance` WHERE docstatus = 1
+                        AND attendance_date = %s""", (pb_day,), as_dict=True):
+                    if pb_att.get(r.employee) not in ("Present", "Half Day", "Work From Home"):
+                        pb_att[r.employee] = r.status
+            for r in frappe.db.sql("""SELECT employee, leave_type FROM `tabLeave Application` WHERE docstatus = 1
+                    AND status = 'Approved' AND from_date <= %s AND to_date >= %s""", (pb_day, pb_day), as_dict=True):
+                pb_leave[r.employee] = r.leave_type or "Leave"
+            pb_on = {}
+            pb_acts = {}
+            for r in pb_rows:
+                pb_on.setdefault(r.emp, []).append({"asg": r.asg, "plan": r.plan, "task": r.task, "task_label": r.task_name, "block": r.block,
+                                                    "state": r.state, "farm": r.farm, "tl": r.tl})
+                g = pb_acts.get(r.asg)
+                if not g:
+                    g = {"asg": r.asg, "plan": r.plan, "farm": r.farm, "task": r.task, "task_label": r.task_name, "block": r.block, "state": r.state,
+                         "from_date": str(r.from_date), "to_date": str(r.to_date), "tl": r.tl, "uom": r.uom,
+                         "daily_target": frappe.utils.flt(r.tgt), "pct": frappe.utils.flt(r.pct), "crew": [], "present": 0}
+                    pb_acts[r.asg] = g
+                g["crew"].append({"emp": r.emp, "name": r.name, "since": str(r.since), "scan": pb_scan.get(r.emp),
+                                  "att": pb_att.get(r.emp), "leave": pb_leave.get(r.emp)})
+                if pb_scan.get(r.emp) or pb_att.get(r.emp) in ("Present", "Half Day", "Work From Home"):
+                    g["present"] = g["present"] + 1
+            pb_tl_names = {}
+            for g in pb_acts.values():
+                if g["tl"] and g["tl"] not in pb_tl_names:
+                    pb_tl_names[g["tl"]] = (frappe.db.get_value("User", g["tl"], "full_name") if "@" in g["tl"] else
+                                            frappe.db.get_value("Employee", g["tl"], "employee_name")) or g["tl"]
+                g["tl_name"] = pb_tl_names.get(g["tl"]) or ""
+            pb_people = []
+            for e in pb_emps:
+                pb_people.append({"emp": e.emp, "name": e.name, "farm": e.farm, "designation": e.designation,
+                                  "etype": e.etype, "cat": e.cat, "tw": frappe.utils.cint(e.tw),
+                                  "acts": pb_on.get(e.emp, []), "scan": pb_scan.get(e.emp), "att": pb_att.get(e.emp),
+                                  "leave": pb_leave.get(e.emp)})
+            # people on an activity who are not on these farms' staff lists (borrowed from another farm)
+            pb_known = {e.emp: 1 for e in pb_emps}
+            for emp_k in pb_on:
+                if not pb_known.get(emp_k):
+                    pb_people.append({"emp": emp_k, "name": frappe.db.get_value("Employee", emp_k, "employee_name") or emp_k,
+                                      "farm": frappe.db.get_value("Employee", emp_k, "custom_farm") or "", "designation": "",
+                                      "etype": "", "cat": "", "tw": 1, "acts": pb_on[emp_k], "scan": pb_scan.get(emp_k),
+                                      "att": pb_att.get(emp_k), "leave": pb_leave.get(emp_k), "other_farm": 1})
+            out["date"] = pb_day
+            out["people"] = pb_people
+            out["activities"] = sorted(pb_acts.values(), key=lambda x: (x["farm"] or "", x["task_label"] or "", x["asg"]))
+
+        else:
+            am_month = str(frappe.form_dict.get("month") or frappe.utils.today()[:7])[:7]
+            am_from = am_month + "-01"
+            am_to = str(frappe.utils.get_last_day(am_from))
+            am_today = str(frappe.utils.today())
+            am_tw_only = frappe.utils.cint(frappe.form_dict.get("tw_only") if frappe.form_dict.get("tw_only") is not None else 1)
+            am_emps = [e for e in pb_emps if (e.tw or not am_tw_only)]
+            am_ids = tuple([e.emp for e in am_emps]) or ("__none__",)
+            am_days = []
+            am_d = am_from
+            while am_d <= am_to:
+                am_days.append(am_d)
+                am_d = str(frappe.utils.add_days(am_d, 1))
+            am_cells = {}
+
+            for r in frappe.db.sql("""SELECT employee, DATE(`time`) d, MIN(`time`) t1, MAX(`time`) t2, COUNT(*) n
+                    FROM `tabEmployee Checkin` WHERE employee IN %s AND `time` >= %s AND `time` < DATE_ADD(%s, INTERVAL 1 DAY)
+                    GROUP BY employee, DATE(`time`)""", (am_ids, am_from, am_to), as_dict=True):
+                c = am_cells.setdefault(r.employee + "|" + str(r.d), {})
+                c["in"] = str(r.t1)[11:16]
+                if r.n > 1:
+                    c["out"] = str(r.t2)[11:16]
+            for r in frappe.db.sql("""SELECT employee, attendance_date d, status FROM `tabAttendance`
+                    WHERE docstatus = 1 AND employee IN %s AND attendance_date BETWEEN %s AND %s""",
+                    (am_ids, am_from, am_to), as_dict=True):
+                c = am_cells.setdefault(r.employee + "|" + str(r.d), {})
+                if c.get("att") not in ("Present", "Half Day", "Work From Home"):
+                    c["att"] = r.status
+            for r in frappe.db.sql("""SELECT employee, from_date, to_date, leave_type FROM `tabLeave Application`
+                    WHERE docstatus = 1 AND status = 'Approved' AND employee IN %s AND from_date <= %s AND to_date >= %s""",
+                    (am_ids, am_to, am_from), as_dict=True):
+                for dd in am_days:
+                    if str(r.from_date) <= dd <= str(r.to_date):
+                        am_cells.setdefault(r.employee + "|" + dd, {})["leave"] = r.leave_type or "Leave"
+            am_hl = list({e.hl for e in am_emps if e.hl})
+            am_off = {}
+            if am_hl:
+                for r in frappe.db.sql("""SELECT parent, holiday_date FROM `tabHoliday` WHERE parent IN %s
+                        AND holiday_date BETWEEN %s AND %s""", (tuple(am_hl), am_from, am_to), as_dict=True):
+                    am_off[r.parent + "|" + str(r.holiday_date)] = 1
+            for r in frappe.db.sql("""
+                    SELECT we.employee, we.work_date d, SUM(we.amount) amt, SUM(we.actual_quantity) q,
+                           GROUP_CONCAT(DISTINCT IFNULL(tk.subject, ac.task) SEPARATOR ', ') tasks,
+                           MAX(IFNULL(we.presence_confirmed_by, '')) conf,
+                           MIN(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN 1 ELSE 0 END) all_conf
+                    FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+                    LEFT JOIN `tabTask` tk ON tk.name = ac.task
+                    WHERE we.parenttype = 'Work Management Actuals' AND ac.docstatus < 2
+                      AND IFNULL(ac.workflow_state, '') != 'Rejected' AND we.employee IN %s
+                      AND we.work_date BETWEEN %s AND %s
+                      AND (IFNULL(we.actual_quantity, 0) > 0 OR IFNULL(we.amount, 0) > 0)
+                    GROUP BY we.employee, we.work_date""", (am_ids, am_from, am_to), as_dict=True):
+                c = am_cells.setdefault(r.employee + "|" + str(r.d), {})
+                c["work"] = round(frappe.utils.flt(r.amt), 2)
+                c["tasks"] = r.tasks
+                if r.conf:
+                    c["conf"] = r.conf
+                if not frappe.utils.cint(r.all_conf):
+                    c["pending"] = 1
+            am_rows = []
+            for e in am_emps:
+                cells = []
+                tot = {"present": 0, "absent": 0, "leave": 0, "off": 0, "unknown": 0, "worked": 0, "pay": 0.0,
+                       "worked_no_presence": 0, "present_no_work": 0}
+                for dd in am_days:
+                    c = am_cells.get(e.emp + "|" + dd) or {}
+                    if c.get("in") or c.get("att") in ("Present", "Work From Home"):
+                        code = "P"
+                    elif c.get("att") == "Half Day":
+                        code = "HD"
+                    elif c.get("leave") or c.get("att") == "On Leave":
+                        code = "L"
+                    elif c.get("att") == "Absent":
+                        code = "A"
+                    elif e.hl and am_off.get(e.hl + "|" + dd):
+                        code = "O"
+                    elif dd > am_today:
+                        code = ""
+                    else:
+                        code = "?"
+                    c["c"] = code
+                    if code in ("P", "HD"):
+                        tot["present"] = tot["present"] + 1
+                    elif code == "A":
+                        tot["absent"] = tot["absent"] + 1
+                    elif code == "L":
+                        tot["leave"] = tot["leave"] + 1
+                    elif code == "O":
+                        tot["off"] = tot["off"] + 1
+                    elif code == "?":
+                        tot["unknown"] = tot["unknown"] + 1
+                    if c.get("work") is not None:
+                        tot["worked"] = tot["worked"] + 1
+                        tot["pay"] = tot["pay"] + frappe.utils.flt(c.get("work"))
+                        if code in ("A", "?", "L") and not c.get("conf"):
+                            c["flag"] = 1
+                            tot["worked_no_presence"] = tot["worked_no_presence"] + 1
+                    elif code in ("P", "HD"):
+                        tot["present_no_work"] = tot["present_no_work"] + 1
+                    cells.append(c)
+                tot["pay"] = round(tot["pay"], 2)
+                am_rows.append({"emp": e.emp, "name": e.name, "farm": e.farm, "designation": e.designation,
+                                "cells": cells, "tot": tot})
+            out["month"] = am_month
+            out["days"] = am_days
+            out["today"] = am_today
+            out["rows"] = am_rows
+
     elif action == "task_names":
         # {task docname: subject}, so a screen can print what a task is called rather
         # than what it is filed under. Every read that returns work carries a Task

@@ -271,10 +271,11 @@
   // Close workflow lives in the wm_actuals script (single source of truth), so we
   // POST there directly with the plan name. GM closes instantly; Farm Manager /
   // Section Head sends a request for the GM to confirm.
-  function closeCall(action, plan, reason){
+  function closeCall(action, plan, reason, rating){
     var token = (typeof frappe!=="undefined" && frappe.csrf_token) ? frappe.csrf_token : "";
     var p=new URLSearchParams();
     p.append("action", action); p.append("plan", plan); p.append("reason", reason);
+    if(rating) p.append("rating", rating);
     return fetch("/api/method/wm_actuals", {
       method:"POST",
       headers:{ "Content-Type":"application/x-www-form-urlencoded", "X-Frappe-CSRF-Token":token, "Accept":"application/json" },
@@ -298,6 +299,8 @@
           '<div style="font-size:12px;color:#444;margin-bottom:10px">'+esc(desc)+' <span style="color:#777">Plan <b>'+esc(plan)+'</b>.</span></div>'+
           '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">Reason (required)</label>'+
           '<textarea id="wpc-reason" rows="3" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;width:100%;background:#fff;color:var(--ink);resize:vertical" placeholder="e.g. crop finished early, '+esc(TX("unit_singular","block").toLowerCase())+' cleared ahead of target"></textarea>'+
+          '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:10px 0 5px">Rating of the work done (required)</label>'+
+          '<select id="wpc-rating" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:7px 10px;background:#fff"><option value="">— rate it —</option><option>1 - Good</option><option>2 - Fair</option><option>3 - Rework</option></select>'+
         '</div>'+
         '<div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--faint)">'+
           '<button type="button" class="btn" id="wpc-cancel">Cancel</button>'+
@@ -313,8 +316,10 @@
     go.onclick=function(){
       var reason=(ta.value||"").trim();
       if(!reason){ toast("A reason is required"); return; }
+      var rating=el("wpc-rating").value;
+      if(!rating){ toast("Rate the work done first"); return; }
       go.disabled=true;
-      closeCall(isGm?"act_close_confirm":"act_close_request", plan, reason).then(function(d){
+      closeCall(isGm?"act_close_confirm":"act_close_request", plan, reason, rating).then(function(d){
         if(d.error){ toast("Error: "+d.error); go.disabled=false; return; }
         shut();
         toast(isGm ? "Plan closed" : "Close request sent to GM");

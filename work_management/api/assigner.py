@@ -160,6 +160,48 @@ def wm_assigner(**kwargs):
     WMG_HR = 1 if (any(_r_ in MY_ROLES for _r_ in HR_HEAD_ROLES)) else 0
 
 
+    # WHO WORKS ON A FARM'S PLANS (2026-11-19): the farm(s) in their Farm user
+    # permission, or every farm when they have none. The crew controls (release,
+    # delete a duplicate) are open to everyone involved in the farm's work, not
+    # only its manager -- the people who make the assignments use them most.
+    WMG_CREW_ROLES = ("Work Planner", "Work Entry", "Production Section Head", "HR Clerk", "HR User",
+                      "Work Team Leader", "Farm Manager")
+    wmg_my_farms = [x[0] for x in frappe.db.sql("""SELECT DISTINCT for_value FROM `tabUser Permission`
+        WHERE user = %s AND allow = 'Farm'""", (frappe.session.user,))]
+
+
+    def wmg_crew_err(d, verb):
+        """"" when this person may change `d`'s crew, else the refusal: the farm's
+        manager, HR, the GM, whoever made the assignment, or anyone with a work
+        management role on that farm."""
+        if not wmg_farm_err(d.farm, verb):
+            return ""
+        if frappe.session.user in (d.get("assigned_by"), d.get("owner")):
+            return ""
+        if [r for r in WMG_CREW_ROLES if r in MY_ROLES] and (not wmg_my_farms or d.farm in wmg_my_farms):
+            return ""
+        return "Only people working on " + str(d.farm or "that farm") + "'s plans may " + verb + "."
+
+
+    def wmg_auto_left(asg, emp, start):
+        """Release date when none was picked: their last day with work recorded here, so
+        they are free from the next day -- releasing on today's date kept them "assigned
+        elsewhere" all of today. Nothing recorded: yesterday, or the day before they
+        started (they were never busy here)."""
+        last = frappe.db.sql("""
+            SELECT MAX(we.work_date) FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+            WHERE ac.assignment = %s AND we.employee = %s AND IFNULL(ac.workflow_state, '') != 'Rejected'
+              AND ac.docstatus < 2 AND (IFNULL(we.actual_quantity, 0) > 0 OR IFNULL(we.amount, 0) > 0)
+        """, (asg, emp))
+        if last and last[0][0]:
+            return str(last[0][0])
+        yd = str(frappe.utils.add_days(frappe.utils.today(), -1))
+        if start and str(start) > yd:
+            return str(frappe.utils.add_days(start, -1))
+        return yd
+
+
     def wmg_farm_err(farm, verb):
         """"" when this person may act on `farm`'s work, else the refusal."""
         if WMG_GM or WMG_HR:
@@ -330,7 +372,7 @@ def wm_assigner(**kwargs):
     # the action makes its own role and farm checks further down.
     WMG_WRITES = {
         "a_add_crew": "", "a_fm_approve": "", "a_gm_approve": "", "a_hr_approve": "",
-        "a_reject": "", "a_release": "", "a_submit": "", "a_substitute": ""
+        "a_reject": "", "a_release": "", "a_submit": "", "a_substitute": "", "a_delete": ""
     }
     WMG_DENY = ""
     if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
@@ -1120,6 +1162,8 @@ def wm_assigner(**kwargs):
         if a:
             a["editable"] = 1 if a.workflow_state in ("Draft","Rejected","Pending Farm Manager","Pending HR Head","Pending GM") else 0
             a["can_substitute"] = 1 if a.workflow_state == "Assigned" else 0
+            a_full = frappe.db.get_value("Work Management Assigner", nm, ["farm", "assigned_by", "owner"], as_dict=True)
+            a["can_crew"] = 0 if (a.workflow_state in ("Rejected", "Cancelled") or wmg_crew_err(a_full, "x")) else 1
             rows = frappe.db.get_all("Work Assignment Employee",
                 filters={"parent": nm},
                 fields=["employee","employee_name","designation","employment_type","status","start_date","left_date"],
@@ -1387,33 +1431,25 @@ def wm_assigner(**kwargs):
         # to the whole crew, which is why this is a small change.
         nm = frappe.form_dict.get("assignment")
         rel_raw = frappe.form_dict.get("employees") or frappe.form_dict.get("employee") or ""
-        rel_day = (frappe.form_dict.get("release_date") or frappe.form_dict.get("left_date")
-            or frappe.utils.today())
+        # no date picked: each worker's own last worked day (wmg_auto_left)
+        rel_day = (frappe.form_dict.get("release_date") or frappe.form_dict.get("left_date") or "")
         rel_who = []
         for rw in str(rel_raw).split(","):
             if rw.strip():
                 rel_who.append(rw.strip())
-        rl = frappe.get_roles(frappe.session.user)
-        rel_may = any(_r_ in rl for _r_ in HR_HEAD_ROLES) or ("General Manager" in rl) \
-            or ("System Manager" in rl)
-        for rr in rl:
-            if rr.startswith("Farm Manager"):
-                rel_may = 1
         err = None
         if not nm or not rel_who:
             err = "The assignment and at least one worker are required"
-        elif not rel_may:
-            # the screen hides the controls from everybody else; this is the same rule
-            # enforced where it counts
-            err = "Only a Farm Manager, the HR head or the GM may release a worker."
         d = None
         if not err:
             d = frappe.get_doc("Work Management Assigner", nm)
-            if d.workflow_state != "Assigned":
-                err = "Workers can only be released from an approved (Assigned) assignment"
+            # any stage but a dead one (2026-11-19): a crew can be freed while the
+            # assignment is still waiting for approval, not only once it is Assigned
+            if d.workflow_state in ("Rejected", "Cancelled") or d.docstatus == 2:
+                err = "This assignment is " + str(d.workflow_state) + "; there is no crew to release."
             if not err:
-                err = wmg_farm_err(d.farm, "release a worker from this farm's work") or None
-            if not err:
+                err = wmg_crew_err(d, "release a worker from this farm's work") or None
+            if not err and rel_day:
                 for rw in rel_who:
                     if not err:
                         err = wmg_left_err(nm, rw, rel_day) or None
@@ -1435,11 +1471,19 @@ def wm_assigner(**kwargs):
                 # the parent is submitted, so child rows and parent counts are written
                 # directly, which is the route a_substitute takes and needs no
                 # re-approval
+                rel_days = {}
                 for rw in rel_rows:
+                    rw_day = rel_day
+                    if not rw_day:
+                        rw_day = wmg_auto_left(nm, rw, frappe.db.get_value("Work Assignment Employee",
+                            rel_rows[rw], "start_date") or d.from_date)
+                        if d.to_date and str(d.to_date) < str(rw_day):
+                            rw_day = str(d.to_date)
+                    rel_days[rw] = str(rw_day)
                     frappe.db.set_value("Work Assignment Employee", rel_rows[rw], "status",
                         "Left", update_modified=False)
                     frappe.db.set_value("Work Assignment Employee", rel_rows[rw], "left_date",
-                        rel_day, update_modified=False)
+                        rw_day, update_modified=False)
                 # assigned_count counts ACTIVE rows, so releasing without a replacement
                 # moves it -- unlike a substitution, where one leaves as one joins
                 active_rows = frappe.db.sql("""
@@ -1465,15 +1509,62 @@ def wm_assigner(**kwargs):
                 out["released_count"] = len(rel_rows)
                 out["released"] = list(rel_rows.keys())
                 out["not_active"] = rel_missing
-                out["release_date"] = str(rel_day)
+                out["release_date"] = str(rel_day) if rel_day else "each worker's last worked day"
+                out["release_days"] = rel_days
                 out["active_count"] = active
                 out["variance"] = active - planned
                 out["kept_rows"] = frappe.utils.cint(kept[0].n) if kept else 0
                 out["kept_amount"] = frappe.utils.flt(kept[0].c, 2) if kept else 0
-                out["message"] = (str(len(rel_rows)) + " released on " + str(rel_day) + ". " +
+                out["message"] = (str(len(rel_rows)) + " released" + (" on " + str(rel_day) if rel_day else
+                    " after their last worked day") + ". " +
                     str(out["kept_rows"]) + " day-row(s) already recorded here are kept, worth KES " +
                     frappe.utils.fmt_money(out["kept_amount"]) +
                     ". They are free for another task now.")
+
+    elif action == "a_delete":
+        # DELETE A DUPLICATE ASSIGNMENT (2026-11-19). Two assignments made for the same
+        # plan hold the crew twice ("assigned elsewhere"). Anyone working on the
+        # farm's plans may delete one, at any stage, with a reason -- as long as no
+        # actuals were recorded against it (delete those first under Actuals). The
+        # crew and the reason are written on the plan's timeline, so nothing vanishes
+        # without a trace.
+        nm = frappe.form_dict.get("assignment")
+        del_reason = (frappe.form_dict.get("reason") or "").strip()
+        d = frappe.get_doc("Work Management Assigner", nm) if nm and frappe.db.exists("Work Management Assigner", nm) else None
+        err = None
+        if not d:
+            err = "No such assignment: " + str(nm)
+        elif not del_reason:
+            err = "Say why it is being deleted (for example: a duplicate of WMA-...)."
+        if not err:
+            err = wmg_crew_err(d, "delete this farm's assignments") or None
+        if not err:
+            del_acts = frappe.db.get_all("Work Management Actuals",
+                filters={"assignment": nm, "docstatus": ["<", 2]}, pluck="name")
+            if del_acts:
+                err = (nm + " has actuals recorded against it (" + ", ".join(del_acts[:5]) + "). Delete those "
+                       "under Actuals first (only unconfirmed ones can be), or release the crew instead.")
+        if err:
+            out["error"] = err
+        else:
+            del_crew = [str(r.employee_name or r.employee) + " (" + str(r.employee) + ")" for r in d.employees]
+            del_note = ("Assignment " + nm + " (" + str(d.workflow_state) + ", " + str(d.from_date) + " to " +
+                        str(d.to_date) + ") deleted by " + frappe.session.user + ". Reason: " + del_reason +
+                        ". Crew: " + (", ".join(del_crew) or "none") + ".")
+            if d.planner_request and frappe.db.exists("Work Management Planner", d.planner_request):
+                frappe.get_doc("Work Management Planner", d.planner_request).add_comment("Comment", del_note)
+            if frappe.utils.cint(d.docstatus) == 1:
+                # a submitted record cannot be deleted; it is cancelled in place first
+                frappe.db.set_value("Work Management Assigner", nm, "docstatus", 2, update_modified=False)
+                for kid in frappe.db.get_all("Work Assignment Employee", filters={"parent": nm}, pluck="name"):
+                    frappe.db.set_value("Work Assignment Employee", kid, "docstatus", 2, update_modified=False)
+            for odr in frappe.db.get_all("Work Off Day Request", filters={"assignment": nm}, pluck="name") \
+                    if frappe.db.exists("DocType", "Work Off Day Request") else []:
+                frappe.delete_doc("Work Off Day Request", odr, ignore_permissions=True, force=1)
+            frappe.delete_doc("Work Management Assigner", nm, ignore_permissions=True, force=1)
+            frappe.db.commit()
+            out["deleted"] = nm
+            out["note"] = del_note
 
     elif action == "a_substitute":
         # one-for-one: outgoing -> Left(+left_date); replacement appended Active(+start_date)

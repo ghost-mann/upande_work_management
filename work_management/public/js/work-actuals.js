@@ -44,7 +44,7 @@
     // `method` names another screen's script, the way work-planner.js does it --
     // needed only for wm_dashboard's task_names map, which no other script serves.
     var ep="/api/method/"+(method||"wm_actuals");
-    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_close_reject:1,act_reopen:1,od_request:1,od_decide:1,ws_notify:1,ws_delete_rejected:1};
+    var writes={act_submit:1,act_fm_approve:1,act_hr_approve:1,act_gm_approve:1,act_reject:1,a_substitute:1,a_release:1,a_add_crew:1,act_close_confirm:1,act_close_request:1,act_close_reject:1,act_reopen:1,od_request:1,od_decide:1,ws_notify:1,ws_delete_rejected:1,act_delete:1};
     var isWrite=writes[args.action]===1;
     var p=new URLSearchParams();
     for(var k in args){ if(args[k]!==undefined && args[k]!==null) p.append(k,args[k]); }
@@ -411,7 +411,7 @@
     var val = (typeof explicitAsg === "string" && explicitAsg)
       ? explicitAsg
       : ((this && this.value) ? this.value : "");
-    ST.asg=val; ST.cells={}; ST.hours={}; ST.detail=null;
+    ST.asg=val; ST.cells={}; ST.hours={}; ST.confirm={}; ST.detail=null;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
     if(!ST.asg){ el("ac-detail").style.display="none"; refresh(); return; }
     call({action:"act_detail",assignment:ST.asg}).then(function(d){
@@ -431,7 +431,7 @@
     showTab("enter");
     var sel=el("ac-asg");
     if(sel){ sel.value=assignment; }
-    ST.asg=assignment; ST.cells={}; ST.hours={}; ST.detail=null;
+    ST.asg=assignment; ST.cells={}; ST.hours={}; ST.confirm={}; ST.detail=null;
     ST._editingDoc=docname; ST._editingStage=stage;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
     // edit_doc: the server seeds the grid from this pending record and leaves it unlocked
@@ -544,6 +544,7 @@
       ? "This finalises any open draft actuals to Confirmed and caps the plan (target kept for reporting). A reason is required."
       : "This sends a close request to the GM. Entry stays open until they confirm. A reason is required.";
     var ta=el("ac-close-reason"); ta.value=presetReason||"";
+    closeRating(true, "");
     el("ac-close-go").textContent = isGm ? "Close now" : "Send request";
     el("ac-close-go").disabled = !ta.value.trim();
     m.style.display="flex";
@@ -551,7 +552,25 @@
   // The same reason box, for the GM's two answers from the Approvals queues:
   // turning a close request down, and reopening a plan closed early. Each posts
   // the plan and the reason, then reloads the queue it was opened from.
+  // A RATING WITH EVERY EARLY CLOSE: asked of whoever requests it, and of the GM
+  // when closing (prefilled with the request's). Added to the reason box here so
+  // the page's HTML needs no change.
+  function closeRating(show, preset){
+    var w=el("ac-close-rating-wrap");
+    if(!w){
+      w=document.createElement("div"); w.id="ac-close-rating-wrap"; w.style.marginTop="10px";
+      w.innerHTML='<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">Rating of the work done (required)</label>'+
+        '<select id="ac-close-rating" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:7px 10px;border-radius:8px;background:#fff">'+
+        '<option value="">— rate it —</option><option>1 - Good</option><option>2 - Fair</option><option>3 - Rework</option></select>';
+      var ta=el("ac-close-reason"); ta.parentNode.insertBefore(w, ta.nextSibling);
+    }
+    w.style.display=show?"block":"none";
+    el("ac-close-rating").value=preset||"";
+  }
   var PLAN_ACTS = {
+    approve: {action:"act_close_confirm", title:"Approve close & rate", go:"Close plan",
+      desc:"Confirms open actuals, caps the plan (target kept) and frees the workers. Rate the work done: the request's rating is filled in, change it if you see it differently.",
+      done:"Plan closed", reload:function(){ loadCloseRequests(); }},
     reject: {action:"act_close_reject", title:"Reject close request", go:"Reject request",
       desc:"The plan stays open and entry carries on. Whoever asked sees that it was rejected, and your reason.",
       done:"Close request rejected", reload:function(){ loadCloseRequests(); }},
@@ -559,21 +578,27 @@
       desc:"The plan opens for entry again. Actuals the close confirmed stay confirmed, and released workers stay released — re-add anyone still needed with Add crew.",
       done:"Plan reopened", reload:function(){ loadClosedPlans(); }}
   };
-  function openPlanModal(kind, plan){
+  function openPlanModal(kind, plan, presetReason, presetRating){
     var m=el("ac-closemodal"); if(!m) return;
     var pa=PLAN_ACTS[kind];
     ST._planAct={kind:kind, plan:plan};
     el("ac-close-title").textContent = pa.title+" · "+plan;
     el("ac-close-desc").textContent = pa.desc;
-    var ta=el("ac-close-reason"); ta.value="";
+    var ta=el("ac-close-reason"); ta.value=presetReason||"";
+    closeRating(kind==="approve", presetRating);
     el("ac-close-go").textContent = pa.go;
-    el("ac-close-go").disabled = true;
+    el("ac-close-go").disabled = !ta.value.trim();
     m.style.display="flex";
   }
   function submitPlanAct(reason){
     var pa=PLAN_ACTS[ST._planAct.kind], plan=ST._planAct.plan;
+    var args={action:pa.action, plan:plan, reason:reason};
+    if(ST._planAct.kind==="approve"){
+      args.rating=el("ac-close-rating").value;
+      if(!args.rating){ toast("Rate the work done first"); return; }
+    }
     el("ac-close-go").disabled=true;
-    call({action:pa.action, plan:plan, reason:reason}).then(function(d){
+    call(args).then(function(d){
       if(d.error){ toast("Error: "+d.error); el("ac-close-go").disabled=false; return; }
       closeCloseModal();
       toast(pa.done+" · "+plan);
@@ -586,8 +611,10 @@
     if(!reason){ toast("A reason is required"); return; }
     if(ST._planAct){ submitPlanAct(reason); return; }
     var act = ST._closeIsGm ? "act_close_confirm" : "act_close_request";
+    var rating=el("ac-close-rating") ? el("ac-close-rating").value : "";
+    if(!rating){ toast("Rate the work done first"); return; }
     el("ac-close-go").disabled=true;
-    call({action:act, assignment:ST.asg, reason:reason}).then(function(d){
+    call({action:act, assignment:ST.asg, reason:reason, rating:rating}).then(function(d){
       if(d.error){ toast("Error: "+d.error); el("ac-close-go").disabled=false; return; }
       closeCloseModal();
       if(ST._closeIsGm){
@@ -637,7 +664,9 @@
           '<span><b style="color:#d97706">○</b> pending leave (can still enter)</span>'+
           '<span><b style="color:#0a7a43">in 06:52</b> time scanned in (P = marked present, no scan time)</span>'+
           '<span><b style="color:#b91c1c">A</b> marked Absent that day</span>'+
-          '<span><b style="color:#a06000">?</b> no record either way — presence unknown</span>'+
+          '<span><b style="color:#a06000">?</b> no record either way — presence unknown; on saving you confirm who was at work</span>'+
+          '<span><b style="color:#7c3aed">✓ conf</b> no scan yet, confirmed present by hand (HR checks it)</span>'+
+          (a.hourly?'<span style="color:#1d4ed8"><b>Hourly task:</b> on a Saturday type the hours worked — 6 hours is a full day and is paid as 8</span>':'')+
           '</div>'+
           '<div style="overflow-x:auto"><table class="grid"><thead><tr>'+
           '<th class="wname">Worker</th>';
@@ -699,6 +728,8 @@
               pmark='<span title="attendance marked Present (no scan time)" style="'+pbase+'color:#0a7a43">P</span>';
             } else if(attA){
               pmark='<span title="marked Absent this day (submitted attendance)" style="'+pbase+'color:#b91c1c">A · absent</span>';
+            } else if((a.cell_confirmed||{})[ck(w.employee,iso)]){
+              pmark='<span title="no scan yet; confirmed present by '+esc(a.cell_confirmed[ck(w.employee,iso)])+' (HR checks it in the payroll check)" style="'+pbase+'color:#7c3aed">✓ conf</span>';
             } else {
               pmark='<span title="no scan and no attendance record — presence unknown" style="'+pbase+'color:#a06000">?</span>';
             }
@@ -891,10 +922,43 @@
     }
     if(!payload.length){ toast("Enter at least one quantity"); return; }
     var args={ action:"act_submit", assignment:ST.asg, rows:payload.join("|") };
+    if(ST.confirm && Object.keys(ST.confirm).length) args.confirm_present=Object.keys(ST.confirm).join("|");
     if(submitNow) args.submit_now=1;
     if(ST._editingDoc){ args.edit_doc=ST._editingDoc; }  // approver updating a pending doc in place
     el("b-acdraft").disabled=true; el("b-acsubmit").disabled=true;
     function handleResp(d){
+      if(d.needs_presence){
+        // NO SCAN YET: the biometric data can come in late. Tick who was at work;
+        // they are paid and HR checks them in the payroll check. The unticked
+        // days are left out of this record.
+        var pbox=el("ac-presence");
+        if(!pbox){ pbox=document.createElement("div"); pbox.id="ac-presence";
+          pbox.style.cssText="margin:10px 0;padding:10px 12px;border:1px solid #c4b5fd;background:#f5f3ff;border-radius:10px;font-size:12.5px";
+          var phost=el("b-acsubmit").parentNode; phost.parentNode.insertBefore(pbox, phost); }
+        var plist=d.presence||[];
+        pbox.innerHTML='<b>No scan or attendance yet for '+plist.length+' worker-day'+(plist.length>1?'s':'')+'.</b> '+
+          'Tick each person you know was at work: they are paid and HR checks them against the biometric later. '+
+          'Unticked days are left out of this record.'+
+          '<div style="margin:6px 0"><label style="font-size:11.5px"><input type="checkbox" id="ac-pr-all"> tick all</label></div>'+
+          '<div style="max-height:260px;overflow:auto;margin:4px 0 8px">'+plist.map(function(x,i){
+            return '<label style="display:block;padding:2px 0"><input type="checkbox" data-pr="'+i+'"> '+esc(x.name)+' <span style="color:#777">('+esc(x.employee)+') — '+esc(x.date)+'</span></label>'; }).join("")+'</div>'+
+          '<button class="btn good" id="ac-pr-go">Save: ticked were present</button> <button class="btn" id="ac-pr-no">Cancel</button>';
+        el("ac-pr-all").onchange=function(){ var on=this.checked; pbox.querySelectorAll("input[data-pr]").forEach(function(c){ c.checked=on; }); };
+        el("ac-pr-go").onclick=function(){
+          ST.confirm=ST.confirm||{};
+          var keep=0;
+          pbox.querySelectorAll("input[data-pr]").forEach(function(c){
+            var x=plist[+c.getAttribute("data-pr")], key=ck(x.employee,x.date);
+            if(c.checked){ ST.confirm[key]=1; keep++; } else { delete ST.cells[key]; delete ST.hours[key]; }
+          });
+          pbox.remove();
+          if(!keep && !Object.keys(ST.cells).length){ toast("Nothing left to save"); refresh(); onAsg(ST.asg); return; }
+          doSubmit(submitNow);
+        };
+        el("ac-pr-no").onclick=function(){ pbox.remove(); refresh(); };
+        el("b-acdraft").disabled=false; el("b-acsubmit").disabled=false;
+        return;
+      }
       if(d.needs_att_override){
         // TIME & ATTENDANCE gate: these worker-days clash with attendance/leave/offs
         var lines=(d.att_conflicts||[]).map(function(c){ return "• "+(c.name||c.employee)+": "+(c.reasons||[]).join("; "); });
@@ -940,7 +1004,7 @@
       else if(ST._editingDoc){ toast("Updated "+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")); var bn=el("ac-editbanner"); if(bn){bn.style.display="none";} ST._editingDoc=null; ST._editingStage=null; }
       else toast((submitNow?"Submitted ":"Draft saved ")+d.name+" · "+fmt(d.total_actual_qty)+" "+(ST.detail&&ST.detail.uom?ST.detail.uom:"")+" · KES "+fmt(d.total_payment,2));
       if(submitNow && !d.submit_blocked){
-        ST.asg=null; ST.cells={}; ST.hours={}; ST.detail=null;
+        ST.asg=null; ST.cells={}; ST.hours={}; ST.confirm={}; ST.detail=null;
         el("ac-asg").value=""; el("ac-detail").style.display="none";
         el("ac-grid").innerHTML='<div class="empty">Pick an assignment to load the grid.</div>';
         el("ac-varnote").textContent="";
@@ -1313,12 +1377,26 @@
         list.forEach(function(r, i){
           var editable = (r.workflow_state==="Draft" || r.workflow_state==="Rejected");
           var editcell = editable ? '<span class="editlink" data-asg="'+esc(r.assignment)+'">Edit →</span>' : '';
+          // not yet confirmed: may be deleted (a duplicate, the wrong plan), with a reason
+          if(r.workflow_state!=="CONFIRMED") editcell+=' <button class="btn" data-actdel="'+esc(r.name)+'" title="Delete this record, e.g. a duplicate. A copy is kept in the farm history." style="padding:2px 8px;font-size:11px">Delete</button>';
           h+='<tr data-x="'+i+'"><td>'+esc(r.name)+'</td><td>'+esc(isodate(r.entry_date)||"—")+'</td><td>'+esc(r.farm)+'</td><td>'+esc(taskName(r.task))+'</td><td class="n m">'+fmt(r.total_actual_qty)+'</td><td class="n m">'+fmt(r.payroll_people)+'</td><td class="n m">'+fmt(r.total_payment)+'</td><td>'+stateTag(r.workflow_state)+qualityTag(r)+'</td><td>'+editcell+'</td></tr>';
         });
         body.innerHTML=h+'</tbody></table>';
         body.querySelectorAll(".editlink").forEach(function(elk){
           elk.style.cursor="pointer";
           elk.onclick=function(ev){ ev.stopPropagation(); var asg=elk.getAttribute("data-asg"); if(asg) resumeActual(asg); };
+        });
+        body.querySelectorAll("[data-actdel]").forEach(function(btn){
+          btn.onclick=function(ev){
+            ev.stopPropagation();
+            var nm=btn.getAttribute("data-actdel");
+            askReason("Delete actuals "+nm+"?", "A copy is kept in the farm history. Why is it being deleted (e.g. a duplicate of WMAC-…)?", "Delete", function(why, done){
+              call({action:"act_delete", name:nm, reason:why}).then(function(d){
+                if(d.error){ done(d.error); return; }
+                done(); toast(nm+" deleted"); loadMine();
+              }).catch(function(){ done("Delete failed"); });
+            });
+          };
         });
         wireExpand(body, 9, function(i){
           var r=list[i];
@@ -1453,7 +1531,7 @@
            '<td class="n m">'+fmt(r.fulfilled_qty)+((r.confirmed_qty!=null&&r.confirmed_qty<r.fulfilled_qty)?'<div style="font-size:9px;color:#a06000">'+fmt(r.confirmed_qty)+' confirmed</div>':'')+'</td>'+
            '<td class="n m">'+fmt(r.remaining_qty)+'</td>'+
            '<td>'+esc(r.custom_close_requested_by||"—")+'<div style="font-size:9px;color:#94a3b8">'+esc(r.custom_close_request_date||"")+'</div></td>'+
-           '<td style="max-width:220px;white-space:normal">'+esc(r.custom_close_reason||"—")+'</td>'+
+           '<td style="max-width:220px;white-space:normal">'+esc(r.custom_close_reason||"—")+(r.custom_close_request_rating?'<div style="font-size:10px;color:#555">rated '+esc(r.custom_close_request_rating)+'</div>':'')+'</td>'+
            '<td><div class="ib"><button class="btn solid" data-cl="'+esc(r.name)+'">Approve &amp; close</button><button class="btn" data-clrej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
@@ -1468,14 +1546,11 @@
         btn.onclick=function(ev){ ev.stopPropagation(); openPlanModal("reject", btn.getAttribute("data-clrej")); };
       });
       body.querySelectorAll("[data-cl]").forEach(function(btn){
-        btn.onclick=function(){
+        btn.onclick=function(ev){
+          if(ev) ev.stopPropagation();
           var plan=btn.getAttribute("data-cl");
-          btn.disabled=true; btn.textContent="Closing…";
-          call({action:"act_close_confirm", plan:plan}).then(function(d){
-            if(d.error){ toast("Error: "+d.error); btn.disabled=false; btn.textContent="Approve & close"; return; }
-            toast("Closed "+plan+" · "+fmt(d.workers_released)+" workers freed");
-            loadCloseRequests();
-          }).catch(function(e){ toast("Close failed"); btn.disabled=false; btn.textContent="Approve & close"; });
+          var r=list.filter(function(x){ return x.name===plan; })[0]||{};
+          openPlanModal("approve", plan, r.custom_close_reason||"", r.custom_close_request_rating||"");
         };
       });
       });

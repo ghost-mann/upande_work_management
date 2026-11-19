@@ -465,6 +465,53 @@ def wm_actuals(**kwargs):
 
 
 
+    def wmg_log_deleted(wn, reason):
+        """Snapshot an actuals record into Work Management Deleted Actuals before it is
+        deleted. `wn` carries name, farm, task, assignment, block_section, from_date,
+        to_date, entered_by, owner. Returns the log's name."""
+        wn_rows = frappe.get_doc("Work Management Actuals", wn.name).get("employees") or []
+        wn_log = frappe.new_doc("Work Management Deleted Actuals")
+        wn_log.actuals = wn.name
+        wn_log.farm = wn.farm
+        wn_log.task = wn.task
+        wn_log.assignment = wn.assignment
+        wn_log.from_date = wn.from_date
+        wn_log.to_date = wn.to_date
+        wn_log.entered_by = wn.entered_by or wn.owner
+        wn_log.deleted_by = frappe.session.user
+        wn_log.deleted_on = frappe.utils.now()
+        wn_log.reason = reason
+        wn_log.worker_days = len([x for x in wn_rows if frappe.utils.flt(x.actual_quantity) > 0
+                                  or frappe.utils.flt(x.amount) > 0])
+        wn_log.amount = sum(frappe.utils.flt(x.amount) for x in wn_rows)
+        wn_log.snapshot = frappe.as_json({
+            "name": wn.name, "farm": wn.farm, "task": wn.task, "assignment": wn.assignment,
+            "block_section": wn.block_section, "from_date": str(wn.from_date),
+            "to_date": str(wn.to_date), "entered_by": wn.entered_by,
+            "rows": [{"employee": x.employee, "employee_name": x.employee_name,
+                      "work_date": str(x.work_date), "actual_quantity": x.actual_quantity,
+                      "hours": x.hours, "amount": x.amount,
+                      "count_in_payroll": x.count_in_payroll} for x in wn_rows]})
+        wn_log.insert(ignore_permissions=True)
+        return wn_log.name
+
+
+    def wmg_rel_day(fr):
+        """The release date written for a worker freed by a plan finishing or closing:
+        their last day with work recorded on that assignment, so they are free for
+        other work from the next day. Releasing with today's date kept a worker who
+        did nothing today "assigned elsewhere" for the rest of the day (2026-11-19
+        complaint: released workers showed as not released). With nothing recorded,
+        yesterday, or the day before they started -- they were never busy there.
+        `fr` carries lw (last work day) and sd (their start)."""
+        if fr.get("lw"):
+            return str(fr.get("lw"))
+        yd = str(frappe.utils.add_days(frappe.utils.today(), -1))
+        if fr.get("sd") and str(fr.get("sd")) > yd:
+            return str(frappe.utils.add_days(fr.get("sd"), -1))
+        return yd
+
+
     def wmg_plan_done(nm):
         """Once an actual is CONFIRMED: update its plan's progress and, when the plan
         has reached its target, release the crew. Run by whichever step ends the chain;
@@ -501,7 +548,13 @@ def wm_actuals(**kwargs):
             if target_r > 0 and fulfilled >= (target_r - 0.0001) and cstate_r != "Closed":
                 today_r = frappe.utils.today()
                 free_r = frappe.db.sql("""
-                    SELECT we.name row_id, a2.to_date td
+                    SELECT we.name row_id, a2.to_date td,
+                       COALESCE(we.start_date, a2.from_date) sd,
+                       (SELECT MAX(w.work_date) FROM `tabWork Actuals Employee` w
+                        INNER JOIN `tabWork Management Actuals` wac ON wac.name = w.parent
+                        WHERE wac.assignment = a2.name AND w.employee = we.employee AND wac.docstatus < 2
+                          AND IFNULL(wac.workflow_state, '') != 'Rejected'
+                          AND (IFNULL(w.actual_quantity, 0) > 0 OR IFNULL(w.amount, 0) > 0)) lw
                     FROM `tabWork Assignment Employee` we
                     INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
                     WHERE a2.planner_request = %s AND IFNULL(we.status,'Active') = 'Active'
@@ -509,7 +562,7 @@ def wm_actuals(**kwargs):
                 for fr in free_r:
                     # released no later than the assignment's last day: actuals entered after
                     # the work ended must not keep the crew "assigned elsewhere" until today
-                    rel_day = today_r
+                    rel_day = wmg_rel_day(fr)
                     if fr.td and str(fr.td) < str(rel_day):
                         rel_day = str(fr.td)
                     frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
@@ -620,7 +673,8 @@ def wm_actuals(**kwargs):
         "a_substitute": "", "act_close_confirm": "", "act_close_reject": "",
         "act_close_request": "", "act_fm_approve": "", "act_gm_approve": "",
         "act_hr_approve": "", "act_reject": "", "act_reopen": "", "act_submit": "",
-        "od_decide": "", "od_request": "", "ws_delete_rejected": "", "ws_notify": ""
+        "od_decide": "", "od_request": "", "ws_delete_rejected": "", "ws_notify": "",
+        "act_delete": ""
     }
     WMG_DENY = ""
     if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
@@ -851,6 +905,7 @@ def wm_actuals(**kwargs):
         # cell offers the hours beside the quantity, pre-filled with the standard for
         # that date so an ordinary day still needs nothing typed.
         a["allow_split_day"] = 1 if ALLOW_SPLIT_DAY else 0
+        a["hourly"] = 1 if str(uom or "").strip().lower() in ("hour", "hours", "hr", "hrs") else 0
         a["standard_day"] = {
             "weekday": frappe.utils.flt(STANDARD_DAY.get("weekday")),
             "saturday": frappe.utils.flt(STANDARD_DAY.get("saturday")),
@@ -1123,19 +1178,28 @@ def wm_actuals(**kwargs):
         a["editing_doc"] = editing.name if editing else None
         cells = {}
         cell_hours = {}
+        cell_conf = {}
         seed_from = editing.name if editing else (draft[0].name if draft else None)
         if seed_from:
             for r in frappe.db.sql("""
-                    SELECT employee, work_date, actual_quantity, hours
+                    SELECT employee, work_date, actual_quantity, hours, presence_confirmed_by
                     FROM `tabWork Actuals Employee` WHERE parent = %s
             """, (seed_from,), as_dict=True):
                 cells[str(r.employee) + "~" + str(r.work_date)] = r.actual_quantity
+                # an hourly task's short day was saved as paid hours (6 worked -> 8):
+                # show the hours worked, which is what is typed and converted again
+                if a.get("hourly") and frappe.utils.flt(r.hours) > 0 and \
+                        frappe.utils.getdate(r.work_date).weekday() == 5:
+                    cells[str(r.employee) + "~" + str(r.work_date)] = frappe.utils.flt(r.hours)
+                if r.presence_confirmed_by:
+                    cell_conf[str(r.employee) + "~" + str(r.work_date)] = r.presence_confirmed_by
                 # only when somebody typed one -- an empty box is the screen's cue to
                 # fill in that date's standard, and sending a 0 would suppress it
                 if frappe.utils.flt(r.hours) > 0:
                     cell_hours[str(r.employee) + "~" + str(r.work_date)] = frappe.utils.flt(r.hours)
         a["cells"] = cells
         a["cell_hours"] = cell_hours
+        a["cell_confirmed"] = cell_conf
         # also: is there a live (in-review/confirmed) doc blocking new entry?
         # Pending Farm Manager is in review too: leaving it out showed a record that
         # had been entered and saved as an empty, open grid. The record being edited
@@ -1286,6 +1350,25 @@ def wm_actuals(**kwargs):
             att_conflicts = []
             att_absent_never = 0
             att_override = frappe.form_dict.get("att_override")
+            # CONFIRMED PRESENT (2026-11-19). The biometric data can arrive hours or
+            # days late, so a worker with no scan yet is not proof of absence. The
+            # person entering ticks each such worker-day they saw at work; the ticked
+            # days are saved with who confirmed them and go to HR in the payroll
+            # check, the unticked ones are left out of the record. Always on: a day
+            # with no scan and no attendance is never paid without somebody's word.
+            pres_conf = {}
+            for pc_x in (frappe.form_dict.get("confirm_present") or "").split("|"):
+                pc_b = pc_x.split("~")
+                if len(pc_b) >= 2 and pc_b[0] and pc_b[1]:
+                    pres_conf[(pc_b[0], pc_b[1])] = 1
+            if edit_doc or existing:
+                # days confirmed on an earlier save stay confirmed
+                for pc_r in frappe.db.sql("""SELECT employee, work_date, presence_confirmed_by FROM `tabWork Actuals Employee`
+                        WHERE parent = %s AND IFNULL(presence_confirmed_by, '') != ''""",
+                        ((edit_doc if editing_pending else None) or (existing[0] if existing else ""),), as_dict=True):
+                    pres_conf[(pc_r.employee, str(pc_r.work_date))] = pc_r.presence_confirmed_by
+            pres_need = []
+            pres_used = {}
             gate_absent = 1
             gate_leave = 1
             gate_off = 1
@@ -1303,7 +1386,8 @@ def wm_actuals(**kwargs):
                 gate_noscan = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", "att_block_noscan_actuals"))
             except Exception:
                 pass
-            if (gate_absent or gate_leave or gate_off or gate_noscan) and payload:
+            gate_noscan = 1
+            if payload:
                 pairs = []
                 pemps = {}
                 pdates = {}
@@ -1364,7 +1448,7 @@ def wm_actuals(**kwargs):
                     # check — future dates are skipped (nothing to scan yet).
                     scan_set = {}
                     present_set = {}
-                    if gate_noscan:
+                    if 1:
                         for r in frappe.db.sql("""
                             SELECT employee, DATE(`time`) d FROM `tabEmployee Checkin`
                             WHERE employee IN %s AND DATE(`time`) IN %s
@@ -1393,8 +1477,13 @@ def wm_actuals(**kwargs):
                             reasons_map.setdefault(pe, []).append("off day / holiday on " + pd)
                             flagged = 1
                         # no-scan check only when nothing else explains the day
-                        if gate_noscan and not flagged and pd <= ns_today and not scan_set.get((pe, pd)) and not present_set.get((pe, pd)):
-                            reasons_map.setdefault(pe, []).append("no scan or attendance on " + pd)
+                        if not flagged and pd <= ns_today and not scan_set.get((pe, pd)) and not present_set.get((pe, pd)):
+                            if pres_conf.get((pe, pd)):
+                                pres_used[(pe, pd)] = (pres_conf[(pe, pd)] if pres_conf[(pe, pd)] != 1 else
+                                    (frappe.session.user + " " + frappe.utils.now()[:16]))
+                            else:
+                                pres_need.append({"employee": pe, "date": pd,
+                                    "name": frappe.db.get_value("Employee", pe, "employee_name") or pe})
                     for ce in reasons_map:
                         cnm = frappe.db.get_value("Employee", ce, "employee_name") or ce
                         # de-duplicate + cap so the dialog stays readable
@@ -1506,6 +1595,10 @@ def wm_actuals(**kwargs):
                            "; ".join(out["qty_flagged"][:6]) + ".")
             if wmg_err:
                 out["error"] = wmg_err
+            elif pres_need:
+                # asked in the page: tick who was there, the rest are left out
+                out["needs_presence"] = 1
+                out["presence"] = pres_need[:300]
             elif att_conflicts and att_override and not can_override:
                 out["error"] = ("These entries include workers marked Absent — only the Farm Manager "
                                 "(or GM) can approve recording actuals on an absent day. Ask them to "
@@ -1577,6 +1670,16 @@ def wm_actuals(**kwargs):
                     hrs = frappe.utils.flt(bits[3]) if len(bits) > 3 else 0
                     if hrs <= 0:
                         hrs = std_h
+                    # HOURLY TASKS ON A SHORT DAY (2026-11-19). A Saturday is 6 hours and
+                    # a full one still earns the daily wage (8 hours x the hourly rate),
+                    # so clerks were typing 8 for a 6-hour Saturday. The hours worked are
+                    # now scaled to the weekday's: 6 on a Saturday is paid as 8. Capped at
+                    # a full weekday, so a clerk who still types 8 pays the same wage, not
+                    # more. hours keeps what was worked; the quantity is the paid hours.
+                    wmg_wk_h = frappe.utils.flt(STANDARD_DAY.get("weekday")) or 8
+                    if wmg_hourly and std_h > 0 and std_h < wmg_wk_h:
+                        hrs = qty
+                        qty = min(round(qty * wmg_wk_h / std_h, 2), wmg_wk_h)
                     etype = frappe.db.get_value("Employee", emp, "employment_type")
                     # the same test the substitute picker and payment use. Reading
                     # employment_type alone here meant a person payment WOULD pay had
@@ -1592,6 +1695,8 @@ def wm_actuals(**kwargs):
                     row.employment_type = etype
                     row.actual_quantity = qty
                     row.hours = hrs
+                    if pres_used.get((emp, str(wdate))):
+                        row.presence_confirmed_by = pres_used[(emp, str(wdate))]
                     row.count_in_payroll = in_pay
                     row.amount = amt
                     if (emp, str(wdate)) in wmg_qty_flagged:
@@ -1876,6 +1981,40 @@ def wm_actuals(**kwargs):
                     "total_payment","cost_variance","workflow_state","entry_date",
                     "team_leader","quality_score","quality_note"],
             order_by="creation desc", limit=200)
+
+    elif action == "act_delete":
+        # DELETE A RECORD THAT SHOULD NOT EXIST (2026-11-19): two records made for the
+        # same work, entered against the wrong plan. Anyone working on the farm's plans
+        # may delete one that is not yet confirmed, with a reason; a snapshot is kept
+        # in Work Management Deleted Actuals and shows in the farm's history. A
+        # confirmed record is the payroll check's to fix, never deleted from here.
+        dl_name = frappe.form_dict.get("name")
+        dl_reason = (frappe.form_dict.get("reason") or "").strip()
+        dl = frappe.db.get_value("Work Management Actuals", dl_name,
+            ["name", "workflow_state", "docstatus", "farm", "task", "assignment", "block_section",
+             "entered_by", "owner", "from_date", "to_date"], as_dict=True) if dl_name else None
+        dl_farms = [x[0] for x in frappe.db.sql("""SELECT DISTINCT for_value FROM `tabUser Permission`
+            WHERE user = %s AND allow = 'Farm'""", (frappe.session.user,))]
+        dl_staff = [r for r in ("Work Planner", "Work Entry", "Production Section Head", "HR Clerk", "HR User",
+                                "Work Team Leader", "Farm Manager") if r in MY_ROLES]
+        if not dl:
+            out["error"] = "No such actuals record: " + str(dl_name)
+        elif dl.workflow_state == "CONFIRMED" or frappe.utils.cint(dl.docstatus) != 0:
+            out["error"] = (dl.name + " is confirmed. A confirmed record is fixed in the payroll check, not deleted.")
+        elif not dl_reason:
+            out["error"] = "Say why it is being deleted (for example: a duplicate of another record)."
+        elif not (WS_ALL or WS_HR or dl.farm in WS_MANAGE_FARMS or frappe.session.user in (dl.entered_by, dl.owner)
+                  or (dl_staff and (not dl_farms or dl.farm in dl_farms))):
+            out["error"] = "Only people working on " + str(dl.farm) + "'s plans can delete its records."
+        elif frappe.db.sql("""SELECT 1 FROM `tabWork Actuals Employee` WHERE parent = %(p)s
+                              AND (IFNULL(paid, 0) = 1 OR IFNULL(payment_ref, '') != '' OR IFNULL(payroll_check, '') != '')
+                              LIMIT 1""", {"p": dl.name}):
+            out["error"] = dl.name + " has rows in a payment or a payroll check, so it cannot be deleted."
+        else:
+            out["log"] = wmg_log_deleted(dl, dl_reason)
+            frappe.delete_doc("Work Management Actuals", dl.name, ignore_permissions=True, force=1)
+            frappe.db.commit()
+            out["deleted"] = dl.name
 
     elif action == "act_pending":
         stage = frappe.form_dict.get("stage") or "Pending HR Head"
@@ -2162,6 +2301,11 @@ def wm_actuals(**kwargs):
             err = "No plan resolved for this close request"
         if not reason:
             err = "A reason is required to request a close"
+        # A RATING WITH EVERY EARLY CLOSE (2026-11-19): whoever asks rates the work
+        # done, and the GM rates it again when closing (prefilled with this one).
+        cl_rating = (frappe.form_dict.get("rating") or "").strip()
+        if not err and cl_rating not in ("1 - Good", "2 - Fair", "3 - Rework"):
+            err = "Rate the work done (Good, Fair or Rework) to close a plan early"
         if not err and not (is_requester or is_gm):
             err = "You are not allowed to request a close (need Farm Manager or Section Head)"
         if not err:
@@ -2177,6 +2321,7 @@ def wm_actuals(**kwargs):
             frappe.db.set_value("Work Management Planner", plan, "custom_close_requested_by", frappe.session.user, update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_close_request_date", frappe.utils.today(), update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_close_reason", reason, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_request_rating", cl_rating, update_modified=False)
             frappe.db.commit()
             out["plan"] = plan
             out["close_state"] = "Close Requested"
@@ -2196,7 +2341,7 @@ def wm_actuals(**kwargs):
                 filters={"custom_close_state": "Close Requested"},
                 fields=["name", "farm", "block_section", "task", "quantity", "fulfilled_qty",
                         "remaining_qty", "uom", "custom_close_requested_by", "custom_close_request_date",
-                        "custom_close_reason"],
+                        "custom_close_reason", "custom_close_request_rating"],
                 order_by="custom_close_request_date desc", limit=200)
             # fulfilled/remaining stored on the plan are stale — compute LIVE from
             # every recorded actuals doc (drafts and pending included, since a
@@ -2252,6 +2397,11 @@ def wm_actuals(**kwargs):
         use_reason = reason or (stored_reason or "")
         if not err and not use_reason:
             err = "A reason is required to close"
+        # the GM rates the work when closing early (the request's rating is offered first)
+        gm_rating = (frappe.form_dict.get("rating") or "").strip()
+        gm_rnote = (frappe.form_dict.get("rating_note") or "").strip()
+        if not err and gm_rating not in ("1 - Good", "2 - Fair", "3 - Rework"):
+            err = "Rate the work done (Good, Fair or Rework) before closing the plan"
         if err:
             out["error"] = err
         else:
@@ -2325,6 +2475,9 @@ def wm_actuals(**kwargs):
             # 3) mark the plan Closed (target KEPT; workflow_state untouched at Approved)
             frappe.db.set_value("Work Management Planner", plan, "custom_close_state", "Closed", update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_closed_by", frappe.session.user, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, {"custom_close_rating": gm_rating,
+                "custom_close_rating_note": gm_rnote or None, "custom_close_rated_by": frappe.session.user},
+                update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_closed_date", frappe.utils.today(), update_modified=False)
             # roll up delivered split + balance onto the plan (documentation)
             split_rows = frappe.db.sql("""
@@ -2348,7 +2501,13 @@ def wm_actuals(**kwargs):
             released = 0
             close_day = frappe.utils.today()
             freerows = frappe.db.sql("""
-                SELECT we.name row_id, a2.to_date td
+                SELECT we.name row_id, a2.to_date td,
+                   COALESCE(we.start_date, a2.from_date) sd,
+                   (SELECT MAX(w.work_date) FROM `tabWork Actuals Employee` w
+                    INNER JOIN `tabWork Management Actuals` wac ON wac.name = w.parent
+                    WHERE wac.assignment = a2.name AND w.employee = we.employee AND wac.docstatus < 2
+                      AND IFNULL(wac.workflow_state, '') != 'Rejected'
+                      AND (IFNULL(w.actual_quantity, 0) > 0 OR IFNULL(w.amount, 0) > 0)) lw
                 FROM `tabWork Assignment Employee` we
                 INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
                 WHERE a2.planner_request = %s
@@ -2357,7 +2516,7 @@ def wm_actuals(**kwargs):
             for fr in freerows:
                 # released no later than the assignment's last day: actuals entered after
                 # the work ended must not keep the crew "assigned elsewhere" until today
-                rel_day = close_day
+                rel_day = wmg_rel_day(fr)
                 if fr.td and str(fr.td) < str(rel_day):
                     rel_day = str(fr.td)
                 frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
@@ -2408,6 +2567,7 @@ def wm_actuals(**kwargs):
             frappe.db.set_value("Work Management Planner", plan, "custom_close_requested_by", None, update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_close_request_date", None, update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_close_reason", None, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_request_rating", None, update_modified=False)
             frappe.get_doc("Work Management Planner", plan).add_comment("Info",
                 "Close request by " + (cs.custom_close_requested_by or "—") + " rejected by " +
                 frappe.session.user + ": " + reason +
@@ -2470,6 +2630,7 @@ def wm_actuals(**kwargs):
             frappe.db.set_value("Work Management Planner", plan, "custom_closed_by", None, update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_closed_date", None, update_modified=False)
             frappe.db.set_value("Work Management Planner", plan, "custom_close_reason", None, update_modified=False)
+            frappe.db.set_value("Work Management Planner", plan, "custom_close_request_rating", None, update_modified=False)
             frappe.get_doc("Work Management Planner", plan).add_comment("Info",
                 "Reopened by " + frappe.session.user + ": " + reason +
                 " (closed by " + (cs.custom_closed_by or "—") + " on " + str(cs.custom_closed_date or "—") +
@@ -2737,35 +2898,10 @@ def wm_actuals(**kwargs):
                                {"p": wn.name}):
                 out["error"] = wn.name + " has rows already in a payment, so it cannot be deleted."
             else:
-                wn_doc = frappe.get_doc("Work Management Actuals", wn.name)
-                wn_rows = wn_doc.get("employees") or []
-                wn_log = frappe.new_doc("Work Management Deleted Actuals")
-                wn_log.actuals = wn.name
-                wn_log.farm = wn.farm
-                wn_log.task = wn.task
-                wn_log.assignment = wn.assignment
-                wn_log.from_date = wn.from_date
-                wn_log.to_date = wn.to_date
-                wn_log.entered_by = wn.entered_by or wn.owner
-                wn_log.deleted_by = frappe.session.user
-                wn_log.deleted_on = frappe.utils.now()
-                wn_log.reason = wn_reason
-                wn_log.worker_days = len([x for x in wn_rows if frappe.utils.flt(x.actual_quantity) > 0
-                                          or frappe.utils.flt(x.amount) > 0])
-                wn_log.amount = sum(frappe.utils.flt(x.amount) for x in wn_rows)
-                wn_log.snapshot = frappe.as_json({
-                    "name": wn.name, "farm": wn.farm, "task": wn.task, "assignment": wn.assignment,
-                    "block_section": wn.block_section, "from_date": str(wn.from_date),
-                    "to_date": str(wn.to_date), "entered_by": wn.entered_by,
-                    "rows": [{"employee": x.employee, "employee_name": x.employee_name,
-                              "work_date": str(x.work_date), "actual_quantity": x.actual_quantity,
-                              "hours": x.hours, "amount": x.amount,
-                              "count_in_payroll": x.count_in_payroll} for x in wn_rows]})
-                wn_log.insert(ignore_permissions=True)
+                out["log"] = wmg_log_deleted(wn, wn_reason)
                 frappe.delete_doc("Work Management Actuals", wn.name, ignore_permissions=True)
                 frappe.db.commit()
                 out["deleted"] = wn.name
-                out["log"] = wn_log.name
 
     # ---------------------------------------------------------------------
     # HISTORY (hist_) -- one farm, all time, every status

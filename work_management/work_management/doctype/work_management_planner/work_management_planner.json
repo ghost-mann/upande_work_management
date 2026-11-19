@@ -61,6 +61,10 @@
   "custom_closed_by",
   "custom_closed_date",
   "custom_close_requested_by",
+  "custom_close_request_rating",
+  "custom_close_rating",
+  "custom_close_rating_note",
+  "custom_close_rated_by",
   "custom_salaried_qty",
   "custom_submitted_at"
  ],
@@ -428,12 +432,41 @@
    "read_only": 1,
    "in_standard_filter": 1,
    "description": "Who runs this week's work: the activity's team leader on the master plan, or their stand-in for these dates. KPIs are counted against this person. Login (email) of someone with one, otherwise their Employee ID."
+  },
+  {
+   "fieldname": "custom_close_request_rating",
+   "fieldtype": "Select",
+   "label": "Close Request Rating",
+   "read_only": 1,
+   "options": "\n1 - Good\n2 - Fair\n3 - Rework",
+   "description": "How the person asking to close early rated the work done."
+  },
+  {
+   "fieldname": "custom_close_rating",
+   "fieldtype": "Select",
+   "label": "Close Rating",
+   "read_only": 1,
+   "options": "\n1 - Good\n2 - Fair\n3 - Rework",
+   "description": "The GM's rating of the work when closing the plan early."
+  },
+  {
+   "fieldname": "custom_close_rating_note",
+   "fieldtype": "Small Text",
+   "label": "Close Rating Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_close_rated_by",
+   "fieldtype": "Link",
+   "label": "Close Rated By",
+   "read_only": 1,
+   "options": "User"
   }
  ],
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-17 10:00:00.000000",
+ "modified": "2026-11-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Planner",
