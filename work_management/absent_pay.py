@@ -10,7 +10,9 @@ is unchanged. Each change is logged as a Payroll Check Fix, against the open
 check that covers the day when there is one. Cancelling the Absent record puts
 the pay back. A daily sweep catches attendance written without its hooks.
 
-A day that also has a Present / Half Day / Work From Home record is not Absent.
+A day whose pay was put back by hand (its fix entry says "Restored by
+management") is left alone. A day that also has a Present / Half Day / Work From
+Home record is not Absent.
 Pay already paid (paid=1 or a payment reference) is never touched; the payroll
 check still raises it.
 """
@@ -19,6 +21,9 @@ import frappe
 
 ISSUE = "absent_paid"
 TAG = "Auto: day marked Absent"
+# A day someone put the pay back on (to verify it, or because management decided
+# to pay it) is theirs: the rule never zeroes it again. Its fix entry carries this.
+RESTORED = "Restored by management"
 
 
 def enabled():
@@ -62,7 +67,9 @@ def zero_day(employee, day, why=None):
 		WHERE we.parenttype = 'Work Management Actuals' AND we.employee = %s AND we.work_date = %s
 		  AND ac.docstatus < 2 AND IFNULL(ac.workflow_state, '') != 'Rejected'
 		  AND we.amount > 0 AND IFNULL(we.paid, 0) = 0 AND IFNULL(we.payment_ref, '') = ''
-	""", (employee, day), as_dict=True)
+		  AND NOT EXISTS (SELECT 1 FROM `tabWork Management Payroll Check Fix` fx
+			WHERE fx.zeroed_row = we.name AND fx.issue = %s AND fx.reason LIKE %s)
+	""", (employee, day, ISSUE, "%" + RESTORED + "%"), as_dict=True)
 	if not rows:
 		return []
 	pc = _open_check(day)

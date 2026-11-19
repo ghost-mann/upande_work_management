@@ -46,6 +46,12 @@ class TestRules(unittest.TestCase):
 		self.assertIn('"Work Management Payroll Check Fix"', body)
 		self.assertIn('fx.issue = ISSUE', body)
 
+	def test_a_day_restored_by_hand_is_never_zeroed_again(self):
+		body = SRC[SRC.index("def zero_day"):SRC.index("def restore_day")]
+		self.assertIn("fx.reason LIKE %s", body)
+		self.assertIn('"%" + RESTORED + "%"', body)
+		self.assertIn('RESTORED = "Restored by management"', SRC)
+
 	def test_restore_only_undoes_its_own_zeroing(self):
 		body = SRC[SRC.index("def restore_day"):SRC.index("def on_attendance_submit")]
 		self.assertIn("startswith(TAG)", body)
