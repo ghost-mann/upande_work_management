@@ -506,10 +506,38 @@ def wm_actuals(**kwargs):
         `fr` carries lw (last work day) and sd (their start)."""
         if fr.get("lw"):
             return str(fr.get("lw"))
-        yd = str(frappe.utils.add_days(frappe.utils.today(), -1))
-        if fr.get("sd") and str(fr.get("sd")) > yd:
+        # nothing recorded on a plan that is finishing: they were never busy on it
+        if fr.get("sd"):
             return str(frappe.utils.add_days(fr.get("sd"), -1))
-        return yd
+        return str(frappe.utils.add_days(frappe.utils.today(), -1))
+
+
+    def wmg_fix_left_dates(plan):
+        """On a plan that has closed or finished, nobody stays busy past the last day
+        they worked on it. Workers released earlier by hand can carry a later date
+        (picked before their last days were entered, or days later rejected); that
+        date kept them "assigned elsewhere" (2026-11-20: 1,731 such rows, David Mzee
+        Naibei among them). Moves every such date back. Returns how many moved."""
+        moved = 0
+        for fx in frappe.db.sql("""
+            SELECT we.name row_id, we.left_date, a2.to_date td,
+                   COALESCE(we.start_date, a2.from_date) sd,
+                   (SELECT MAX(w.work_date) FROM `tabWork Actuals Employee` w
+                    INNER JOIN `tabWork Management Actuals` wac ON wac.name = w.parent
+                    WHERE wac.assignment = a2.name AND w.employee = we.employee AND wac.docstatus < 2
+                      AND IFNULL(wac.workflow_state, '') != 'Rejected'
+                      AND (IFNULL(w.actual_quantity, 0) > 0 OR IFNULL(w.amount, 0) > 0)) lw
+            FROM `tabWork Assignment Employee` we
+            INNER JOIN `tabWork Management Assigner` a2 ON we.parent = a2.name
+            WHERE a2.planner_request = %s AND IFNULL(we.status, 'Active') = 'Left'
+        """, (plan,), as_dict=True):
+            want = str(fx.lw) if fx.lw else str(frappe.utils.add_days(fx.sd, -1))
+            if fx.td and str(fx.td) < want:
+                want = str(fx.td)
+            if fx.left_date and str(fx.left_date) > want:
+                frappe.db.set_value("Work Assignment Employee", fx.row_id, "left_date", want, update_modified=False)
+                moved = moved + 1
+        return moved
 
 
     def wmg_plan_done(nm):
@@ -570,6 +598,7 @@ def wm_actuals(**kwargs):
                     released_auto = released_auto + 1
                 # mark the plan complete so it drops out of the pickers (target kept)
                 frappe.db.set_value("Work Management Planner", asg, "custom_close_state", "Completed", update_modified=False)
+                wmg_fix_left_dates(asg)
         return {"fulfilled": fulfilled, "remaining": remaining, "released": released_auto}
 
 
@@ -2571,6 +2600,7 @@ def wm_actuals(**kwargs):
                 frappe.db.set_value("Work Assignment Employee", fr.row_id, "status", "Left", update_modified=False)
                 frappe.db.set_value("Work Assignment Employee", fr.row_id, "left_date", rel_day, update_modified=False)
                 released = released + 1
+            out["release_dates_corrected"] = wmg_fix_left_dates(plan)
             frappe.db.commit()
             out["plan"] = plan
             out["close_state"] = "Closed"

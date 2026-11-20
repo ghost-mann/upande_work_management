@@ -88,15 +88,12 @@ class TestRelease(unittest.TestCase):
 		import datetime as dt
 		if lw:
 			return lw
-		yd = str(dt.date.fromisoformat(today) - dt.timedelta(days=1))
-		if sd and sd > yd:
-			return str(dt.date.fromisoformat(sd) - dt.timedelta(days=1))
-		return yd
+		return str(dt.date.fromisoformat(sd) - dt.timedelta(days=1))
 
 	def test_free_from_the_day_after_the_last_work(self):
 		self.assertEqual(self.rel("2026-11-17", "2026-11-10"), "2026-11-17")
-		self.assertEqual(self.rel(None, "2026-11-10"), "2026-11-18")
-		self.assertEqual(self.rel(None, "2026-11-19"), "2026-11-18")
+		# nothing recorded on a finishing plan: never busy there
+		self.assertEqual(self.rel(None, "2026-11-10"), "2026-11-09")
 		self.assertEqual(self.rel(None, "2026-11-25"), "2026-11-24")
 
 	def test_closing_and_finishing_use_it(self):
@@ -190,3 +187,38 @@ class TestFarmCardCountsOpenIssues(unittest.TestCase):
 		js = (JS / "work-payment.js").read_text()
 		self.assertIn("&& !f.open_issues;", js)
 		self.assertIn("Issues to fix or acknowledge", js)
+
+
+class TestNobodyStaysBusyOnAFinishedPlan(unittest.TestCase):
+	"""2026-11-20: David Mzee Naibei (400178) was released on the close day, the 17th,
+	after his last work on the 16th, and showed "assigned elsewhere" on the 17th.
+	1,731 such dates were corrected. The close and finish steps now fix every
+	release date on the plan, and an hourly sweep catches anything else."""
+
+	def want(self, lw, sd, td):
+		import datetime as dt
+		w = lw if lw else str(dt.date.fromisoformat(sd) - dt.timedelta(days=1))
+		return td if td < w else w
+
+	def test_the_rule(self):
+		self.assertEqual(self.want("2026-11-16", "2026-11-16", "2026-11-20"), "2026-11-16")
+		self.assertEqual(self.want(None, "2026-11-16", "2026-11-20"), "2026-11-15")
+		self.assertEqual(self.want("2026-11-22", "2026-11-16", "2026-11-20"), "2026-11-20")
+
+	def test_close_and_finish_correct_the_whole_plan(self):
+		s = src("actuals.py")
+		self.assertIn("def wmg_fix_left_dates(plan):", s)
+		self.assertIn('out["release_dates_corrected"] = wmg_fix_left_dates(plan)', s)
+		i = s.index("def wmg_plan_done(")
+		self.assertIn("wmg_fix_left_dates(asg)", s[i:s.index("\n    def ", i + 10)])
+
+	def test_no_work_on_a_finishing_plan_means_never_busy_there(self):
+		s = src("actuals.py")
+		i = s.index("def wmg_rel_day(")
+		body = s[i:s.index("def wmg_fix_left_dates(", i)]
+		self.assertIn('return str(frappe.utils.add_days(fr.get("sd"), -1))', body)
+
+	def test_hourly_sweep_is_scheduled(self):
+		hooks = (ROOT / "hooks.py").read_text()
+		self.assertIn('"work_management.release_dates.sweep"', hooks)
+		self.assertIn("pl.custom_close_state IN ('Closed', 'Completed')", (ROOT / "release_dates.py").read_text())

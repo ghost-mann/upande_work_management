@@ -125,6 +125,11 @@ scheduler_events = {
 		"work_management.rates.sync_active_periods",
 		"work_management.absent_pay.sweep",
 	],
+	# A released worker is never "assigned elsewhere" past their last day of work
+	# on a finished plan (work_management/release_dates.py).
+	"hourly": [
+		"work_management.release_dates.sweep",
+	],
 }
 
 after_install = "work_management.install.after_install"
