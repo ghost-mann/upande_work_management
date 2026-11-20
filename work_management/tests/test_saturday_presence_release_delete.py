@@ -155,3 +155,24 @@ class TestPeopleBoard(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestAbsentButAtWork(unittest.TestCase):
+	"""2026-11-20: a day marked Absent can be ticked present too; the tick pays it,
+	HR sees it in the payroll check, and an Attendance Request goes to HR."""
+
+	def test_absent_days_join_the_tick_list(self):
+		s = src("actuals.py")
+		self.assertIn('pres_need.append({"employee": pe, "date": pd, "absent": 1,', s)
+		self.assertIn("pres_absent[(pe, pd)] = 1", s)
+
+	def test_a_ticked_absent_day_raises_an_attendance_request(self):
+		s = src("actuals.py")
+		self.assertIn('ar = frappe.new_doc("Attendance Request")', s)
+		self.assertIn('ar.reason = "On Duty"', s)
+		self.assertIn("WHERE w.document_type = 'Attendance Request' AND w.is_active = 1", s)
+
+	def test_the_screen_says_so(self):
+		js = (JS / "work-actuals.js").read_text()
+		self.assertIn("marked Absent</span>", js)
+		self.assertIn("d.attendance_requests", js)

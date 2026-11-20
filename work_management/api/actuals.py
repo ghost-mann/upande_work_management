@@ -1369,6 +1369,7 @@ def wm_actuals(**kwargs):
                     pres_conf[(pc_r.employee, str(pc_r.work_date))] = pc_r.presence_confirmed_by
             pres_need = []
             pres_used = {}
+            pres_absent = {}
             gate_absent = 1
             gate_leave = 1
             gate_off = 1
@@ -1466,8 +1467,18 @@ def wm_actuals(**kwargs):
                     for (pe, pd) in pairs:
                         flagged = 0
                         if absent_set.get((pe, pd)):
-                            reasons_map.setdefault(pe, []).append("marked Absent on " + pd)
+                            # MARKED ABSENT BUT AT WORK (2026-11-20): the team leader ticks
+                            # them present like a no-scan day. The day is paid, HR sees it
+                            # in the payroll check, and an Attendance Request goes to HR to
+                            # correct the attendance itself. Unticked, the day is left out.
                             flagged = 1
+                            if pres_conf.get((pe, pd)):
+                                pres_used[(pe, pd)] = (pres_conf[(pe, pd)] if pres_conf[(pe, pd)] != 1 else
+                                    (frappe.session.user + " " + frappe.utils.now()[:16]))
+                                pres_absent[(pe, pd)] = 1
+                            else:
+                                pres_need.append({"employee": pe, "date": pd, "absent": 1,
+                                    "name": frappe.db.get_value("Employee", pe, "employee_name") or pe})
                         for (lf, lt, ltype) in leave_ranges.get(pe, []):
                             if lf <= pd <= lt:
                                 reasons_map.setdefault(pe, []).append("on " + ltype + " on " + pd)
@@ -1860,6 +1871,44 @@ def wm_actuals(**kwargs):
                             ov_lines.append(cx["name"] + " (" + cx["employee"] + "): " + "; ".join(cx["reasons"]))
                         d.add_comment("Comment", "Attendance override by " + frappe.session.user + " — actuals recorded despite: " + " | ".join(ov_lines))
                         out["att_overridden"] = len(att_conflicts)
+                    # an attendance correction for HR for every ticked Absent day: a
+                    # draft Attendance Request (On Duty) put straight into HR's queue.
+                    # Approving it turns the day Present; rejecting it leaves the
+                    # payroll check's "confirmed present, attendance says Absent" for HR.
+                    ar_made = []
+                    for (ar_e, ar_d) in pres_absent:
+                        if frappe.db.sql("""SELECT 1 FROM `tabAttendance Request` WHERE employee = %s
+                                AND from_date <= %s AND to_date >= %s AND docstatus < 2 LIMIT 1""", (ar_e, ar_d, ar_d)):
+                            continue
+                        try:
+                            ar = frappe.new_doc("Attendance Request")
+                            ar.employee = ar_e
+                            ar.company = frappe.db.get_value("Employee", ar_e, "company")
+                            ar.from_date = ar_d
+                            ar.to_date = ar_d
+                            ar.reason = "On Duty"
+                            ar.explanation = ("Marked Absent but at work on " + str(ar_d) + " (" +
+                                str(frappe.db.get_value("Task", d.task, "subject") or d.task or "") +
+                                ", " + d.name + "). Confirmed present by " + frappe.session.user + " when entering actuals.")
+                            ar.insert(ignore_permissions=True)
+                            # into HR's queue: the state the request's own workflow moves a
+                            # Draft to when it is sent for approval (not approved here)
+                            ar_next = frappe.db.sql("""SELECT t.next_state FROM `tabWorkflow Transition` t
+                                INNER JOIN `tabWorkflow` w ON w.name = t.parent
+                                WHERE w.document_type = 'Attendance Request' AND w.is_active = 1
+                                  AND t.state = %s AND t.next_state IN (
+                                    SELECT s.state FROM `tabWorkflow Document State` s
+                                    WHERE s.parent = w.name AND s.doc_status = '0')
+                                  AND t.next_state != t.state
+                                ORDER BY t.idx LIMIT 1""", (ar.get("workflow_state") or "",))
+                            if ar_next:
+                                frappe.db.set_value("Attendance Request", ar.name, "workflow_state", ar_next[0][0],
+                                    update_modified=False)
+                            ar_made.append(ar.name)
+                        except Exception:
+                            frappe.log_error(frappe.get_traceback(), "WM: attendance request for " + str(ar_e) + " " + str(ar_d))
+                    if ar_made:
+                        out["attendance_requests"] = ar_made
                     out["name"] = d.name
                     out["workflow_state"] = d.workflow_state
                     out["total_payment"] = d.total_payment

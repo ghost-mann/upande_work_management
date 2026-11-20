@@ -663,7 +663,7 @@
           '<span><b style="color:#c2760c">L</b> approved leave (blocked)</span>'+
           '<span><b style="color:#d97706">○</b> pending leave (can still enter)</span>'+
           '<span><b style="color:#0a7a43">in 06:52</b> time scanned in (P = marked present, no scan time)</span>'+
-          '<span><b style="color:#b91c1c">A</b> marked Absent that day</span>'+
+          '<span><b style="color:#b91c1c">A</b> marked Absent — if they were at work, enter the quantity and tick them present on saving (HR gets an attendance correction)</span>'+
           '<span><b style="color:#a06000">?</b> no record either way — presence unknown; on saving you confirm who was at work</span>'+
           '<span><b style="color:#7c3aed">✓ conf</b> no scan yet, confirmed present by hand (HR checks it)</span>'+
           (a.hourly?'<span style="color:#1d4ed8"><b>Hourly task:</b> on a Saturday type the hours worked — 6 hours is a full day and is paid as 8</span>':'')+
@@ -726,6 +726,8 @@
               pmark='<span title="scanned in at '+esc(scanT)+'" style="'+pbase+'color:#0a7a43">in '+esc(scanT)+'</span>';
             } else if(attP){
               pmark='<span title="attendance marked Present (no scan time)" style="'+pbase+'color:#0a7a43">P</span>';
+            } else if(attA && (a.cell_confirmed||{})[ck(w.employee,iso)]){
+              pmark='<span title="marked Absent; confirmed present by '+esc(a.cell_confirmed[ck(w.employee,iso)])+' — attendance correction sent to HR" style="'+pbase+'color:#7c3aed">A ✓ conf</span>';
             } else if(attA){
               pmark='<span title="marked Absent this day (submitted attendance)" style="'+pbase+'color:#b91c1c">A · absent</span>';
             } else if((a.cell_confirmed||{})[ck(w.employee,iso)]){
@@ -936,12 +938,15 @@
           pbox.style.cssText="margin:10px 0;padding:10px 12px;border:1px solid #c4b5fd;background:#f5f3ff;border-radius:10px;font-size:12.5px";
           var phost=el("b-acsubmit").parentNode; phost.parentNode.insertBefore(pbox, phost); }
         var plist=d.presence||[];
-        pbox.innerHTML='<b>No scan or attendance yet for '+plist.length+' worker-day'+(plist.length>1?'s':'')+'.</b> '+
+        var nAbs=plist.filter(function(x){ return x.absent; }).length;
+        pbox.innerHTML='<b>'+plist.length+' worker-day'+(plist.length>1?'s':'')+' with no proof of attendance'+(nAbs?' ('+nAbs+' marked Absent)':'')+'.</b> '+
           'Tick each person you know was at work: they are paid and HR checks them against the biometric later. '+
+          (nAbs?'For a day marked <b>Absent</b>, ticking also sends HR an attendance correction to approve. ':'')+
           'Unticked days are left out of this record.'+
           '<div style="margin:6px 0"><label style="font-size:11.5px"><input type="checkbox" id="ac-pr-all"> tick all</label></div>'+
           '<div style="max-height:260px;overflow:auto;margin:4px 0 8px">'+plist.map(function(x,i){
-            return '<label style="display:block;padding:2px 0"><input type="checkbox" data-pr="'+i+'"> '+esc(x.name)+' <span style="color:#777">('+esc(x.employee)+') — '+esc(x.date)+'</span></label>'; }).join("")+'</div>'+
+            return '<label style="display:block;padding:2px 0"><input type="checkbox" data-pr="'+i+'"> '+esc(x.name)+' <span style="color:#777">('+esc(x.employee)+') — '+esc(x.date)+'</span>'+
+              (x.absent?' <span style="color:#b91c1c;font-weight:700;font-size:11px">marked Absent</span>':' <span style="color:#a06000;font-size:11px">no scan yet</span>')+'</label>'; }).join("")+'</div>'+
           '<button class="btn good" id="ac-pr-go">Save: ticked were present</button> <button class="btn" id="ac-pr-no">Cancel</button>';
         el("ac-pr-all").onchange=function(){ var on=this.checked; pbox.querySelectorAll("input[data-pr]").forEach(function(c){ c.checked=on; }); };
         el("ac-pr-go").onclick=function(){
@@ -992,6 +997,7 @@
         return;
       }
       if(d.att_overridden){ toast("Attendance override logged for "+d.att_overridden+" worker"+(d.att_overridden>1?"s":"")); }
+      if(d.attendance_requests && d.attendance_requests.length){ toast("Sent HR "+d.attendance_requests.length+" attendance correction"+(d.attendance_requests.length>1?"s":"")+" for the ticked Absent days"); }
       if(d.error){ toast("Error: "+d.error); refresh(); return; }
       // Advisory, and deliberately so: the rows were written either way. Shown
       // as an alert rather than a toast because a toast is missed, and the whole
