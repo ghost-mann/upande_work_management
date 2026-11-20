@@ -176,3 +176,17 @@ class TestAbsentButAtWork(unittest.TestCase):
 		js = (JS / "work-actuals.js").read_text()
 		self.assertIn("marked Absent</span>", js)
 		self.assertIn("d.attendance_requests", js)
+
+
+class TestFarmCardCountsOpenIssues(unittest.TestCase):
+	"""2026-11-20: Lokitela's card looked clean (no duplicates, nothing unfinished)
+	but one quantity outlier was unacknowledged, so Approve was offered and refused."""
+
+	def test_detail_counts_them(self):
+		b = block("payment.py", "chk_detail")
+		self.assertIn('by[oi_x["owner"]]["open_issues"]', b)
+
+	def test_the_card_holds_approve_until_they_are_cleared(self):
+		js = (JS / "work-payment.js").read_text()
+		self.assertIn("&& !f.open_issues;", js)
+		self.assertIn("Issues to fix or acknowledge", js)

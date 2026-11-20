@@ -2786,14 +2786,15 @@
     h+='<div class="pc-farms">';
     (d.farms||[]).forEach(function(f){
       var can=c.status==="Farm Review" && f.status!=="Approved" && (me.gm || (me.approve_farms||fm).indexOf(f.farm)>=0);
-      var clean=!f.dups && !f.unfinished && !(d.absent_blocks && f.absent_paid);
+      var clean=!f.dups && !f.unfinished && !(d.absent_blocks && f.absent_paid) && !f.open_issues;
       h+='<div class="pc-farm"><h4>'+esc(f.farm)+pcChip(f.status)+'</h4><div class="pc-n">'+
          '<b>'+fmt(f.worker_days)+'</b> worker-days · <b>'+money(f.amount)+'</b><br>'+
          'Duplicate days: <b class="'+(f.dups?'bad':'')+'">'+fmt(f.dups)+'</b> · Unfinished: <b class="'+(f.unfinished?'bad':'')+'">'+fmt(f.unfinished)+'</b>'+
          (f.absent_paid?'<br>Paid on a marked-Absent day: <b class="bad">'+fmt(f.absent_paid)+'</b> '+(d.absent_blocks?'(must be fixed before approval)':'(check, not blocking)'):'')+
+         (f.open_issues?'<br>Issues to fix or acknowledge: <b class="bad">'+fmt(f.open_issues)+'</b> (see Issues to clear, below)':'')+
          (f.approved_by?'<br>Approved by '+esc(f.approved_by)+' '+esc(String(f.approved_at||"").slice(0,16)):'')+'</div>'+
          '<div class="pc-bar"><button class="btn sm" data-pcf="'+esc(f.farm)+'">Show '+esc(f.farm)+'</button>'+
-         (can?'<button class="btn sm good" data-pca="'+esc(f.farm)+'"'+(clean?'':' disabled title="Fix its duplicate days, unfinished records and pay on Absent days first"')+'>Approve '+esc(f.farm)+'</button>':'')+'</div></div>';
+         (can?'<button class="btn sm good" data-pca="'+esc(f.farm)+'"'+(clean?'':' disabled title="Fix its duplicate days, unfinished records, pay on Absent days and open issues first"')+'>Approve '+esc(f.farm)+'</button>':'')+'</div></div>';
     });
     h+='</div>';
     if(d.hr_dups) h+='<div class="pc-note"><b>'+fmt(d.hr_dups)+' duplicate day(s) cross two farms.</b> HR fixes these; they do not hold up a farm manager.</div>';

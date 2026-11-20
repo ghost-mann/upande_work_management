@@ -4370,6 +4370,13 @@ def wm_payment(**kwargs):
                     by[x.farm]["worker_days"] = frappe.utils.cint(x.n)
                     by[x.farm]["amount"] = frappe.utils.flt(x.a)
                     by[x.farm]["absent_paid"] = frappe.utils.cint(x.absent_paid)
+            # OPEN ISSUES PER FARM (2026-11-20): the farm's approval also waits for its
+            # open issues (fix or acknowledge), and the card did not count them, so a
+            # card that looked clean offered an Approve that was then refused.
+            if pc.status == "Farm Review":
+                for oi_x in wmi_open(wmi_issues(pc, fscope), list(by.keys())):
+                    if oi_x["owner"] in by:
+                        by[oi_x["owner"]]["open_issues"] = frappe.utils.cint(by[oi_x["owner"]].get("open_issues")) + 1
             out["check"] = pc
             out["farms"] = [by[k] for k in sorted(by.keys())]
             out["hr_dups"] = hr_dups
