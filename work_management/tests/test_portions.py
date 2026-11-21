@@ -141,3 +141,16 @@ class Doctypes(unittest.TestCase):
 		f = {x["fieldname"]: x for x in meta("work_management_planner")["fields"]}
 		self.assertEqual(f["portion"]["fieldtype"], "Data")
 		self.assertEqual(f["portion"].get("allow_on_submit"), 1)
+
+
+class FinalReviewFixes(unittest.TestCase):
+	def test_a_negative_portion_is_refused(self):
+		errs = portion_errors(LINE, [P("a", "otieno", -50, ["B1"]), P("b", "chebet", 150, ["B2"])])
+		self.assertTrue(any("negative" in e for e in errs), errs)
+
+	def test_rounding_does_not_refuse_a_full_split(self):
+		line = {"task": "T", "label": "X", "work_qty": 2, "cost": 66.67}  # 2 x 33.335
+		parts = [P("a", "otieno", 1, ["B1"], cost=portion_cost(1, 33.335)),
+		         P("b", "chebet", 1, ["B2"], cost=portion_cost(1, 33.335))]
+		parts[0]["cost"] = parts[1]["cost"] = 33.34  # each rounded up on its own
+		self.assertEqual(portion_errors(line, parts), [])

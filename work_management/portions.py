@@ -60,6 +60,8 @@ def portion_errors(line, portions, used=None, legacy=None, valid_leaders=None, l
 			continue
 		if valid_leaders is not None and tl not in valid_leaders:
 			errs.append("%s: %s is not on the farm's active team leader list." % (what, tl))
+		if _f(p.get("work_qty")) < 0 or _f(p.get("cost")) < 0:
+			errs.append("%s: %s's portion cannot be negative." % (what, tl))
 		if not p.get("blocks"):
 			errs.append("%s: %s's portion needs at least one block." % (what, tl))
 		for b in p.get("blocks") or []:
@@ -86,7 +88,9 @@ def portion_errors(line, portions, used=None, legacy=None, valid_leaders=None, l
 	if sq > _f(line.get("work_qty")) + TOLERANCE:
 		errs.append("%s: the portions come to %.2f%s, over the activity's %.2f."
 		            % (what, sq, tail, _f(line.get("work_qty"))))
-	if sc > _f(line.get("cost")) + TOLERANCE:
+	# each portion's money is rounded on its own, so n portions may come to up
+	# to n half-cents over the line's single rounded figure without being over
+	if sc > _f(line.get("cost")) + TOLERANCE * (len(portions) + 1):
 		ctail = " including KES %.2f in earlier requests made before the split" % _f(legacy.get("c")) \
 			if _f(legacy.get("c")) > TOLERANCE else ""
 		errs.append("%s: the portions come to KES %.2f%s, over the activity's KES %.2f."

@@ -193,12 +193,21 @@ def wm_masterplan(**kwargs):
     PORTION_DT = 1 if frappe.db.exists("DocType", "Work Management Activity Portion") else 0
     MP_PORTIONS_OVER_SQL = """
         SELECT a.task FROM `tabWork Management Master Plan Activity` a
-        INNER JOIN (SELECT task, SUM(work_qty) q, SUM(cost) c
+        INNER JOIN `tabWork Management Master Plan` mp ON mp.name = a.parent
+        INNER JOIN (SELECT task, SUM(work_qty) q, SUM(cost) c, COUNT(*) n
                     FROM `tabWork Management Activity Portion`
                     WHERE parent = %(p)s AND parenttype = 'Work Management Master Plan'
                     GROUP BY task) s ON s.task = a.task
+        LEFT JOIN (SELECT pr.task, SUM(pr.quantity) q, SUM(pr.total_cost) c
+                   FROM `tabWork Management Planner` pr
+                   INNER JOIN `tabWork Management Master Plan` m2 ON m2.name = %(p)s
+                   WHERE pr.farm = m2.farm AND IFNULL(pr.`portion`, '') = ''
+                     AND IFNULL(pr.workflow_state, '') != 'Rejected'
+                     AND pr.from_date >= m2.period_from AND pr.to_date <= m2.period_to
+                   GROUP BY pr.task) lg ON lg.task = a.task
         WHERE a.parent = %(p)s AND IFNULL(a.consultant_state, '') != 'Rejected'
-          AND (s.q > IFNULL(a.work_qty, 0) + 0.005 OR s.c > IFNULL(a.cost, 0) + 0.005)
+          AND (s.q + IFNULL(lg.q, 0) > IFNULL(a.work_qty, 0) + 0.005
+               OR s.c + IFNULL(lg.c, 0) > IFNULL(a.cost, 0) + 0.005 * (s.n + 1))
     """
     MP_PORTIONS_OVER_MSG = ("Some activities are split into portions that add up to more than the "
                             "activity: ")
@@ -510,8 +519,10 @@ def wm_masterplan(**kwargs):
                             "portioned_qty": gp_s["q"], "portioned_cost": gp_s["c"],
                             "unallocated_qty": frappe.utils.flt(gp_a.work_qty) - gp_s["q"] - frappe.utils.flt(gp_l.q),
                             "unallocated_cost": frappe.utils.flt(gp_a.cost) - gp_s["c"] - frappe.utils.flt(gp_l.c),
-                            "over": 1 if (gp_s["q"] > frappe.utils.flt(gp_a.work_qty) + TOLERANCE or
-                                          gp_s["c"] > frappe.utils.flt(gp_a.cost) + TOLERANCE) else 0}
+                            # same rule as MP_PORTIONS_OVER_SQL, the gate on every step forward
+                            "over": 1 if (gp_s["q"] + frappe.utils.flt(gp_l.q) > frappe.utils.flt(gp_a.work_qty) + TOLERANCE or
+                                          gp_s["c"] + frappe.utils.flt(gp_l.c) > frappe.utils.flt(gp_a.cost) +
+                                          TOLERANCE * (len([x for x in out["portions"] if x.task == gp_a.task]) + 1)) else 0}
                     out["portion_changes"] = frappe.db.get_all("Work Management Portion Change",
                         filters={"parent": mp_name, "parenttype": "Work Management Master Plan"},
                         fields=["kind", "task", "portion_key", "old_value", "new_value", "note",
@@ -937,10 +948,22 @@ def wm_masterplan(**kwargs):
                     if not sv_cut and not (sv_review and not sv_post):
                         for sv_t in sv_ptot:
                             sv_a = sv_lines.get(sv_t)
+                            # requests raised before the split hold no portion but still
+                            # use the line, so they count alongside the portions
+                            sv_lg = frappe.db.sql("""
+                                SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                                FROM `tabWork Management Planner`
+                                WHERE task = %(t)s AND farm = %(f)s AND IFNULL(`portion`,'') = ''
+                                  AND IFNULL(workflow_state,'') != 'Rejected'
+                                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                            """, {"t": sv_t, "f": sv_farm, "pfrom": sv_from, "pto": sv_to}, as_dict=True)[0]
+                            sv_ptot[sv_t]["q"] = sv_ptot[sv_t]["q"] + frappe.utils.flt(sv_lg.q)
+                            sv_ptot[sv_t]["c"] = sv_ptot[sv_t]["c"] + frappe.utils.flt(sv_lg.c)
+                            sv_pn = len([x for x in sv_keepp if x.task == sv_t])
                             if (sv_ptot[sv_t]["q"] > frappe.utils.flt(sv_a.work_qty) + TOLERANCE or
-                                    sv_ptot[sv_t]["c"] > frappe.utils.flt(sv_a.cost) + TOLERANCE):
+                                    sv_ptot[sv_t]["c"] > frappe.utils.flt(sv_a.cost) + TOLERANCE * (sv_pn + 1)):
                                 sv_cut = ((frappe.db.get_value("Task", sv_t, "subject") or str(sv_t)) +
-                                          " is split into portions that come to " + ("%.2f" % sv_ptot[sv_t]["q"]) +
+                                          " is split into portions that, with any requests raised before the split, come to " + ("%.2f" % sv_ptot[sv_t]["q"]) +
                                           " (KES " + ("%.2f" % sv_ptot[sv_t]["c"]) + "). The activity cannot be "
                                           "set below its portions -- shrink the portions first.")
                                 break
@@ -1273,6 +1296,8 @@ def wm_masterplan(**kwargs):
                 elif not (frappe.db.get_value("User", sp_tl, "enabled")
                           or frappe.db.get_value("Employee", {"name": sp_tl, "status": "Active"}, "name")):
                     sp_errs.append(sp_what + ": " + sp_tl + " is neither an active login nor an active employee.")
+                if sp_p["work_qty"] < 0:
+                    sp_errs.append(sp_what + ": " + sp_tl + "'s portion cannot be negative.")
                 if not sp_p["blocks"]:
                     sp_errs.append(sp_what + ": " + sp_tl + "'s portion needs at least one block.")
                 for sp_b in sp_p["blocks"]:
@@ -1306,7 +1331,8 @@ def wm_masterplan(**kwargs):
                                    ((" including " + ("%.2f" % sp_lgq) + " in earlier requests made before the split")
                                     if sp_lgq > TOLERANCE else "") +
                                    ", over the activity's " + ("%.2f" % sp_lq) + ".")
-                if sp_sc > frappe.utils.flt(sp_line.cost) + TOLERANCE:
+                # each portion's money is rounded on its own: allow a half-cent apiece
+                if sp_sc > frappe.utils.flt(sp_line.cost) + TOLERANCE * (len(sp_new) + 1):
                     sp_errs.append(sp_what + ": the portions come to KES " + ("%.2f" % sp_sc) +
                                    ((" including KES " + ("%.2f" % sp_lgc) + " in earlier requests made before the split")
                                     if sp_lgc > TOLERANCE else "") +
