@@ -3996,10 +3996,12 @@ def wm_dashboard(**kwargs):
         tl_mw = " AND mp.farm IN %(fms)s"
         if tl_farm:
             tl_mw = " AND mp.farm = %(fm)s"
-        if tl_who:
-            tl_mw = tl_mw + " AND a.team_leader = %(tl)s"
+        # (2026-11-21) the leader filter moved below: on a split activity the work
+        # belongs to the portions' team leaders, not to the line's
         tl_mp = {}
+        tl_acc = {}
         tl_mp_rows = []
+        tl_pdt = 1 if frappe.db.exists("DocType", "Work Management Activity Portion") else 0
         for tl_m in frappe.db.sql("""
             SELECT mp.name plan, mp.plan_name, mp.farm, a.task, a.team_leader, a.work_qty, a.man_days,
                    a.rate, a.cost, a.uom
@@ -4017,33 +4019,79 @@ def wm_dashboard(**kwargs):
                 WHERE ac.workflow_state IN """ + tl_ok + """
                   AND p.master_plan = %(mp)s AND p.task = %(t)s
             """, {"mp": tl_m.plan, "t": tl_m.task}, as_dict=True)[0]
-            tl_tq = frappe.utils.flt(tl_m.work_qty)
-            tl_dq = frappe.utils.flt(tl_d.dq)
-            tl_left = tl_tq - tl_dq
-            if tl_left < 0:
-                tl_left = 0
-            tl_mdu = (frappe.utils.flt(tl_m.man_days) / tl_tq) if tl_tq else 0
-            tl_b = tl_mp.get(tl_m.team_leader)
-            if tl_b is None:
-                tl_b = {"activities": 0, "target_cost": 0.0, "done_cost": 0.0,
-                        "backlog_md": 0.0, "backlog_cost": 0.0}
-                tl_mp[tl_m.team_leader] = tl_b
-            tl_b["activities"] = tl_b["activities"] + 1
-            tl_b["target_cost"] = tl_b["target_cost"] + frappe.utils.flt(tl_m.cost)
-            tl_b["done_cost"] = tl_b["done_cost"] + min(tl_dq, tl_tq) * frappe.utils.flt(tl_m.rate)
-            tl_b["backlog_md"] = tl_b["backlog_md"] + tl_left * tl_mdu
-            tl_b["backlog_cost"] = tl_b["backlog_cost"] + tl_left * frappe.utils.flt(tl_m.rate)
-            if tl_who:
-                tl_mp_rows.append({"plan": tl_m.plan, "plan_name": tl_m.plan_name, "farm": tl_m.farm,
-                    "task": tl_m.task,
-                    "subject": frappe.db.get_value("Task", tl_m.task, "subject") or tl_m.task,
-                    "uom": tl_m.uom, "target_qty": tl_tq, "done_qty": tl_dq,
-                    "progress": round(tl_dq / tl_tq * 100, 1) if tl_tq else None,
-                    "backlog_qty": round(tl_left, 2), "backlog_md": round(tl_left * tl_mdu, 2),
-                    "backlog_cost": round(tl_left * frappe.utils.flt(tl_m.rate), 2)})
+            tl_lq = frappe.utils.flt(tl_m.work_qty)
+            tl_mdu = (frappe.utils.flt(tl_m.man_days) / tl_lq) if tl_lq else 0
+            tl_subj = frappe.db.get_value("Task", tl_m.task, "subject") or tl_m.task
+            # ACTIVITY PORTIONS (2026-11-21): a split activity is measured per portion,
+            # each against its own share and credited to its own team leader; the
+            # line's team leader is scored separately as accountable for the whole
+            tl_parts = frappe.db.get_all("Work Management Activity Portion",
+                filters={"parent": tl_m.plan, "parenttype": "Work Management Master Plan", "task": tl_m.task},
+                fields=["portion_key", "team_leader", "label", "work_qty", "cost"]) if tl_pdt else []
+            tl_units = []
+            if tl_parts:
+                if not tl_who or tl_m.team_leader == tl_who:
+                    tl_ldq = frappe.utils.flt(tl_d.dq)
+                    tl_ab = tl_acc.get(tl_m.team_leader)
+                    if tl_ab is None:
+                        tl_ab = {"activities": 0, "target_cost": 0.0, "done_cost": 0.0}
+                        tl_acc[tl_m.team_leader] = tl_ab
+                    tl_ab["activities"] = tl_ab["activities"] + 1
+                    tl_ab["target_cost"] = tl_ab["target_cost"] + frappe.utils.flt(tl_m.cost)
+                    tl_ab["done_cost"] = tl_ab["done_cost"] + min(tl_ldq, tl_lq) * frappe.utils.flt(tl_m.rate)
+                    if tl_who:
+                        tl_lleft = tl_lq - tl_ldq
+                        if tl_lleft < 0:
+                            tl_lleft = 0
+                        tl_mp_rows.append({"plan": tl_m.plan, "plan_name": tl_m.plan_name, "farm": tl_m.farm,
+                            "task": tl_m.task, "subject": tl_subj, "overall": 1, "portions": len(tl_parts),
+                            "uom": tl_m.uom, "target_qty": tl_lq, "done_qty": tl_ldq,
+                            "progress": round(tl_ldq / tl_lq * 100, 1) if tl_lq else None,
+                            "backlog_qty": round(tl_lleft, 2), "backlog_md": round(tl_lleft * tl_mdu, 2),
+                            "backlog_cost": round(tl_lleft * frappe.utils.flt(tl_m.rate), 2)})
+                for tl_pp in tl_parts:
+                    tl_pd = frappe.db.sql("""
+                        SELECT COALESCE(SUM(ac.total_actual_qty),0) dq
+                        FROM `tabWork Management Actuals` ac
+                        INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                        INNER JOIN `tabWork Management Planner` p ON a2.planner_request = p.name
+                        WHERE ac.workflow_state IN """ + tl_ok + """
+                          AND p.master_plan = %(mp)s AND p.`portion` = %(k)s
+                    """, {"mp": tl_m.plan, "k": tl_pp.portion_key}, as_dict=True)[0]
+                    tl_units.append({"owner": tl_pp.team_leader, "tq": frappe.utils.flt(tl_pp.work_qty),
+                                     "dq": frappe.utils.flt(tl_pd.dq), "cost": frappe.utils.flt(tl_pp.cost),
+                                     "portion": tl_pp.label or tl_pp.portion_key})
+            else:
+                tl_units.append({"owner": tl_m.team_leader, "tq": tl_lq, "dq": frappe.utils.flt(tl_d.dq),
+                                 "cost": frappe.utils.flt(tl_m.cost), "portion": None})
+            for tl_un in tl_units:
+                if tl_who and tl_un["owner"] != tl_who:
+                    continue
+                tl_tq = tl_un["tq"]
+                tl_dq = tl_un["dq"]
+                tl_left = tl_tq - tl_dq
+                if tl_left < 0:
+                    tl_left = 0
+                tl_b = tl_mp.get(tl_un["owner"])
+                if tl_b is None:
+                    tl_b = {"activities": 0, "target_cost": 0.0, "done_cost": 0.0,
+                            "backlog_md": 0.0, "backlog_cost": 0.0}
+                    tl_mp[tl_un["owner"]] = tl_b
+                tl_b["activities"] = tl_b["activities"] + 1
+                tl_b["target_cost"] = tl_b["target_cost"] + tl_un["cost"]
+                tl_b["done_cost"] = tl_b["done_cost"] + min(tl_dq, tl_tq) * frappe.utils.flt(tl_m.rate)
+                tl_b["backlog_md"] = tl_b["backlog_md"] + tl_left * tl_mdu
+                tl_b["backlog_cost"] = tl_b["backlog_cost"] + tl_left * frappe.utils.flt(tl_m.rate)
+                if tl_who:
+                    tl_mp_rows.append({"plan": tl_m.plan, "plan_name": tl_m.plan_name, "farm": tl_m.farm,
+                        "task": tl_m.task, "subject": tl_subj, "portion": tl_un["portion"],
+                        "uom": tl_m.uom, "target_qty": tl_tq, "done_qty": tl_dq,
+                        "progress": round(tl_dq / tl_tq * 100, 1) if tl_tq else None,
+                        "backlog_qty": round(tl_left, 2), "backlog_md": round(tl_left * tl_mdu, 2),
+                        "backlog_cost": round(tl_left * frappe.utils.flt(tl_m.rate), 2)})
         tl_out = []
         tl_names = {}
-        for tl_u in list(tl_people.keys()) + list(tl_mp.keys()):
+        for tl_u in list(tl_people.keys()) + list(tl_mp.keys()) + list(tl_acc.keys()):
             if tl_names.get(tl_u):
                 continue
             tl_names[tl_u] = (frappe.db.get_value("User", tl_u, "full_name")
@@ -4063,6 +4111,10 @@ def wm_dashboard(**kwargs):
                 "mp_activities": tl_m["activities"],
                 "mp_progress": round(tl_m["done_cost"] / tl_m["target_cost"] * 100, 1) if tl_m["target_cost"] > 0 else None,
                 "backlog_md": round(tl_m["backlog_md"], 2), "backlog_cost": round(tl_m["backlog_cost"], 2),
+                # accountable for whole split activities (their portions run by others)
+                "acc_activities": (tl_acc.get(tl_u) or {}).get("activities") or 0,
+                "acc_progress": (round(tl_acc[tl_u]["done_cost"] / tl_acc[tl_u]["target_cost"] * 100, 1)
+                                 if tl_acc.get(tl_u) and tl_acc[tl_u]["target_cost"] > 0 else None),
                 "scored": tl_sc,
                 "good": round(tl_b["good"] * 100.0 / tl_sc, 1) if tl_sc else None,
                 "fair": round(tl_b["fair"] * 100.0 / tl_sc, 1) if tl_sc else None,

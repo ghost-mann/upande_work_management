@@ -351,7 +351,9 @@
        th("Completion","completion","n")+th("Efficiency","efficiency","n")+th("Cost eff.","cost","n")+
        th("Master plan","mp","n")+th("Backlog","backlog","n")+th("Quality","quality")+'</tr></thead><tbody>';
     rows.forEach(function(r,i){
-      h+='<tr data-tl="'+esc(r.user)+'"><td class="m">'+(i+1)+'</td><td><b>'+esc(r.full_name)+'</b></td>'+
+      h+='<tr data-tl="'+esc(r.user)+'"><td class="m">'+(i+1)+'</td><td><b>'+esc(r.full_name)+'</b>'+
+         (r.acc_activities?'<div class="hint" style="font-size:10px" title="split activities they answer for as a whole; the portions are run by others">accountable for '+
+           fmt(r.acc_activities)+' split activit'+(r.acc_activities===1?'y':'ies')+' · '+tlPct(r.acc_progress)+'</div>':'')+'</td>'+
          '<td class="n m">'+fmt(r.plans)+'</td>'+
          '<td class="n m" style="'+tlTone(r.completion,95,80)+'">'+tlPct(r.completion)+'</td>'+
          '<td class="n m" style="'+tlTone(r.efficiency,95,80)+'">'+tlPct(r.efficiency)+'</td>'+
@@ -377,6 +379,7 @@
       tile("Completion", tlPct(r.completion), "weekly plans · master plan "+(r.mp_progress==null?"—":fmt(r.mp_progress,0)+"%"), tlSpark(wk,"completion","#2563eb"))+
       tile("Efficiency", tlPct(r.efficiency), fmt(r.earned_md,1)+" earned of "+fmt(r.worked_md,1)+" worker-days", tlSpark(wk,"efficiency","#7c3aed"))+
       tile("Backlog", r.mp_activities?fmt(r.backlog_md,1)+" md":"—", r.mp_activities?("KES "+money(r.backlog_cost)+" across "+fmt(r.mp_activities)+" activit"+(r.mp_activities===1?"y":"ies")):"owns no master plan activity", "")+
+      (r.acc_activities?tile("Accountable for", tlPct(r.acc_progress), fmt(r.acc_activities)+" split activit"+(r.acc_activities===1?"y":"ies")+" run by several team leaders — whole-activity progress", ""):"")+
       tile("Rework", tlPct(r.rework), r.scored?("G "+fmt(r.good,0)+"% · F "+fmt(r.fair,0)+"% · R "+fmt(r.rework,0)+"% of "+fmt(r.scored)+" scored"):"nothing scored yet", tlSpark(wk,"rework","#dc2626"))+
       '</div>'+tlHelp("card")+'<div style="height:10px"></div>';
     var mp=d.mp_rows||[];
@@ -384,7 +387,9 @@
       h+='<div class="sech" style="font-size:12px">Master plan activities owned</div><div style="overflow:auto"><table><thead><tr><th>Plan</th><th>Activity</th>'+
          '<th class="n">Target</th><th class="n">Done</th><th class="n">Progress</th><th class="n">Backlog</th><th class="n">Backlog md</th></tr></thead><tbody>';
       mp.forEach(function(m){
-        h+='<tr><td class="m" style="font-size:10px">'+esc(m.plan_name||m.plan)+'</td><td>'+esc(m.subject)+'</td>'+
+        h+='<tr'+(m.overall?' style="background:#eef2ff"':'')+'><td class="m" style="font-size:10px">'+esc(m.plan_name||m.plan)+'</td><td>'+esc(m.subject)+
+           (m.overall?' <span class="hint" style="font-size:10px">· accountable for the whole, split '+fmt(m.portions)+' ways</span>':'')+
+           (m.portion?' <span class="hint" style="font-size:10px">· their portion'+(String(m.portion).length>8||/\s/.test(m.portion)?' ('+esc(m.portion)+')':'')+'</span>':'')+'</td>'+
            '<td class="n m">'+fmt(m.target_qty)+' '+esc(m.uom||"")+'</td><td class="n m">'+fmt(m.done_qty)+'</td>'+
            '<td class="n m">'+tlPct(m.progress)+'</td><td class="n m">'+fmt(m.backlog_qty)+'</td><td class="n m">'+fmt(m.backlog_md,1)+'</td></tr>';
       });
