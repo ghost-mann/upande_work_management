@@ -517,7 +517,7 @@ def wm_masterplan(**kwargs):
                         fields=["kind", "task", "portion_key", "old_value", "new_value", "note",
                                 "changed_by", "changed_on"], order_by="changed_on desc")
                     gp_st = mp.workflow_state
-                    out["can_set_portions"] = 1 if (
+                    out["can_set_portions"] = 0 if mp.farm not in TL_MANAGE_FARMS else 1 if (
                         (gp_st in ("Draft", "Rejected") and CAN_EDIT)
                         or (gp_st == "Pending GM" and CAN_GM)
                         or (gp_st == "Approved" and (CAN_EDIT or CAN_GM))) else 0
@@ -1164,6 +1164,11 @@ def wm_masterplan(**kwargs):
             sp_err = "no such master plan: " + str(sp_name)
         elif FARMS and sp_mp.farm not in FARMS:
             sp_err = str(sp_mp.farm) + " is not a farm you are working."
+        elif sp_mp.farm not in TL_MANAGE_FARMS:
+            # the farm's own Farm Manager splits its work (the GM and System Managers
+            # any farm's) -- the same rule as the farm's team leader list
+            sp_err = ("Only " + str(sp_mp.farm) + "'s farm manager or the general manager can "
+                      "split this plan's activities.")
         elif sp_mp.workflow_state in ("Draft", "Rejected"):
             if not CAN_EDIT:
                 sp_err = "Only a farm manager, the HR head or the general manager can split this plan's activities."
@@ -1538,7 +1543,7 @@ def wm_masterplan(**kwargs):
             out["error"] = ("Every activity needs a team leader before the plan can go for "
                             "review. Open the plan, pick a team leader for each activity and save.")
         elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sr_name}):
-            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(x[0]) for x in
+            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(frappe.db.get_value("Task", x[0], "subject") or x[0]) for x in
                             frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sr_name})]) + MP_PORTIONS_OVER_TAIL)
         else:
             frappe.db.set_value("Work Management Master Plan", sr_name,
@@ -1832,7 +1837,7 @@ def wm_masterplan(**kwargs):
             out["error"] = ("Every activity needs a team leader before this plan can move on. "
                             "Pick them in the Team leader column and press Save team leaders.")
         elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sg_name}):
-            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(x[0]) for x in
+            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(frappe.db.get_value("Task", x[0], "subject") or x[0]) for x in
                             frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sg_name})]) + MP_PORTIONS_OVER_TAIL)
         else:
             sg_rows = frappe.db.sql("""
@@ -1889,7 +1894,7 @@ def wm_masterplan(**kwargs):
             out["error"] = ("Every activity needs a team leader before this plan can move on. "
                             "Pick them in the Team leader column and press Save team leaders.")
         elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": ga_name}):
-            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(x[0]) for x in
+            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(frappe.db.get_value("Task", x[0], "subject") or x[0]) for x in
                             frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": ga_name})]) + MP_PORTIONS_OVER_TAIL)
         else:
             ga_doc = frappe.db.get_value("Work Management Master Plan", ga_name,
