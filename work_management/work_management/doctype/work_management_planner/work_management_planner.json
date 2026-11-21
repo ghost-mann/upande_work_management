@@ -10,6 +10,7 @@
   "farm",
   "master_plan",
   "team_leader",
+  "portion",
   "company",
   "status",
   "cb_dates",
@@ -461,12 +462,20 @@
    "label": "Close Rated By",
    "read_only": 1,
    "options": "User"
+  },
+  {
+   "fieldname": "portion",
+   "fieldtype": "Data",
+   "label": "Portion",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "description": "The team leader's portion of a split master plan activity this work draws on."
   }
  ],
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-19 12:00:00.000000",
+ "modified": "2026-11-21 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Planner",

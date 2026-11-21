@@ -1,0 +1,40 @@
+{
+ "creation": "2026-11-21 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "module": "Work Management",
+ "name": "Work Management Activity Portion Block",
+ "owner": "Administrator",
+ "modified": "2026-11-21 12:00:00.000000",
+ "modified_by": "Administrator",
+ "field_order": [
+  "portion_key",
+  "block"
+ ],
+ "fields": [
+  {
+   "fieldname": "portion_key",
+   "fieldtype": "Data",
+   "label": "Portion Key",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "block",
+   "fieldtype": "Link",
+   "options": "Warehouse",
+   "label": "Block",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 4
+  }
+ ],
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

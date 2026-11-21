@@ -19,6 +19,10 @@
   "activities",
   "sb_stand_ins",
   "stand_ins",
+  "sb_portions",
+  "portions",
+  "portion_blocks",
+  "portion_changes",
   "sb_mp_tot",
   "total_activities",
   "total_man_days",
@@ -191,12 +195,38 @@
    "options": "Work Management Team Leader Stand In",
    "label": "Stand-ins",
    "description": "While a team leader is away, their activities on this plan pass to the stand-in for those dates, and the work counts toward the stand-in's KPIs."
+  },
+  {
+   "fieldname": "sb_portions",
+   "fieldtype": "Section Break",
+   "label": "Activity Portions",
+   "collapsible": 1,
+   "description": "An activity may be split between team leaders. Each portion is a team leader, their blocks and their share of the activity's work and money; together they never exceed the activity. The activity's own team leader stays accountable for the whole."
+  },
+  {
+   "fieldname": "portions",
+   "fieldtype": "Table",
+   "options": "Work Management Activity Portion",
+   "label": "Portions"
+  },
+  {
+   "fieldname": "portion_blocks",
+   "fieldtype": "Table",
+   "options": "Work Management Activity Portion Block",
+   "label": "Portion Blocks"
+  },
+  {
+   "fieldname": "portion_changes",
+   "fieldtype": "Table",
+   "options": "Work Management Portion Change",
+   "label": "Portion Changes After Approval",
+   "read_only": 1
   }
  ],
  "idx": 0,
  "is_submittable": 0,
  "links": [],
- "modified": "2026-11-01 12:00:00.000000",
+ "modified": "2026-11-21 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Master Plan",

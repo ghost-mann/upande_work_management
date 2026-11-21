@@ -99,6 +99,8 @@ FIELD_LABELS = (
 	("Work Payment Line", "farm", "{top_singular}"),
 	("Work Payment Line", "block", "{unit_singular} / {section_singular}"),
 	("Work Planner Block", "block", "{unit_singular} / {section_singular}"),
+	("Work Management Activity Portion Block", "block", "{unit_singular}"),
+	("Work Management Master Plan", "portion_blocks", "Portion {unit_plural}"),
 	("Work Rate Recalc Run", "farm", "{top_singular} Scope"),
 )
 
