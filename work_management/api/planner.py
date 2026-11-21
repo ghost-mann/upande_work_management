@@ -426,6 +426,42 @@ def wm_planner(**kwargs):
                 tk_rc = frappe.utils.flt(ta.cost) - frappe.utils.flt(tk_used.c)
                 ti = frappe.db.get_value("Task", ta.task,
                     ["subject", "custom_uom", "custom_daily_target", "custom_rate"], as_dict=True)
+                # ACTIVITY PORTIONS (2026-11-21): a split line is raised against one
+                # team leader's portion -- their blocks, their share, their remaining
+                tk_parts = []
+                if frappe.db.exists("DocType", "Work Management Activity Portion"):
+                    for tp in frappe.db.get_all("Work Management Activity Portion",
+                            filters={"parent": tkm.name, "parenttype": "Work Management Master Plan",
+                                     "task": ta.task},
+                            fields=["portion_key", "team_leader", "label", "work_qty", "cost"], order_by="idx"):
+                        tp_bl = frappe.db.get_all("Work Management Activity Portion Block",
+                            filters={"parent": tkm.name, "parenttype": "Work Management Master Plan",
+                                     "portion_key": tp.portion_key}, pluck="block", order_by="idx")
+                        tp_u = frappe.db.sql("""
+                            SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                            FROM `tabWork Management Planner`
+                            WHERE master_plan = %(p)s AND `portion` = %(k)s
+                              AND IFNULL(workflow_state,'') != 'Rejected'
+                        """, {"p": tkm.name, "k": tp.portion_key}, as_dict=True)[0]
+                        tp_best = None
+                        for tk_s in tk_stand:
+                            if (tk_s.team_leader == tp.team_leader and
+                                    str(tk_s.from_date) <= str(tk_from) <= str(tk_s.to_date)):
+                                if tp_best is None or str(tk_s.from_date) >= str(tp_best.from_date):
+                                    tp_best = tk_s
+                        tp_act = tp_best.stand_in if tp_best else tp.team_leader
+                        tp_rq = frappe.utils.flt(tp.work_qty) - frappe.utils.flt(tp_u.q)
+                        tp_rc = frappe.utils.flt(tp.cost) - frappe.utils.flt(tp_u.c)
+                        tk_parts.append({"key": tp.portion_key, "label": tp.label,
+                                         "team_leader": tp.team_leader, "acting_leader": tp_act,
+                                         "acting_name": (frappe.db.get_value("User", tp_act, "full_name")
+                                                         or frappe.db.get_value("Employee", tp_act, "employee_name")
+                                                         or tp_act),
+                                         "blocks": tp_bl, "work_qty": frappe.utils.flt(tp.work_qty),
+                                         "cost": frappe.utils.flt(tp.cost),
+                                         "remaining_qty": tp_rq, "remaining_cost": tp_rc,
+                                         "exhausted": 1 if (tp_rq <= 0.005 or tp_rc <= 0.005) else 0,
+                                         "mine": 1 if (tp_act and tp_act == frappe.session.user) else 0})
                 tasks.append({"name": ta.task, "subject": (ti.subject if ti else ta.task),
                               "uom": ta.uom or (ti.custom_uom if ti else None),
                               "daily_target": frappe.utils.flt(ti.custom_daily_target) if ti else 0,
@@ -438,7 +474,9 @@ def wm_planner(**kwargs):
                               "team_leader": tk_lead, "acting_leader": tk_acting,
                               "acting_name": (frappe.db.get_value("User", tk_acting, "full_name")
                                               if tk_acting else None),
-                              "mine": 1 if (tk_acting and tk_acting == frappe.session.user) else 0})
+                              "mine": 1 if ((tk_acting and tk_acting == frappe.session.user)
+                                            or [x for x in tk_parts if x["mine"]]) else 0,
+                              "portions": tk_parts})
         out["tasks"] = tasks
 
     elif action == "budgets":
@@ -547,7 +585,7 @@ def wm_planner(**kwargs):
             or_filters={"requested_by":frappe.session.user, "team_leader":frappe.session.user},
             fields=["name","farm","block_section","task","quantity","people_per_day","person_days",
                     "total_hours","total_cost","from_date","to_date","workflow_state","request_date",
-                    "approved_by","approval_date","uom","daily_target","rate","working_days","team_leader"],
+                    "approved_by","approval_date","uom","daily_target","rate","working_days","team_leader","portion"],
             order_by="creation desc", limit=200)
 
     elif action == "planner_blocks":
@@ -588,6 +626,7 @@ def wm_planner(**kwargs):
         from_date = frappe.form_dict.get("from_date"); to_date = frappe.form_dict.get("to_date")
         submit_now = frappe.form_dict.get("submit_now")
         plan_name = frappe.form_dict.get("plan")  # if editing an existing draft
+        portion = (frappe.form_dict.get("portion") or "").strip()
         block_list = []
         if blocks_raw:
             for b in blocks_raw.split(","):
@@ -673,6 +712,7 @@ def wm_planner(**kwargs):
             cap_pick = None
             cap_err = None
             cap_line = None
+            cap_portion = None
             if mp_named:
                 if mp_named in cap_names:
                     cap_pick = mp_named
@@ -735,6 +775,53 @@ def wm_planner(**kwargs):
                                    str(round(cap_rc, 2)) + " left of " +
                                    str(frappe.utils.flt(cap_line.cost)) +
                                    ", this plan costs " + str(round(cap_cost, 2)) + ".")
+                    # ---- PORTION CAP (2026-11-21) ----------------------------------
+                    # A line split between team leaders is raised against one portion:
+                    # its blocks only, and no more than what is left of its share. The
+                    # line's own cap above still applies. Mirrors portion_headroom() in
+                    # work_management/portions.py; keep in step.
+                    if not cap_err and frappe.db.exists("DocType", "Work Management Activity Portion"):
+                        cap_parts = frappe.db.get_all("Work Management Activity Portion",
+                            filters={"parent": cm.name, "parenttype": "Work Management Master Plan", "task": task},
+                            fields=["portion_key", "team_leader", "work_qty", "cost"])
+                        cap_subj = frappe.db.get_value("Task", task, "subject") or str(task)
+                        if cap_parts and not portion:
+                            cap_err = (cap_subj + " is split between team leaders. Pick whose portion "
+                                       "this work belongs to.")
+                        elif cap_parts:
+                            cap_pp = [x for x in cap_parts if x.portion_key == portion]
+                            if not cap_pp:
+                                cap_err = ("That portion is no longer on master plan " + cm.name +
+                                           ". Pick the team leader's portion again.")
+                            else:
+                                cap_portion = cap_pp[0]
+                                cap_pbl = frappe.db.get_all("Work Management Activity Portion Block",
+                                    filters={"parent": cm.name, "parenttype": "Work Management Master Plan",
+                                             "portion_key": portion}, pluck="block")
+                                cap_out = [b for b in block_list if b not in cap_pbl]
+                                if cap_out:
+                                    cap_err = (", ".join(cap_out) + (" is" if len(cap_out) == 1 else " are") +
+                                               " not in " + str(cap_portion.team_leader) + "'s portion of " +
+                                               cap_subj + ". Their blocks: " + ", ".join(cap_pbl) + ".")
+                                else:
+                                    cap_pu = frappe.db.sql("""
+                                        SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                                        FROM `tabWork Management Planner`
+                                        WHERE master_plan = %(p)s AND `portion` = %(k)s AND name != %(me)s
+                                          AND IFNULL(workflow_state,'') != 'Rejected'
+                                    """, {"p": cm.name, "k": portion, "me": cap_me}, as_dict=True)[0]
+                                    cap_prq = frappe.utils.flt(cap_portion.work_qty) - frappe.utils.flt(cap_pu.q)
+                                    cap_prc = frappe.utils.flt(cap_portion.cost) - frappe.utils.flt(cap_pu.c)
+                                    if qty > cap_prq + 0.005:
+                                        cap_err = ("Over " + str(cap_portion.team_leader) + "'s portion of " +
+                                                   cap_subj + ": " + str(round(cap_prq, 2)) + " left of " +
+                                                   str(frappe.utils.flt(cap_portion.work_qty)) +
+                                                   ", this plan asks for " + str(qty) + ".")
+                                    elif cap_cost > cap_prc + 0.005:
+                                        cap_err = ("Over " + str(cap_portion.team_leader) + "'s portion of " +
+                                                   cap_subj + ": KES " + str(round(cap_prc, 2)) + " left of " +
+                                                   str(frappe.utils.flt(cap_portion.cost)) +
+                                                   ", this plan costs " + str(round(cap_cost, 2)) + ".")
             if cap_err:
                 out["error"] = cap_err
             else:
@@ -763,6 +850,10 @@ def wm_planner(**kwargs):
                 # counted against this name. resolve_leader(), inlined.
                 sb_lead = frappe.db.get_value("Work Management Master Plan Activity",
                     {"parent": cap_pick, "task": task}, "team_leader") if cap_pick else None
+                # work on a portion is run by that portion's team leader
+                if cap_portion:
+                    sb_lead = cap_portion.team_leader
+                d.portion = cap_portion.portion_key if cap_portion else None
                 sb_best = None
                 if sb_lead and frappe.db.exists("DocType", "Work Management Team Leader Stand In"):
                     for sb_s in frappe.db.get_all("Work Management Team Leader Stand In",
@@ -871,7 +962,7 @@ def wm_planner(**kwargs):
         nm = frappe.form_dict.get("plan")
         p = frappe.db.get_value("Work Management Planner", nm,
             ["name","farm","block_section","task","quantity","total_cost","from_date","to_date",
-             "workflow_state","uom","daily_target","rate"], as_dict=True)
+             "workflow_state","uom","daily_target","rate","portion","master_plan"], as_dict=True)
         blist = []
         if p and p.block_section:
             blist.append(p.block_section)
