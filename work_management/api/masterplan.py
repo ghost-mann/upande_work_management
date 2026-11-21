@@ -186,6 +186,23 @@ def wm_masterplan(**kwargs):
     # farm's. A site without the doctype (the Server Script world) still requires a
     # team leader on every activity, it just has no list to check the name against.
     TL_DT = 1 if frappe.db.exists("DocType", "Work Management Team Leader") else 0
+    # ACTIVITY PORTIONS (2026-11-21). A line may be split between team leaders, each
+    # with their blocks and a share of the line. The shares never add up past the line:
+    # every step that moves a plan forward refuses while any line's portions do.
+    # work_management/portions.py is the unit-tested statement; keep in step.
+    PORTION_DT = 1 if frappe.db.exists("DocType", "Work Management Activity Portion") else 0
+    MP_PORTIONS_OVER_SQL = """
+        SELECT a.task FROM `tabWork Management Master Plan Activity` a
+        INNER JOIN (SELECT task, SUM(work_qty) q, SUM(cost) c
+                    FROM `tabWork Management Activity Portion`
+                    WHERE parent = %(p)s AND parenttype = 'Work Management Master Plan'
+                    GROUP BY task) s ON s.task = a.task
+        WHERE a.parent = %(p)s AND IFNULL(a.consultant_state, '') != 'Rejected'
+          AND (s.q > IFNULL(a.work_qty, 0) + 0.005 OR s.c > IFNULL(a.cost, 0) + 0.005)
+    """
+    MP_PORTIONS_OVER_MSG = ("Some activities are split into portions that add up to more than the "
+                            "activity: ")
+    MP_PORTIONS_OVER_TAIL = ". Open the plan and re-split them."
     tl_my_farms = []
     for _farm_, _role_ in FARM_APPROVER_ROLE.items():
         if _role_ in mp_roles: tl_my_farms.append(_farm_)
@@ -234,7 +251,7 @@ def wm_masterplan(**kwargs):
     WMG_WRITES = {
         "decide_bulk": "", "decide_line": "", "gm_approve": "", "headroom": "", "plans_bulk": "",
         "reject": "", "return_to_consultant": "", "save": "edit_master_plan", "send_to_gm": "",
-        "set_leaders": "", "submit_for_review": "", "tl_save": ""
+        "set_leaders": "", "set_portions": "", "submit_for_review": "", "tl_save": ""
     }
     WMG_DENY = ""
     if action in WMG_WRITES or action.startswith("chk_") and action not in ("chk_list", "chk_detail", "chk_issues", "chk_dup_groups", "chk_dup_detail"):
@@ -437,6 +454,73 @@ def wm_masterplan(**kwargs):
                                          or frappe.db.get_value("Employee", gl_u, "employee_name") or gl_u})
                 out["leader_options"] = gl_opts
                 out["can_set_leaders"] = 1 if (CAN_EDIT and mp.workflow_state != "Rejected") else 0
+                # ACTIVITY PORTIONS: each split line's team leaders, their blocks and
+                # shares, what weekly requests already hold of each, what is left
+                # unallocated, and -- on an approved plan -- every change since.
+                out["portions"] = []
+                out["portion_changes"] = []
+                out["split"] = {}
+                out["can_set_portions"] = 0
+                if PORTION_DT:
+                    gp_blocks = {}
+                    for gp_b in frappe.db.get_all("Work Management Activity Portion Block",
+                            filters={"parent": mp_name, "parenttype": "Work Management Master Plan"},
+                            fields=["portion_key", "block"], order_by="idx"):
+                        gp_blocks.setdefault(gp_b.portion_key, []).append(gp_b.block)
+                    gp_used = {}
+                    for gp_u in frappe.db.sql("""
+                        SELECT `portion`, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                        FROM `tabWork Management Planner`
+                        WHERE master_plan = %(p)s AND IFNULL(`portion`,'') != ''
+                          AND IFNULL(workflow_state,'') != 'Rejected'
+                        GROUP BY `portion`
+                    """, {"p": mp_name}, as_dict=True):
+                        gp_used[gp_u.portion] = gp_u
+                    gp_sum = {}
+                    for gp in frappe.db.get_all("Work Management Activity Portion",
+                            filters={"parent": mp_name, "parenttype": "Work Management Master Plan"},
+                            fields=["portion_key", "task", "team_leader", "label", "work_qty", "cost",
+                                    "man_days", "days"], order_by="idx"):
+                        gp_u = gp_used.get(gp.portion_key)
+                        gp["blocks"] = gp_blocks.get(gp.portion_key) or []
+                        gp["planned_qty"] = frappe.utils.flt(gp_u.q) if gp_u else 0
+                        gp["planned_cost"] = frappe.utils.flt(gp_u.c) if gp_u else 0
+                        gp["remaining_qty"] = frappe.utils.flt(gp.work_qty) - gp.planned_qty
+                        gp["remaining_cost"] = frappe.utils.flt(gp.cost) - gp.planned_cost
+                        out["portions"].append(gp)
+                        gp_s = gp_sum.setdefault(gp.task, {"q": 0, "c": 0})
+                        gp_s["q"] = gp_s["q"] + frappe.utils.flt(gp.work_qty)
+                        gp_s["c"] = gp_s["c"] + frappe.utils.flt(gp.cost)
+                    for gp_a in out["activities"]:
+                        gp_s = gp_sum.get(gp_a.task)
+                        if not gp_s:
+                            continue
+                        # requests raised on this line before it was split hold no
+                        # portion; they still use the line, so they take room too
+                        gp_l = frappe.db.sql("""
+                            SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                            FROM `tabWork Management Planner`
+                            WHERE task = %(t)s AND farm = %(f)s AND IFNULL(`portion`,'') = ''
+                              AND IFNULL(workflow_state,'') != 'Rejected'
+                              AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+                        """, {"t": gp_a.task, "f": mp.farm, "pfrom": mp.period_from,
+                              "pto": mp.period_to}, as_dict=True)[0]
+                        out["split"][gp_a.task] = {
+                            "legacy_qty": frappe.utils.flt(gp_l.q), "legacy_cost": frappe.utils.flt(gp_l.c),
+                            "portioned_qty": gp_s["q"], "portioned_cost": gp_s["c"],
+                            "unallocated_qty": frappe.utils.flt(gp_a.work_qty) - gp_s["q"] - frappe.utils.flt(gp_l.q),
+                            "unallocated_cost": frappe.utils.flt(gp_a.cost) - gp_s["c"] - frappe.utils.flt(gp_l.c),
+                            "over": 1 if (gp_s["q"] > frappe.utils.flt(gp_a.work_qty) + TOLERANCE or
+                                          gp_s["c"] > frappe.utils.flt(gp_a.cost) + TOLERANCE) else 0}
+                    out["portion_changes"] = frappe.db.get_all("Work Management Portion Change",
+                        filters={"parent": mp_name, "parenttype": "Work Management Master Plan"},
+                        fields=["kind", "task", "portion_key", "old_value", "new_value", "note",
+                                "changed_by", "changed_on"], order_by="changed_on desc")
+                    gp_st = mp.workflow_state
+                    out["can_set_portions"] = 1 if (
+                        (gp_st in ("Draft", "Rejected") and CAN_EDIT)
+                        or (gp_st == "Pending GM" and CAN_GM)
+                        or (gp_st == "Approved" and (CAN_EDIT or CAN_GM))) else 0
                 # an approved plan is editable only by the accounts named in Settings,
                 # and the correction runs down the same in-place path a reviewer uses
                 out["edit_after_approval"] = 1 if (
@@ -813,6 +897,57 @@ def wm_masterplan(**kwargs):
                             sv_cut = ("Shortening the period would strand " +
                                       str(len(sv_lost)) + " weekly plan(s) that hold this "
                                       "budget: " + ", ".join([x.name for x in sv_lost]) + ".")
+                # PORTIONS FOLLOW THEIR LINES (2026-11-21). A split line's portions are
+                # priced at the line's rate, so a re-priced line re-prices them; a line
+                # taken off the plan takes its portions with it, unless work is already
+                # planned on one. The raiser (or the GM editing an approved plan) cannot
+                # cut a line below its portions -- shrink the portions first. A reviewer
+                # correcting in place may; the plan then waits at its next step until
+                # the portions are re-split (MP_PORTIONS_OVER_SQL).
+                if PORTION_DT and not sv_cut and d.get("portions"):
+                    sv_lines = {}
+                    for sv_a in d.activities:
+                        sv_lines[sv_a.task] = sv_a
+                    sv_gone = {}
+                    sv_keepp = []
+                    sv_ptot = {}
+                    for sv_p in d.get("portions"):
+                        sv_a = sv_lines.get(sv_p.task)
+                        if not sv_a:
+                            sv_gone[sv_p.portion_key] = sv_p
+                            continue
+                        sv_p.cost = frappe.utils.flt(frappe.utils.flt(sv_p.work_qty) * frappe.utils.flt(sv_a.rate, 6), 2)
+                        sv_p.man_days = ((frappe.utils.flt(sv_a.man_days) * frappe.utils.flt(sv_p.work_qty) /
+                                          frappe.utils.flt(sv_a.work_qty)) if frappe.utils.flt(sv_a.work_qty) else 0)
+                        sv_keepp.append(sv_p)
+                        sv_pt = sv_ptot.setdefault(sv_p.task, {"q": 0, "c": 0})
+                        sv_pt["q"] = sv_pt["q"] + frappe.utils.flt(sv_p.work_qty)
+                        sv_pt["c"] = sv_pt["c"] + frappe.utils.flt(sv_p.cost)
+                    if sv_gone:
+                        sv_held = frappe.db.sql("""
+                            SELECT DISTINCT `portion` FROM `tabWork Management Planner`
+                            WHERE master_plan = %(p)s AND `portion` IN %(k)s
+                              AND IFNULL(workflow_state,'') != 'Rejected'
+                        """, {"p": d.name, "k": tuple(sv_gone.keys())})
+                        if sv_held:
+                            sv_cut = ("An activity taken off this plan is split into portions that already "
+                                      "have work planned against them (" + ", ".join(
+                                          [str(sv_gone[x[0]].team_leader) + " on " + str(sv_gone[x[0]].task)
+                                           for x in sv_held]) + "). It cannot be removed.")
+                    if not sv_cut and not (sv_review and not sv_post):
+                        for sv_t in sv_ptot:
+                            sv_a = sv_lines.get(sv_t)
+                            if (sv_ptot[sv_t]["q"] > frappe.utils.flt(sv_a.work_qty) + TOLERANCE or
+                                    sv_ptot[sv_t]["c"] > frappe.utils.flt(sv_a.cost) + TOLERANCE):
+                                sv_cut = ((frappe.db.get_value("Task", sv_t, "subject") or str(sv_t)) +
+                                          " is split into portions that come to " + ("%.2f" % sv_ptot[sv_t]["q"]) +
+                                          " (KES " + ("%.2f" % sv_ptot[sv_t]["c"]) + "). The activity cannot be "
+                                          "set below its portions -- shrink the portions first.")
+                                break
+                    if not sv_cut and sv_gone:
+                        d.set("portions", sv_keepp)
+                        d.set("portion_blocks", [x for x in (d.get("portion_blocks") or [])
+                                                 if not sv_gone.get(x.portion_key)])
                 if sv_cut:
                     out["error"] = sv_cut
                 else:
@@ -902,6 +1037,15 @@ def wm_masterplan(**kwargs):
             for sl_u in sl_owner.values():
                 if sl_u:
                     sl_named[sl_u] = 1
+            # a portion's team leader leads work on this plan too, and can be covered
+            sl_portion = {}
+            if PORTION_DT:
+                for sl_pp in frappe.db.get_all("Work Management Activity Portion",
+                        filters={"parent": sl_name, "parenttype": "Work Management Master Plan"},
+                        fields=["portion_key", "team_leader"]):
+                    sl_portion[sl_pp.portion_key] = sl_pp.team_leader
+                    if sl_pp.team_leader:
+                        sl_named[sl_pp.team_leader] = 1
             sl_i = 0
             for sl_s in sl_stand:
                 sl_i = sl_i + 1
@@ -959,7 +1103,7 @@ def wm_masterplan(**kwargs):
             # re-stamp the weekly plans whose work is not yet past the Farm Manager
             sl_moved = 0
             for sl_p in frappe.db.sql("""
-                SELECT p.name, p.task, p.from_date, p.team_leader
+                SELECT p.name, p.task, p.from_date, p.team_leader, IFNULL(p.`portion`, '') `portion`
                 FROM `tabWork Management Planner` p
                 WHERE p.master_plan = %(mp)s AND IFNULL(p.workflow_state,'') != 'Rejected'
                   AND NOT EXISTS (
@@ -970,6 +1114,9 @@ def wm_masterplan(**kwargs):
                            OR ac.workflow_state IN ('Pending HR Head','Pending GM','CONFIRMED')))
             """, {"mp": sl_name}, as_dict=True):
                 sl_who = sl_owner.get(sl_p.task)
+                if sl_p.portion and sl_portion.get(sl_p.portion):
+                    # work on a portion is run by that portion's leader, not the line's
+                    sl_who = sl_portion.get(sl_p.portion)
                 if sl_who:
                     sl_best = None
                     for sl_s in sl_stand:
@@ -991,6 +1138,272 @@ def wm_masterplan(**kwargs):
             frappe.db.commit()
             out["name"] = sl_name
             out["restamped"] = sl_moved
+
+    elif action == "set_portions":
+        # SPLIT ONE ACTIVITY BETWEEN TEAM LEADERS (2026-11-21). The line keeps its own
+        # team leader, accountable for the whole; each portion is a team leader, the
+        # blocks they run and their share of the line's work, priced at the line's
+        # frozen rate. The shares never come to more than the line, a block belongs to
+        # one portion, and once the plan is approved a portion cannot drop below what
+        # its requests already hold -- and every change is logged on the plan.
+        # Draft/Rejected: the raiser. Pending GM: the GM. Approved: the Farm Manager
+        # or the GM, without re-approval (the line's total cannot move from here).
+        # work_management/portions.py (portion_errors, portion_changes) is the
+        # unit-tested statement of these rules; keep in step.
+        sp_name = frappe.form_dict.get("name")
+        sp_task = frappe.form_dict.get("task")
+        sp_rows = json.loads(frappe.form_dict.get("portions") or "[]")
+        sp_note = (frappe.form_dict.get("note") or "").strip()
+        sp_mp = frappe.db.get_value("Work Management Master Plan", sp_name,
+            ["name", "farm", "workflow_state", "period_from", "period_to"], as_dict=True) if sp_name else None
+        sp_err = None
+        sp_line = None
+        if not PORTION_DT:
+            sp_err = "Activity portions are not installed on this site yet."
+        elif not sp_mp:
+            sp_err = "no such master plan: " + str(sp_name)
+        elif FARMS and sp_mp.farm not in FARMS:
+            sp_err = str(sp_mp.farm) + " is not a farm you are working."
+        elif sp_mp.workflow_state in ("Draft", "Rejected"):
+            if not CAN_EDIT:
+                sp_err = "Only a farm manager, the HR head or the general manager can split this plan's activities."
+        elif sp_mp.workflow_state == "Pending GM":
+            if not CAN_GM:
+                sp_err = "This plan is with the general manager. Only the GM can change its portions now."
+        elif sp_mp.workflow_state == "Approved":
+            if not (CAN_EDIT or CAN_GM):
+                sp_err = "Only the farm manager or the general manager can change an approved plan's portions."
+        else:
+            sp_err = ("While the plan is at " + str(sp_mp.workflow_state) +
+                      " its portions cannot change. They can again once it is back with its raiser or with the GM.")
+        if not sp_err:
+            sp_line = frappe.db.get_value("Work Management Master Plan Activity",
+                {"parent": sp_name, "task": sp_task},
+                ["name", "task", "work_qty", "cost", "rate", "man_days", "days", "consultant_state",
+                 "team_leader"], as_dict=True) if sp_task else None
+            if not sp_line:
+                sp_err = str(sp_task) + " is not an activity on " + str(sp_name) + "."
+            elif sp_line.consultant_state == "Rejected":
+                sp_err = "This activity was rejected and cannot be split."
+        sp_what = (frappe.db.get_value("Task", sp_task, "subject") or str(sp_task)) if sp_task else ""
+        sp_old = []
+        sp_new = []
+        sp_used = {}
+        if not sp_err:
+            sp_oldb = {}
+            for sp_b in frappe.db.get_all("Work Management Activity Portion Block",
+                    filters={"parent": sp_name, "parenttype": "Work Management Master Plan"},
+                    fields=["portion_key", "block"], order_by="idx"):
+                sp_oldb.setdefault(sp_b.portion_key, []).append(sp_b.block)
+            sp_oldkeys = {}
+            sp_leaders = {}
+            for sp_o in frappe.db.get_all("Work Management Activity Portion",
+                    filters={"parent": sp_name, "parenttype": "Work Management Master Plan"},
+                    fields=["portion_key", "task", "team_leader", "label", "work_qty", "cost"], order_by="idx"):
+                sp_leaders[sp_o.team_leader] = 1
+                if sp_o.task == sp_task:
+                    sp_o["blocks"] = sp_oldb.get(sp_o.portion_key) or []
+                    sp_old.append(sp_o)
+                    sp_oldkeys[sp_o.portion_key] = sp_o
+            sp_rate = frappe.utils.flt(sp_line.rate, 6)
+            sp_lq = frappe.utils.flt(sp_line.work_qty)
+            for sp_r in sp_rows:
+                sp_k = (sp_r or {}).get("portion_key")
+                if not sp_k or not sp_oldkeys.get(sp_k):
+                    sp_k = frappe.generate_hash(length=8)
+                sp_q = frappe.utils.flt(sp_r.get("work_qty"))
+                sp_bl = []
+                for sp_b in sp_r.get("blocks") or []:
+                    if sp_b and sp_b not in sp_bl:
+                        sp_bl.append(sp_b)
+                sp_new.append({"portion_key": sp_k, "team_leader": (sp_r.get("team_leader") or "").strip(),
+                               "label": (sp_r.get("label") or "").strip(),
+                               "work_qty": sp_q, "cost": frappe.utils.flt(sp_q * sp_rate, 2),
+                               "man_days": (frappe.utils.flt(sp_line.man_days) * sp_q / sp_lq) if sp_lq else 0,
+                               "days": frappe.utils.cint(sp_r.get("days")) or frappe.utils.cint(sp_line.days),
+                               "blocks": sp_bl})
+            # who may lead: the farm's active list, plus anyone this plan already names
+            sp_ok = {}
+            if TL_DT:
+                for sp_t in frappe.db.get_all("Work Management Team Leader",
+                        filters={"farm": sp_mp.farm, "active": 1}, pluck="user"):
+                    sp_ok[sp_t] = 1
+                for sp_t in frappe.db.get_all("Work Management Master Plan Activity",
+                        filters={"parent": sp_name}, pluck="team_leader"):
+                    if sp_t:
+                        sp_ok[sp_t] = 1
+                for sp_t in sp_leaders:
+                    sp_ok[sp_t] = 1
+            if sp_oldkeys:
+                for sp_u in frappe.db.sql("""
+                    SELECT `portion`, COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                    FROM `tabWork Management Planner`
+                    WHERE master_plan = %(p)s AND `portion` IN %(k)s
+                      AND IFNULL(workflow_state,'') != 'Rejected'
+                    GROUP BY `portion`
+                """, {"p": sp_name, "k": tuple(sp_oldkeys.keys())}, as_dict=True):
+                    sp_used[sp_u.portion] = {"q": frappe.utils.flt(sp_u.q), "c": frappe.utils.flt(sp_u.c)}
+            sp_leg = frappe.db.sql("""
+                SELECT COALESCE(SUM(quantity),0) q, COALESCE(SUM(total_cost),0) c
+                FROM `tabWork Management Planner`
+                WHERE task = %(t)s AND farm = %(f)s AND IFNULL(`portion`,'') = ''
+                  AND IFNULL(workflow_state,'') != 'Rejected'
+                  AND from_date >= %(pfrom)s AND to_date <= %(pto)s
+            """, {"t": sp_task, "f": sp_mp.farm, "pfrom": sp_mp.period_from,
+                  "pto": sp_mp.period_to}, as_dict=True)[0] if sp_new else None
+            # portion_errors(), inlined
+            sp_errs = []
+            sp_seen = {}
+            sp_keys = {}
+            sp_i = 0
+            for sp_p in sp_new:
+                sp_i = sp_i + 1
+                sp_keys[sp_p["portion_key"]] = 1
+                sp_tl = sp_p["team_leader"]
+                if not sp_tl:
+                    sp_errs.append(sp_what + ": portion " + str(sp_i) + " needs a team leader.")
+                    continue
+                if TL_DT and not sp_ok.get(sp_tl):
+                    sp_errs.append(sp_what + ": " + sp_tl + " is not on the farm's active team leader list.")
+                elif not (frappe.db.get_value("User", sp_tl, "enabled")
+                          or frappe.db.get_value("Employee", {"name": sp_tl, "status": "Active"}, "name")):
+                    sp_errs.append(sp_what + ": " + sp_tl + " is neither an active login nor an active employee.")
+                if not sp_p["blocks"]:
+                    sp_errs.append(sp_what + ": " + sp_tl + "'s portion needs at least one block.")
+                for sp_b in sp_p["blocks"]:
+                    if frappe.db.get_value("Warehouse", sp_b, "is_group") is None:
+                        sp_errs.append(sp_what + ": " + str(sp_b) + " is not a block.")
+                    elif sp_seen.get(sp_b) and sp_seen.get(sp_b) != sp_i:
+                        sp_errs.append(sp_what + ": block " + str(sp_b) + " is in both " +
+                                       str(sp_new[sp_seen.get(sp_b) - 1]["team_leader"]) + "'s and " +
+                                       sp_tl + "'s portions. A block belongs to one.")
+                    if not sp_seen.get(sp_b):
+                        sp_seen[sp_b] = sp_i
+                sp_u = sp_used.get(sp_p["portion_key"])
+                if sp_u:
+                    if sp_p["work_qty"] < sp_u["q"] - TOLERANCE:
+                        sp_errs.append(sp_what + ": " + sp_tl + "'s portion already has " + ("%.2f" % sp_u["q"]) +
+                                       " planned and cannot be cut to " + ("%.2f" % sp_p["work_qty"]) + ".")
+                    elif sp_p["cost"] < sp_u["c"] - TOLERANCE:
+                        sp_errs.append(sp_what + ": " + sp_tl + "'s portion already has KES " + ("%.2f" % sp_u["c"]) +
+                                       " planned and cannot be cut to KES " + ("%.2f" % sp_p["cost"]) + ".")
+            for sp_k in sp_used:
+                if not sp_keys.get(sp_k) and (sp_used[sp_k]["q"] > TOLERANCE or sp_used[sp_k]["c"] > TOLERANCE):
+                    sp_errs.append(sp_what + ": " + str(sp_oldkeys[sp_k].team_leader) +
+                                   "'s portion has requests against it and cannot be removed.")
+            if sp_new:
+                sp_lgq = frappe.utils.flt(sp_leg.q)
+                sp_lgc = frappe.utils.flt(sp_leg.c)
+                sp_sq = sum([x["work_qty"] for x in sp_new]) + sp_lgq
+                sp_sc = sum([x["cost"] for x in sp_new]) + sp_lgc
+                if sp_sq > sp_lq + TOLERANCE:
+                    sp_errs.append(sp_what + ": the portions come to " + ("%.2f" % sp_sq) +
+                                   ((" including " + ("%.2f" % sp_lgq) + " in earlier requests made before the split")
+                                    if sp_lgq > TOLERANCE else "") +
+                                   ", over the activity's " + ("%.2f" % sp_lq) + ".")
+                if sp_sc > frappe.utils.flt(sp_line.cost) + TOLERANCE:
+                    sp_errs.append(sp_what + ": the portions come to KES " + ("%.2f" % sp_sc) +
+                                   ((" including KES " + ("%.2f" % sp_lgc) + " in earlier requests made before the split")
+                                    if sp_lgc > TOLERANCE else "") +
+                                   ", over the activity's KES " + ("%.2f" % frappe.utils.flt(sp_line.cost)) + ".")
+            if sp_errs:
+                sp_err = " ".join(sp_errs)
+        if sp_err:
+            out["error"] = sp_err
+        else:
+            sp_doc = frappe.get_doc("Work Management Master Plan", sp_name)
+            sp_drop = {}
+            for sp_o in sp_old:
+                sp_drop[sp_o.portion_key] = 1
+            sp_keep = [x for x in (sp_doc.get("portions") or []) if x.task != sp_task]
+            sp_keepb = [x for x in (sp_doc.get("portion_blocks") or []) if not sp_drop.get(x.portion_key)]
+            sp_doc.set("portions", [])
+            sp_doc.set("portion_blocks", [])
+            for sp_x in sp_keep:
+                sp_doc.append("portions", {"portion_key": sp_x.portion_key, "task": sp_x.task,
+                    "team_leader": sp_x.team_leader, "label": sp_x.label, "work_qty": sp_x.work_qty,
+                    "cost": sp_x.cost, "man_days": sp_x.man_days, "days": sp_x.days})
+            for sp_x in sp_keepb:
+                sp_doc.append("portion_blocks", {"portion_key": sp_x.portion_key, "block": sp_x.block})
+            for sp_p in sp_new:
+                sp_doc.append("portions", {"portion_key": sp_p["portion_key"], "task": sp_task,
+                    "team_leader": sp_p["team_leader"], "label": sp_p["label"] or None,
+                    "work_qty": sp_p["work_qty"], "cost": sp_p["cost"],
+                    "man_days": sp_p["man_days"], "days": sp_p["days"]})
+                for sp_b in sp_p["blocks"]:
+                    sp_doc.append("portion_blocks", {"portion_key": sp_p["portion_key"], "block": sp_b})
+            sp_logged = 0
+            if sp_mp.workflow_state == "Approved":
+                # portion_changes(), inlined
+                sp_was = {}
+                for sp_o in sp_old:
+                    sp_was[sp_o.portion_key] = sp_o
+                sp_now = {}
+                for sp_p in sp_new:
+                    sp_now[sp_p["portion_key"]] = sp_p
+                sp_log = []
+                for sp_p in sp_new:
+                    sp_o = sp_was.get(sp_p["portion_key"])
+                    if not sp_o:
+                        sp_log.append(["added", sp_p["portion_key"], "",
+                                       sp_p["team_leader"] + " " + ("%.2f" % sp_p["work_qty"]) + " " +
+                                       ",".join(sorted(sp_p["blocks"]))])
+                        continue
+                    if (sp_o.team_leader or "") != sp_p["team_leader"]:
+                        sp_log.append(["leader", sp_p["portion_key"], sp_o.team_leader or "", sp_p["team_leader"]])
+                    if abs(frappe.utils.flt(sp_o.work_qty) - sp_p["work_qty"]) > TOLERANCE:
+                        sp_log.append(["budget", sp_p["portion_key"], "%.2f" % frappe.utils.flt(sp_o.work_qty),
+                                       "%.2f" % sp_p["work_qty"]])
+                    if sorted(sp_o.blocks) != sorted(sp_p["blocks"]):
+                        sp_log.append(["blocks", sp_p["portion_key"], ",".join(sorted(sp_o.blocks)),
+                                       ",".join(sorted(sp_p["blocks"]))])
+                for sp_o in sp_old:
+                    if not sp_now.get(sp_o.portion_key):
+                        sp_log.append(["removed", sp_o.portion_key,
+                                       str(sp_o.team_leader) + " " + ("%.2f" % frappe.utils.flt(sp_o.work_qty)), ""])
+                for sp_l in sp_log:
+                    sp_doc.append("portion_changes", {"kind": sp_l[0], "task": sp_task, "portion_key": sp_l[1],
+                        "old_value": sp_l[2], "new_value": sp_l[3], "note": sp_note or None,
+                        "changed_by": frappe.session.user, "changed_on": frappe.utils.now()})
+                sp_logged = len(sp_log)
+            sp_doc.flags.ignore_permissions = True
+            sp_doc.flags.ignore_validate_update_after_submit = True
+            sp_doc.save(ignore_permissions=True)
+            # requests still with their raiser follow a changed leader; anything past
+            # that keeps the leader it was raised under, so past KPIs stay put
+            sp_stand = frappe.db.get_all("Work Management Team Leader Stand In",
+                filters={"parent": sp_name, "parenttype": "Work Management Master Plan"},
+                fields=["team_leader", "stand_in", "from_date", "to_date"]) \
+                if frappe.db.exists("DocType", "Work Management Team Leader Stand In") else []
+            sp_moved = 0
+            sp_bykey = {}
+            for sp_p in sp_new:
+                sp_bykey[sp_p["portion_key"]] = sp_p
+            if sp_bykey:
+                for sp_q in frappe.db.sql("""
+                    SELECT name, `portion`, from_date, team_leader FROM `tabWork Management Planner`
+                    WHERE master_plan = %(p)s AND `portion` IN %(k)s
+                      AND workflow_state IN ('Draft', 'Rejected', 'Pending Approval')
+                """, {"p": sp_name, "k": tuple(sp_bykey.keys())}, as_dict=True):
+                    sp_who = sp_bykey[sp_q.portion]["team_leader"]
+                    sp_best = None
+                    for sp_s in sp_stand:
+                        if (sp_s.team_leader == sp_who and
+                                str(sp_s.from_date) <= str(sp_q.from_date) <= str(sp_s.to_date)):
+                            if sp_best is None or str(sp_s.from_date) >= str(sp_best.from_date):
+                                sp_best = sp_s
+                    if sp_best:
+                        sp_who = sp_best.stand_in
+                    if (sp_q.team_leader or None) != (sp_who or None):
+                        frappe.db.set_value("Work Management Planner", sp_q.name, "team_leader", sp_who,
+                                            update_modified=False)
+                        sp_moved = sp_moved + 1
+            frappe.db.commit()
+            out["name"] = sp_name
+            out["task"] = sp_task
+            out["portions"] = sp_new
+            out["logged"] = sp_logged
+            out["restamped"] = sp_moved
 
     elif action == "tl_list":
         # A farm's team leaders, for the Team leaders tab (everyone, active or not)
@@ -1124,6 +1537,9 @@ def wm_masterplan(**kwargs):
             # a draft saved before team leaders were required can still be missing one
             out["error"] = ("Every activity needs a team leader before the plan can go for "
                             "review. Open the plan, pick a team leader for each activity and save.")
+        elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sr_name}):
+            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(x[0]) for x in
+                            frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sr_name})]) + MP_PORTIONS_OVER_TAIL)
         else:
             frappe.db.set_value("Work Management Master Plan", sr_name,
                                 "workflow_state", STAGE_NEXT["masterplan_submit"])
@@ -1196,6 +1612,9 @@ def wm_masterplan(**kwargs):
                     # the decision stands, but the plan waits here until every activity
                     # has a team leader
                     out["held_for_leaders"] = 1
+                elif not dl_pending and PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": dl.parent}):
+                    # ... and until every split activity's portions fit inside it again
+                    out["held_for_portions"] = 1
                 elif not dl_pending:
                     frappe.db.set_value("Work Management Master Plan", dl.parent,
                                         "workflow_state", STAGE_NEXT["masterplan_consultant"])
@@ -1264,6 +1683,8 @@ def wm_masterplan(**kwargs):
                   AND IFNULL(consultant_state, '') != 'Rejected'
             """, {"p": db_parent})[0][0]:
                     out["held_for_leaders"] = 1
+                elif not db_pending and PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": db_parent}):
+                    out["held_for_portions"] = 1
                 elif not db_pending:
                     frappe.db.set_value("Work Management Master Plan", db_parent, "workflow_state", STAGE_NEXT["masterplan_consultant"])
                     out["moved_to"] = STAGE_NEXT["masterplan_consultant"]
@@ -1323,6 +1744,8 @@ def wm_masterplan(**kwargs):
                   AND IFNULL(consultant_state, '') != 'Rejected'
             """, {"p": pb_n})[0][0]:
                         pb_failed.append({"name": pb_n, "why": "has activities with no team leader"})
+                    elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": pb_n}):
+                        pb_failed.append({"name": pb_n, "why": "has activities split into portions that add up to more than the activity"})
                     else:
                         pb_ok = frappe.db.sql("""
                             SELECT COUNT(*) n FROM `tabWork Management Master Plan Activity`
@@ -1370,6 +1793,8 @@ def wm_masterplan(**kwargs):
                   AND IFNULL(consultant_state, '') != 'Rejected'
             """, {"p": pb_n})[0][0]:
                         pb_failed.append({"name": pb_n, "why": "has activities with no team leader"})
+                    elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": pb_n}):
+                        pb_failed.append({"name": pb_n, "why": "has activities split into portions that add up to more than the activity"})
                     else:
                         for pb_p in frappe.db.get_all("Work Management Master Plan Activity",
                                 filters={"parent": pb_n, "consultant_state": "Pending"}, pluck="name"):
@@ -1406,6 +1831,9 @@ def wm_masterplan(**kwargs):
             # no plan moves up a step while an activity has nobody running it
             out["error"] = ("Every activity needs a team leader before this plan can move on. "
                             "Pick them in the Team leader column and press Save team leaders.")
+        elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sg_name}):
+            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(x[0]) for x in
+                            frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": sg_name})]) + MP_PORTIONS_OVER_TAIL)
         else:
             sg_rows = frappe.db.sql("""
                 SELECT consultant_state, task FROM `tabWork Management Master Plan Activity`
@@ -1460,6 +1888,9 @@ def wm_masterplan(**kwargs):
             """, {"p": ga_name})[0][0]:
             out["error"] = ("Every activity needs a team leader before this plan can move on. "
                             "Pick them in the Team leader column and press Save team leaders.")
+        elif PORTION_DT and frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": ga_name}):
+            out["error"] = (MP_PORTIONS_OVER_MSG + ", ".join([str(x[0]) for x in
+                            frappe.db.sql(MP_PORTIONS_OVER_SQL, {"p": ga_name})]) + MP_PORTIONS_OVER_TAIL)
         else:
             ga_doc = frappe.db.get_value("Work Management Master Plan", ga_name,
                 ["farm", "period_from", "period_to"], as_dict=True)
