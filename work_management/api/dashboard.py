@@ -5172,6 +5172,18 @@ def wm_dashboard(**kwargs):
             am_month = str(frappe.form_dict.get("month") or frappe.utils.today()[:7])[:7]
             am_from = am_month + "-01"
             am_to = str(frappe.utils.get_last_day(am_from))
+            # a date range (2026-11-21), e.g. the 21st-20th pay period, overrides the month;
+            # reversed dates are swapped and the sheet is held to 92 days
+            am_f = str(frappe.form_dict.get("from_date") or "").strip()[:10]
+            am_t = str(frappe.form_dict.get("to_date") or "").strip()[:10]
+            if am_f and am_t:
+                am_from = str(frappe.utils.getdate(am_f))
+                am_to = str(frappe.utils.getdate(am_t))
+                if am_to < am_from:
+                    am_from, am_to = am_to, am_from
+                if frappe.utils.date_diff(am_to, am_from) > 91:
+                    am_to = str(frappe.utils.add_days(am_from, 91))
+                am_month = am_from[:7]
             am_today = str(frappe.utils.today())
             am_tw_only = frappe.utils.cint(frappe.form_dict.get("tw_only") if frappe.form_dict.get("tw_only") is not None else 1)
             am_emps = [e for e in pb_emps if (e.tw or not am_tw_only)]
@@ -5273,6 +5285,8 @@ def wm_dashboard(**kwargs):
                 am_rows.append({"emp": e.emp, "name": e.name, "farm": e.farm, "designation": e.designation,
                                 "cells": cells, "tot": tot})
             out["month"] = am_month
+            out["from_date"] = am_from
+            out["to_date"] = am_to
             out["days"] = am_days
             out["today"] = am_today
             out["rows"] = am_rows

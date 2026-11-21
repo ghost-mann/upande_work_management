@@ -1717,7 +1717,9 @@
       '<div class="pp-ctl">'+
         '<div><div class="tl-lab">Date</div><input type="date" id="pp-date" class="tl-in" value="'+ppToday()+'"></div>'+
         '<div><div class="tl-lab">'+esc(TX("top_singular","Farm"))+'</div><select id="pp-farm" class="tl-in">'+farmOptions("")+'</select></div>'+
-        '<div id="pp-month-w" style="display:none"><div class="tl-lab">Month</div><input type="month" id="pp-month" class="tl-in" value="'+ppToday().slice(0,7)+'"></div>'+
+        '<div class="pp-mw" style="display:none"><div class="tl-lab">Month</div><input type="month" id="pp-month" class="tl-in" value="'+ppToday().slice(0,7)+'"></div>'+
+        '<div class="pp-mw" style="display:none"><div class="tl-lab">From</div><input type="date" id="pp-from" class="tl-in" value="'+ppMonthRange(ppToday().slice(0,7))[0]+'"></div>'+
+        '<div class="pp-mw" style="display:none"><div class="tl-lab">To</div><input type="date" id="pp-to" class="tl-in" value="'+ppMonthRange(ppToday().slice(0,7))[1]+'"></div>'+
         '<label style="font-size:12px;margin-bottom:6px"><input type="checkbox" id="pp-tw" checked> task workers only</label>'+
         '<input type="text" id="pp-q" class="tl-in" placeholder="Search name, ID, activity…" style="flex:1;min-width:160px">'+
         '<button type="button" class="refresh" id="pp-csv" style="display:none">Download CSV</button>'+
@@ -1733,14 +1735,23 @@
       b.onclick=function(){
         box.querySelectorAll("[data-pp]").forEach(function(x){ x.classList.toggle("on", x===b); });
         PP.tab=b.getAttribute("data-pp");
-        el("pp-month-w").style.display = PP.tab==="month" ? "" : "none";
+        box.querySelectorAll(".pp-mw").forEach(function(w){ w.style.display = PP.tab==="month" ? "" : "none"; });
         el("pp-date").parentNode.style.display = PP.tab==="month" ? "none" : "";
         el("pp-csv").style.display = PP.tab==="month" ? "" : "none";
         if(PP.tab==="month") ppLoadMonth(); else ppPaint();
       };
     });
     el("pp-date").onchange=ppLoad; el("pp-farm").onchange=function(){ if(PP.tab==="month") ppLoadMonth(); else ppLoad(); };
-    el("pp-month").onchange=ppLoadMonth;
+    el("pp-month").onchange=function(){
+      var r=ppMonthRange(el("pp-month").value); if(!r) return;
+      el("pp-from").value=r[0]; el("pp-to").value=r[1]; ppLoadMonth();
+    };
+    el("pp-from").onchange=el("pp-to").onchange=function(){
+      if(!el("pp-from").value || !el("pp-to").value) return;
+      var r=ppMonthRange(el("pp-from").value.slice(0,7));
+      el("pp-month").value = (r && r[0]===el("pp-from").value && r[1]===el("pp-to").value) ? el("pp-from").value.slice(0,7) : "";
+      ppLoadMonth();
+    };
     el("pp-tw").onchange=function(){ PP.tw=el("pp-tw").checked; if(PP.tab==="month") ppLoadMonth(); else ppPaint(); };
     el("pp-q").oninput=function(){ PP.q=(el("pp-q").value||"").toLowerCase().trim(); if(PP.tab==="month") ppPaintMonth(); else ppPaint(); };
     el("pp-csv").onclick=ppCsv;
@@ -1821,12 +1832,19 @@
     var a=((PP.data&&PP.data.activities)||[]).filter(function(x){ return x.asg===asg; })[0];
     return a ? (a.tl_name||"—") : "—";
   }
+  function ppMonthRange(m){
+    if(!/^\d{4}-\d{2}$/.test(m||"")) return null;
+    var last=new Date(+m.slice(0,4), +m.slice(5,7), 0).getDate();
+    return [m+"-01", m+"-"+String(last).padStart(2,"0")];
+  }
   function ppLoadMonth(){
     var b=el("pp-body"); if(!b) return;
     b.innerHTML='<div class="loading">Building the attendance sheet&hellip;</div>';
-    call({action:"attendance_month", month:el("pp-month").value, farm:el("pp-farm").value, tw_only:PP.tw?1:0}).then(function(d){
+    call({action:"attendance_month", month:el("pp-month").value, from_date:el("pp-from").value, to_date:el("pp-to").value, farm:el("pp-farm").value, tw_only:PP.tw?1:0}).then(function(d){
       if(d.error){ b.innerHTML='<div class="err">'+esc(d.error)+'</div>'; return; }
-      PP.month=d; ppPaintMonth();
+      PP.month=d;
+      if(d.from_date){ el("pp-from").value=d.from_date; el("pp-to").value=d.to_date; }
+      ppPaintMonth();
     }).catch(function(e){ b.innerHTML='<div class="err">Could not load: '+esc(e&&e.message||e)+'</div>'; });
   }
   var PP_CODE={P:"P",HD:"½",A:"A",L:"L",O:"·","?":"?","":""};
@@ -1847,7 +1865,8 @@
       '<div class="pp-leg"><span><i class="m-P">P</i>scan / present</span><span><i class="m-HD">½</i>half day</span><span><i class="m-A">A</i>absent</span><span><i class="m-L">L</i>leave</span><span><i class="m-O">·</i>off day</span><span><i class="m-Q">?</i>no record</span>'+
       '<span><i class="m-w" style="background:#f1f5f9">P</i>underlined = work recorded</span><span><i class="m-flag">A</i>red box = work with no presence</span><span><i class="m-conf">?</i>dashed = confirmed present by hand</span></div>'+
       '<div class="pp-scroll"><table class="pp-m"><thead><tr><th class="nm">Worker</th>'+
-      d.days.map(function(x){ var dt=new Date(x+"T00:00:00"); return '<th title="'+esc(x)+'">'+x.slice(8)+'<div style="font-size:8px">'+"SMTWTFS".charAt(dt.getDay())+'</div></th>'; }).join("")+
+      d.days.map(function(x,i){ var dt=new Date(x+"T00:00:00"), mo=(i===0||x.slice(8)==="01")&&d.days[0].slice(0,7)!==d.days[d.days.length-1].slice(0,7);
+        return '<th title="'+esc(x)+'"'+(mo&&i?' style="border-left:2px solid var(--line)"':'')+'>'+(mo?'<div style="font-size:8px">'+"JanFebMarAprMayJunJulAugSepOctNovDec".substr((dt.getMonth())*3,3)+'</div>':'')+x.slice(8)+'<div style="font-size:8px">'+"SMTWTFS".charAt(dt.getDay())+'</div></th>'; }).join("")+
       '<th>P</th><th>A</th><th>L</th><th>?</th><th>Work days</th><th>Pay</th><th title="work, no presence">⚠</th><th title="present, no work">idle</th></tr></thead><tbody>'+
       rows.map(function(r){
         return '<tr><td class="nm"><b>'+esc(r.name)+'</b><div style="font-size:9.5px;color:var(--mute)">'+esc(r.emp)+(r.designation?' · '+esc(r.designation):'')+'</div></td>'+
@@ -1866,7 +1885,7 @@
     b.innerHTML=h;
   }
   function ppCsv(){
-    var d=PP.month; if(!d){ toast("Load the month first"); return; }
+    var d=PP.month; if(!d){ toast("Load the sheet first"); return; }
     var lines=[["Employee","Name","Farm","Designation"].concat(d.days).concat(["Present","Absent","Leave","No record","Work days","Pay KES","Work no presence","Present no work"])];
     (d.rows||[]).forEach(function(r){
       lines.push([r.emp,r.name,r.farm,r.designation||""].concat(r.cells.map(function(c){ return (c.c||"")+(c.work!=null?"+W":"")+(c.flag?"!":""); }))
@@ -1875,7 +1894,7 @@
     var csv=lines.map(function(l){ return l.map(function(v){ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(","); }).join("\n");
     var a=document.createElement("a");
     a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-    a.download="task-worker-attendance-"+d.month+(el("pp-farm").value?"-"+el("pp-farm").value:"")+".csv";
+    a.download="task-worker-attendance-"+(d.from_date?d.from_date+"_to_"+d.to_date:d.month)+(el("pp-farm").value?"-"+el("pp-farm").value:"")+".csv";
     document.body.appendChild(a); a.click(); a.remove();
   }
   function render(D){
