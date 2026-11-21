@@ -34,7 +34,7 @@
     // Every action the server treats as a write (WMG_WRITES in wm_planner,
     // wm_masterplan, wm_rates): those refuse anything but a POST.
     var writes = {submit:1, approve:1, reject:1, week_approve:1, week_return:1,
-                  save:1, submit_for_review:1, decide_line:1, gm_approve:1, set_leaders:1,
+                  save:1, submit_for_review:1, decide_line:1, gm_approve:1, set_leaders:1, set_portions:1,
                   decide_bulk:1, headroom:1, plans_bulk:1, return_to_consultant:1, send_to_gm:1, tl_save:1,
                   apply_wage:1, backfill:1, classify:1, correct_apply:1, new_rate:1, recalc:1, reverse:1,
                   revert_periods:1, sync_doc_rates:1, sync_planner_rates:1, sync_task_rates:1, unit_change_apply:1};
@@ -502,14 +502,18 @@
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
                 edited_lines:d.edited_lines, ok_lines:d.ok_lines,
                 leader_options:d.leader_options||[], stand_ins:d.stand_ins||[],
-                can_set_leaders:d.can_set_leaders, missing_leaders:d.missing_leaders||0};
+                can_set_leaders:d.can_set_leaders, missing_leaders:d.missing_leaders||0,
+                portions:d.portions||[], split:d.split||{}, portion_changes:d.portion_changes||[],
+                can_set_portions:d.can_set_portions};
       }).catch(function(){ return {p:p, acts:acts, rate_drift:d.rate_drift, spanning:[],
                 can_edit:d.can_edit, can_decide:d.can_decide, can_gm_approve:d.can_gm_approve,
                 edit_is_review:d.edit_is_review, deciding_as_standin:d.deciding_as_standin,
                 can_send_to_gm:d.can_send_to_gm, undecided_lines:d.undecided_lines,
                 edited_lines:d.edited_lines, ok_lines:d.ok_lines,
                 leader_options:d.leader_options||[], stand_ins:d.stand_ins||[],
-                can_set_leaders:d.can_set_leaders, missing_leaders:d.missing_leaders||0}; });
+                can_set_leaders:d.can_set_leaders, missing_leaders:d.missing_leaders||0,
+                portions:d.portions||[], split:d.split||{}, portion_changes:d.portion_changes||[],
+                can_set_portions:d.can_set_portions}; });
     }).then(function(res){
       if(!res) return;
       var p=res.p, acts=res.acts;
@@ -653,7 +657,10 @@
       acts.forEach(function(a,i){
         var exhausted = (a.remaining_qty!=null && a.remaining_qty<=0.005) ||
                         (a.remaining_cost!=null && a.remaining_cost<=0.005);
-        h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(taskName(a.task))+'</td>'+
+        var nParts=(res.portions||[]).filter(function(x){ return x.task===a.task; }).length;
+        h+='<tr class="mp-actrow" data-ai="'+i+'" style="cursor:pointer"><td>'+esc(taskName(a.task))+
+           (nParts?' <span class="mpd-used" title="split between team leaders" style="background:#e0e7ff;color:#3730a3">split ×'+nParts+'</span>':'')+
+           (((res.split||{})[a.task]||{}).over?' <span class="mpd-used" style="background:#fee2e2;color:#991b1b">portions over</span>':'')+'</td>'+
            '<td>'+(res.can_set_leaders ? tlSelect("mp-tl"+(a.team_leader?"":" mpf-need"), 'data-ti="'+i+'"', a.team_leader, "— pick —")
                                        : (a.team_leader ? esc(tlLabel(a.team_leader)) : '<span class="mp-notl">No team leader</span>'))+'</td>'+
            '<td class="n m">'+fmt(a.man_days)+'</td>'+
@@ -679,6 +686,8 @@
            '<div class="mp-consumers" data-panel="'+i+'"></div></td></tr>';
       });
       h+='</tbody></table></div>';
+      // ACTIVITY PORTIONS live in their own panel, painted by ptPaint below
+      h+='<div id="mp-pt" style="margin-top:14px"></div>';
       // STAND-INS: while a team leader is away their activities on this plan pass
       // to someone else for those dates, and that work counts to the stand-in
       var sis = (res.stand_ins||[]).slice();
@@ -738,6 +747,149 @@
           openMasterPlan(p.name);
         }).catch(function(e){ toast("Could not save: "+e.message); tlSave.disabled=false; });
       };
+      // ACTIVITY PORTIONS (2026-11-21). An activity keeps its own team leader,
+      // accountable for the whole; under it the Farm Manager may split it between
+      // team leaders -- their blocks and their share of the work and money. The
+      // shares never add up past the activity, a block belongs to one share, and
+      // weekly requests are capped by the share they are raised against.
+      var ptBlocks=null;
+      var ptSplit=res.split||{};
+      function ptBlockLabel(b){
+        if(ptBlocks){ for(var i=0;i<ptBlocks.length;i++){ if(ptBlocks[i].name===b) return ptBlocks[i].label; } }
+        return lbl(b);
+      }
+      function ptPaint(editTask){
+        var pb=el("mp-pt"); if(!pb) return;
+        var parts=res.portions||[];
+        var ph='<div class="sech" style="font-weight:600;margin-bottom:6px">Activity portions</div>'+
+          '<div class="note" style="margin-bottom:6px">Split an activity between team leaders: each gets their own '+
+          esc(TX("unit_plural","blocks")).toLowerCase()+' and a share of the work and money. The activity’s team leader stays accountable '+
+          'for the whole. Weekly requests are raised against one share and cannot go past it.</div>';
+        var splitActs=acts.filter(function(a){ return parts.some(function(x){ return x.task===a.task; }); });
+        if(!splitActs.length && !editTask) ph+='<div class="hint" style="margin-bottom:6px">No activity is split.</div>';
+        splitActs.forEach(function(a){
+          if(a.task===editTask) return;
+          var sp=ptSplit[a.task]||{}, atk=a.task;   // the id goes in attributes only
+          ph+='<div class="mpf-tablewrap" style="margin-bottom:10px"><table><thead><tr><th colspan="7">'+esc(taskName(a.task))+
+            ' <span style="font-weight:400;color:var(--mute)">· accountable: '+esc(tlLabel(a.team_leader)||"—")+
+            ' · '+fmt(a.work_qty)+' '+esc(a.uom||"")+' / KES '+fmt(a.cost,2)+'</span>'+
+            (res.can_set_portions?' <button type="button" class="btn sm" data-pted="'+esc(atk)+'" style="float:right">Edit portions</button>':'')+
+            '</th></tr><tr><th>Team leader</th><th>'+esc(TX("unit_plural","Blocks"))+'</th><th class="n">Work</th><th class="n">Cost</th>'+
+            '<th class="n">Man days</th><th class="n">Requested</th><th class="n">Left</th></tr></thead><tbody>';
+          parts.filter(function(x){ return x.task===a.task; }).forEach(function(x){
+            ph+='<tr><td><b>'+esc(tlLabel(x.team_leader))+'</b>'+(x.label?'<div style="font-size:10px;color:var(--mute)">'+esc(x.label)+'</div>':'')+'</td>'+
+              '<td style="font-size:11px">'+(x.blocks||[]).map(ptBlockLabel).map(esc).join(", ")+'</td>'+
+              '<td class="n m">'+fmt(x.work_qty)+'</td><td class="n m">'+fmt(x.cost,2)+'</td><td class="n m">'+fmt(x.man_days,1)+'</td>'+
+              '<td class="n m">'+fmt(x.planned_qty)+'</td><td class="n m">'+fmt(x.remaining_qty)+
+              (x.remaining_qty<=0.005?' <span class="mpd-used">used up</span>':'')+'</td></tr>';
+          });
+          ph+='<tr style="color:var(--mute)"><td colspan="2">'+(sp.legacy_qty>0.005?'Requests raised before the split: '+fmt(sp.legacy_qty)+' · ':'')+'Unallocated</td>'+
+            '<td class="n m">'+fmt(sp.unallocated_qty)+'</td><td class="n m">'+fmt(sp.unallocated_cost,2)+'</td><td colspan="3"></td></tr>';
+          if(sp.over) ph+='<tr><td colspan="7" style="color:#991b1b"><b>The portions add up to more than the activity.</b> Re-split them before this plan can move on.</td></tr>';
+          ph+='</tbody></table></div>';
+        });
+        if(editTask){
+          ph+='<div id="mp-pt-ed"></div>';
+        } else if(res.can_set_portions){
+          var unsplit=acts.filter(function(a){ return a.consultant_state!=="Rejected" && !parts.some(function(x){ return x.task===a.task; }); });
+          if(unsplit.length){
+            ph+='<div class="btns" style="margin:4px 0 8px"><select id="mp-pt-new"><option value="">— split an activity —</option>'+
+              unsplit.map(function(a){ var atk=a.task; return '<option value="'+esc(atk)+'">'+esc(taskName(atk))+'</option>'; }).join("")+
+              '</select><button type="button" class="btn sm" id="mp-pt-go">Split</button></div>';
+          }
+        }
+        if((res.portion_changes||[]).length){
+          ph+='<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px">Changes since approval ('+res.portion_changes.length+')</summary>'+
+            '<div class="mpf-tablewrap"><table><thead><tr><th>When</th><th>Who</th><th>Activity</th><th>Change</th><th>Was</th><th>Now</th><th>Note</th></tr></thead><tbody>'+
+            res.portion_changes.map(function(c){
+              return '<tr><td class="m">'+esc(String(c.changed_on||"").slice(0,16))+'</td><td>'+esc(shortUser(c.changed_by))+'</td><td>'+esc(taskName(c.task))+
+                '</td><td>'+esc(c.kind)+'</td><td>'+esc(c.kind==="leader"?tlLabel(c.old_value):c.old_value)+'</td><td>'+
+                esc(c.kind==="leader"?tlLabel(c.new_value):c.new_value)+'</td><td>'+esc(c.note||"")+'</td></tr>';
+            }).join("")+'</tbody></table></div></details>';
+        }
+        pb.innerHTML=ph;
+        pb.querySelectorAll("[data-pted]").forEach(function(b){ b.onclick=function(){ ptEdit(b.getAttribute("data-pted")); }; });
+        var go=el("mp-pt-go");
+        if(go) go.onclick=function(){ var t=el("mp-pt-new").value; if(t) ptEdit(t); else toast("Pick the activity to split"); };
+        if(editTask) ptEditor(editTask);
+      }
+      function ptEdit(task){
+        if(ptBlocks){ ptPaint(task); return; }
+        call({action:"blocks", farm:p.farm}).then(function(bd){ ptBlocks=bd.blocks||[]; ptPaint(task); })
+          .catch(function(){ toast("Could not load the "+TX("unit_plural","blocks").toLowerCase()); });
+      }
+      function ptEditor(task){
+        var ed=el("mp-pt-ed"); if(!ed) return;
+        var a=null; acts.forEach(function(x){ if(x.task===task) a=x; });
+        if(!a) return;
+        var sp=ptSplit[task]||{};
+        var rows=(res.portions||[]).filter(function(x){ return x.task===task; }).map(function(x){
+          return {portion_key:x.portion_key, team_leader:x.team_leader, label:x.label||"", work_qty:x.work_qty,
+                  days:x.days, blocks:(x.blocks||[]).slice(), planned_qty:x.planned_qty||0};
+        });
+        if(!rows.length) rows=[{team_leader:a.team_leader||"", label:"", work_qty:0, days:a.days, blocks:[], planned_qty:0},
+                              {team_leader:"", label:"", work_qty:0, days:a.days, blocks:[], planned_qty:0}];
+        function draw(){
+          var tq=0; rows.forEach(function(r){ tq+=(parseFloat(r.work_qty)||0); });
+          var legacy=sp.legacy_qty||0, left=(a.work_qty||0)-tq-legacy;
+          var taken={}; rows.forEach(function(r,k){ r.blocks.forEach(function(b){ taken[b]=k; }); });
+          var eh='<div class="mpf-tablewrap" style="border:2px solid #6366f1"><table><thead><tr><th colspan="6">Split '+esc(taskName(task))+
+            ' <span style="font-weight:400;color:var(--mute)">· '+fmt(a.work_qty)+' '+esc(a.uom||"")+' at KES '+fmtRate(a.rate)+' · accountable: '+esc(tlLabel(a.team_leader)||"—")+'</span></th></tr>'+
+            '<tr><th>Team leader</th><th>Label</th><th class="n">Work ('+esc(a.uom||"")+')</th><th class="n">Cost</th><th>'+esc(TX("unit_plural","Blocks"))+'</th><th></th></tr></thead><tbody>';
+          rows.forEach(function(r,k){
+            eh+='<tr><td>'+tlSelect("pt-tl"+(r.team_leader?"":" mpf-need"), 'data-k="'+k+'"', r.team_leader, "— pick —")+'</td>'+
+              '<td><input type="text" class="pt-lb" data-k="'+k+'" value="'+esc(r.label)+'" placeholder="e.g. north crew" style="width:110px"></td>'+
+              '<td class="n"><input type="number" min="0" step="any" class="pt-q" data-k="'+k+'" value="'+esc(r.work_qty)+'" style="width:90px;text-align:right">'+
+              (r.planned_qty>0.005?'<div style="font-size:10px;color:var(--mute)">'+fmt(r.planned_qty)+' already requested</div>':'')+'</td>'+
+              '<td class="n m">'+fmt((parseFloat(r.work_qty)||0)*(a.rate||0),2)+'</td>'+
+              '<td style="max-width:340px"><div style="display:flex;flex-wrap:wrap;gap:4px">'+
+              (ptBlocks||[]).map(function(b){
+                var mine=r.blocks.indexOf(b.name)>=0, other=(taken[b.name]!=null && taken[b.name]!==k);
+                return '<span data-k="'+k+'" data-b="'+esc(b.name)+'" style="cursor:'+(other?'not-allowed;opacity:.35':'pointer')+
+                  ';font-size:10.5px;padding:2px 6px;border:1px solid var(--line);border-radius:4px'+(mine?';background:#c7d2fe;border-color:#6366f1':'')+'"'+
+                  (other?' title="in another portion"':'')+'>'+esc(b.label)+'</span>';
+              }).join("")+'</div></td>'+
+              '<td><button type="button" class="btn sm pt-del" data-k="'+k+'">Remove</button></td></tr>';
+          });
+          eh+='<tr><td colspan="2" style="text-align:right">'+(legacy>0.005?'Requests raised before the split: '+fmt(legacy)+' · ':'')+'<b>Unallocated</b></td>'+
+            '<td class="n m" style="'+(left<-0.005?'color:#991b1b;font-weight:700':'')+'">'+fmt(left)+'</td><td class="n m">'+fmt(left*(a.rate||0),2)+'</td>'+
+            '<td colspan="2">'+(left<-0.005?'<span style="color:#991b1b">over the activity by '+fmt(-left)+'</span>':'')+'</td></tr>';
+          eh+='</tbody></table></div><div class="btns" style="margin-top:6px">'+
+            '<button type="button" class="btn sm" id="pt-add">+ Add portion</button>'+
+            (p.workflow_state==="Approved"?'<input type="text" id="pt-note" placeholder="Why (kept in the change log)" style="flex:1;min-width:180px">':'')+
+            '<button type="button" class="btn sm" id="pt-cancel">Cancel</button>'+
+            '<button type="button" class="btn sm solid" id="pt-save">Save portions</button></div>';
+          var keepNote=(el("pt-note")||{}).value||"";
+          ed.innerHTML=eh;
+          if(el("pt-note")) el("pt-note").value=keepNote;
+          ed.querySelectorAll("select.pt-tl").forEach(function(x){ x.onchange=function(){ rows[+x.getAttribute("data-k")].team_leader=x.value; }; });
+          ed.querySelectorAll(".pt-lb").forEach(function(x){ x.oninput=function(){ rows[+x.getAttribute("data-k")].label=x.value; }; });
+          ed.querySelectorAll(".pt-q").forEach(function(x){ x.onchange=function(){ rows[+x.getAttribute("data-k")].work_qty=parseFloat(x.value)||0; draw(); }; });
+          ed.querySelectorAll("[data-b]").forEach(function(x){
+            x.onclick=function(){
+              var k=+x.getAttribute("data-k"), b=x.getAttribute("data-b"), r=rows[k];
+              if(taken[b]!=null && taken[b]!==k){ toast("That "+TX("unit_singular","block").toLowerCase()+" is in another portion"); return; }
+              var at=r.blocks.indexOf(b); if(at>=0) r.blocks.splice(at,1); else r.blocks.push(b);
+              draw();
+            };
+          });
+          ed.querySelectorAll(".pt-del").forEach(function(x){ x.onclick=function(){ rows.splice(+x.getAttribute("data-k"),1); draw(); }; });
+          el("pt-add").onclick=function(){ rows.push({team_leader:"", label:"", work_qty:0, days:a.days, blocks:[], planned_qty:0}); draw(); };
+          el("pt-cancel").onclick=function(){ ptPaint(null); };
+          el("pt-save").onclick=function(){
+            var btn=el("pt-save"); btn.disabled=true;
+            call({action:"set_portions", name:p.name, task:task, note:(el("pt-note")||{}).value||"",
+                  portions:JSON.stringify(rows.map(function(r){ return {portion_key:r.portion_key||"", team_leader:r.team_leader,
+                    label:r.label, work_qty:parseFloat(r.work_qty)||0, days:r.days||0, blocks:r.blocks}; }))}, "wm_masterplan").then(function(d2){
+              if(d2.error){ toast(d2.error); btn.disabled=false; return; }
+              toast(rows.length?"Portions saved":"Activity no longer split"); openMasterPlan(p.name);
+            }).catch(function(e){ toast("Could not save: "+(e&&e.message||e)); btn.disabled=false; });
+          };
+        }
+        draw();
+      }
+      ptPaint(null);
+      if((res.portions||[]).length) call({action:"blocks", farm:p.farm}).then(function(bd){ ptBlocks=bd.blocks||[]; ptPaint(null); }).catch(function(){});
       var mpBack=el("mp-back");
       if(mpBack) mpBack.onclick=loadMasterPlans;
       var mpSendGm=el("mp-sendgm");
@@ -1583,9 +1735,52 @@
     recalc();
   }
 
+  // ACTIVITY PORTIONS (2026-11-21): a split activity is raised against one team
+  // leader's share -- only its blocks are offered, and its own remaining is shown
+  function curPortion(){
+    var t=ST.taskInfo; if(!t || !(t.portions||[]).length || !ST.portion) return null;
+    for(var i=0;i<t.portions.length;i++){ if(t.portions[i].key===ST.portion) return t.portions[i]; }
+    return null;
+  }
+  function renderPortionPick(){
+    var sel=el("f-task"); if(!sel) return;
+    var w=el("f-portion-wrap");
+    if(!w){
+      w=document.createElement("div"); w.id="f-portion-wrap"; w.style.cssText="display:none;margin-top:6px";
+      w.innerHTML='<label class="fl" for="f-portion">Whose portion</label><select id="f-portion"></select>'+
+        '<div id="f-portion-note" style="font-size:11px;color:var(--mute);margin-top:3px"></div>';
+      var anchor=el("f-mine-wrap")||sel;
+      anchor.parentNode.insertBefore(w, anchor.nextSibling);
+      el("f-portion").onchange=function(){ ST.portion=this.value||null; portionNarrow(); };
+    }
+    var t=ST.taskInfo, parts=(t&&t.portions)||[];
+    if(!parts.length){ w.style.display="none"; ST.portion=null; syncBlockGrid(); return; }
+    if(ST.portion && !parts.some(function(x){ return x.key===ST.portion; })) ST.portion=null;
+    if(!ST.portion){ var mine=parts.filter(function(x){ return x.mine; }); if(mine.length===1) ST.portion=mine[0].key; }
+    el("f-portion").innerHTML='<option value="">— pick the team leader’s portion —</option>'+parts.map(function(x){
+      return '<option value="'+esc(x.key)+'"'+(x.key===ST.portion?' selected':'')+(x.exhausted&&x.key!==ST.portion?' disabled':'')+'>'+
+        esc(x.acting_name||x.acting_leader||x.team_leader)+(x.label?' ('+esc(x.label)+')':'')+' — '+
+        esc((x.blocks||[]).map(blockLabel).join(", "))+' — '+(x.exhausted?'used up':fmt(x.remaining_qty)+' '+esc(t.uom||"")+' left')+'</option>';
+    }).join("");
+    w.style.display="block";
+    portionNarrow();
+  }
+  function portionNarrow(){
+    var pt=curPortion(), note=el("f-portion-note");
+    if(pt){
+      for(var k in ST.picked){ if(ST.picked[k] && pt.blocks.indexOf(k)<0) ST.picked[k]=false; }
+      if(pt.blocks.length===1) ST.picked[pt.blocks[0]]=true;
+      if(note) note.innerHTML='Left in this portion: <b>'+fmt(pt.remaining_qty)+' '+esc((ST.taskInfo||{}).uom||"")+
+        '</b> / KES '+fmt(pt.remaining_cost,0)+' of '+fmt(pt.work_qty)+'. This work counts to '+esc(pt.acting_name||pt.acting_leader)+'.';
+    } else if(note){ note.textContent = ((ST.taskInfo||{}).portions||[]).length ? "This activity is split between team leaders." : ""; }
+    syncBlockGrid(); recalc();
+  }
+
   function syncBlockGrid(){
     var g=el("f-blockgrid"); g.innerHTML="";
+    var ptOnly=curPortion();
     ST.blocks.forEach(function(b){
+      if(ptOnly && ptOnly.blocks.indexOf(b.name)<0) return;
       var d=document.createElement("div");
       d.className="bk"+(ST.picked[b.name]?" on":"");
       d.textContent=b.label;
@@ -1602,6 +1797,8 @@
     if(ST.taskInfo){
       el("f-kpi").innerHTML="Standard: <b>"+fmt(ST.taskInfo.daily_target)+" "+esc(ST.taskInfo.uom||"")+"/day</b> @ KES "+fmtRate(ST.taskInfo.rate)+" per "+esc(ST.taskInfo.uom||"unit");
     } else { el("f-kpi").textContent=""; }
+    ST.portion=null;
+    renderPortionPick();
     loadCompare();
     recalc();
   }
@@ -1662,7 +1859,8 @@
     var ba=blockArea();
     var ab=el("o-area"); if(ab) ab.textContent = ba>0?(fmt(ba,2)):"—";
     el("o-cost").textContent = cost>0?fmt(cost):"—";
-    var ready = ST.farm && nBlocks()>0 && ST.task && qty>0 && wd>0;
+    var needPortion = !!(info && (info.portions||[]).length && !curPortion());
+    var ready = ST.farm && nBlocks()>0 && ST.task && qty>0 && wd>0 && !needPortion;
     el("b-draft").disabled=!ready;
     el("b-submit").disabled=!ready;
     var missing=[];
@@ -1674,6 +1872,7 @@
       missing.push(ST.blocked ? "no activities are budgeted for these dates — see the note above the period"
                               : "select a task");
     }
+    if(needPortion) missing.push("pick whose portion this work belongs to");
     if(qty<=0) missing.push("enter a quantity");
     if(wd<=0) missing.push("set a valid date range");
     var hint=el("f-submit-hint");
@@ -1702,7 +1901,7 @@
     var args={ action:"submit", farm:ST.farm, blocks:pickedList().join(","), task:ST.task,
       quantity:parseFloat(el("f-qty").value)||0,
       from_date:el("f-from").value, to_date:el("f-to").value,
-      master_plan:ST.masterPlan||"" };
+      master_plan:ST.masterPlan||"", portion:ST.portion||"" };
     if(submitNow) args.submit_now=1;
     if(ST.editingPlan) args.plan=ST.editingPlan;
     el("b-draft").disabled=true; el("b-submit").disabled=true;
@@ -1712,7 +1911,7 @@
       var verb = d.editing ? (submitNow?"Updated & submitted ":"Draft updated ") : (submitNow?"Submitted ":"Draft saved ");
       toast(verb+d.name+" · "+d.workflow_state+(nb>1?(" ("+nb+" "+TX("unit_plural","blocks").toLowerCase()+")"):""));
       clearEdit();
-      el("f-qty").value=""; ST.task=null; ST.taskInfo=null; ST.picked={}; el("f-task").value=""; el("f-kpi").textContent=""; syncBlockGrid();
+      el("f-qty").value=""; ST.task=null; ST.taskInfo=null; ST.portion=null; ST.picked={}; el("f-task").value=""; el("f-kpi").textContent=""; renderPortionPick();
       recalc();
       if(submitNow){ }
     // serverMessage() already dug the server's own sentence out of the 417 body.
@@ -1747,6 +1946,8 @@
         ST.task=p.task; el("f-task").value=p.task;
         for(var i=0;i<ST.tasks.length;i++){ if(ST.tasks[i].name===p.task){ ST.taskInfo=ST.tasks[i]; break; } }
         if(ST.taskInfo){ el("f-kpi").innerHTML="Standard: <b>"+fmt(ST.taskInfo.daily_target)+" "+esc(ST.taskInfo.uom||"")+"/day</b> @ KES "+fmtRate(ST.taskInfo.rate)+" per "+esc(ST.taskInfo.uom||"unit"); }
+        ST.portion=p.portion||null;
+        renderPortionPick();
         el("f-qty").value=p.quantity;
         el("f-from").value=p.from_date; el("f-to").value=p.to_date;
         recalc();
