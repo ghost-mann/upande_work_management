@@ -90,6 +90,15 @@ class TestPartTwo(unittest.TestCase):
 		self.assertIn("x.status = 'Approved'", fn)
 
 
+class TestCheckTakesInFarmsWithMissingWork(unittest.TestCase):
+	def test_create_includes_farms_with_missing_days(self):
+		# a farm whose only problem is missing work must still be in the check, or
+		# nothing ever holds it up
+		body = between('action == "chk_create"', 'cd = frappe.new_doc("Work Management Payroll Check")')
+		self.assertIn('frappe.call("work_management.missing_work.find"', body)
+		self.assertIn("if not ctop", body[body.index('frappe.call("work_management.missing_work.find"') - 300:])
+
+
 class TestScreen(unittest.TestCase):
 	def test_js_links_to_missing_tab(self):
 		self.assertIn("/work-actuals?tab=missing", JS)

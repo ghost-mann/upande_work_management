@@ -1873,7 +1873,7 @@
   // Each day is cleared by entering the work, by putting the worker on a crew
   // first (no crew that day), or by saying why there was no work. The payroll
   // check will not let a farm approve while it still has open days.
-  var MW={farm:"", from:"", to:"", data:null, view:"clear", sel:{}};
+  var MW={farm:"", from:"", to:"", data:null, view:"clear", sel:{}, seq:0};
   function openEntry(asg, day, emp){
     // Enter Actuals for that assignment, with the worker's cell for that day focused
     showTab("enter");
@@ -2014,8 +2014,11 @@
     el("mw-pn").hidden=true;
     el("mw-dates").style.display=MW.view==="wait"?"none":"";
     el("mw-body").innerHTML='<div class="empty">Loading&hellip;</div>';
-    if(MW.view==="wait"){ loadWaiting(); return; }
+    // only the latest load may draw: a slow grid answer must not land on the Waiting tab
+    var seq=++MW.seq;
+    if(MW.view==="wait"){ loadWaiting(seq); return; }
     call({action:"mw_grid", farm:MW.farm, from_date:MW.from, to_date:MW.to}, "wm_missing_work").then(function(d){
+      if(seq!==MW.seq) return;
       if(d.error){ el("mw-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
       MW.data=d; MW.farm=d.farm||""; MW.from=d.from_date||MW.from; MW.to=d.to_date||MW.to; MW.sel={};
       el("mw-from").value=MW.from; el("mw-to").value=MW.to;
@@ -2199,8 +2202,10 @@
     };
   }
   // Waiting for approval: every missing-day fix not yet final, step by step
-  function loadWaiting(){
+  function loadWaiting(seq){
+    if(seq===undefined) seq=++MW.seq;
     call({action:"mw_waiting", farm:MW.farm}, "wm_missing_work").then(function(w){
+      if(seq!==MW.seq) return;
       if(w.error){ el("mw-body").innerHTML='<div class="empty">'+esc(w.error)+'</div>'; return; }
       var b=el("mw-turn"); if(b){ b.hidden=!w.your_turn; b.textContent=w.your_turn||""; }
       if(MW.data) mwFarmButtons(MW.data.farms, null);

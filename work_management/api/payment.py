@@ -4336,6 +4336,13 @@ def wm_payment(**kwargs):
                     ORDER BY ac.farm""", {"f": cf, "t": ct}):
                     if fr[0] in FARMS:
                         cfarms.append(fr[0])
+                # a farm with task workers present but no work recorded (open or waiting
+                # missing days) is in the check too: its farm manager has to clear them
+                if not ctop:
+                    for mwr in frappe.call("work_management.missing_work.find", farms=list(FARMS), from_date=cf,
+                                           to_date=ct, include_excused=True):
+                        if mwr["state"] in ("open", "waiting") and mwr["farm"] in FARMS and mwr["farm"] not in cfarms:
+                            cfarms.append(mwr["farm"])
                 if not cfarms:
                     cerr = "Nothing was recorded on any farm over those dates." if not ctop else \
                            "There is no late work to pay inside those dates."

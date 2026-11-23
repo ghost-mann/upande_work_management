@@ -84,6 +84,12 @@ class TestGridAndWaiting(unittest.TestCase):
 		for s in ("esc(w.name", "esc(x.employee_name", "esc(x.reason", "esc(taskName(c.task_name))"):
 			self.assertIn(s, self.ui)
 
+	def test_a_late_answer_never_draws_over_the_other_tab(self):
+		# switching to Waiting while the grid loads: the grid's answer arrives later
+		# and must be dropped, not drawn over the Waiting list
+		self.assertIn("var seq=++MW.seq;", self.ui)
+		self.assertGreaterEqual(self.ui.count("if(seq!==MW.seq) return;"), 2)
+
 	def test_friendly_all_clear(self):
 		self.assertIn("Nothing to clear", self.ui)
 
