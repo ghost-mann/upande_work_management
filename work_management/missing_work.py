@@ -327,7 +327,9 @@ def wm_missing_work(**kwargs):
 			frappe.utils.today(), -14)
 		to_date = kwargs.get("to_date") or (check or {}).get("period_to") or frappe.utils.add_days(
 			frappe.utils.today(), -1)
-		rows = find(chosen, from_date, to_date, include_excused=True) if chosen else []
+		# one pass over every farm of theirs: the farm buttons show each one's count
+		all_rows = find(farms, from_date, to_date, include_excused=True) if chosen else []
+		rows = [r for r in all_rows if r["farm"] in chosen]
 		names = {r[0]: r[1] for r in frappe.db.sql("""SELECT name, employee_name FROM `tabEmployee`
 			WHERE name IN %s""", (tuple({r["employee"] for r in rows}) or ("__none__",),))}
 		scans = {}
@@ -342,6 +344,7 @@ def wm_missing_work(**kwargs):
 			r["scan"] = scans.get((r["employee"], r["day"]))
 		out["rows"] = rows
 		out["counts"] = {f: len([r for r in rows if r["farm"] == f and not r["excuse"]]) for f in chosen}
+		out["farm_counts"] = {f: len([r for r in all_rows if r["farm"] == f and not r["excuse"]]) for f in farms}
 		out["farms"] = farms
 		out["farm"] = chosen[0] if chosen else ""
 		out["from_date"] = str(from_date)

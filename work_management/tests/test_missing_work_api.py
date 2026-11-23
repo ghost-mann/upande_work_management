@@ -97,6 +97,12 @@ class TestEndpoint(unittest.TestCase):
 		self.assertIn("chosen = [farm] if farm else farms[:1]", action("mw_list"))
 		self.assertIn("out['farm']", action("mw_list"))
 
+	def test_list_counts_every_farm_for_the_farm_buttons(self):
+		s = action("mw_list")
+		self.assertIn("out['farm_counts']", s)
+		# one find over the user's farms, not one per farm
+		self.assertEqual(s.count("find("), 1)
+
 	def test_list_returns_the_screen_fields(self):
 		s = action("mw_list")
 		for k in ("'rows'", "'counts'", "'farms'", "'open_check'", "'can_excuse'", "'late_farms'"):
