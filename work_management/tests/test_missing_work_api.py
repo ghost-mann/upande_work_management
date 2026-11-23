@@ -121,6 +121,7 @@ class TestAssignmentOptions(unittest.TestCase):
 		self.assertIn("workflow_state = 'Assigned'", s)
 		self.assertIn("IFNULL(w2.status, 'Active') != 'Left'", s)
 		self.assertIn("a.from_date <= %s AND a.to_date >= %s", s)
+		self.assertIn("IFNULL(pl.uom, '') uom", s)
 
 
 class TestStamping(unittest.TestCase):

@@ -1873,7 +1873,7 @@
   // Each day is cleared by entering the work, by putting the worker on a crew
   // first (no crew that day), or by saying why there was no work. The payroll
   // check will not let a farm approve while it still has open days.
-  var MW={farm:"", from:"", to:"", data:null};
+  var MW={farm:"", from:"", to:"", data:null, view:"clear", sel:{}};
   function openEntry(asg, day, emp){
     // Enter Actuals for that assignment, with the worker's cell for that day focused
     showTab("enter");
@@ -1885,6 +1885,20 @@
       else toast("Opened "+asg+"; "+day+" is not open for entry on it.");
     });
   }
+  // grid codes (missing_work.grid_codes): what each letter means and how it looks
+  var MW_CODES={
+    "M":["missing","came in, no work recorded &mdash; click to fix"],
+    "W":["wait","fix waiting for approval"],
+    "R":["reason","no work &mdash; reason approved"],
+    "A":["absent","absent &mdash; click if they did work"],
+    "X":["asked","HR asked to correct attendance"],
+    "P":["pres","present"],
+    "H":["half","half day"],
+    "L":["leave","leave"],
+    "O":["off","off day / holiday"],
+    "?":["none","no record"]
+  };
+  var MW_TEXT={"M":"!","W":"&#8987;","R":"&#10003;","A":"A","X":"A","P":"P","H":"&frac12;","L":"L","O":"&middot;","?":"?"};
   function mwPanel(){
     var p=el("p-missing");
     if(!p){
@@ -1894,60 +1908,86 @@
     if(!el("mw-style")){
       var st=document.createElement("style"); st.id="mw-style";
       st.textContent=[
-        "#p-missing .mw-farms{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 14px}",
+        "#p-missing .mw-views{display:flex;gap:6px;margin:4px 0 14px;border-bottom:1px solid var(--line)}",
+        "#p-missing .mw-view{font:inherit;font-size:13.5px;font-weight:600;background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;cursor:pointer;color:var(--mute)}",
+        "#p-missing .mw-view.on{color:var(--ink);border-bottom-color:var(--ink)}",
+        "#p-missing .mw-view b{font-size:11px;margin-left:6px;padding:1px 7px;border-radius:999px;background:rgba(217,150,46,.18);color:#7a4f06}",
+        "#p-missing .mw-farms{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}",
         "#p-missing .mw-farm{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:999px;padding:7px 14px;cursor:pointer;display:inline-flex;gap:8px;align-items:center}",
         "#p-missing .mw-farm b{font-size:11px;min-width:22px;text-align:center;padding:2px 7px;border-radius:999px;background:rgba(185,28,28,.12);color:#a02020}",
         "#p-missing .mw-farm b.zero{background:rgba(10,122,67,.13);color:#0a6a3b}",
         "#p-missing .mw-farm.on{background:var(--ink);color:#fff;border-color:var(--ink)}",
-        "#p-missing .mw-dates{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--mute);margin-bottom:14px}",
+        "#p-missing .mw-dates{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--mute);margin-bottom:12px}",
         "#p-missing .mw-dates input{width:auto;padding:6px 8px;font-size:13px}",
-        "#p-missing .mw-sum{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:18px;box-shadow:var(--sh)}",
-        "#p-missing .mw-sum .big{font-size:34px;font-weight:700;line-height:1;margin-right:10px}",
-        "#p-missing .mw-sum h3{display:flex;align-items:baseline;margin:0;font-size:16px;font-weight:600}",
-        "#p-missing .mw-sum p{margin:8px 0 0;color:var(--mute);font-size:13px;line-height:1.5;max-width:70ch}",
-        "#p-missing .mw-sum .wait{margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(217,150,46,.13);color:#7a4f06;font-size:13px}",
-        "#p-missing .mw-split{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}",
-        "#p-missing .mw-split span{font-size:12.5px;padding:6px 10px;border-radius:8px;background:var(--wash);color:var(--ink)}",
-        "#p-missing details.mw-day{background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}",
-        "#p-missing details.mw-day>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:13px 16px;font-weight:600;font-size:14px}",
-        "#p-missing details.mw-day>summary::-webkit-details-marker{display:none}",
-        "#p-missing details.mw-day>summary .n{font-size:12px;font-weight:500;color:var(--mute)}",
-        "#p-missing details.mw-day>summary .n::after{content:'\\25BE';margin-left:8px;display:inline-block;transition:transform .15s}",
-        "#p-missing details.mw-day:not([open])>summary .n::after{transform:rotate(-90deg)}",
-        "#p-missing .mw-crew{border-top:1px solid var(--line);padding:12px 16px}",
-        "#p-missing .mw-crewhead{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px}",
-        "#p-missing .mw-crewhead .t{font-weight:600;font-size:13.5px}",
-        "#p-missing .mw-crewhead .s{font-size:12px;color:var(--mute)}",
-        "#p-missing .mw-crew.none{background:rgba(217,150,46,.06)}",
-        "#p-missing .mw-row{display:grid;grid-template-columns:22px 34px minmax(140px,1fr) auto auto;gap:10px;align-items:center;padding:8px 0;border-top:1px dashed var(--line)}",
-        "#p-missing .mw-row:first-of-type{border-top:0}",
-        "#p-missing .mw-av{width:32px;height:32px;border-radius:50%;background:var(--wash);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--mute)}",
-        "#p-missing .mw-name{font-size:13.5px;font-weight:600}",
-        "#p-missing .mw-name small{display:block;font-weight:400;font-size:11.5px;color:var(--mute)}",
-        "#p-missing .mw-scan{font-size:11.5px;padding:3px 9px;border-radius:999px;background:rgba(10,122,67,.11);color:#0a6a3b;white-space:nowrap}",
-        "#p-missing .mw-scan.att{background:var(--wash);color:var(--mute)}",
-        "#p-missing .mw-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}",
-        "#p-missing .mw-acts .btn,#p-missing .mw-crewhead .btn,#p-missing .mw-panel .btn{margin-top:0;padding:7px 12px}",
-        "#p-missing .btn.good{background:#0a7a43;color:#fff;border-color:#0a7a43}",
-        "#p-missing .mw-panel{grid-column:3/-1;background:var(--wash);border-radius:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px}",
-        "#p-missing .mw-panel[hidden]{display:none}",
-        "#p-missing .mw-panel select,#p-missing .mw-panel input{width:auto;font-size:13px;padding:6px 8px}",
+        "#p-missing .mw-dates .btn,#p-missing .mw-pn .btn,#p-missing .mw-wrow .btn,#p-missing #mw-bulk .btn,#p-missing .mw-ghead .btn{margin-top:0;padding:7px 12px}",
+        "#p-missing .mw-sum{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 20px;margin-bottom:14px;box-shadow:var(--sh)}",
+        "#p-missing .mw-sum h3{display:flex;align-items:baseline;gap:10px;margin:0;font-size:16px;font-weight:600}",
+        "#p-missing .mw-sum .big{font-size:32px;font-weight:700;line-height:1}",
+        "#p-missing .mw-sum p{margin:6px 0 0;color:var(--mute);font-size:13px;line-height:1.5;max-width:75ch}",
+        "#p-missing .mw-sum .wait{margin-top:10px;padding:9px 12px;border-radius:10px;background:rgba(217,150,46,.13);color:#7a4f06;font-size:13px}",
+        "#p-missing .mw-leg{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--mute);margin:4px 0 10px;align-items:center}",
+        "#p-missing .mw-leg i{font-style:normal;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;margin-right:4px;font-weight:700;font-size:11px}",
+        "#p-missing .mw-scroll{overflow:auto;max-height:620px;border:1px solid var(--line);border-radius:12px;background:#fff}",
+        "#p-missing table.mw-grid{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}",
+        "#p-missing table.mw-grid th,#p-missing table.mw-grid td{padding:2px;text-align:center;font-size:11px;border-bottom:1px solid var(--line)}",
+        "#p-missing table.mw-grid thead th{position:sticky;top:0;background:var(--wash);z-index:3;font-weight:600;color:var(--mute);min-width:30px}",
+        "#p-missing table.mw-grid th.nm,#p-missing table.mw-grid td.nm{position:sticky;left:0;background:#fff;z-index:2;text-align:left;min-width:190px;max-width:230px;padding:5px 10px;border-right:1px solid var(--line)}",
+        "#p-missing table.mw-grid thead th.nm{z-index:4;background:var(--wash)}",
+        "#p-missing table.mw-grid td.nm b{font-size:12.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+        "#p-missing table.mw-grid td.nm small{font-size:10.5px;color:var(--mute)}",
+        "#p-missing table.mw-grid th.wk{border-left:2px solid var(--line)}",
+        "#p-missing .mw-c{display:inline-flex;align-items:center;justify-content:center;width:26px;height:24px;border-radius:5px;font-weight:700;font-size:11px;border:0;font-family:inherit;padding:0}",
+        "#p-missing button.mw-c{cursor:pointer}",
+        "#p-missing .mw-c.wk{text-decoration:underline;text-underline-offset:2px}",
+        "#p-missing .c-missing{background:#fff;color:#b91c1c;box-shadow:inset 0 0 0 2px #dc2626}",
+        "#p-missing .c-wait{background:#fef3c7;color:#92400e}",
+        "#p-missing .c-reason{background:#e5e7eb;color:#374151}",
+        "#p-missing .c-absent{background:#fee2e2;color:#991b1b}",
+        "#p-missing .c-asked{background:#fff7ed;color:#9a3412;box-shadow:inset 0 0 0 2px #fdba74;outline:1px dashed #f59e0b}",
+        "#p-missing .c-pres{background:#dcfce7;color:#166534}",
+        "#p-missing .c-half{background:#ecfccb;color:#3f6212}",
+        "#p-missing .c-leave{background:#dbeafe;color:#1e40af}",
+        "#p-missing .c-off{background:#f1f5f9;color:#94a3b8}",
+        "#p-missing .c-none{background:#fafaf9;color:#a8a29e}",
+        "#p-missing .mw-c.sel{outline:3px solid #2563eb;outline-offset:1px}",
+        "#p-missing .mw-c.cur{outline:3px solid var(--ink);outline-offset:1px}",
+        "#p-missing .mw-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 8px;font-size:12.5px}",
+        "#p-missing .mw-pn{position:fixed;top:0;right:0;bottom:0;width:min(420px,100vw);background:#fff;box-shadow:-20px 0 40px -20px rgba(0,0,0,.25);z-index:1000;padding:20px;overflow:auto}",
+        "#p-missing .mw-pn[hidden]{display:none}",
+        "#p-missing .mw-pn h3{margin:0 0 2px;font-size:17px}",
+        "#p-missing .mw-pn .sub{color:var(--mute);font-size:12.5px;margin-bottom:14px}",
+        "#p-missing .mw-pn section{border-top:1px solid var(--line);padding:14px 0}",
+        "#p-missing .mw-pn h4{margin:0 0 8px;font-size:13.5px}",
+        "#p-missing .mw-pn .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}",
+        "#p-missing .mw-pn input,#p-missing .mw-pn select{width:auto;font-size:13px;padding:7px 9px}",
+        "#p-missing .mw-pn .x{position:absolute;top:14px;right:14px;background:none;border:0;font-size:22px;cursor:pointer;color:var(--mute)}",
+        "#p-missing .mw-msg{font-size:12.5px;padding:8px 10px;border-radius:8px;margin-top:8px}",
+        "#p-missing .mw-msg.bad{background:rgba(185,28,28,.09);color:#991b1b}",
+        "#p-missing .mw-msg.ok{background:rgba(10,122,67,.1);color:#0a6a3b}",
+        "#p-missing .mw-msg.info{background:var(--wash);color:var(--ink)}",
         "#p-missing .mw-chip{font:inherit;font-size:12px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;cursor:pointer}",
-        "#p-missing .mw-panel input[data-mw-note],#p-missing #mw-bulk-note{width:200px}",
         "#p-missing .mw-chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}",
-        "#p-missing .mw-row.done{opacity:.6}",
-        "#p-missing .mw-why{font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(10,10,10,.06)}",
-        "#p-missing .mw-link{background:none;border:0;color:var(--blue);font:inherit;font-size:12px;cursor:pointer;text-decoration:underline}",
-        "#p-missing .mw-clear{text-align:center;padding:40px 20px;background:#fff;border:1px solid var(--line);border-radius:16px}",
-        "#p-missing .mw-clear .tick{font-size:30px;color:#0a7a43}",
-        "#p-missing #mw-bulk{position:sticky;bottom:12px;z-index:5;margin-top:14px;background:var(--ink);color:#fff;border-radius:14px;padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:var(--shm)}",
+        "#p-missing .btn.good{background:#0a7a43;color:#fff;border-color:#0a7a43}",
+        "#p-missing .mw-scan{font-size:11.5px;padding:3px 9px;border-radius:999px;background:rgba(10,122,67,.11);color:#0a6a3b;white-space:nowrap}",
+        "#p-missing #mw-bulk{position:sticky;bottom:12px;z-index:5;margin-top:12px;background:var(--ink);color:#fff;border-radius:14px;padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:var(--shm)}",
         "#p-missing #mw-bulk[hidden]{display:none}",
         "#p-missing #mw-bulk .mw-chip{background:transparent;color:#fff;border-color:rgba(255,255,255,.35)}",
         "#p-missing #mw-bulk .mw-chip.on{background:#fff;color:var(--ink)}",
-        "#p-missing #mw-bulk input{width:auto;font-size:13px;padding:6px 8px}",
+        "#p-missing #mw-bulk input{width:200px;font-size:13px;padding:6px 8px}",
+        "#p-missing .mw-group{background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}",
+        "#p-missing .mw-ghead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;background:var(--wash)}",
+        "#p-missing .mw-ghead h4{margin:0;font-size:14px}",
+        "#p-missing .mw-ghead .turn{font-size:11px;padding:2px 8px;border-radius:999px;background:#0a7a43;color:#fff;margin-left:8px}",
+        "#p-missing .mw-wrow{display:grid;grid-template-columns:22px minmax(150px,1.4fr) minmax(120px,1fr) minmax(110px,auto) auto;gap:10px;align-items:center;padding:10px 16px;border-top:1px solid var(--line);font-size:13px}",
+        "#p-missing .mw-wrow small{display:block;color:var(--mute);font-size:11.5px}",
+        "#p-missing .mw-wrow .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}",
+        "#p-missing .mw-wrow .back{grid-column:2/-1;display:flex;gap:6px;flex-wrap:wrap}",
+        "#p-missing .mw-wrow .back[hidden]{display:none}",
+        "#p-missing .mw-wrow .back input{flex:1;min-width:200px;font-size:13px;padding:6px 8px}",
+        "#p-missing .mw-clear{text-align:center;padding:36px 20px;background:#fff;border:1px solid var(--line);border-radius:16px}",
         "#p-missing input[type=checkbox]{width:16px;height:16px;margin:0}",
-        "#p-missing .btn:focus-visible,#p-missing .mw-chip:focus-visible,#p-missing .mw-farm:focus-visible,#p-missing summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px}",
-        "@media(max-width:720px){#p-missing .mw-row{grid-template-columns:22px 34px 1fr}#p-missing .mw-scan,#p-missing .mw-acts{grid-column:3/-1;justify-content:flex-start}}"
+        "#p-missing .btn:focus-visible,#p-missing .mw-chip:focus-visible,#p-missing .mw-farm:focus-visible,#p-missing .mw-view:focus-visible,#p-missing button.mw-c:focus-visible{outline:2px solid var(--blue);outline-offset:2px}",
+        "@media(max-width:720px){#p-missing .mw-wrow{grid-template-columns:22px 1fr}#p-missing .mw-wrow .acts{grid-column:2;justify-content:flex-start}#p-missing table.mw-grid th.nm,#p-missing table.mw-grid td.nm{min-width:120px;max-width:140px}}"
       ].join("\n");
       document.head.appendChild(st);
     }
@@ -1955,163 +1995,292 @@
   }
   // "Tue 21 Oct" from an ISO date
   function mwDay(iso){ return dowShort(iso)+" "+dnum(iso)+" "+monLabel(iso); }
-  function mwInitials(n){ var p=String(n||"?").trim().split(/\s+/); return ((p[0]||"?").charAt(0)+(p.length>1?p[p.length-1].charAt(0):"")).toUpperCase(); }
+  function mwStage(s){ return {"Pending Farm Manager":"farm manager","Pending HR Head":"HR","Pending HR":"HR","Pending GM":"GM"}[s]||s; }
   function loadMissing(){
     var p=mwPanel();
     if(!el("mw-body")){
-      p.innerHTML='<div class="mw-farms" id="mw-farms"></div>'+
-        '<div class="mw-dates">Showing <input type="date" id="mw-from" aria-label="From"> to <input type="date" id="mw-to" aria-label="To"> <button type="button" class="btn" id="mw-apply">Show</button></div>'+
-        '<div id="mw-body"><div class="empty">Loading&hellip;</div></div>';
+      p.innerHTML='<div class="mw-views" role="tablist"><button type="button" class="mw-view on" data-mw-view="clear" role="tab">To clear</button>'+
+        '<button type="button" class="mw-view" data-mw-view="wait" role="tab">Waiting for approval<b id="mw-turn" hidden></b></button></div>'+
+        '<div class="mw-farms" id="mw-farms"></div>'+
+        '<div class="mw-dates" id="mw-dates">Showing <input type="date" id="mw-from" aria-label="From"> to <input type="date" id="mw-to" aria-label="To"> <button type="button" class="btn" id="mw-apply">Show</button></div>'+
+        '<div id="mw-body"><div class="empty">Loading&hellip;</div></div>'+
+        '<aside class="mw-pn" id="mw-pn" hidden aria-label="Fix this day"></aside>';
       el("mw-apply").onclick=function(){ MW.from=el("mw-from").value; MW.to=el("mw-to").value; loadMissing(); };
+      p.querySelectorAll("[data-mw-view]").forEach(function(b){ b.onclick=function(){
+        MW.view=b.getAttribute("data-mw-view");
+        p.querySelectorAll("[data-mw-view]").forEach(function(x){ x.classList.toggle("on", x===b); });
+        loadMissing(); }; });
     }
+    el("mw-pn").hidden=true;
+    el("mw-dates").style.display=MW.view==="wait"?"none":"";
     el("mw-body").innerHTML='<div class="empty">Loading&hellip;</div>';
-    call({action:"mw_list", farm:MW.farm, from_date:MW.from, to_date:MW.to}, "wm_missing_work").then(function(d){
+    if(MW.view==="wait"){ loadWaiting(); return; }
+    call({action:"mw_grid", farm:MW.farm, from_date:MW.from, to_date:MW.to}, "wm_missing_work").then(function(d){
       if(d.error){ el("mw-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
-      MW.data=d; MW.farm=d.farm||""; MW.from=d.from_date||MW.from; MW.to=d.to_date||MW.to;
+      MW.data=d; MW.farm=d.farm||""; MW.from=d.from_date||MW.from; MW.to=d.to_date||MW.to; MW.sel={};
       el("mw-from").value=MW.from; el("mw-to").value=MW.to;
-      var fc=d.farm_counts||{};
-      el("mw-farms").innerHTML=(d.farms||[]).map(function(f){
-        var n=fc[f]||0;
-        return '<button type="button" class="mw-farm'+(f===MW.farm?' on':'')+'" data-mw-farm="'+esc(f)+'" aria-pressed="'+(f===MW.farm)+'">'+esc(f)+' <b class="'+(n?'':'zero')+'">'+fmt(n)+'</b></button>';
-      }).join("");
-      el("mw-farms").querySelectorAll("[data-mw-farm]").forEach(function(b){ b.onclick=function(){ MW.farm=b.getAttribute("data-mw-farm"); loadMissing(); }; });
+      mwFarmButtons(d.farms, d.farm_counts);
       renderMissing(d);
+      mwTurnCount();
     }).catch(function(e){ el("mw-body").innerHTML='<div class="empty">Could not load: '+esc(e&&e.message||e)+'</div>'; });
   }
-  function mwReasons(d, attr){
-    return (d.reasons||[]).map(function(x){ return '<button type="button" class="mw-chip" '+attr+'="'+esc(x)+'">'+esc(x)+'</button>'; }).join("");
+  function mwFarmButtons(farms, fc){
+    fc=fc||{};
+    el("mw-farms").innerHTML=(farms||[]).map(function(f){
+      var n=fc[f]||0;
+      return '<button type="button" class="mw-farm'+(f===MW.farm?' on':'')+'" data-mw-farm="'+esc(f)+'" aria-pressed="'+(f===MW.farm)+'">'+esc(f)+(MW.view==="wait"?'':' <b class="'+(n?'':'zero')+'">'+fmt(n)+'</b>')+'</button>';
+    }).join("");
+    el("mw-farms").querySelectorAll("[data-mw-farm]").forEach(function(b){ b.onclick=function(){ MW.farm=b.getAttribute("data-mw-farm"); loadMissing(); }; });
+  }
+  function mwTurnCount(){
+    call({action:"mw_waiting", farm:""}, "wm_missing_work").then(function(w){
+      var b=el("mw-turn"); if(!b) return; var n=(w&&w.your_turn)||0; b.hidden=!n; b.textContent=n;
+    }).catch(function(){});
   }
   function renderMissing(d){
-    var rows=(d.rows||[]), open=rows.filter(function(r){ return !r.excuse; }), given=rows.length-open.length;
+    var ws=d.workers||[], days=d.days||[], open=0, wait=0;
+    ws.forEach(function(w){ open+=w.open; wait+=w.waiting; });
     var lvl=TX("top_singular","Farm").toLowerCase();
     if(!(d.farms||[]).length){ el("mw-body").innerHTML='<div class="empty">You do not record work on any '+esc(lvl)+'.</div>'; return; }
-    var onCrew=open.filter(function(r){ return r.crews.length; }).length, noCrew=open.length-onCrew;
-    var late=(d.late_farms||[]).indexOf(MW.farm)>=0 && d.open_check;
     var period=mwDay(MW.from)+' to '+mwDay(MW.to);
-    if(!open.length){
-      el("mw-body").innerHTML='<div class="mw-clear"><div class="tick">&#10003;</div><h3 style="margin:6px 0">Nothing to clear on '+esc(MW.farm)+'</h3>'+
-        '<p style="color:var(--mute);margin:0">Everyone who came in from '+esc(period)+' has work recorded'+(given?', or a reason why not ('+fmt(given)+' given)':'')+'.</p></div>'+
-        (given?'<div style="margin-top:14px">'+mwDays(rows, d, late)+'</div>':'');
-      wireMissing(d); return;
+    var h='';
+    if(!open){
+      h+='<div class="mw-clear"><div style="font-size:28px;color:#0a7a43">&#10003;</div><h3 style="margin:4px 0">Nothing to clear on '+esc(MW.farm)+'</h3>'+
+        '<p style="color:var(--mute);margin:0">Everyone who came in from '+esc(period)+' has work recorded or a reason why not'+(wait?' ('+fmt(wait)+' still waiting for approval)':'')+'.</p></div>';
+    } else {
+      h+='<div class="mw-sum"><h3><span class="big">'+fmt(open)+'</span>to clear on '+esc(MW.farm)+'</h3>'+
+        '<p>Days between '+esc(period)+' when a task worker came in but has no work recorded. Click a red box to enter their work or say why there was none. Every fix then goes to the farm manager, HR and the GM.</p>'+
+        (wait?'<p>'+fmt(wait)+' more '+(wait===1?'is':'are')+' waiting for approval.</p>':'')+
+        (d.open_check?'<div class="wait">Payroll check '+esc(d.open_check.name)+' ('+esc(mwDay(d.open_check.period_from))+' to '+esc(mwDay(d.open_check.period_to))+') can&rsquo;t be approved for '+esc(MW.farm)+' until these are cleared and approved.</div>':'')+
+        '</div>';
     }
-    var h='<div class="mw-sum"><h3><span class="big">'+fmt(open.length)+'</span>to clear on '+esc(MW.farm)+'</h3>'+
-      '<p>Workers who came in between '+esc(period)+' but have no work recorded. For each one, enter the work they did, or say why there was none.</p>'+
-      '<div class="mw-split">'+(onCrew?'<span><b>'+fmt(onCrew)+'</b> on a crew &mdash; enter their work</span>':'')+
-        (noCrew?'<span><b>'+fmt(noCrew)+'</b> not on any crew &mdash; add them to one, or say why</span>':'')+
-        (given?'<span><b>'+fmt(given)+'</b> already given a reason</span>':'')+'</div>'+
-      (d.open_check?'<div class="wait">Payroll check '+esc(d.open_check.name)+' ('+esc(mwDay(d.open_check.period_from))+' to '+esc(mwDay(d.open_check.period_to))+') can&rsquo;t be approved for '+esc(MW.farm)+' until these are cleared.</div>':'')+
-      '</div>';
-    h+=mwDays(rows, d, late);
-    h+='<div id="mw-bulk" hidden><b id="mw-bulk-n"></b> Give them all the same reason: '+mwReasons(d,'data-mw-bulkreason')+
-       '<input id="mw-bulk-note" placeholder="What happened?" hidden> <button type="button" class="btn" id="mw-bulk-go">Save reason</button> <button type="button" class="mw-link" style="color:#fff" id="mw-bulk-clear">Untick all</button></div>';
+    h+='<div class="mw-leg">'+Object.keys(MW_CODES).map(function(k){ return '<span><i class="c-'+MW_CODES[k][0]+'">'+MW_TEXT[k]+'</i>'+MW_CODES[k][1]+'</span>'; }).join("")+
+      '<span><i class="c-pres" style="text-decoration:underline">P</i>underlined = work recorded</span></div>';
+    h+='<div class="mw-tools"><label><input type="checkbox" id="mw-tickmode"> Tick several red boxes to give them the same reason</label></div>';
+    h+='<div class="mw-scroll"><table class="mw-grid"><thead><tr><th class="nm">Worker ('+fmt(ws.length)+')</th>'+
+      days.map(function(x){ var dt=new Date(x+"T00:00:00"), mon=dt.getDay()===1;
+        return '<th'+(mon?' class="wk"':'')+' title="'+esc(mwDay(x))+'">'+dnum(x)+'<div style="font-size:9px;font-weight:400">'+"SMTWTFS".charAt(dt.getDay())+'</div></th>'; }).join("")+
+      '</tr></thead><tbody>';
+    ws.forEach(function(w){
+      h+='<tr><td class="nm" title="'+esc(w.name)+'"><b>'+esc(w.name)+'</b><small>'+esc(w.emp)+(w.open?' &middot; <span style="color:#b91c1c">'+fmt(w.open)+' to clear</span>':'')+'</small></td>';
+      for(var i=0;i<days.length;i++){
+        var c=w.cells.charAt(i), up=c.toUpperCase(), meta=MW_CODES[up]||MW_CODES["?"], worked=(c!==up);
+        var mon=new Date(days[i]+"T00:00:00").getDay()===1;
+        var click=(up==="M"||up==="W"||up==="R"||up==="A"||up==="X");
+        var tip=esc(w.name)+' &middot; '+esc(mwDay(days[i]))+': '+meta[1].replace(/&mdash;/g,"-")+(worked?' (work recorded)':'');
+        h+='<td'+(mon?' class="wk"':'')+'>'+(click?'<button type="button" class="mw-c c-'+meta[0]+(worked?' wk':'')+'" data-mw-cell="'+esc(w.emp+"|"+days[i])+'" data-mw-code="'+up+'" title="'+tip+'" aria-label="'+tip+'">'+MW_TEXT[up]+'</button>'
+          :'<span class="mw-c c-'+meta[0]+(worked?' wk':'')+'" title="'+tip+'">'+MW_TEXT[up]+'</span>')+'</td>';
+      }
+      h+='</tr>';
+    });
+    h+='</tbody></table></div>';
+    h+='<div id="mw-bulk" hidden><b id="mw-bulk-n"></b> Why was there no work? '+(d.reasons||[]).map(function(x){ return '<button type="button" class="mw-chip" data-mw-bulkreason="'+esc(x)+'">'+esc(x)+'</button>'; }).join("")+
+       ' <input id="mw-bulk-note" placeholder="What happened?" hidden> <button type="button" class="btn" id="mw-bulk-go">Send for approval</button> <button type="button" class="btn" id="mw-bulk-clear" style="background:transparent;color:#fff">Untick all</button></div>';
     el("mw-body").innerHTML=h;
-    wireMissing(d);
-  }
-  function mwDays(rows, d, late){
-    var byDay={}, h='';
-    rows.forEach(function(r){ (byDay[r.day]=byDay[r.day]||[]).push(r); });
-    var oldest=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-    Object.keys(byDay).sort().forEach(function(day, di){
-      var dayOpen=byDay[day].filter(function(r){ return !r.excuse; }).length;
-      h+='<details class="mw-day"'+(di<3&&dayOpen?' open':'')+'><summary>'+esc(mwDay(day))+'<span class="n">'+(dayOpen?fmt(dayOpen)+' to clear':'all cleared')+'</span></summary>';
-      var groups={}, order=[];
-      byDay[day].forEach(function(r){ var c=r.crews[0], k=c?c.assignment:""; if(!groups[k]){ groups[k]={crew:c, rows:[]}; order.push(k); } groups[k].rows.push(r); });
-      order.sort(function(a,b){ return (a==="")-(b===""); });
-      order.forEach(function(k){
-        var g=groups[k], c=g.crew, openRows=g.rows.filter(function(r){ return !r.excuse; }), openN=openRows.length, firstOpen=openRows[0]||{};
-        h+='<div class="mw-crew'+(c?'':' none')+'"><div class="mw-crewhead"><div>'+
-          (c?'<div class="t">'+esc(taskName(c.task_name))+'</div><div class="s">'+esc(c.block||"")+(c.team_leader?' &middot; team leader '+esc(c.team_leader):'')+' &middot; '+esc(c.assignment)+'</div>'
-            :'<div class="t">Not on any crew</div><div class="s">'+((d.assignments||[]).some(function(a){ return String(a.from_date)<=day && String(a.to_date)>=day; })
-              ?'They came in but weren&rsquo;t on an assignment that day. Add them to one, or say why there was no work.'
-              :'They came in but no crew on '+esc(MW.farm)+' can take '+esc(mwDay(day))+'. Say why there was no work, or raise an assignment in the Assigner to record it.')+'</div>')+'</div>'+
-          (c&&openN>1?'<button type="button" class="btn good" data-mw-enter="'+esc(c.assignment)+'" data-mw-day="'+esc(day)+'" data-mw-emp="'+esc(firstOpen.employee)+'">Enter work for all '+fmt(openN)+'</button>':'')+'</div>';
-        g.rows.forEach(function(r){
-          var key=r.employee+"|"+r.day, nm=r.employee_name||r.employee;
-          var sc=r.scan?'<span class="mw-scan">In '+esc(r.scan[0])+' &middot; out '+esc(r.scan[1])+'</span>':'<span class="mw-scan att">Marked present</span>';
-          var who='<div class="mw-av" aria-hidden="true">'+esc(mwInitials(nm))+'</div><div class="mw-name">'+esc(r.employee_name||r.employee)+'<small>'+esc(r.employee)+'</small></div>';
-          if(r.excuse){
-            h+='<div class="mw-row done"><span></span>'+who+'<span class="mw-why">No work: '+esc(r.excuse.reason)+(r.excuse.note?' &mdash; '+esc(r.excuse.note):'')+'</span>'+
-              '<div class="mw-acts">'+(r.excuse.payroll_check?'<span class="tag paid">In '+esc(r.excuse.payroll_check)+'</span>':'<button type="button" class="mw-link" data-mw-undo="'+esc(r.excuse.name)+'">Undo</button>')+'</div></div>';
-            return;
-          }
-          var opts=c?[]:(d.assignments||[]).filter(function(a){ return String(a.from_date)<=day && String(a.to_date)>=day; });
-          var act=c?'<button type="button" class="btn good" data-mw-enter="'+esc(c.assignment)+'" data-mw-day="'+esc(day)+'" data-mw-emp="'+esc(r.employee)+'">Enter work</button>':
-            (opts.length?'<button type="button" class="btn solid" data-mw-add="'+esc(key)+'">Add to a crew</button>':'');
-          h+='<div class="mw-row"><input type="checkbox" data-mw-sel="'+esc(key)+'" aria-label="Select '+esc(nm)+'">'+who+sc+
-            '<div class="mw-acts">'+act+'<button type="button" class="btn" data-mw-no="'+esc(key)+'">No work</button></div>'+
-            '<div class="mw-panel" data-mw-nopanel="'+esc(key)+'" hidden>Why was there no work? '+mwReasons(d,'data-mw-reason')+
-              '<input data-mw-note="'+esc(key)+'" placeholder="What happened?" hidden> <button type="button" class="btn" data-mw-save="'+esc(key)+'">Save reason</button></div>';
-          if(!c && opts.length){
-            var needLate=day<oldest;
-            h+='<div class="mw-panel" data-mw-addrow="'+esc(key)+'" hidden>'+
-              ('Put '+esc(nm)+' on <select data-mw-asg="'+esc(key)+'">'+opts.map(function(a){ return '<option value="'+esc(a.name)+'">'+esc(taskName(a.task_name))+' &middot; '+esc(a.block||"")+' ('+esc(a.name)+')</option>'; }).join("")+'</select> for '+esc(mwDay(day))+
-                (needLate?(late?' <input data-mw-why="'+esc(key)+'" placeholder="Why weren&rsquo;t they on a crew?" style="min-width:230px">':' <span style="color:var(--mute)">This day is more than 7 days ago, so only this '+esc(TX("top_singular","Farm").toLowerCase())+'&rsquo;s manager (while the payroll check is open) or the GM can add them.</span>'):'')+
-                ((!needLate||late)?' <button type="button" class="btn good" data-mw-addgo="'+esc(key)+'">Add and enter work</button>':''))+
-              '</div>';
-          }
-          h+='</div>';
-        });
-        h+='</div>';
-      });
-      h+='</details>';
-    });
-    return h;
-  }
-  function wireMissing(d){
     var box=el("mw-body");
-    function save(keys, reason, note, btn){
-      if(!keys.length){ toast("Tick the workers first"); return; }
-      if(!reason){ toast("Pick why there was no work"); return; }
-      if(reason==="Other" && !note){ toast("Say what happened when the reason is Other"); return; }
-      if(btn) btn.disabled=true;
-      var rows=keys.map(function(k){ var p=k.split("|"); return {employee:p[0], day:p[1]}; });
-      call({action:"mw_excuse", rows:JSON.stringify(rows), reason:reason, note:note}, "wm_missing_work").then(function(x){
-        if(x.error){ toast("Error: "+x.error); if(btn) btn.disabled=false; return; }
-        toast("Reason saved for "+fmt(x.excused)+" worker-day"+(x.excused===1?"":"s")); loadMissing();
+    box.querySelectorAll("[data-mw-cell]").forEach(function(b){ b.onclick=function(){
+      var key=b.getAttribute("data-mw-cell"), code=b.getAttribute("data-mw-code");
+      if(el("mw-tickmode").checked && code==="M"){ if(MW.sel[key]) delete MW.sel[key]; else MW.sel[key]=1; b.classList.toggle("sel", !!MW.sel[key]); mwSyncBulk(); return; }
+      mwOpen(key, code);
+    }; });
+    el("mw-tickmode").onchange=function(){ if(!this.checked){ MW.sel={}; box.querySelectorAll(".mw-c.sel").forEach(function(x){ x.classList.remove("sel"); }); mwSyncBulk(); } };
+    var bar=el("mw-bulk");
+    bar.querySelectorAll("[data-mw-bulkreason]").forEach(function(b){ b.onclick=function(){
+      bar.querySelectorAll("[data-mw-bulkreason]").forEach(function(x){ x.classList.toggle("on", x===b); });
+      el("mw-bulk-note").hidden=b.getAttribute("data-mw-bulkreason")!=="Other"; }; });
+    el("mw-bulk-go").onclick=function(){
+      var on=bar.querySelector("[data-mw-bulkreason].on");
+      mwExcuse(Object.keys(MW.sel), on?on.getAttribute("data-mw-bulkreason"):"", (el("mw-bulk-note").value||"").trim(), this, function(){ loadMissing(); });
+    };
+    el("mw-bulk-clear").onclick=function(){ el("mw-tickmode").checked=false; el("mw-tickmode").onchange(); };
+  }
+  function mwSyncBulk(){ var n=Object.keys(MW.sel).length, bar=el("mw-bulk"); if(!bar) return; bar.hidden=!n; el("mw-bulk-n").textContent=n+" ticked."; }
+  function mwExcuse(keys, reason, note, btn, done, msgEl){
+    function say(t){ if(msgEl){ msgEl.className="mw-msg bad"; msgEl.textContent=t; msgEl.hidden=false; } else toast(t); }
+    if(!keys.length){ say("Tick the red boxes first"); return; }
+    if(!reason){ say("Pick why there was no work"); return; }
+    if(reason==="Other" && !note){ say("Say what happened when the reason is Other"); return; }
+    if(btn) btn.disabled=true;
+    var rows=keys.map(function(k){ var p=k.split("|"); return {employee:p[0], day:p[1]}; });
+    call({action:"mw_excuse", rows:JSON.stringify(rows), reason:reason, note:note}, "wm_missing_work").then(function(x){
+      if(x.error){ say(x.error); if(btn) btn.disabled=false; return; }
+      toast("Sent for approval: "+fmt(x.excused)+" day"+(x.excused===1?"":"s")); done();
+    });
+  }
+  // the side panel for one worker-day
+  function mwOpen(key, code){
+    var d=MW.data||{}, det=(d.details||{})[key]||{}, p=key.split("|"), emp=p[0], day=p[1];
+    var w=(d.workers||[]).filter(function(x){ return x.emp===emp; })[0]||{name:emp};
+    var c=(det.crews||[])[0];
+    var h='<button type="button" class="x" id="mw-pn-x" aria-label="Close">&times;</button>'+
+      '<h3>'+esc(w.name)+'</h3><div class="sub">'+esc(emp)+' &middot; '+esc(mwDay(day))+(det.scan?' &middot; <span class="mw-scan">In '+esc(det.scan[0])+' &middot; out '+esc(det.scan[1])+'</span>':'')+'</div>';
+    if(code==="A"||code==="X"){
+      h+='<section><h4>Marked absent</h4>'+(code==="X"
+        ?'<div class="mw-msg info">HR has been asked to correct this day. Once they change it to Present, it turns red here and you can enter the work.</div>'
+        :(d.can_ask_hr?'<p style="font-size:13px;margin:0 0 10px">If they did come to work, HR has to correct the attendance before the work can be recorded.</p><button type="button" class="btn good" id="mw-ask">They did work &mdash; ask HR to correct it</button><div class="mw-msg" id="mw-pn-msg" hidden></div>':'<div class="mw-msg info">Only someone who records work on this '+esc(TX("top_singular","Farm").toLowerCase())+' can ask HR.</div>'))+'</section>';
+    } else if(code==="W"){
+      h+='<section><h4>Waiting for approval</h4><div class="mw-msg info">'+(det.fix?'Work was sent for approval and is with the '+esc(mwStage(det.fix))+'.':
+        (det.excuse?'No work: '+esc(det.excuse.reason)+(det.excuse.note?' &mdash; '+esc(det.excuse.note):'')+'. With the '+esc(mwStage(det.excuse.status))+'.':''))+'</div>'+
+        '<button type="button" class="btn" id="mw-to-wait" style="margin-top:10px">Open Waiting for approval</button></section>';
+    } else if(code==="R"){
+      h+='<section><h4>No work &mdash; approved</h4><div class="mw-msg ok">'+esc((det.excuse||{}).reason||"")+((det.excuse||{}).note?' &mdash; '+esc(det.excuse.note):'')+'</div></section>';
+    } else {
+      if(det.sent_back||((det.excuse||{}).status==="Sent back")){
+        var sb=det.sent_back||{by:det.excuse.sent_back_by, reason:det.excuse.sent_back_reason};
+        h+='<div class="mw-msg bad">Sent back by '+esc(sb.by||"")+': '+esc(sb.reason||"")+'</div>';
+      }
+      if(c){
+        h+='<section><h4>Enter the work they did</h4><div class="sub" style="margin:0 0 8px">'+esc(taskName(c.task_name))+' &middot; '+esc(c.block||"")+' &middot; '+esc(c.assignment)+'</div>'+
+          '<div class="row"><input type="number" min="0" step="any" id="mw-qty" style="width:110px" aria-label="Quantity"> '+esc(c.uom||"")+
+          ' <button type="button" class="btn good" id="mw-send" data-asg="'+esc(c.assignment)+'">Send for approval</button></div><div class="mw-msg" id="mw-pn-msg" hidden></div></section>';
+      } else {
+        var opts=(d.assignments||[]).filter(function(a){ return String(a.from_date)<=day && String(a.to_date)>=day; });
+        var oldest=new Date(Date.now()-7*86400000).toISOString().slice(0,10), needLate=day<oldest, late=(d.late_farms||[]).indexOf(MW.farm)>=0 && d.open_check;
+        h+='<section><h4>Not on any crew that day</h4>'+(opts.length
+          ?'<p style="font-size:13px;margin:0 0 8px">Put them on a crew for '+esc(mwDay(day))+', then enter the work.</p><div class="row"><select id="mw-asg" style="max-width:100%">'+opts.map(function(a){ return '<option value="'+esc(a.name)+'" data-uom="'+esc(a.uom||"")+'">'+esc(taskName(a.task_name))+' &middot; '+esc(a.block||"")+' ('+esc(a.name)+')</option>'; }).join("")+'</select></div>'+
+            (needLate?(late?'<div class="row" style="margin-top:8px"><input id="mw-why" placeholder="Why weren&rsquo;t they on a crew?" style="flex:1"></div>':'<div class="mw-msg info">This day is more than 7 days ago, so only this '+esc(TX("top_singular","Farm").toLowerCase())+'&rsquo;s manager (while the payroll check is open) or the GM can add them.</div>'):'')+
+            ((!needLate||late)?'<div class="row" style="margin-top:8px"><button type="button" class="btn solid" id="mw-add">Add to this crew</button></div>':'')
+          :'<div class="mw-msg info">No crew on '+esc(MW.farm)+' can take '+esc(mwDay(day))+'. Raise an assignment in the Assigner to record their work, or say why there was none.</div>')+
+          '<div class="mw-msg" id="mw-pn-msg" hidden></div></section>';
+      }
+      h+='<section><h4>Or: there was no work for them</h4><div class="row">'+(d.reasons||[]).map(function(x){ return '<button type="button" class="mw-chip" data-mw-reason="'+esc(x)+'">'+esc(x)+'</button>'; }).join("")+'</div>'+
+        '<div class="row" style="margin-top:8px"><input id="mw-note" placeholder="What happened?" hidden style="flex:1"></div>'+
+        '<div class="row" style="margin-top:8px"><button type="button" class="btn" id="mw-no">Send reason for approval</button></div><div class="mw-msg" id="mw-no-msg" hidden></div></section>';
+    }
+    var pn=el("mw-pn"); pn.innerHTML=h; pn.hidden=false;
+    document.querySelectorAll("#p-missing .mw-c.cur").forEach(function(x){ x.classList.remove("cur"); });
+    var cur=document.querySelector('#p-missing [data-mw-cell="'+key.replace(/"/g,"")+'"]'); if(cur) cur.classList.add("cur");
+    var first=pn.querySelector("#mw-qty, #mw-asg, #mw-ask, .mw-chip, #mw-pn-x"); if(first) first.focus();
+    el("mw-pn-x").onclick=function(){ pn.hidden=true; };
+    document.onkeydown=function(ev){ if(ev.key==="Escape" && !pn.hidden) pn.hidden=true; };
+    function msg(t, kind){ var m=el("mw-pn-msg"); m.className="mw-msg "+(kind||"bad"); m.textContent=t; m.hidden=false; }
+    if(el("mw-to-wait")) el("mw-to-wait").onclick=function(){ MW.view="wait"; document.querySelectorAll("#p-missing [data-mw-view]").forEach(function(x){ x.classList.toggle("on", x.getAttribute("data-mw-view")==="wait"); }); loadMissing(); };
+    if(el("mw-ask")) el("mw-ask").onclick=function(){
+      var b=this; b.disabled=true;
+      call({action:"mw_ask_hr", employee:emp, day:day}, "wm_missing_work").then(function(x){
+        if(x.error){ msg(x.error); b.disabled=false; return; }
+        toast("HR asked to correct "+mwDay(day)); loadMissing(); });
+    };
+    function sendQty(asg){
+      var q=parseFloat(el("mw-qty").value);
+      if(!(q>0)){ msg("Type how much they did"); el("mw-qty").focus(); return; }
+      el("mw-send").disabled=true;
+      call({action:"act_submit", assignment:asg, rows:emp+"~"+day+"~"+q, missing_fix:1, submit_now:1}).then(function(x){
+        if(x.error){ msg(x.error); el("mw-send").disabled=false; return; }
+        if(x.needs_presence||x.needs_att_override){ msg("This day needs its attendance confirmed first. Open it in Enter Actuals."); el("mw-send").disabled=false; return; }
+        toast("Sent for approval: "+w.name+", "+mwDay(day)); loadMissing();
       });
     }
-    function pickChip(scope, attr, b){
-      scope.querySelectorAll("["+attr+"]").forEach(function(x){ x.classList.toggle("on", x===b); });
-      // the note box is only for Other
-      var note=scope.querySelector("input[data-mw-note], #mw-bulk-note");
-      if(note){ note.hidden=b.getAttribute(attr)!=="Other"; if(!note.hidden) note.focus(); }
-    }
-    function ticked(){ var k=[]; box.querySelectorAll("[data-mw-sel]").forEach(function(x){ if(x.checked) k.push(x.getAttribute("data-mw-sel")); }); return k; }
-    function syncBulk(){ var bar=el("mw-bulk"); if(!bar) return; var n=ticked().length; bar.hidden=!n; el("mw-bulk-n").textContent=n+" ticked."; }
-    box.querySelectorAll("[data-mw-sel]").forEach(function(x){ x.onchange=syncBulk; });
-    box.querySelectorAll("[data-mw-no]").forEach(function(b){ b.onclick=function(){
-      var pn=box.querySelector('[data-mw-nopanel="'+b.getAttribute("data-mw-no")+'"]'); if(pn) pn.hidden=!pn.hidden; }; });
-    box.querySelectorAll("[data-mw-nopanel]").forEach(function(pn){
-      pn.querySelectorAll("[data-mw-reason]").forEach(function(b){ b.onclick=function(){ pickChip(pn,"data-mw-reason",b); }; });
-    });
-    box.querySelectorAll("[data-mw-save]").forEach(function(b){ b.onclick=function(){
-      var key=b.getAttribute("data-mw-save"), pn=box.querySelector('[data-mw-nopanel="'+key+'"]'), on=pn.querySelector("[data-mw-reason].on");
-      save([key], on?on.getAttribute("data-mw-reason"):"", (box.querySelector('[data-mw-note="'+key+'"]').value||"").trim(), b); }; });
-    var bar=el("mw-bulk");
-    if(bar){
-      bar.querySelectorAll("[data-mw-bulkreason]").forEach(function(b){ b.onclick=function(){ pickChip(bar,"data-mw-bulkreason",b); }; });
-      el("mw-bulk-go").onclick=function(){ var on=bar.querySelector("[data-mw-bulkreason].on"); save(ticked(), on?on.getAttribute("data-mw-bulkreason"):"", (el("mw-bulk-note").value||"").trim(), this); };
-      el("mw-bulk-clear").onclick=function(){ box.querySelectorAll("[data-mw-sel]").forEach(function(x){ x.checked=false; }); syncBulk(); };
-    }
-    box.querySelectorAll("[data-mw-enter]").forEach(function(b){ b.onclick=function(){ openEntry(b.getAttribute("data-mw-enter"), b.getAttribute("data-mw-day"), b.getAttribute("data-mw-emp")); }; });
-    box.querySelectorAll("[data-mw-undo]").forEach(function(b){ b.onclick=function(){
-      b.disabled=true;
-      call({action:"mw_unexcuse", names:JSON.stringify([b.getAttribute("data-mw-undo")])}, "wm_missing_work").then(function(x){
-        if(x.error){ toast("Error: "+x.error); b.disabled=false; return; } toast("Reason removed"); loadMissing(); });
-    }; });
-    box.querySelectorAll("[data-mw-add]").forEach(function(b){ b.onclick=function(){
-      var row=box.querySelector('[data-mw-addrow="'+b.getAttribute("data-mw-add")+'"]'); if(row) row.hidden=!row.hidden; }; });
-    box.querySelectorAll("[data-mw-addgo]").forEach(function(b){ b.onclick=function(){
-      var key=b.getAttribute("data-mw-addgo"), p=key.split("|"), emp=p[0], day=p[1];
-      var asg=(box.querySelector('[data-mw-asg="'+key+'"]')||{}).value;
-      var why=box.querySelector('[data-mw-why="'+key+'"]'), reason="";
-      if(why){ reason=(why.value||"").trim(); if(!reason){ toast("Say why they weren't on a crew"); why.focus(); return; } }
+    if(el("mw-send")) el("mw-send").onclick=function(){ sendQty(this.getAttribute("data-asg")); };
+    if(el("mw-qty")) el("mw-qty").onkeydown=function(ev){ if(ev.key==="Enter") el("mw-send").click(); };
+    if(el("mw-add")) el("mw-add").onclick=function(){
+      var b=this, asg=el("mw-asg").value, why=el("mw-why"), reason="";
+      if(why){ reason=(why.value||"").trim(); if(!reason){ msg("Say why they weren't on a crew"); why.focus(); return; } }
       b.disabled=true;
       call({action:"a_add_crew", assignment:asg, employees:emp, start_date:day, until:day,
             for_check:why?d.open_check.name:undefined, backdate_reason:why?reason:undefined}, "wm_assigner").then(function(x){
-        if(x.error){ toast("Error: "+x.error); b.disabled=false; return; }
-        toast("Added to "+asg+" for "+mwDay(day)); openEntry(asg, day, emp);
+        if(x.error){ msg(x.error); b.disabled=false; return; }
+        var o=el("mw-asg").selectedOptions[0];
+        var sec=b.closest("section");
+        sec.innerHTML='<h4>Enter the work they did</h4><div class="mw-msg ok">Added to '+esc(asg)+' for '+esc(mwDay(day))+'.</div>'+
+          '<div class="row" style="margin-top:8px"><input type="number" min="0" step="any" id="mw-qty" style="width:110px" aria-label="Quantity"> '+esc(o?o.getAttribute("data-uom"):"")+
+          ' <button type="button" class="btn good" id="mw-send">Send for approval</button></div><div class="mw-msg" id="mw-pn-msg" hidden></div>';
+        el("mw-send").onclick=function(){ sendQty(asg); };
+        el("mw-qty").onkeydown=function(ev){ if(ev.key==="Enter") el("mw-send").click(); };
+        el("mw-qty").focus();
       });
+    };
+    pn.querySelectorAll("[data-mw-reason]").forEach(function(b){ b.onclick=function(){
+      pn.querySelectorAll("[data-mw-reason]").forEach(function(x){ x.classList.toggle("on", x===b); });
+      el("mw-note").hidden=b.getAttribute("data-mw-reason")!=="Other"; if(!el("mw-note").hidden) el("mw-note").focus(); }; });
+    if(el("mw-no")) el("mw-no").onclick=function(){
+      var on=pn.querySelector("[data-mw-reason].on");
+      mwExcuse([key], on?on.getAttribute("data-mw-reason"):"", (el("mw-note").value||"").trim(), this, function(){ loadMissing(); }, el("mw-no-msg"));
+    };
+  }
+  // Waiting for approval: every missing-day fix not yet final, step by step
+  function loadWaiting(){
+    call({action:"mw_waiting", farm:MW.farm}, "wm_missing_work").then(function(w){
+      if(w.error){ el("mw-body").innerHTML='<div class="empty">'+esc(w.error)+'</div>'; return; }
+      var b=el("mw-turn"); if(b){ b.hidden=!w.your_turn; b.textContent=w.your_turn||""; }
+      if(MW.data) mwFarmButtons(MW.data.farms, null);
+      var h='';
+      if(!(w.work||[]).length && !(w.reasons||[]).length){
+        el("mw-body").innerHTML='<div class="mw-clear"><h3 style="margin:0 0 4px">Nothing waiting for approval on '+esc(MW.farm||"your farms")+'</h3><p style="color:var(--mute);margin:0">Fixes sent from To clear appear here until the farm manager, HR and the GM have approved them.</p></div>';
+        return;
+      }
+      function groups(items, kind){
+        var order=["Pending Farm Manager","Pending HR Head","Pending HR","Pending GM","Draft"], by={};
+        items.forEach(function(x){ (by[x.stage]=by[x.stage]||[]).push(x); });
+        var keys=Object.keys(by).sort(function(a,b){
+          var ta=by[a].some(function(x){ return x.can_act; }), tb=by[b].some(function(x){ return x.can_act; });
+          return (tb-ta) || (order.indexOf(a)-order.indexOf(b)); });
+        return keys.map(function(st){
+          var rows=by[st], mine=rows.filter(function(x){ return x.can_act; }).length;
+          var gh='<div class="mw-group" data-mw-kind="'+kind+'" data-mw-stage="'+esc(st)+'"><div class="mw-ghead"><h4>With the '+esc(mwStage(st))+' ('+fmt(rows.length)+')'+(mine?'<span class="turn">Your turn</span>':'')+'</h4>'+
+            (mine?'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label style="font-size:12px"><input type="checkbox" data-mw-all> tick all</label>'+
+              (kind==="work"&&st==="Pending Farm Manager"?'<span style="font-size:12px">Quality:</span><button type="button" class="mw-chip" data-mw-q="1">Good</button><button type="button" class="mw-chip" data-mw-q="2">Fair</button><button type="button" class="mw-chip" data-mw-q="3">Rework</button>':'')+
+              '<button type="button" class="btn good" data-mw-approveall>Approve ticked</button></div>':'')+'</div>';
+          rows.forEach(function(x){
+            gh+='<div class="mw-wrow"><span>'+(x.can_act?'<input type="checkbox" data-mw-tick="'+esc(x.name)+'" aria-label="Tick '+esc(x.employee_name||x.employee)+'">':'')+'</span>'+
+              '<div><b>'+esc(x.employee_name||x.employee)+'</b><small>'+esc(x.employee)+' &middot; '+esc(mwDay(x.day))+' &middot; '+esc(x.farm)+'</small></div>'+
+              (kind==="work"?'<div>'+esc(taskName(x.task_name))+'<small>'+fmt(x.qty,2)+' '+esc(x.uom||"")+' &middot; KES '+fmt(x.amount,2)+'</small></div><div><small>entered by</small>'+esc(x.entered_by||"")+'</div>'
+                :'<div>No work: '+esc(x.reason)+(x.note?'<small>'+esc(x.note)+'</small>':'')+'</div><div><small>marked by</small>'+esc(x.marked_by||"")+'</div>')+
+              '<div class="acts">'+(x.can_act?'<button type="button" class="btn good" data-mw-ok="'+esc(x.name)+'">Approve</button><button type="button" class="btn" data-mw-backopen="'+esc(x.name)+'">Send back</button>':'<span style="font-size:12px;color:var(--mute)">with the '+esc(mwStage(x.stage))+'</span>')+'</div>'+
+              (x.can_act?'<div class="back" data-mw-backrow="'+esc(x.name)+'" hidden><input data-mw-backwhy="'+esc(x.name)+'" placeholder="Why is it being sent back?"><button type="button" class="btn" data-mw-back="'+esc(x.name)+'">Send back</button></div>':'')+
+              '</div>';
+          });
+          return gh+'</div>';
+        }).join("");
+      }
+      if((w.work||[]).length) h+='<h3 style="margin:6px 0 10px;font-size:15px">Work entered for a missing day</h3>'+groups(w.work,"work");
+      if((w.reasons||[]).length) h+='<h3 style="margin:16px 0 10px;font-size:15px">No work given</h3>'+groups(w.reasons,"reason");
+      el("mw-body").innerHTML=h;
+      mwWireWaiting(w);
+    }).catch(function(e){ el("mw-body").innerHTML='<div class="empty">Could not load: '+esc(e&&e.message||e)+'</div>'; });
+  }
+  function mwWireWaiting(w){
+    var box=el("mw-body"), all={};
+    (w.work||[]).forEach(function(x){ all["work|"+x.name]=x; }); (w.reasons||[]).forEach(function(x){ all["reason|"+x.name]=x; });
+    function kindOf(el2){ return el2.closest("[data-mw-kind]").getAttribute("data-mw-kind"); }
+    function approveWork(names, quality, btn){
+      // one record at a time, through the Actuals approvals and their rules
+      var i=0, done=0;
+      function next(){
+        if(i>=names.length){ toast("Approved "+fmt(done)); loadWaiting(); return; }
+        var x=all["work|"+names[i++]];
+        var act={"Pending Farm Manager":"act_fm_approve","Pending HR Head":"act_hr_approve","Pending GM":"act_gm_approve"}[x.stage];
+        var args={action:act, name:x.name};
+        if(act==="act_fm_approve"){ if(!quality){ toast("Pick the quality first: Good, Fair or Rework"); if(btn) btn.disabled=false; return; } args.quality_score=quality; if(quality==="3") args.quality_note="Rework (Missing work)"; }
+        call(args).then(function(r){ if(r.error){ toast(x.employee_name+": "+r.error); if(btn) btn.disabled=false; loadWaiting(); return; } done++; next(); });
+      }
+      if(btn) btn.disabled=true; next();
+    }
+    function approveReasons(names, btn){
+      if(btn) btn.disabled=true;
+      call({action:"mw_approve", names:JSON.stringify(names)}, "wm_missing_work").then(function(r){
+        if(r.error){ toast(r.error); if(btn) btn.disabled=false; return; } toast("Approved "+fmt(r.done)); loadWaiting(); });
+    }
+    box.querySelectorAll("[data-mw-q]").forEach(function(b){ b.onclick=function(){
+      b.closest(".mw-ghead").querySelectorAll("[data-mw-q]").forEach(function(x){ x.classList.toggle("on", x===b); }); }; });
+    function quality(scope){ var q=scope.querySelector("[data-mw-q].on"); return q?q.getAttribute("data-mw-q"):""; }
+    box.querySelectorAll("[data-mw-all]").forEach(function(c){ c.onchange=function(){ var on=this.checked;
+      c.closest(".mw-group").querySelectorAll("[data-mw-tick]").forEach(function(x){ x.checked=on; }); }; });
+    box.querySelectorAll("[data-mw-approveall]").forEach(function(b){ b.onclick=function(){
+      var g=b.closest(".mw-group"), names=[]; g.querySelectorAll("[data-mw-tick]").forEach(function(x){ if(x.checked) names.push(x.getAttribute("data-mw-tick")); });
+      if(!names.length){ toast("Tick the ones to approve"); return; }
+      if(kindOf(b)==="work") approveWork(names, quality(g), b); else approveReasons(names, b); }; });
+    box.querySelectorAll("[data-mw-ok]").forEach(function(b){ b.onclick=function(){
+      var n=b.getAttribute("data-mw-ok"), g=b.closest(".mw-group");
+      if(kindOf(b)==="work") approveWork([n], quality(g), b); else approveReasons([n], b); }; });
+    box.querySelectorAll("[data-mw-backopen]").forEach(function(b){ b.onclick=function(){
+      var r=box.querySelector('[data-mw-backrow="'+b.getAttribute("data-mw-backopen")+'"]'); r.hidden=!r.hidden; if(!r.hidden) r.querySelector("input").focus(); }; });
+    box.querySelectorAll("[data-mw-back]").forEach(function(b){ b.onclick=function(){
+      var n=b.getAttribute("data-mw-back"), why=(box.querySelector('[data-mw-backwhy="'+n+'"]').value||"").trim();
+      if(!why){ toast("Say why it is being sent back"); return; }
+      b.disabled=true;
+      var p=kindOf(b)==="work"?call({action:"act_reject", name:n, reason:why}):call({action:"mw_send_back", names:JSON.stringify([n]), reason:why}, "wm_missing_work");
+      p.then(function(r){ if(r.error){ toast(r.error); b.disabled=false; return; } toast("Sent back"); loadWaiting(); });
     }; });
   }
   function deepLink(){

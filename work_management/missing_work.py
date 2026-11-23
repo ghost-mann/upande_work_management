@@ -490,9 +490,10 @@ def assignment_options(farm, from_date, to_date):
 	belong to one of those."""
 	return [dict(r, from_date=str(r.from_date), to_date=str(r.to_date)) for r in frappe.db.sql("""
 		SELECT a.name, IFNULL(tk.subject, a.task) task_name, IFNULL(a.block_section, '') block,
-			a.from_date, a.to_date
+			a.from_date, a.to_date, IFNULL(pl.uom, '') uom
 		FROM `tabWork Management Assigner` a
 		LEFT JOIN `tabTask` tk ON tk.name = a.task
+		LEFT JOIN `tabWork Management Planner` pl ON pl.name = a.planner_request
 		WHERE a.docstatus < 2 AND a.workflow_state = 'Assigned' AND TRIM(a.farm) = %s
 		AND a.from_date <= %s AND a.to_date >= %s
 		AND EXISTS (SELECT 1 FROM `tabWork Assignment Employee` w2 WHERE w2.parent = a.name
