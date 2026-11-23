@@ -396,3 +396,135 @@ def wm_missing_work(**kwargs):
 	else:
 		out["error"] = "unknown action: " + str(action)
 	return out
+
+
+# ---- the 07:30 reminder ----------------------------------------------------------------
+
+SENDER = "Kaitet Work Management <notifications@karenroses.com>"
+
+
+def split_emails(text):
+	"""Settings lists: comma- or newline-separated."""
+	return [x.strip() for x in str(text or "").replace("\n", ",").split(",") if x.strip()]
+
+
+def leader_for(team_leader, master_plan, day, stand_ins):
+	"""Who leads that crew on `day`: a dated stand-in for this leader on this
+	master plan, else the leader."""
+	for s in stand_ins or []:
+		if (s.get("master_plan") == master_plan and s.get("team_leader") == team_leader
+				and str(s.get("from_date")) <= day <= str(s.get("to_date"))):
+			return s.get("stand_in") or team_leader
+	return team_leader
+
+
+def recipients(rows, stand_ins, users_with_email, fms_by_farm, notify):
+	"""{email: {"rows": [...], "all_farms": bool}}. On-crew days go to the crew's
+	leader (or stand-in) when they log in with an email; every day goes to its
+	farm's managers; the notify list (GM, HR) gets every day as one summary."""
+	out = {}
+
+	def give(email, r, all_farms=False):
+		if not email:
+			return
+		box = out.setdefault(email, {"rows": [], "all_farms": all_farms, "seen": set()})
+		key = (r["employee"], r["day"])
+		if key not in box["seen"]:
+			box["seen"].add(key)
+			box["rows"].append(r)
+
+	for r in rows:
+		for c in r["crews"][:1]:
+			who = leader_for(c.get("team_leader"), c.get("master_plan"), r["day"], stand_ins)
+			give(users_with_email.get(who), r)
+		for fm in fms_by_farm.get(r["farm"]) or []:
+			give(fm, r)
+		for n in notify or []:
+			give(n, r, True)
+	for box in out.values():
+		box.pop("seen", None)
+	return out
+
+
+def render_email(rows, all_farms, url):
+	"""The email body: (for the summary) a count per farm, then each worker by
+	farm, day and crew."""
+	esc = frappe.utils.escape_html
+	h = ['<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#222">']
+	h.append("<p>These task workers were present (scan or attendance) but have no work recorded and no "
+		"reason given. Enter their work, or say why there was none, in "
+		'<a href="' + esc(url) + '">Actuals &gt; Missing work</a>. The payroll check will not let a farm '
+		"approve until they are cleared.</p>")
+	farms = sorted({r["farm"] or "" for r in rows})
+	if all_farms:
+		h.append('<table cellpadding="5" style="border-collapse:collapse;margin:0 0 12px 0">'
+			'<tr style="background:#0a0a0a;color:#fafaf6"><th align="left">Farm</th><th>Days</th>'
+			"<th>On a crew</th><th>Not on any crew</th></tr>")
+		for f in farms:
+			fr = [r for r in rows if r["farm"] == f]
+			on = len([r for r in fr if r["crews"]])
+			h.append("<tr><td>" + esc(f) + "</td><td align=\"right\">" + str(len(fr)) + "</td><td align=\"right\">" +
+				str(on) + "</td><td align=\"right\">" + str(len(fr) - on) + "</td></tr>")
+		h.append("</table>")
+	for f in farms:
+		h.append('<h3 style="margin:16px 0 4px 0;font-size:14px">' + esc(f) + "</h3>")
+		h.append('<table cellpadding="4" style="border-collapse:collapse;width:100%">'
+			'<tr style="background:#f4f3ef"><th align="left">Day</th><th align="left">Worker</th>'
+			'<th align="left">Crew</th></tr>')
+		for r in sorted([r for r in rows if r["farm"] == f], key=lambda x: (x["day"], x["crews"][0]["assignment"]
+				if x["crews"] else "~", x.get("employee_name") or x["employee"])):
+			c = r["crews"][0] if r["crews"] else None
+			crew = (esc(c["task_name"] or "") + " &middot; " + esc(c["block"] or "") + " (" + esc(c["assignment"]) + ")"
+				if c else "<i>not on any crew</i>")
+			h.append("<tr><td>" + esc(r["day"]) + "</td><td>" + esc(r.get("employee_name") or r["employee"]) +
+				" (" + esc(r["employee"]) + ")</td><td>" + crew + "</td></tr>")
+		h.append("</table>")
+	h.append("</div>")
+	return "".join(h)
+
+
+def send_reminders():
+	"""Daily at 07:30 (hooks.py cron): yesterday and the six days before."""
+	if not frappe.db.get_single_value("Work Management Settings", "missing_work_reminder"):
+		return 0
+	from work_management.api.config import get_config
+
+	today = frappe.utils.today()
+	from_date = frappe.utils.add_days(today, -7)
+	to_date = frappe.utils.add_days(today, -1)
+	farms = get_config().get("farms") or []
+	rows = find(farms, from_date, to_date)
+	if not rows:
+		return 0
+	names = {r[0]: r[1] for r in frappe.db.sql("SELECT name, employee_name FROM `tabEmployee` WHERE name IN %s",
+		(tuple({r["employee"] for r in rows}),))}
+	for r in rows:
+		r["employee_name"] = names.get(r["employee"]) or r["employee"]
+	plans = tuple({c["master_plan"] for r in rows for c in r["crews"] if c.get("master_plan")}) or ("__none__",)
+	stand_ins = [dict(s) for s in frappe.db.sql("""SELECT parent master_plan, team_leader, stand_in, from_date, to_date
+		FROM `tabWork Management Team Leader Stand In` WHERE parent IN %s""", (plans,), as_dict=True)] \
+		if frappe.db.exists("DocType", "Work Management Team Leader Stand In") else []
+	# a leader is a login (user) or an Employee ID; either way they need an email to be told
+	users = {}
+	for name, email in frappe.db.sql("SELECT name, email FROM `tabUser` WHERE enabled = 1 AND IFNULL(email, '') != ''"):
+		users[name] = email
+	for emp, uid in frappe.db.sql("""SELECT name, user_id FROM `tabEmployee` WHERE IFNULL(user_id, '') != ''"""):
+		if uid in users:
+			users[emp] = users[uid]
+	fms = {}
+	for farm, email in frappe.db.sql("""SELECT sa.scope, u.email FROM `tabWork Management Stage Approver` sa
+		INNER JOIN `tabUser` u ON u.name = sa.user
+		WHERE sa.parenttype = 'Work Management Settings' AND sa.stage_label = 'Actuals: Farm Manager'
+		AND IFNULL(sa.scope, '') != '' AND u.enabled = 1"""):
+		fms.setdefault(farm, []).append(email)
+	notify = split_emails(frappe.db.get_single_value("Work Management Settings", "missing_work_notify"))
+	base = frappe.utils.get_url("/work-actuals?tab=missing&from=" + from_date + "&to=" + to_date)
+	sent = 0
+	for email, box in recipients(rows, stand_ins, users, fms, notify).items():
+		bf = sorted({r["farm"] for r in box["rows"]})
+		url = base + ("&farm=" + bf[0] if len(bf) == 1 else "")
+		frappe.sendmail(recipients=[email], sender=SENDER, add_css=False,
+			subject="Missing work: " + str(len(box["rows"])) + " worker-day(s) with no actuals",
+			message=render_email(box["rows"], box["all_farms"], url))
+		sent = sent + 1
+	return sent

@@ -130,6 +130,13 @@ scheduler_events = {
 	"hourly": [
 		"work_management.release_dates.sweep",
 	],
+	# Present task workers with no actuals: team leaders, farm managers and the
+	# GM/HR summary list (Work Management Settings > Missing work).
+	"cron": {
+		"30 7 * * *": [
+			"work_management.missing_work.send_reminders",
+		],
+	},
 }
 
 after_install = "work_management.install.after_install"
