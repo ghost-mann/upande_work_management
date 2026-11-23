@@ -99,6 +99,8 @@
   "section_payroll_check",
   "payroll_check_required",
   "payroll_check_notify",
+  "missing_work_reminder",
+  "missing_work_notify",
   "max_backdate_days",
   "qty_flag_multiple",
   "qty_refuse_multiple",
@@ -779,6 +781,19 @@
    "description": "Comma-separated emails of HR, told when every farm has approved and when the GM approves. Empty: the Settings approvers for Actuals: HR Head."
   },
   {
+   "fieldname": "missing_work_reminder",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Email missing work every morning",
+   "description": "On: at 07:30 every day, team leaders, farm managers and the addresses below get the task workers who were present but have no actuals (yesterday and the 6 days before)."
+  },
+  {
+   "fieldname": "missing_work_notify",
+   "fieldtype": "Small Text",
+   "label": "Missing work summary to",
+   "description": "Comma-separated emails (e.g. the GM and HR) who get one all-farms summary each morning."
+  },
+  {
    "fieldname": "max_backdate_days",
    "fieldtype": "Int",
    "label": "Days an assignment may start in the past",
@@ -824,7 +839,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 22:00:00.000000",
+ "modified": "2026-11-23 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",
