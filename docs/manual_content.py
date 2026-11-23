@@ -233,23 +233,30 @@ def sections():
 			  "GM approves — the close queue shows live done/remaining figures."),
 
 		("h3", "Missing work"),
-		("p", "A task worker who was present (a scan, or a Present / Half Day attendance) but "
-			  "has no work recorded that day would simply go unpaid. The Missing work tab lists "
-			  "every such day, by day and by crew. Each one ends in one of two ways."),
-		("n", "Enter work: opens the assignment's grid with that worker's cell for the day "
-			  "selected. Enter work for N does the same for the whole crew."),
-		("n", "Not on any crew: the worker was never assigned that day. Add to assignment puts "
-			  "them on an approved assignment for that one day, then opens the grid. Days more "
-			  "than 7 days old need the GM, except inside an open payroll check, where the "
-			  "farm's own manager may add them with a reason; HR sees each one in the check "
-			  "as \"added late\"."),
-		("n", "No work given: tick the days, pick the reason (sent home, rain, sick, scanned but "
-			  "not working, or Other with a note) and mark them. Undo works until the farm "
-			  "approves a payroll check covering the day."),
-		("note", "The payroll check will not let a farm approve while it still has missing days "
-			  "in the check's dates. Approved leave, holidays and days marked Absent are never "
-			  "missing. Every morning at 07:30 team leaders and farm managers get yesterday's "
-			  "list, and the addresses in Settings (the GM and HR) get one summary for all farms."),
+		("p", "A task worker who came in (a scan, or a Present / Half Day attendance) but has no "
+			  "work recorded that day would simply go unpaid. Missing work has two tabs: To clear "
+			  "and Waiting for approval."),
+		("n", "To clear is a monthly grid, like the dashboard's attendance sheet: every task worker "
+			  "on the farm, one box per day. A red box is a day to clear; click it."),
+		("n", "On a crew that day: type the quantity they did and send it for approval. It is saved "
+			  "as its own small record, so it works even when the crew's main record is already "
+			  "approved. The plan's quantity still caps it."),
+		("n", "Not on any crew: put them on a crew for that day first, then enter the quantity. Days "
+			  "more than 7 days old need the GM, except inside an open payroll check, where the "
+			  "farm's own manager may add them with a reason."),
+		("n", "No work for them: pick the reason (sent home, rain, sick, scanned but not working, or "
+			  "Other with a note). Tick several red boxes to give them the same reason at once."),
+		("n", "A red A is a day marked Absent. If they did work, click it and ask HR to correct the "
+			  "attendance; once HR approves the request the day turns red and the work can be entered."),
+		("n", "Waiting for approval lists every fix, work and reasons alike, until the farm manager, "
+			  "HR and the GM have approved it, in that order (steps switched off in Settings are "
+			  "skipped). The farm manager scores the quality of work. Nobody approves their own "
+			  "entry, and the same person cannot take both the HR and the GM step on a reason. "
+			  "Send back needs a reason and returns the day to To clear."),
+		("note", "The payroll check will not let a farm approve while it has days to clear or fixes "
+			  "still waiting in the check's dates. Every morning at 07:30 team leaders and farm "
+			  "managers get yesterday's open days, and the addresses in Settings (the GM and HR) "
+			  "get one summary for all farms."),
 
 		("h2", "Payment — workers are paid one at a time"),
 		("p", "The payment section is worker-centric. Each worker's confirmed earnings are sent "

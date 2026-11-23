@@ -40,11 +40,15 @@ in one go; each block becomes its own plan line.
 2. Each worker-day row is valued at the plan rate (qty × rate).
 3. Submit the actuals document through its confirmations: Farm Manager →
    HR → General Manager (**CONFIRMED**). Only CONFIRMED work can be paid.
-4. **Missing work** tab: task workers who were present (scan or attendance) but have
-   no work recorded. Enter their work, put them on a crew first (*Add to assignment*),
-   or mark *No work given* with a reason. A farm cannot approve its part of a payroll
-   check while it has open missing days. A 07:30 email lists yesterday's to team
-   leaders, farm managers and the Settings summary list (GM, HR).
+4. **Missing work** tab, with two sub-tabs:
+   - **To clear**: a monthly grid of every task worker. Click a red box to enter the
+     quantity (saved as its own record), put the worker on a crew first, or give a
+     *no work* reason. Click a red **A** to ask HR to correct an Absent day.
+   - **Waiting for approval**: every fix (work and reasons) goes farm manager → HR → GM.
+     Approve or send back with a reason; sent-back days return to To clear.
+   A farm cannot approve its part of a payroll check while it has open or waiting days.
+   A 07:30 email lists yesterday's open days to team leaders, farm managers and the
+   Settings summary list (GM, HR).
 
 ## 4. Payment (`/work-payment`) — workers are paid one at a time
 

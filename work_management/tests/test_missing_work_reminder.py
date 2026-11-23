@@ -87,6 +87,13 @@ class TestSend(unittest.TestCase):
 		self.assertIn("sender=SENDER", body("send_reminders"))
 		self.assertIn("add_css=False", body("send_reminders"))
 
+	def test_lists_open_days_only(self):
+		# fixes waiting for approval are not "missing" any more: find() without
+		# include_excused returns open days only
+		s = body("send_reminders")
+		self.assertIn("find(farms, from_date, to_date)", s)
+		self.assertNotIn("include_excused", s)
+
 	def test_links_to_the_tab(self):
 		self.assertIn("/work-actuals?tab=missing", SRC)
 
