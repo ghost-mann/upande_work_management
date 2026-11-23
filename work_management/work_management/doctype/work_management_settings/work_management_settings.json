@@ -64,6 +64,7 @@
   "disc_short_day",
   "disc_hours_vs_qty",
   "disc_closed_short",
+  "disc_multi_standard",
   "att_auto_release_inactive",
   "sb_consult",
   "consultant_users",
@@ -76,6 +77,7 @@
   "std_hours_saturday",
   "column_break_split",
   "std_hours_sunday",
+  "max_hours_per_day",
   "tab_rates",
   "sb_rates",
   "current_daily_wage",
@@ -363,6 +365,13 @@
    "description": "Plans capped below their approved target \u2014 by a short submit or by closing early \u2014 with the shortfall and the reason given. One is a week that did not go to plan; a column of them is a target nobody believes."
   },
   {
+   "fieldname": "disc_multi_standard",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "More than one day's standard on one date",
+   "description": "One worker whose rows on a single date add up to more than one day's target \u2014 an 8-hour task and a bed made, say. Can be a real split day, so it is saved, and listed here before payment."
+  },
+  {
    "fieldname": "att_auto_release_inactive",
    "fieldtype": "Check",
    "label": "Auto-release inactive employees from assignments",
@@ -439,6 +448,14 @@
    "precision": "2",
    "label": "Standard hours, Sunday",
    "description": "Sunday is worked on these farms, so it is a full day by default. Set it to zero for a site that does not work Sundays \u2014 a zero day contributes no man-days rather than dividing by nothing."
+  },
+  {
+   "fieldname": "max_hours_per_day",
+   "fieldtype": "Float",
+   "default": "8",
+   "precision": "2",
+   "label": "Most hours one worker may be paid for in a day",
+   "description": "Across every actuals document. An hour-based entry (the plan's unit is Hours) that would take one worker past this on one date is refused. Empty means 8."
   },
   {
    "fieldname": "tab_rates",
@@ -844,7 +861,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-11 00:00:00.000000",
+ "modified": "2026-11-23 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",

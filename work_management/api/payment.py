@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import pay_period, pay_week, report_access
+from work_management import day_guard, pay_period, pay_week, report_access
 from work_management.api.config import FEED_KIND, PAYROLL_FEED, chain_states, get_config, sql_in
 
 
@@ -2609,7 +2609,7 @@ def wm_payment(**kwargs):
                    "disc_rate_mismatch", "disc_multi_farm", "disc_self_approved", "disc_left_earning",
                    "disc_no_pay", "disc_dup_day", "disc_inactive_assigned",
                    "disc_long_day", "disc_short_day", "disc_hours_vs_qty",
-                   "disc_closed_short"):
+                   "disc_closed_short", "disc_multi_standard"):
             val = 1
             try:
                 val = frappe.utils.cint(frappe.db.get_single_value("Work Management Settings", dk))
@@ -2987,6 +2987,64 @@ def wm_payment(**kwargs):
                           "total_amt": frappe.utils.flt(r.total_amt),
                           "actuals": r.docs, "entered_by": r.enterers,
                           "paid": frappe.utils.cint(r.min_paid)})
+        # ---- MORE THAN ONE DAY'S STANDARD ON ONE DATE ----
+        # An 8 h task and a bed made on the same date are each a full day's
+        # target. That can be a real split day, so day_guard lets it save -- and
+        # lists it here instead, with the documents, so it is seen before the
+        # payroll feed rather than after. Submitted work, not only CONFIRMED:
+        # the point is to see it while it can still be rejected. A row's share
+        # is its quantity over its plan's daily target (day_guard.standard_share).
+        b_mstd = []
+        ms_states = [x for x in day_guard.counted_states()
+                     if x not in chain_states(_cfg, "Work Management Actuals", "draft")]
+        ms_conds = ("ac.workflow_state IN %s AND we.actual_quantity > 0 "
+                    "AND we.work_date BETWEEN %s AND %s")
+        ms_params = [tuple(ms_states) or ("__none__",), dfrom, dto]
+        if farm_list_d:
+            ms_conds = ms_conds + " AND TRIM(ac.farm) IN %s"
+            ms_params.append(tuple(farm_list_d))
+        ms_rows = frappe.db.sql("""
+            SELECT we.employee, we.employee_name, we.work_date, we.actual_quantity qty,
+                   we.amount, ac.name doc, ac.workflow_state state, ac.task, ac.farm,
+                   p.daily_target, p.uom
+            FROM `tabWork Actuals Employee` we
+            INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
+            LEFT JOIN `tabWork Management Assigner` a ON ac.assignment = a.name
+            LEFT JOIN `tabWork Management Planner` p
+                   ON p.name = COALESCE(ac.planner_request, a.planner_request)
+            WHERE """ + ms_conds + """
+            ORDER BY we.work_date DESC
+            LIMIT 30000
+        """, tuple(ms_params), as_dict=True)
+        ms_share = day_guard.standard_share(ms_rows)
+        ms_by = {}
+        for r in ms_rows:
+            ms_by.setdefault((str(r.employee), str(r.work_date)), []).append(r)
+        for mk in ms_share:
+            if not day_guard.over_one_standard(ms_share[mk]):
+                continue
+            mrows = ms_by.get(mk) or []
+            mdocs = []
+            # one part per row: the task (an id -- the screen names it), how
+            # much and in what unit, so "TASK-38 8 Hour + TASK-30 1 Nos" reads
+            # as the two full days it is
+            mparts = []
+            for r in mrows:
+                if r.doc not in mdocs:
+                    mdocs.append(r.doc)
+                mparts.append({"task": r.task, "qty": frappe.utils.flt(r.qty),
+                               "uom": r.uom, "doc": r.doc})
+            b_mstd.append({"employee": mk[0],
+                           "employee_name": (mrows[0].employee_name if mrows else None) or mk[0],
+                           "wdate": mk[1],
+                           "what": "more than one day's standard on " + mk[1],
+                           "standards": round(ms_share[mk], 2),
+                           "parts": mparts,
+                           "farm": ", ".join(sorted({str(r.farm or "") for r in mrows})),
+                           "actuals": ",".join(mdocs),
+                           "states": ", ".join(sorted({str(r.state) for r in mrows})),
+                           "amount": frappe.utils.flt(sum(frappe.utils.flt(r.amount) for r in mrows))})
+        b_mstd = sorted(b_mstd, key=lambda x: (x["wdate"], x["employee_name"]), reverse=True)
         # ---- CLOSED SHORT: plans capped below the target they were approved for,
         # either by a short submit or by an early close. A plan-level check, not a
         # worker-day one, so the "amount" here is the MONEY NOT SPENT rather than
@@ -2998,7 +3056,10 @@ def wm_payment(**kwargs):
         # -- the same field an adjusted target uses, which is why an adjusted plan
         # that then finished in full does not appear here: the shortfall is
         # measured against what the plan is capped at now, not against history.
-        b_short = []
+        # Its own list. This was `b_short`, the name the "Hours and output
+        # disagree" check above had already filled -- so that check's rows were
+        # thrown away here and both categories showed the closed plans.
+        b_closed = []
         scconds = "IFNULL(p.custom_close_state,'') = 'Closed'"
         scparams = []
         if farm_list_d:
@@ -3023,7 +3084,7 @@ def wm_payment(**kwargs):
                 # that happens to carry a close state is not a short one
                 continue
             sc_money = frappe.utils.flt(r.approved_cost) - frappe.utils.flt(r.cost)
-            b_short.append({
+            b_closed.append({
                 "employee": None, "employee_name": r.plan,
                 "farm": r.farm, "task": r.task,
                 "wdate": str(r.from_date) + " → " + str(r.to_date),
@@ -3072,6 +3133,9 @@ def wm_payment(**kwargs):
             {"key": "dup_day", "title": "Paid twice for the same day",
              "about": "The same worker, task and date recorded in more than one actuals document — usually two overlapping assignments for one task. The KES figure is the EXCESS beyond one copy. Zero the duplicate day with Edit in the worker's review sheet.",
              "rows": b_dup},
+            {"key": "multi_standard", "title": "More than one day's standard on one date",
+             "about": "One worker whose rows on a single date add up to more than one day's target -- an 8-hour task and a bed made, say. Submitted and confirmed work, so it can still be rejected. A real split day is allowed and simply shows here; anything else is a day paid twice under two tasks. Same task or same assignment twice, and hour-based rows over the daily ceiling, are refused at entry and never get this far.",
+             "rows": b_mstd},
             {"key": "absent_paid", "title": "Paid on marked-Absent days",
              "about": "Money recorded on a day the worker's submitted attendance says Absent. A scan time means the attendance is probably wrong; no scan means the entry itself needs scrutiny.",
              "rows": b_absent},
@@ -3107,7 +3171,7 @@ def wm_payment(**kwargs):
              "rows": b_short},
             {"key": "closed_short", "title": "Closed short of target",
              "about": "Plans capped below the target they were approved for — by a short submit or by closing early — with the shortfall and the reason given. The KES figure is the budget released back to the master plan, not money wrongly spent. One is a week that did not go to plan; a column of them is a target nobody believes, which is exactly what this exists to keep visible.",
-             "rows": b_short},
+             "rows": b_closed},
             {"key": "hours_vs_qty", "title": "Hourly task where the two numbers differ",
              "about": "The task is measured in Hours, so the quantity and the hours are the same fact typed twice — and here they disagree. 34 tasks in the catalogue are hourly, covering 497 plans, and hours are typed on every split row whatever the unit, which is what makes this possible. One of the two figures is wrong; the quantity is the one that pays.",
              "rows": b_hqty},
@@ -3120,7 +3184,8 @@ def wm_payment(**kwargs):
                       "self_approved": "disc_self_approved", "left_but_earning": "disc_left_earning",
                       "long_day": "disc_long_day", "short_day": "disc_short_day",
                       "hours_vs_qty": "disc_hours_vs_qty",
-                      "closed_short": "disc_closed_short"}
+                      "closed_short": "disc_closed_short",
+                      "multi_standard": "disc_multi_standard"}
         for c in checks:
             if not disc_on.get(toggle_map.get(c["key"]), 1):
                 c["rows"] = []

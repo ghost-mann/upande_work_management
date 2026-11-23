@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, notify, presence, self_approval, stage_pills
+from work_management import bulk, chain, day_guard, notify, presence, self_approval, stage_pills
 from work_management.api.config import chain_states, get_config, sql_in
 
 
@@ -797,6 +797,22 @@ def wm_actuals(**kwargs):
                     WHERE parent = %s AND IFNULL(note, '') != ''
             """, (live[0].name,), as_dict=True):
                 cell_notes[str(r.employee) + "~" + str(r.work_date)] = str(r.note).strip()
+        # WHAT ELSE EACH CELL'S WORKER HAS ON THAT DATE, in other documents the
+        # pipeline will pay -- so the grid can say, as a cell is typed, that it
+        # would be refused (same assignment, same task and block, hours over the
+        # ceiling) or flagged (more than one day's standard). This document's own
+        # rows are left out: they are the ones being typed.
+        # Left out as well: this assignment's entry waiting in the chain, which is
+        # the one an approver edits in place from this grid.
+        dg_mine = frappe.db.sql_list("""
+            SELECT name FROM `tabWork Management Actuals`
+            WHERE assignment = %s AND workflow_state IN (""" + sql_in(ST_ACT_WAITING) + """)
+        """, (name,)) if a.get("name") else []
+        a["day_guard"] = day_guard.grid_context(
+            name if a.get("name") else None,
+            [w.employee for w in (a.get("workers") or [])],
+            a.get("from_date"), a.get("to_date"),
+            exclude=[a.get("draft_name")] + list(dg_mine))
         out["detail"] = a
 
     elif action == "act_submit":
@@ -1016,50 +1032,26 @@ def wm_actuals(**kwargs):
                                 seenr[rr] = 1
                                 rlist.append(rr)
                         att_conflicts.append({"employee": ce, "name": cnm, "reasons": rlist[:6]})
-            # DUPLICATE-DAY GUARD: the same worker + the same task + the same date
-            # already recorded in ANOTHER live actuals document means double pay
-            # (two overlapping assignments for one task). Needs an explicit,
-            # logged override.
+            # THE SAME WORK TWICE, OR A DAY LONGER THAN THE DAY IS. Refused, not
+            # overridable: the same worker and date already recorded on this
+            # assignment, or on this task and block, in any document the pipeline
+            # means to pay (paid rows included) -- or hour-based rows over the
+            # Settings ceiling across every document. This check used to ride in
+            # the attendance-override dialog, looked only at OTHER assignments, and
+            # anyone could click through it; that is how 30 Oct was paid twice on
+            # Altura. The rule is work_management/day_guard.py, which the Actuals
+            # controller also enforces on every save; asked here first so the
+            # screen gets a sentence naming the other document, not a traceback.
+            day_found = []
             if payload and assignment:
-                cur_task = frappe.db.get_value("Work Management Assigner", assignment, "task")
-                pairs2 = []
-                demps2 = {}
-                ddates2 = {}
-                for c2 in payload.split("|"):
-                    bits2 = c2.split("~")
-                    if len(bits2) >= 3 and bits2[0] and bits2[1] and frappe.utils.flt(bits2[2]) > 0:
-                        pairs2.append((bits2[0], bits2[1]))
-                        demps2[bits2[0]] = 1
-                        ddates2[bits2[1]] = 1
-                if pairs2 and cur_task:
-                    dup_hits = frappe.db.sql("""
-                        SELECT we.employee, we.work_date d, ac.name doc
-                        FROM `tabWork Actuals Employee` we
-                        INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-                        WHERE ac.workflow_state IN (""" + sql_in(ST_ACT_ENTERED) + """)
-                          AND ac.task = %s AND ac.assignment != %s
-                          AND we.actual_quantity > 0
-                          AND we.employee IN %s AND we.work_date IN %s
-                    """, (cur_task, assignment, tuple(demps2.keys()), tuple(ddates2.keys())), as_dict=True)
-                    dupmap = {}
-                    for r2 in dup_hits:
-                        dupmap.setdefault((r2.employee, str(r2.d)), r2.doc)
-                    dup_reasons = {}
-                    for (pe2, pd2) in pairs2:
-                        hit = dupmap.get((pe2, pd2))
-                        if hit:
-                            dup_reasons.setdefault(pe2, []).append("already has " + str(cur_task) + " recorded on " + pd2 + " in " + hit + " — double pay")
-                    if dup_reasons:
-                        merged = {}
-                        for cx in att_conflicts:
-                            merged[cx["employee"]] = cx
-                        for pe2 in dup_reasons:
-                            cx = merged.get(pe2)
-                            if cx:
-                                cx["reasons"] = cx["reasons"] + dup_reasons[pe2]
-                            else:
-                                nm2 = frappe.db.get_value("Employee", pe2, "employee_name") or pe2
-                                att_conflicts.append({"employee": pe2, "name": nm2, "reasons": dup_reasons[pe2]})
+                dg_ctx = day_guard.context_of(assignment=assignment)
+                dg_ctx["doc"] = edit_doc if editing_pending else (existing[0] if existing else None)
+                dg_cells = []
+                for c3 in payload.split("|"):
+                    b3 = c3.split("~")
+                    if len(b3) >= 3 and b3[0] and b3[1] and frappe.utils.flt(b3[2]) > 0:
+                        dg_cells.append((b3[0], b3[1], frappe.utils.flt(b3[2])))
+                day_found = day_guard.check(dg_ctx, dg_cells)
             # ABSENT-day entries are an APPROVER's decision, and the approver is
             # whoever this chain says decides this farm's work -- not
             # `"Farm Manager" in roles`, a shipped job title that answered no to
@@ -1089,7 +1081,11 @@ def wm_actuals(**kwargs):
                         allowed = 1
                 if not allowed:
                     can_override = 0
-            if att_conflicts and att_override and not can_override:
+            if day_found:
+                out["error"] = ("Not saved -- already captured. " +
+                    day_guard.message(day_found, plain=True))
+                out["day_conflicts"] = day_found
+            elif att_conflicts and att_override and not can_override:
                 out["error"] = ("These entries include workers marked Absent — only " + str(ov_who) +
                                 " (or " + str(ACT_DECIDER_LABEL) + ") can approve recording actuals on "
                                 "an absent day. Ask them to enter or approve this, or fix the "
@@ -1676,6 +1672,13 @@ def wm_actuals(**kwargs):
             ap_why = chain.may_take(ap_step, MY_ROLES, farm=cur.farm if cur else None,
                                     farms=ACT_FARMS)
         ap_self = self_approval.refusal(ACT_DT, nm) if cur else None
+        # ASKED AGAIN AT EVERY STEP, single or bulk (bulk re-enters this branch).
+        # The state moves by db.set_value, which never runs the controller's
+        # validate -- so a duplicate already sitting in a queue, or captured
+        # before the guard existed, would otherwise be approved straight to pay.
+        ap_day = None
+        if cur and ap_step and not ap_bad and not ap_why and not ap_self:
+            ap_day = day_guard.refusal_for_document(nm)
         if not cur:
             out["error"] = "Record not found"
         elif ap_bad:
@@ -1689,6 +1692,8 @@ def wm_actuals(**kwargs):
             out["error"] = ap_why
         elif ap_self:
             out["error"] = ap_self
+        elif ap_day:
+            out["error"] = ap_day
         else:
             ap_next = ap_step["next_state"]
             # direct DB writes, bypassing the get_doc doctype-access gate and the
@@ -1994,6 +1999,20 @@ def wm_actuals(**kwargs):
         use_reason = reason or (stored_reason or "")
         if not err and not use_reason:
             err = "A reason is required to close"
+        # A close confirms every open entry on the plan at once, by db.set_value --
+        # the same reason approval asks day_guard again, asked of each of them.
+        if not err:
+            for cc_nm in frappe.db.sql_list("""
+                SELECT ac.name FROM `tabWork Management Actuals` ac
+                INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+                WHERE a2.planner_request = %s AND ac.total_actual_qty > 0
+                  AND (ac.workflow_state IN (""" + sql_in(ST_ACT_OPEN) + """)
+                       OR (ac.workflow_state = 'CONFIRMED' AND ac.docstatus = 0))
+            """, (plan,)):
+                cc_why = day_guard.refusal_for_document(cc_nm)
+                if cc_why:
+                    err = cc_why
+                    break
         if err:
             out["error"] = err
         else:

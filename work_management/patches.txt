@@ -52,4 +52,7 @@ work_management.patches.v1_0.seed_monthly_pay_period
 # patch above that rebuilds the workflows only ever runs on a site that has not
 # had it yet -- live Altura has had every one of them.
 work_management.patches.v1_0.seed_master_plan_name_format
+# The day guard's ceiling and its discrepancy check; insert-if-empty, nothing
+# depends on it. Above the rescue patch, which must stay last.
+work_management.patches.v1_0.seed_the_day_guard_settings
 work_management.patches.v1_0.rescue_documents_in_renamed_states

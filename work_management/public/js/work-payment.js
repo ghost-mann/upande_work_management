@@ -1683,6 +1683,19 @@
           '<td class="m" style="font-size:10px">'+esc(r.assignment||"")+'</td>'+
           '<td class="m">'+esc(r.wdate||"")+'</td></tr>';
       });
+    } else if(c.key==="multi_standard"){
+      // one worker-day holding more than one day's target across documents;
+      // each document is a link, so the reviewer can open the one to reject
+      h+='<th>Worker</th><th>Day</th><th>What</th><th class="n">Standards</th><th>Tasks</th><th class="n">KES</th><th>Docs</th><th>State</th>';
+      rows.forEach(function(r){
+        var links=String(r.actuals||"").split(",").filter(Boolean).map(function(n){
+          return '<a href="/app/work-management-actuals/'+encodeURIComponent(n)+'" target="_blank" rel="noopener">'+esc(n)+'</a>';
+        }).join(", ");
+        body+='<tr><td>'+wlink(r)+'</td><td class="m">'+esc(dshort(r.wdate))+'</td><td>'+esc(r.what||"")+'</td>'+
+          '<td class="n m" style="color:var(--warn, #a06000);font-weight:700">'+fmt(r.standards,2)+'</td>'+
+          '<td style="font-size:11px">'+(r.parts||[]).map(function(p){ return esc(taskName(p.task))+" "+fmt(p.qty)+" "+esc(p.uom||""); }).join(" + ")+'</td><td class="n m">'+fmt(r.amount,2)+'</td>'+
+          '<td class="m" style="font-size:10px">'+links+'</td><td style="font-size:10px">'+esc(r.states||"")+'</td></tr>';
+      });
     } else if(c.key==="dup_day"){
       h+='<th>Worker</th><th>Day</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Task</th><th class="n">Copies</th><th class="n">Total KES</th><th class="n">Excess KES</th><th>Docs</th><th>Entered by</th>';
       rows.forEach(function(r){
@@ -1999,7 +2012,10 @@
     else{
       h+='<div class="tablewrap"><table><thead><tr>'+
         '<th>Task</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Standard</th><th>Period worked</th><th class="n">Days</th><th class="n">Qty</th>'+
-        '<th class="n">Rate</th><th class="n">Amount KES</th><th class="n">Unpaid</th><th class="c">Status</th></tr></thead><tbody>';
+        // AMOUNT / QTY, not a rate: a task worked at two rates, or with a public
+        // holiday in it, averages to a figure nobody set (3,600 / 8 = 450) and
+        // read as "Rate" it looked like a changed rate.
+        '<th class="n" title="Amount divided by quantity. Not a rate: mixed rates and holiday pay average into it.">Avg / unit</th><th class="n">Amount KES</th><th class="n">Unpaid</th><th class="c">Status</th></tr></thead><tbody>';
       tasks.forEach(function(t){
         h+='<tr><td><b>'+esc(taskName(t.task)||"—")+'</b></td><td>'+esc(lbl(t.block)||"—")+'</td>'+
           '<td class="m">'+esc(t.standard||"—")+'</td>'+
@@ -2477,7 +2493,7 @@
       ["Unpaid KES", k.unpaid_amt||0, "Days worked", k.days||0],
       ["Tasks", tasks.length, "Total qty", k.qty||0],
       [],
-      ["Task",TX("unit_singular","Block"),"Standard",TX("top_singular","Farm"),"Worked from","Worked to","Days","Qty","Rate","Amount KES","Unpaid KES","Status"]
+      ["Task",TX("unit_singular","Block"),"Standard",TX("top_singular","Farm"),"Worked from","Worked to","Days","Qty","Avg / unit","Amount KES","Unpaid KES","Status"]
     ];
     tasks.forEach(function(t){
       s1.push([taskName(t.task), t.block||"", t.standard||"", t.farm||"", t.work_from||"", t.work_to||"", t.days||0, t.qty||0,

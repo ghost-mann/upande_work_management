@@ -991,6 +991,85 @@
     recompute(a);
   }
 
+  // ALREADY CAPTURED ELSEWHERE. The server sends, per worker-day, what that
+  // worker already has in other documents the pipeline will pay
+  // (a.day_guard, from day_guard.grid_context). The same rules the server
+  // enforces on submit, judged here as the cell is typed:
+  //   refused -- the same assignment, or the same task and block, already has
+  //              the day; or hour-based quantities over the day's ceiling
+  //   flagged -- more than one day's standard on the date (8 h + 1 bed): it
+  //              saves, and Payment -> Discrepancies lists it
+  function dayGuardScan(a){
+    var dg=a.day_guard||{}, cells=dg.cells||{}, me=dg["this"]||{};
+    var maxH=Number(dg.max_hours)||8;
+    var out={blocks:[], flags:[], byKey:{}};
+    var names={};
+    (a.workers||[]).forEach(function(w){ names[w.employee]=w.employee_name||w.employee; });
+    for(var key in ST.cells){
+      var q=Number(ST.cells[key])||0;
+      if(q<=0) continue;
+      var others=cells[key]||[];
+      if(!others.length) continue;
+      var bits=key.split("~"), who=names[bits[0]]||bits[0], day=bits[1];
+      var msg=null, level=null;
+      for(var i=0;i<others.length;i++){
+        var o=others[i];
+        if(o.same){
+          level="block";
+          msg=who+" already has "+day+" in "+o.doc+" ("+o.state+(o.paid?", paid":"")+"; "+o.same+"). It cannot be captured twice.";
+          break;
+        }
+      }
+      if(!level && me.hourly){
+        var hrs=q, where=[];
+        others.forEach(function(o){ if(o.hourly){ hrs+=Number(o.qty)||0; where.push(fmt(o.qty)+" h in "+o.doc); } });
+        if(hrs>maxH+0.005){
+          level="block";
+          msg=who+" would have "+fmt(hrs)+" h on "+day+", more than the "+fmt(maxH)+" a day allows ("+where.join(", ")+").";
+        }
+      }
+      if(!level && Number(me.daily_target)>0){
+        var share=q/Number(me.daily_target), docs=[];
+        others.forEach(function(o){ share+=Number(o.share)||0; docs.push(o.doc); });
+        if(share>1.005){
+          level="flag";
+          msg=who+" would have more than one day's standard on "+day+" (also in "+docs.join(", ")+"). It saves, and shows in Payment \u2192 Discrepancies.";
+        }
+      }
+      if(level){
+        out.byKey[key]={level:level, msg:msg};
+        (level==="block"?out.blocks:out.flags).push(msg);
+      }
+    }
+    return out;
+  }
+
+  function paintDayGuard(dg){
+    var box=el("ac-grid");
+    if(!box) return;
+    box.querySelectorAll("input[data-emp]").forEach(function(inp){
+      var hit=dg.byKey[ck(inp.getAttribute("data-emp"), inp.getAttribute("data-date"))];
+      inp.style.outline = hit ? ("2px solid "+(hit.level==="block"?"#b91c1c":"#d97706")) : "";
+      inp.style.background = hit ? (hit.level==="block"?"#fde8e8":"#fff4e0") : "";
+      if(hit){ inp.title=hit.msg; } else { inp.removeAttribute("title"); }
+    });
+    var note=el("ac-dgnote");
+    if(!note){
+      note=document.createElement("div");
+      note.id="ac-dgnote";
+      note.style.cssText="font-size:12px;line-height:1.5;margin:8px 0";
+      box.parentNode.insertBefore(note, box.nextSibling);
+    }
+    var h="";
+    if(dg.blocks.length){
+      h+='<div style="color:#b91c1c"><b>Cannot be saved \u2014 already captured:</b><br>'+dg.blocks.slice(0,8).map(esc).join("<br>")+(dg.blocks.length>8?"<br>\u2026 and "+(dg.blocks.length-8)+" more":"")+'</div>';
+    }
+    if(dg.flags.length){
+      h+='<div style="color:#a06000;margin-top:4px"><b>Check before submitting:</b><br>'+dg.flags.slice(0,8).map(esc).join("<br>")+(dg.flags.length>8?"<br>\u2026 and "+(dg.flags.length-8)+" more":"")+'</div>';
+    }
+    note.innerHTML=h;
+  }
+
   function recompute(a){
     var rate=a.rate||0;
     var workers=a.workers||[];
@@ -1025,6 +1104,8 @@
       if(c) c.textContent=fmt(dtot[iso]);
     });
     var g=box.querySelector('[data-grand]'); if(g) g.textContent=fmt(grand);
+    var dgScan=dayGuardScan(a);
+    paintDayGuard(dgScan);
     // KPIs
     el("o-people").textContent=Object.keys(people).length;
     el("o-paid").textContent=Object.keys(payPeople).length;
@@ -1049,7 +1130,8 @@
     // "completed" = plan reaches 100% of target OR the crew is salaried-only (paid fixed, not qty x rate)
     var complete = (target>0 && Math.abs(projected-target) < 0.0001) || (salariedOnly && !noTarget);
     // DRAFT: allowed whenever there is qty entered, target exists, not over, not locked
-    var draftReady = ST.asg && grand>0 && !locked && !over && !noTarget;
+    // and nothing the server would refuse as already captured
+    var draftReady = ST.asg && grand>0 && !locked && !over && !noTarget && !dgScan.blocks.length;
     // SUBMIT: when plan qty is completed (100%) OR salaried-only (documented
     // balance) -- OR, where the site has switched it on, short of target with a
     // reason. A short submit CAPS the plan at what was done, so the button asks
