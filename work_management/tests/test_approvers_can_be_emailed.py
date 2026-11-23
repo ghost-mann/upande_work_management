@@ -107,7 +107,9 @@ class TestTheGeneratedWorkflowCarriesIt(unittest.TestCase):
 	def test_the_setting_is_read_once_for_all_five(self):
 		"""Read per workflow, a Settings reload mid-loop could leave two of the
 		five disagreeing about whether this site sends mail."""
-		at = self.SOURCE.index("def build_workflows(")
+		# _planned() is where build_workflows() and the rebuild preview get their
+		# five plans from, so it is where the setting is read
+		at = self.SOURCE.index("def _planned(")
 		body = self.SOURCE[at:self.SOURCE.index("\ndef ", at + 10)]
 		self.assertLess(body.index("notify = email_alerts_on(settings)"),
 			body.index("for document_type in CHAIN_ENDS:"))

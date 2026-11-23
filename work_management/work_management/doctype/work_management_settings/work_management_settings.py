@@ -23,7 +23,10 @@ class WorkManagementSettings(Document):
 				title=frappe._("Pay frequency"))
 
 	def on_update(self):
-		"""Push the approval configuration out to roles and workflows.
+		"""Push the approval configuration out to roles, and create any missing
+		workflow. An existing workflow is never rewritten from here -- it is
+		maintained in the desk -- so a change that would alter one is reported,
+		and the "Rebuild workflows from Settings" button applies it.
 
 		`skip_approval_sync` is set by seed_stages(), which saves this document
 		itself while filling in the stage catalogue. Without it, seeding would
@@ -34,6 +37,7 @@ class WorkManagementSettings(Document):
 		frappe.clear_cache(doctype="Work Management Settings")
 		approvals.sync_roles(self, previous=self.get_doc_before_save())
 		approvals.build_workflows(self)
+		approvals.tell_about_unapplied_changes(self, previous=self.get_doc_before_save())
 		# a step added in this very save has to be choosable in the approver picker
 		approvals.apply_stage_picker_options(self)
 		taxonomy.apply_labels(self)

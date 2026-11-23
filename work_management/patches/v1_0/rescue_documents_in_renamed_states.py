@@ -23,11 +23,19 @@ ever sees documents in a state their workflow lacks:
     1. the stage rows take the catalogue's state and action   (db-level)
     2. the documents move, each one printed and commented
     3. their open Workflow Action to-dos move with them
-    4. the five workflows are rebuilt from the rows written in 1
+    4. any of the five workflows that does not exist is created
     5. anything still outside its workflow is printed, and left alone
 
-It runs in post_model_sync, before after_migrate. after_migrate's seed_stages()
-and build_workflows() then find nothing to change and save nothing.
+**Step 4 no longer rewrites an existing workflow** (2026-11-23). Workflows are
+maintained by hand in the desk, and nothing automatic may overwrite one -- see
+approvals.build_workflows(). This patch ran on live Altura on 25 Sep, when it
+still rebuilt them; on a site where it has not run yet, a document moved to a
+state its hand-kept workflow lacks is listed by step 5 ("NOT MOVED" / outside
+its workflow), and the System Manager adds the state in the desk or uses
+Settings > Rebuild workflows from Settings.
+
+It runs in post_model_sync, before after_migrate, which also only creates
+missing workflows.
 
 Db-level in 1 rather than a Settings save: saving Settings runs its whole
 validation, and a Stage Approver row key_stage_approvers_by_stage could not key
@@ -104,10 +112,11 @@ def execute():
 				WHERE reference_doctype = %s AND workflow_state = %s AND status = 'Open'""",
 				(new, doctype, old))
 
-	# 4. the workflows, from the rows written in 1
+	# 4. a missing workflow is created; an existing one is the site's and is left
 	settings = frappe.get_doc(SETTINGS)
-	rebuilt = approvals.build_workflows(settings)
-	print(f"Moved {moved} document(s); rebuilt {', '.join(rebuilt) or 'no workflow (unchanged)'}")
+	created = approvals.build_workflows(settings)
+	print(f"Moved {moved} document(s); created {', '.join(created) or 'no workflow'}"
+		"; existing workflows left as they are")
 
 	# 5. whatever is still outside its workflow is reported, never moved
 	for doctype, name, state in stranded():

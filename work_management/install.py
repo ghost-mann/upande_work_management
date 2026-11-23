@@ -495,6 +495,9 @@ def seed_approvals():
 
 	approvals.seed_stages()
 	frappe.clear_cache(doctype="Work Management Settings")
+	# the state and action names -- fixtures once, created here insert-only
+	approvals.ensure_vocabulary()
+	# creates the five; a workflow that already exists is left alone
 	built = approvals.build_workflows()
 	frappe.db.commit()
 	for name in built:

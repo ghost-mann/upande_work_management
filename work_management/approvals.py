@@ -12,8 +12,26 @@ ordinary role-based Frappe Workflow documents, so approvers keep the workflow
 action buttons, the notifications and the awaiting-approval inbox that Frappe
 already gives them.
 
-Everything here is idempotent. It runs on `after_migrate` and whenever Settings
-is saved.
+**A Workflow that exists is the site's, not the app's.** Workflows on a live
+site are maintained by hand in the desk and change often, so nothing automatic
+may overwrite one: `after_migrate`, a Settings save, a patch and the installer
+all call `build_workflows()`, which CREATES a missing workflow and leaves an
+existing one exactly as it is -- not cleared, not re-saved, `modified`
+untouched. The only thing that writes over an existing workflow is
+`rebuild_workflows_from_settings()`, the System Manager's "Rebuild workflows
+from Settings" button on the Settings form, behind a confirm that says it
+overwrites UI edits. `workflow_changes()` says what that would change first.
+
+What the command-centre screens do is NOT read from the Workflow. They decide
+who may act and which state comes next from Work Management Settings, and write
+the state directly. A Workflow edited in the desk changes the desk form's
+action buttons, who may edit in each state, Frappe's own transition check on a
+desk save, and the Workflow Action inbox and its emails -- never the screens.
+
+No Workflow, Workflow State or Workflow Action Master ships as a fixture:
+Frappe's fixture import deletes and re-inserts every record it lists on every
+migrate. The state and action names are created here, insert-only
+(`ensure_vocabulary()`), and a style somebody set in the desk is kept.
 """
 
 from collections import namedtuple
@@ -779,21 +797,61 @@ def transition_groups(stage, rows, settings):
 # ------------------------------------------------------- workflow generation
 
 
+#: The name masters the shipped workflows have always referenced. These were the
+#: Workflow State and Workflow Action Master fixtures; a fixture is re-imported
+#: (deleted and re-inserted) on every migrate, so they are created here instead,
+#: only where missing. The catalogue's own states and actions are added to them.
+WORKFLOW_STATES = (
+	"Approved", "Assigned", "CONFIRMED", "Cancelled", "Draft", "Paid",
+	"Pending Accounts", "Pending Approval", "Pending Consultant", "Pending Farm Manager",
+	"Pending GM", "Pending HR Head", "Pending Manager", "Rejected", "Unpaid",
+)
+WORKFLOW_ACTIONS = (
+	"Approve", "Cancel", "FM Approve", "GM Approve", "HR Approve", "Mark Paid",
+	"Re-submit", "Reject", "Send for Consultant Review", "Send to Accounts", "Send to GM",
+	"Send for Review", "Manager Approve", "Submit for Approval",
+)
+_STATE_STYLE = {"Approved": "Success", "Assigned": "Success", "CONFIRMED": "Success",
+	"Paid": "Success", "Cancelled": "Danger"}
+
+
+def ensure_vocabulary():
+	"""Every state and action name the workflows use, created where missing.
+
+	Insert-only: an existing Workflow State keeps whatever style the desk gave it.
+	Returns the names created.
+	"""
+	states = list(WORKFLOW_STATES)
+	actions = list(WORKFLOW_ACTIONS)
+	for stage in CATALOGUE:
+		states.append(stage.state)
+		actions.append(stage.action)
+	for ends in CHAIN_ENDS.values():
+		states += [ends["terminal"][0], ends["reject"]]
+		actions += [ends.get("reject_action", DEFAULT_REJECT_ACTION), ends.get("resubmit")]
+	return _ensure_workflow_vocabulary(states, actions)
+
+
 def _ensure_workflow_vocabulary(states, actions):
-	"""Frappe validates state and action names as links, so they must exist."""
+	"""Frappe validates state and action names as links, so they must exist.
+	Insert-only. Returns the names it created."""
+	created = []
 	for state in states:
 		if state and not frappe.db.exists("Workflow State", state):
 			frappe.get_doc({
 				"doctype": "Workflow State",
 				"workflow_state_name": state,
-				"style": "Success" if state in ("Approved", "Assigned", "CONFIRMED", "Paid") else "",
+				"style": _STATE_STYLE.get(state, ""),
 			}).insert(ignore_permissions=True)
+			created.append(state)
 	for action in actions:
 		if action and not frappe.db.exists("Workflow Action Master", action):
 			frappe.get_doc({
 				"doctype": "Workflow Action Master",
 				"workflow_action_name": action,
 			}).insert(ignore_permissions=True)
+			created.append(action)
+	return created
 
 
 def plan_workflow(document_type, rows=None, settings=None):
@@ -880,65 +938,199 @@ def plan_workflow(document_type, rows=None, settings=None):
 	}
 
 
-def build_workflows(settings=None):
-	"""Write the generated plan onto the five Workflow documents.
+def build_workflows(settings=None, overwrite=False):
+	"""Create any of the five Workflow documents that does not exist yet.
 
-	Updated in place, never deleted and recreated -- deleting a Workflow that
-	documents are sitting in mid-approval orphans them.
+	An existing Workflow is left exactly as it is -- not cleared, not re-saved --
+	because the desk is where a site maintains it. Every automatic caller
+	(after_migrate, a Settings save, the installer, patches) comes through here
+	with `overwrite` False. Only `rebuild_workflows_from_settings()`, behind a
+	System Manager's confirm, passes True and writes the generated plan over
+	whatever is there.
+
+	Updated in place when overwritten, never deleted and recreated -- deleting a
+	Workflow that documents are sitting in mid-approval orphans them.
+	Returns the names written (created, or overwritten when asked).
 	"""
+	built = []
+	for name, document_type, plan, notify, workflow in _planned(settings):
+		_ensure_workflow_vocabulary(
+			[state["state"] for state in plan["states"]],
+			[transition["action"] for transition in plan["transitions"]],
+		)
+		if workflow is not None:
+			if not overwrite:
+				continue
+			# Same plan, same flags: leave it alone even when asked, so a rebuild
+			# that changes nothing writes no Version and bumps no `modified`.
+			if _workflow_as(workflow) == _plan_as(plan, document_type, notify):
+				continue
+		else:
+			workflow = frappe.new_doc("Workflow")
+			workflow.workflow_name = name
+		_write_plan(workflow, plan, document_type, notify)
+		built.append(name)
+	return built
+
+
+def _planned(settings=None):
+	"""[(name, document_type, plan, notify, existing Workflow or None)]."""
 	settings = settings or _settings()
 	rows = stage_rows(settings)
 	notify = email_alerts_on(settings)
-	built = []
-
+	out = []
 	for document_type in CHAIN_ENDS:
 		if not frappe.db.exists("DocType", document_type):
 			continue
 		plan = plan_workflow(document_type, rows=rows, settings=settings)
 		if not plan:
 			continue
-
-		_ensure_workflow_vocabulary(
-			[state["state"] for state in plan["states"]],
-			[transition["action"] for transition in plan["transitions"]],
-		)
-
 		name = plan["workflow_name"]
-		if frappe.db.exists("Workflow", name):
-			workflow = frappe.get_doc("Workflow", name)
-			# Same plan, same flags: leave it alone. Saved unconditionally, every
-			# migrate bumped `modified` on all five and wrote a Version row, so
-			# nobody could tell a deploy that changed the chain from one that
-			# did not.
-			if _workflow_as(workflow) == _plan_as(plan, document_type, notify):
-				continue
-		else:
-			workflow = frappe.new_doc("Workflow")
-			workflow.workflow_name = name
+		workflow = frappe.get_doc("Workflow", name) if frappe.db.exists("Workflow", name) else None
+		out.append((name, document_type, plan, notify, workflow))
+	return out
 
-		workflow.document_type = document_type
-		workflow.workflow_state_field = "workflow_state"
-		workflow.is_active = 1
-		workflow.override_status = 0
-		# WHETHER APPROVERS ARE EMAILED. Hardcoded to 0 here, on every workflow,
-		# every time this ran -- so a site could name its approvers, generate its
-		# chain, and still have nothing tell any of them there was work waiting.
-		# Now a Settings checkbox, off unless a site turns it on, and read once
-		# above so all five workflows agree. See email_alerts_on().
-		workflow.send_email_alert = 1 if notify else 0
 
-		workflow.set("states", [])
-		for state in plan["states"]:
-			workflow.append("states", state)
-		workflow.set("transitions", [])
-		for transition in plan["transitions"]:
-			workflow.append("transitions", transition)
+def _write_plan(workflow, plan, document_type, notify):
+	workflow.document_type = document_type
+	workflow.workflow_state_field = "workflow_state"
+	workflow.is_active = 1
+	workflow.override_status = 0
+	# WHETHER APPROVERS ARE EMAILED. Hardcoded to 0 here, on every workflow,
+	# every time this ran -- so a site could name its approvers, generate its
+	# chain, and still have nothing tell any of them there was work waiting.
+	# Now a Settings checkbox, off unless a site turns it on, and read once
+	# above so all five workflows agree. See email_alerts_on().
+	workflow.send_email_alert = 1 if notify else 0
 
-		workflow.flags.ignore_permissions = True
-		workflow.save()
-		built.append(name)
+	workflow.set("states", [])
+	for state in plan["states"]:
+		workflow.append("states", state)
+	workflow.set("transitions", [])
+	for transition in plan["transitions"]:
+		workflow.append("transitions", transition)
 
-	return built
+	workflow.flags.ignore_permissions = True
+	workflow.save()
+
+
+def workflow_changes(settings=None):
+	"""What `rebuild_workflows_from_settings()` would change, workflow by workflow.
+
+	[{"workflow", "document_type", "exists", "changes": [sentence, ...]}] -- only
+	workflows that would actually change. An empty list means a rebuild is a no-op.
+	"""
+	out = []
+	for name, document_type, plan, notify, workflow in _planned(settings):
+		if workflow is None:
+			out.append({"workflow": name, "document_type": document_type, "exists": 0,
+				"changes": [_("would be created")]})
+			continue
+		have = _workflow_as(workflow)
+		want = _plan_as(plan, document_type, notify)
+		if have == want:
+			continue
+		out.append({"workflow": name, "document_type": document_type, "exists": 1,
+			"changes": _describe(have, want)})
+	return out
+
+
+def _describe(have, want):
+	"""The difference between two _plan_as() shapes, as sentences."""
+	lines = []
+	labels = ("document type", "state field", "active", "override status", "email alerts")
+	for label, a, b in zip(labels, have[0], want[0]):
+		if a != b:
+			lines.append(_("{0}: {1} -> {2}").format(label, a, b))
+	have_states = {st[0]: st for st in have[1]}
+	want_states = {st[0]: st for st in want[1]}
+	for state in want_states:
+		if state not in have_states:
+			lines.append(_("add state {0} (editable by {1})").format(state, want_states[state][2] or "-"))
+		elif have_states[state] != want_states[state]:
+			lines.append(_("state {0}: docstatus/edit role {1}/{2} -> {3}/{4}").format(
+				state, have_states[state][1], have_states[state][2] or "-",
+				want_states[state][1], want_states[state][2] or "-"))
+	for state in have_states:
+		if state not in want_states:
+			lines.append(_("remove state {0}").format(state))
+
+	def says(t):
+		return _("{0} --{1}--> {2} by {3}").format(t[0], t[1], t[2], t[3]) + (
+			" " + _("when {0}").format(t[4]) if t[4] else "")
+
+	have_t = set(have[2])
+	want_t = set(want[2])
+	for t in want[2]:
+		if t not in have_t:
+			lines.append(_("add transition {0}").format(says(t)))
+	for t in have[2]:
+		if t not in want_t:
+			lines.append(_("remove transition {0}").format(says(t)))
+	if not lines and have != want:
+		lines.append(_("same states and transitions, in a different order"))
+	return lines
+
+
+def plans_of(settings):
+	"""{workflow name: the _plan_as() shape Settings generates} -- for asking
+	whether a Settings save changed what the workflows would be."""
+	try:
+		return {name: _plan_as(plan, document_type, notify)
+			for name, document_type, plan, notify, _wf in _planned(settings)}
+	except Exception:
+		return {}
+
+
+def tell_about_unapplied_changes(settings, previous=None):
+	"""After a Settings save: if THIS save changed what the workflows would be,
+	say what differs and where the button is. Nothing is written.
+
+	Only when the save changed the plan -- not on every save of a site whose
+	workflows were edited in the desk on purpose, which is the normal state of a
+	live site and would make the message noise."""
+	if previous is not None and plans_of(previous) == plans_of(settings):
+		return []
+	changes = [c for c in workflow_changes(settings) if c["exists"]]
+	if not changes:
+		return []
+	lines = []
+	for c in changes:
+		lines.append("<b>" + frappe.utils.escape_html(c["workflow"]) + "</b><ul>" + "".join(
+			"<li>" + frappe.utils.escape_html(x) + "</li>" for x in c["changes"][:12])
+			+ ("<li>...</li>" if len(c["changes"]) > 12 else "") + "</ul>")
+	frappe.msgprint(
+		_("Saved. These approval settings change what the workflows would be, but the "
+			"workflows were <b>not</b> changed: they are maintained in the desk and are never "
+			"overwritten automatically.") + "<br><br>" + "".join(lines) + _(
+			"The command-centre screens follow Settings already. To make the desk workflows "
+			"match, use <b>Rebuild workflows from Settings</b> (System Manager) -- it overwrites "
+			"edits made to them in the desk -- or edit the workflows by hand."),
+		title=_("Workflows not changed"), indicator="orange")
+	return changes
+
+
+@frappe.whitelist()
+def preview_workflow_rebuild():
+	"""For the Settings button's confirm: what a rebuild would change."""
+	frappe.only_for("System Manager")
+	return workflow_changes()
+
+
+@frappe.whitelist(methods=["POST"])
+def rebuild_workflows_from_settings():
+	"""Overwrite the five workflows with what Settings generates. System Manager
+	only, and only from the Settings button after its confirm: every UI edit to
+	those workflows is replaced."""
+	frappe.only_for("System Manager")
+	changes = workflow_changes()
+	built = build_workflows(overwrite=True)
+	for name in built:
+		lines = next((c["changes"] for c in changes if c["workflow"] == name), [])
+		frappe.get_doc("Workflow", name).add_comment("Info",
+			_("Rebuilt from Work Management Settings by {0}, overwriting edits made in the desk: {1}")
+			.format(frappe.session.user, "; ".join(lines) or _("no difference recorded")))
+	return {"rebuilt": built}
 
 
 def _plan_as(plan, document_type, notify):
@@ -1343,7 +1535,21 @@ def after_migrate():
 
 	capabilities.seed()
 	frappe.clear_cache(doctype="Work Management Settings")
-	build_workflows()
+	# The name masters, insert-only -- they used to be fixtures, which a migrate
+	# deletes and re-inserts.
+	ensure_vocabulary()
+	# CREATE ONLY. An existing workflow is the site's: never cleared, rewritten
+	# or re-saved here. One line says so, whatever the count.
+	created = build_workflows()
+	for name in created:
+		print(f"Work Management: created workflow {name}")
+	left = [name for name, _dt, _plan, _notify, wf in _planned() if wf is not None
+		and name not in created]
+	if left:
+		drift = [c["workflow"] for c in workflow_changes() if c["exists"]]
+		print(f"Work Management: {len(left)} existing workflow(s) left as they are"
+			+ (f"; {len(drift)} differ from Settings ({', '.join(drift)}) -- "
+				"Settings > Rebuild workflows from Settings applies them" if drift else ""))
 	# the picker that names who takes a step must offer the steps that exist
 	apply_stage_picker_options()
 	frappe.db.commit()

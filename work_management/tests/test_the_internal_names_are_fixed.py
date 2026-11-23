@@ -113,13 +113,12 @@ class TestTheCatalogueIsAlturas(unittest.TestCase):
 				self.assertEqual(len(states), len(set(states)))
 
 	def test_the_masters_ship(self):
-		states = {r["name"] for r in json.loads(read("fixtures", "workflow_state.json"))}
-		actions = {r["name"] for r in json.loads(read("fixtures", "workflow_action_master.json"))}
-		self.assertIn("Pending Manager", states)
-		self.assertTrue({"Send for Review", "Manager Approve", "Approve"} <= actions)
-		hooks = read("hooks.py")
-		for name in ("Pending Manager", "Send for Review", "Manager Approve"):
-			self.assertIn('"%s"' % name, hooks)
+		# No longer fixtures (a fixture is deleted and re-inserted on every
+		# migrate): approvals.ensure_vocabulary() creates them insert-only. See
+		# test_workflows_belong_to_the_site.
+		self.assertIn("Pending Manager", approvals.WORKFLOW_STATES)
+		self.assertTrue({"Send for Review", "Manager Approve", "Approve"} <= set(approvals.WORKFLOW_ACTIONS))
+		self.assertIn("ensure_vocabulary()", read("approvals.py"))
 
 
 class TestSettingsCannotRenameAState(unittest.TestCase):

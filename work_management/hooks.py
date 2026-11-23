@@ -138,34 +138,14 @@ before_migrate = "work_management.desk.ensure_nav_block"
 # company therefore created Kaitet's hierarchy on their site. The steps now default
 # to System Manager, which Frappe guarantees, so nothing is created and a new
 # company maps the steps onto its own roles.
+# NO WORKFLOW FIXTURES -- not Workflow, Workflow Transition, Workflow State or
+# Workflow Action Master. Workflows on a live site are maintained by hand in the
+# desk, and a fixture is re-imported on every migrate: Frappe deletes the record
+# and inserts the shipped copy, so it can never be "insert-only". The workflows
+# are created (only where missing) by approvals.build_workflows(), and the state
+# and action names they reference by approvals.ensure_vocabulary(), insert-only.
+# tests/test_workflows_belong_to_the_site.py fails if any of the four returns.
 fixtures = [
-	{
-		"dt": "Workflow State",
-		"filters": [
-			[
-				"name",
-				"in",
-				[
-					"Approved",
-					"Assigned",
-					"CONFIRMED",
-					"Draft",
-					"Paid",
-					"Pending Accounts",
-					"Pending Approval",
-					"Pending Consultant",
-					"Pending Farm Manager",
-					"Pending GM",
-					"Pending HR Head",
-					# Altura's catalogue (approvals.CATALOGUE on this branch)
-					"Pending Manager",
-					"Rejected",
-					"Unpaid",
-					"Cancelled",
-				],
-			]
-		],
-	},
 	{
 		# The two "amended after approval" form banners. Shipped as a fixture so
 		# they DEPLOY: a Client Script created in the desk lives on one site and
@@ -175,34 +155,7 @@ fixtures = [
 			"WM Work Management Master Plan — amended after approval",
 			"WM Work Management Planner — amended after approval",
 		]]],
-	},
-	{
-		"dt": "Workflow Action Master",
-		"filters": [
-			[
-				"name",
-				"in",
-				[
-					"Approve",
-					"Cancel",
-					"FM Approve",
-					"GM Approve",
-					"HR Approve",
-					"Mark Paid",
-					"Re-submit",
-					"Reject",
-					"Send for Consultant Review",
-					"Send to Accounts",
-					"Send to GM",
-					# Altura's catalogue (approvals.CATALOGUE on this branch)
-					"Send for Review",
-					"Manager Approve",
-					"Submit for Approval",
-				],
-			]
-		],
 	}
-
 ]
 
 website_route_rules = []

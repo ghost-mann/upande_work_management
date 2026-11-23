@@ -4,6 +4,7 @@
 frappe.ui.form.on("Work Management Settings", {
 	refresh(frm) {
 		wm_stage_picker(frm);
+		wm_rebuild_workflows_button(frm);
 		frm.add_custom_button(__("Rate coverage"), () => wm_rates_call(frm, { action: "meta" },
 			(r) => {
 				frm.set_value("current_daily_wage", r.current_daily_wage || 0);
@@ -175,4 +176,43 @@ function wm_rates_confirm(frm, message, args) {
 		};
 		step(null);
 	});
+}
+
+// REBUILD WORKFLOWS FROM SETTINGS. The one thing that writes over an existing
+// Workflow: migrate and a Settings save only ever create a missing one, because
+// the workflows are maintained by hand in the desk. System Manager only (the
+// server checks too), and only after a confirm that lists what would change
+// and says plainly that edits made in the desk are overwritten.
+function wm_rebuild_workflows_button(frm) {
+	if (!frappe.user.has_role("System Manager")) return;
+	frm.add_custom_button(__("Rebuild workflows from Settings"), () => {
+		frappe.call("work_management.approvals.preview_workflow_rebuild").then((r) => {
+			const changes = r.message || [];
+			if (!changes.length) {
+				frappe.msgprint(__("The workflows already match Settings. Nothing to rebuild."));
+				return;
+			}
+			const body = changes.map((c) =>
+				`<b>${frappe.utils.escape_html(c.workflow)}</b>` +
+				(c.exists ? "" : ` <span class="text-muted">(${__("new")})</span>`) +
+				"<ul>" + c.changes.slice(0, 15).map((x) => `<li>${frappe.utils.escape_html(x)}</li>`).join("") +
+				(c.changes.length > 15 ? "<li>…</li>" : "") + "</ul>").join("");
+			frappe.confirm(
+				`<p><b>${__("This overwrites every edit made to these workflows in the desk UI")}</b> — ` +
+				__("transitions, roles and conditions are replaced with what Settings generates.") + "</p>" +
+				body + `<p>${__("Rebuild now?")}</p>`,
+				() => frappe.call({
+					method: "work_management.approvals.rebuild_workflows_from_settings",
+					type: "POST",
+					freeze: true,
+				}).then((res) => {
+					const done = (res.message && res.message.rebuilt) || [];
+					frappe.show_alert({
+						message: done.length ? __("Rebuilt: {0}", [done.join(", ")]) : __("Nothing changed."),
+						indicator: "green",
+					});
+				})
+			);
+		});
+	}, __("Approvals"));
 }
