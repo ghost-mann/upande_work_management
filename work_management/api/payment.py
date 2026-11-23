@@ -4425,9 +4425,12 @@ def wm_payment(**kwargs):
             # day marked Absent" is on (it is then a "block" issue, see WMI_CLASS); the
             # screen says which, rather than always "not blocking"
             # "no work given" reasons in the check's dates, for HR and the GM: not blocking
-            out["excused"] = frappe.db.sql("""SELECT farm, reason, marked_by, COUNT(*) n
-                FROM `tabWork Missing Day Excuse` WHERE work_date BETWEEN %s AND %s AND farm IN %s
-                GROUP BY farm, reason, marked_by ORDER BY farm, n DESC""",
+            out["excused"] = frappe.db.sql("""SELECT x.farm, x.reason, x.marked_by, COUNT(*) n
+                FROM `tabWork Missing Day Excuse` x WHERE x.work_date BETWEEN %s AND %s AND x.farm IN %s
+                AND NOT EXISTS (SELECT 1 FROM `tabWork Actuals Employee` we
+                    INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+                    WHERE ac.docstatus < 2 AND we.employee = x.employee AND we.work_date = x.work_date)
+                GROUP BY x.farm, x.reason, x.marked_by ORDER BY x.farm, n DESC""",
                 (pc.period_from, pc.period_to, tuple([x.farm for x in pc.farms]) or ("__none__",)), as_dict=True) \
                 if frappe.db.exists("DocType", "Work Missing Day Excuse") else []
             out["absent_blocks"] = 1 if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
@@ -4564,7 +4567,11 @@ def wm_payment(**kwargs):
                 dl = [x for x in wmpc_duplicates(pc.period_from, pc.period_to, None) if not x["paid_twice"]]
                 uf = wmpc_unfinished(pc.period_from, pc.period_to, None) if not pc.is_top_up else []
                 hi = wmi_issues(pc, None)
-                oi = wmi_open(hi, [f.farm for f in pc.farms] + ["HR"] + ([] if is_hr_step else ["GM"]))
+                # missing work is cleared by the farms before they approve; days that turn
+                # up later (late scans, an attendance fix) do not hold up HR or the GM --
+                # they show in Actuals > Missing work and are paid through a top-up
+                oi = [i for i in wmi_open(hi, [f.farm for f in pc.farms] + ["HR"] + ([] if is_hr_step else ["GM"]))
+                      if i["code"] != "missing_work"]
                 if dl or uf or oi:
                     herr = (str(len(dl)) + " duplicate day(s), " + str(len(uf)) + " unfinished record(s) and " +
                             str(len(oi)) + " open issue(s) are still in these dates. Fix or acknowledge them, "

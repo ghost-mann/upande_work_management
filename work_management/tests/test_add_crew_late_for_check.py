@@ -53,6 +53,13 @@ class TestAddCrewLate(unittest.TestCase):
 		self.assertIn("child.added_for_check = add_for", s)
 		self.assertIn('"Added late for payroll check "', s)
 
+	def test_busy_check_ignores_a_fully_released_crew(self):
+		# a gap day on a plan that finished (everyone released, or closed early) is
+		# shown as "not on any crew"; that old crew must not refuse the add
+		s = add_crew()
+		i = s.index("BUSY ELSEWHERE")
+		self.assertIn("IFNULL(w2.status, 'Active') != 'Left'", s[i:i + 1600])
+
 	def test_busy_check_uses_the_short_span(self):
 		s = add_crew()
 		self.assertIn("add_until or d.to_date", s)

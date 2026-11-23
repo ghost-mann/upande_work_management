@@ -47,6 +47,11 @@ class TestTab(unittest.TestCase):
 		self.assertIn("(d.assignments||[])", body)
 		self.assertNotIn("ST.asgList", body)
 
+	def test_no_second_load_for_the_farm(self):
+		i = JS.index("function loadMissing(")
+		self.assertNotIn("r.farm!==MW.farm", JS[i:JS.index("function renderMissing(")])
+		self.assertIn("MW.farm=d.farm||", JS[i:JS.index("function renderMissing(")])
+
 	def test_reasons_come_from_the_server(self):
 		self.assertIn("d.reasons", JS)
 

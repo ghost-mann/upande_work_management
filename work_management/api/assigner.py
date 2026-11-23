@@ -1362,6 +1362,8 @@ def wm_assigner(**kwargs):
                   AND COALESCE(we.start_date, a.from_date) <= %s
                   AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
                   AND we.employee IN %s
+                  AND EXISTS (SELECT 1 FROM `tabWork Assignment Employee` w2 WHERE w2.parent = a.name
+                              AND IFNULL(w2.status, 'Active') != 'Left')
             """, (nm, add_until or d.to_date, add_from, tuple(add_who)), as_dict=True)
             busy_names = []
             for b in busy:

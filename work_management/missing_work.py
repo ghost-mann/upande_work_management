@@ -260,8 +260,13 @@ def current_check(farm):
 
 def stamp_excuses(check, farm, period_from, period_to):
 	"""Lock this farm's excuses in the check's dates to the check (farm approved)."""
-	frappe.db.sql("""UPDATE `tabWork Missing Day Excuse` SET payroll_check = %s
-		WHERE IFNULL(payroll_check, '') = '' AND farm = %s AND work_date BETWEEN %s AND %s""",
+	# an excuse whose day has since had work entered is stale: actuals win, so it is
+	# neither locked into the check nor counted as an idle day
+	frappe.db.sql("""UPDATE `tabWork Missing Day Excuse` x SET x.payroll_check = %s
+		WHERE IFNULL(x.payroll_check, '') = '' AND x.farm = %s AND x.work_date BETWEEN %s AND %s
+		AND NOT EXISTS (SELECT 1 FROM `tabWork Actuals Employee` we
+			INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+			WHERE ac.docstatus < 2 AND we.employee = x.employee AND we.work_date = x.work_date)""",
 		(check, farm, period_from, period_to))
 	return frappe.db.sql("SELECT COUNT(*) FROM `tabWork Missing Day Excuse` WHERE payroll_check = %s", (check,))[0][0]
 
@@ -315,7 +320,7 @@ def wm_missing_work(**kwargs):
 
 	if action == "mw_list":
 		farm = (kwargs.get("farm") or "").strip()
-		chosen = [farm] if farm else farms
+		chosen = [farm] if farm else farms[:1]
 		chosen = [f for f in chosen if f in farms]
 		check = current_check(chosen[0]) if len(chosen) == 1 else None
 		from_date = kwargs.get("from_date") or (check or {}).get("period_from") or frappe.utils.add_days(
@@ -338,6 +343,7 @@ def wm_missing_work(**kwargs):
 		out["rows"] = rows
 		out["counts"] = {f: len([r for r in rows if r["farm"] == f and not r["excuse"]]) for f in chosen}
 		out["farms"] = farms
+		out["farm"] = chosen[0] if chosen else ""
 		out["from_date"] = str(from_date)
 		out["to_date"] = str(to_date)
 		out["open_check"] = check

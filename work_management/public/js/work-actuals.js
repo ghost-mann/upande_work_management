@@ -1910,11 +1910,10 @@
       MW.data=d;
       var fs=el("mw-farm"); fs.innerHTML='';
       (d.farms||[]).forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
-      if(!MW.farm && (d.farms||[]).length) MW.farm=d.farms[0];
-      if(MW.farm && !(d.farms||[]).length){ MW.farm=""; }
+      // the server answers for one farm: the one asked for, else the first
+      MW.farm=d.farm||"";
       fs.value=MW.farm; MW.from=d.from_date||MW.from; MW.to=d.to_date||MW.to;
       el("mw-from").value=MW.from; el("mw-to").value=MW.to;
-      if(MW.farm && (d.rows||[]).length && d.rows.some(function(r){ return r.farm!==MW.farm; })){ loadMissing(); return; }
       renderMissing(d);
     }).catch(function(e){ el("mw-body").innerHTML='<div class="empty">Could not load: '+esc(e&&e.message||e)+'</div>'; });
   }

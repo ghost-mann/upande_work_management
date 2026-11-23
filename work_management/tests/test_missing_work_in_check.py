@@ -44,6 +44,12 @@ class TestApproval(unittest.TestCase):
 		body = between('action == "chk_farm_approve"', 'action == "chk_send_back"')
 		self.assertIn("Actuals > Missing work", body)
 
+	def test_hr_and_gm_are_not_held_by_missing_work(self):
+		# missing days are the farm's to clear before farm approval; a scan arriving
+		# late, or HR's own attendance fix, must not freeze the HR / GM steps
+		body = between('action == "chk_hr_approve" or action == "chk_gm_approve"', 'if herr:')
+		self.assertIn('i["code"] != "missing_work"', body)
+
 	def test_farm_approve_stamps_excuses(self):
 		body = between('action == "chk_farm_approve"', 'action == "chk_send_back"')
 		self.assertIn('frappe.call("work_management.missing_work.stamp_excuses"', body)
@@ -55,6 +61,11 @@ class TestApproval(unittest.TestCase):
 	def test_cancel_unstamps_excuses(self):
 		body = between('action == "chk_cancel"', 'out["error"] = "unknown action: "')
 		self.assertIn('frappe.call("work_management.missing_work.unstamp_excuses"', body)
+
+	def test_excused_summary_skips_days_that_now_have_work(self):
+		body = between('action == "chk_detail"', 'action == "chk_fix_dup"')
+		i = body.index('out["excused"]')
+		self.assertIn("NOT EXISTS", body[i:i + 900])
 
 	def test_detail_returns_excused(self):
 		body = between('action == "chk_detail"', 'action == "chk_fix_dup"')

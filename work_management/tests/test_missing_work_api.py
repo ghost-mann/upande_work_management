@@ -91,6 +91,12 @@ class TestEndpoint(unittest.TestCase):
 		self.assertIn("payroll_check", action("mw_excuse"))
 		self.assertIn("payroll_check", action("mw_unexcuse"))
 
+	def test_list_is_always_one_farm(self):
+		# the screen shows one farm at a time; with none chosen it opens on the
+		# first, so the open check's dates and the assignment list always apply
+		self.assertIn("chosen = [farm] if farm else farms[:1]", action("mw_list"))
+		self.assertIn("out['farm']", action("mw_list"))
+
 	def test_list_returns_the_screen_fields(self):
 		s = action("mw_list")
 		for k in ("'rows'", "'counts'", "'farms'", "'open_check'", "'can_excuse'", "'late_farms'"):
@@ -117,9 +123,14 @@ class TestStamping(unittest.TestCase):
 
 	def test_stamp_only_unstamped_rows_of_the_farm_and_dates(self):
 		s = body("stamp_excuses")
-		self.assertIn("IFNULL(payroll_check, '') = ''", s)
-		self.assertIn("farm = %s", s)
-		self.assertIn("work_date BETWEEN %s AND %s", s)
+		self.assertIn("IFNULL(x.payroll_check, '') = ''", s)
+		self.assertIn("x.farm = %s", s)
+		self.assertIn("x.work_date BETWEEN %s AND %s", s)
+
+	def test_stamp_skips_excuses_whose_day_now_has_work(self):
+		# actuals entered after the excuse win: the excuse is not locked into the check
+		self.assertIn("NOT EXISTS", body("stamp_excuses"))
+		self.assertIn("`tabWork Actuals Employee`", body("stamp_excuses"))
 
 	def test_open_check_is_farm_review_not_top_up_farm_not_approved(self):
 		s = body("open_check")
