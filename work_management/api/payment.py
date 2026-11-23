@@ -4043,6 +4043,11 @@ def wm_payment(**kwargs):
             "approval_gap": ("ack", "GM", "An approval step skipped, or one person on two steps"),
             "self_approved": ("ack", "GM", "Approved by the person who entered it"),
             "backdated": ("ack", "GM", "Assignment created long after it started"),
+            # present (scan or attendance) with no actuals and no "no work given" reason:
+            # cleared in Actuals > Missing work (work_management/missing_work.py)
+            "missing_work": ("block", "farm", "Present, no work recorded"),
+            # put on a crew past the backdate limit by the farm manager, inside this check
+            "added_late": ("ack", "HR", "Worker added to a crew late for this check"),
         }
         WMI_FLAG_X = frappe.utils.flt(frappe.db.get_single_value("Work Management Settings", "qty_flag_multiple")) \
             if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
@@ -4103,6 +4108,8 @@ def wm_payment(**kwargs):
                                AND NOT EXISTS (SELECT 1 FROM `tabAttendance` pp WHERE pp.employee = we.employee
                                     AND pp.attendance_date = we.work_date AND pp.docstatus = 1
                                     AND pp.status IN ('Present', 'Half Day', 'Work From Home'))) absent,
+                       EXISTS (SELECT 1 FROM `tabWork Assignment Employee` wae WHERE wae.parent = ac.assignment
+                               AND wae.employee = we.employee AND wae.added_for_check = %(c)s) added_late,
                        EXISTS (SELECT 1 FROM `tabAttendance` pp WHERE pp.employee = we.employee
                                AND pp.attendance_date = we.work_date AND pp.docstatus = 1
                                AND pp.status IN ('Present', 'Half Day', 'Work From Home')) present,
@@ -4175,6 +4182,8 @@ def wm_payment(**kwargs):
                     add("off_paid", r.row, r, "an off day or holiday on their list", fp)
                 if r.ac_created and frappe.utils.date_diff(frappe.utils.getdate(r.ac_created), r.d) > 14:
                     add("late_entry", r.row, r, "entered " + str(frappe.utils.getdate(r.ac_created)), fp)
+                if frappe.utils.cint(r.added_late):
+                    add("added_late", r.row, r, "put on " + str(r.assignment) + "'s crew late, for this check", fp)
                 if r.doc not in docs_seen:
                     docs_seen[r.doc] = 1
                     dfp = wmi_doc_print(r.total_payment, r.entered_by or r.ac_owner, r.fm_approved_by,
@@ -4197,6 +4206,29 @@ def wm_payment(**kwargs):
                             frappe.utils.getdate(r.asg_created), r.asg_from) > PC_BACKDATE:
                         add("backdated", r.doc, r, str(r.assignment) + " started " + str(r.asg_from) + ", created " +
                             str(frappe.utils.getdate(r.asg_created)), dfp)
+            # Task workers present with no actuals and no reason given. Not on a top-up:
+            # a top-up is for specific late work, and leftovers of the main check's dates
+            # must not hold it up. Not when re-judging acknowledged rows (keys): these
+            # are blocks, cleared by entering the work or a reason, never acknowledged.
+            if not keys and not frappe.utils.cint(c.is_top_up):
+                mw_farms = [farm] if farm else [x.farm for x in (c.get("farms") or [])]
+                mw_rows = frappe.call("work_management.missing_work.find", farms=mw_farms,
+                                      from_date=c.period_from, to_date=c.period_to) if mw_farms else []
+                mw_names = {}
+                if mw_rows:
+                    for nm_r in frappe.db.sql("""SELECT name, employee_name FROM `tabEmployee` WHERE name IN %s""",
+                                              (tuple({m["employee"] for m in mw_rows}),)):
+                        mw_names[nm_r[0]] = nm_r[1]
+                for m in mw_rows:
+                    crew = m["crews"][0] if m["crews"] else None
+                    found.append({"code": "missing_work", "cls": "block", "title": WMI_CLASS["missing_work"][2],
+                                  "owner": m["farm"], "farm": m["farm"], "key": m["employee"] + "|" + m["day"],
+                                  "row": "", "doc": crew["assignment"] if crew else "", "employee": m["employee"],
+                                  "employee_name": mw_names.get(m["employee"]) or m["employee"],
+                                  "work_date": m["day"], "amount": 0, "qty": 0,
+                                  "detail": ("on " + str(crew["task_name"]) + " (" + str(crew["assignment"]) + ")"
+                                             if crew else "not on any crew") + "; present, no actuals, no reason given",
+                                  "acked": 0, "acked_by": None, "ack_reason": None})
             return found
 
         def wmpc_ident(dp, cx):
@@ -4392,6 +4424,12 @@ def wm_payment(**kwargs):
             # paid on an Absent day holds the farm's approval when "never record work on a
             # day marked Absent" is on (it is then a "block" issue, see WMI_CLASS); the
             # screen says which, rather than always "not blocking"
+            # "no work given" reasons in the check's dates, for HR and the GM: not blocking
+            out["excused"] = frappe.db.sql("""SELECT farm, reason, marked_by, COUNT(*) n
+                FROM `tabWork Missing Day Excuse` WHERE work_date BETWEEN %s AND %s AND farm IN %s
+                GROUP BY farm, reason, marked_by ORDER BY farm, n DESC""",
+                (pc.period_from, pc.period_to, tuple([x.farm for x in pc.farms]) or ("__none__",)), as_dict=True) \
+                if frappe.db.exists("DocType", "Work Missing Day Excuse") else []
             out["absent_blocks"] = 1 if frappe.db.sql("""SELECT 1 FROM `tabSingles` WHERE doctype = 'Work Management Settings'
                 AND field = 'att_absent_never' AND value = '1' LIMIT 1""") else 0
             if not pc_hr:
@@ -4479,6 +4517,10 @@ def wm_payment(**kwargs):
                     aerr = (af + " still has " + str(len(dl)) + " duplicate day(s), " + str(len(uf)) +
                             " unfinished record(s) and " + str(len(oi)) + " open issue(s) in these dates. "
                             "Fix or acknowledge them first.")
+                    mw_open = len([i for i in oi if i["code"] == "missing_work"])
+                    if mw_open:
+                        aerr = (aerr + " " + str(mw_open) + " of them are workers present with no work recorded: "
+                                "enter the work or give a reason in Actuals > Missing work.")
             if aerr:
                 out["error"] = aerr
             else:
@@ -4489,6 +4531,9 @@ def wm_payment(**kwargs):
                     {"c": pc.name, "f": pc.period_from, "t": pc.period_to, "farm": af})
                 frappe.db.set_value("Work Management Payroll Check Farm", arow[0].name, {"status": "Approved",
                     "approved_by": frappe.session.user, "approved_at": frappe.utils.now()}, update_modified=False)
+                # the farm's "no work given" reasons in these dates are now part of the check
+                frappe.call("work_management.missing_work.stamp_excuses", check=pc.name, farm=af,
+                            period_from=pc.period_from, period_to=pc.period_to)
                 wmpc_totals(pc)
                 left = [f for f in pc.farms if f.farm != af and f.status != "Approved"]
                 if not left:
@@ -4561,6 +4606,7 @@ def wm_payment(**kwargs):
                 out["error"] = serr
             else:
                 wmpc_unstamp(pc)
+                frappe.call("work_management.missing_work.unstamp_excuses", check=pc.name)
                 for f in pc.farms:
                     frappe.db.set_value("Work Management Payroll Check Farm", f.name, {"status": "Pending",
                         "approved_by": None, "approved_at": None}, update_modified=False)
@@ -4929,6 +4975,7 @@ def wm_payment(**kwargs):
                 out["error"] = "Say why it is being cancelled."
             else:
                 wmpc_unstamp(pc)
+                frappe.call("work_management.missing_work.unstamp_excuses", check=pc.name)
                 frappe.db.set_value("Work Management Payroll Check", pc.name, "status", "Cancelled")
                 frappe.get_doc("Work Management Payroll Check", pc.name).add_comment("Comment",
                     "Cancelled by " + pc_me + ": " + pc_reason)

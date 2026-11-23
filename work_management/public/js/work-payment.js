@@ -2667,6 +2667,12 @@
       var fixOps={rate_mismatch:[["recompute","Recompute"]], left_but_earning:[["zero","Zero"]], off_crew:[["zero","Zero"]],
         qty_outlier_hard:[["set_qty","Correct qty"],["zero","Zero"]], qty_outlier:[["set_qty","Correct qty"],["zero","Zero"]],
         absent_paid:[["zero","Zero"]], ghost_days:[["zero","Zero"]], presence_confirmed:[["zero","Zero"]], confirmed_absent:[["zero","Zero"]], leave_paid:[["zero","Zero"]], off_paid:[["zero","Zero"]]};
+      if(parts[1]==="missing_work"){
+        // fixed in Actuals > Missing work: enter the work or give a reason there
+        var mwq="tab=missing&from="+encodeURIComponent(c.period_from)+"&to="+encodeURIComponent(c.period_to);
+        h+='<div class="pc-bar"><a class="btn sm solid" href="/work-actuals?'+mwq+'&farm='+encodeURIComponent(parts[0])+'" target="_blank" rel="noopener">Open Missing work for '+esc(parts[0])+'</a>'+
+           '<span style="font-size:11px;color:var(--mute)">Present (scan or attendance) with no work recorded and no reason given. Enter the work, or say why there was none.</span></div>';
+      }
       if(mine && cls==="ack") h+='<div class="pc-bar"><button class="btn sm good" id="pci-ack">Acknowledge selected</button><label style="font-size:12px"><input type="checkbox" id="pci-all"> select all '+fmt(shown.filter(function(i){return !i.acked;}).length)+'</label><span style="font-size:11px;color:var(--mute)">Uses the reason box above; logged per row.</span></div>';
       h+='<div class="tablewrap"><div class="tablescroll"><table><thead><tr>'+(cls==="ack"&&mine?'<th></th>':'')+'<th>Worker</th><th>Date</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>Record</th><th>Detail</th><th class="n">KES</th><th>State</th><th></th></tr></thead><tbody>';
       shown.forEach(function(i){
@@ -2675,7 +2681,7 @@
             '<button class="btn sm" data-pcio="'+o[0]+'" data-pcir="'+esc(i.row)+'">'+o[1]+'</button>'; }).join(" ");
         h+='<tr>'+(cls==="ack"&&mine?'<td>'+(i.acked?'':'<input type="checkbox" data-pcis="'+esc(i.key)+'">')+'</td>':'')+
            '<td>'+esc(i.employee_name||i.employee||"")+'</td><td>'+esc(i.work_date)+'</td><td>'+esc(i.farm||"")+'</td>'+
-           '<td><a href="/app/work-management-actuals/'+esc(i.doc)+'" target="_blank" rel="noopener">'+esc(i.doc)+'</a></td><td>'+esc(i.detail)+'</td>'+
+           '<td>'+(i.code==="missing_work"?(i.doc?'<a href="/work-actuals?assignment='+encodeURIComponent(i.doc)+'&date='+encodeURIComponent(i.work_date)+'&emp='+encodeURIComponent(i.employee)+'" target="_blank" rel="noopener">Enter work</a>':'<a href="/work-actuals?tab=missing&farm='+encodeURIComponent(i.farm||"")+'&from='+encodeURIComponent(i.work_date)+'&to='+encodeURIComponent(i.work_date)+'" target="_blank" rel="noopener">Missing work</a>'):'<a href="/app/work-management-actuals/'+esc(i.doc)+'" target="_blank" rel="noopener">'+esc(i.doc)+'</a>')+'</td><td>'+esc(i.detail)+'</td>'+
            '<td class="n m">'+money(i.amount)+'</td><td>'+(i.acked?'<span class="pc-chip ok" title="'+esc(i.ack_reason||"")+'">acknowledged by '+esc(i.acked_by||"")+'</span>':(i.cls==="block"?'<span class="pc-chip bad">open</span>':'<span class="pc-chip wait">open</span>'))+'</td>'+
            '<td>'+(mine&&!i.acked&&i.key===i.row?ops:'')+'</td></tr>';
       });
@@ -2797,6 +2803,13 @@
          (can?'<button class="btn sm good" data-pca="'+esc(f.farm)+'"'+(clean?'':' disabled title="Fix its duplicate days, unfinished records, pay on Absent days and open issues first"')+'>Approve '+esc(f.farm)+'</button>':'')+'</div></div>';
     });
     h+='</div>';
+    if((d.excused||[]).length){
+      // "no work given" reasons: for HR and the GM to see, never blocking
+      var exTot=0, exBy={};
+      d.excused.forEach(function(x){ exTot+=x.n; (exBy[x.farm]=exBy[x.farm]||[]).push(esc(x.reason)+' <b>'+fmt(x.n)+'</b> <span style="opacity:.6">('+esc(x.marked_by||"")+')</span>'); });
+      h+='<div class="pc-note"><b>No work given: '+fmt(exTot)+' day(s)</b> where a task worker was present but the farm said there was no work. '+
+         Object.keys(exBy).map(function(f){ return '<br>'+esc(f)+': '+exBy[f].join(' · '); }).join('')+'</div>';
+    }
     if(d.hr_dups) h+='<div class="pc-note"><b>'+fmt(d.hr_dups)+' duplicate day(s) cross two farms.</b> HR fixes these; they do not hold up a farm manager.</div>';
     // the action bar: a reason box shared by every action that needs one
     var acts='';
