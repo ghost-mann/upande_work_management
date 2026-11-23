@@ -1257,6 +1257,12 @@ def wm_assigner(**kwargs):
         nm = frappe.form_dict.get("assignment")
         add_raw = frappe.form_dict.get("employees") or frappe.form_dict.get("employee") or ""
         add_from = frappe.form_dict.get("start_date")
+        # until: on the crew for start_date..until only (saved as Left on `until`), for
+        # a missing day in the past. for_check: inside that open payroll check the
+        # farm's own manager (or the GM) may go past the backdate limit, with a reason.
+        add_until = frappe.form_dict.get("until") or None
+        add_for = (frappe.form_dict.get("for_check") or "").strip() or None
+        add_oc = None
         add_who = []
         for aw in str(add_raw).split(","):
             if aw.strip() and aw.strip() not in add_who:
@@ -1282,7 +1288,26 @@ def wm_assigner(**kwargs):
                 err = "Workers can only be added to an approved (Assigned) assignment"
             elif not add_from:
                 add_from = d.from_date
-            if not err:
+            if not err and add_until and str(add_until) < str(add_from):
+                err = "The last day (" + str(add_until) + ") is before the first (" + str(add_from) + ")."
+            if not err and add_until and str(add_until) > str(d.to_date):
+                err = "The last day (" + str(add_until) + ") is after this assignment ends (" + str(d.to_date) + ")."
+            if not err and add_for:
+                # added late for a payroll check: only that check's dates, only while the
+                # farm is still reviewing it, only its own farm manager or the GM
+                add_oc = frappe.call("work_management.missing_work.open_check", farm=str(d.farm).strip(), day=str(add_from))
+                if not add_until:
+                    err = "Say the last day they worked (until) when adding them for a payroll check."
+                elif not add_oc or add_oc["name"] != add_for:
+                    err = ("Payroll check " + add_for + " is not open for " + str(d.farm) + " on " + str(add_from) +
+                        ". Ask the GM to add them with a reason.")
+                elif str(add_until) > str(add_oc["period_to"]):
+                    err = "Payroll check " + add_for + " ends " + str(add_oc["period_to"]) + "."
+                elif not (WMG_GM or (str(d.farm).strip() in wmg_fm)):
+                    err = "Only " + str(d.farm) + "'s farm manager or the GM may add a worker late for a payroll check."
+                elif not (frappe.form_dict.get("backdate_reason") or "").strip():
+                    err = "Give a reason for adding them late."
+            elif not err:
                 err = wmg_backdate_err(add_from) or None
             if not err:
                 err = wmg_farm_err(d.farm, "add a worker to this farm's work") or None
@@ -1337,7 +1362,7 @@ def wm_assigner(**kwargs):
                   AND COALESCE(we.start_date, a.from_date) <= %s
                   AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %s
                   AND we.employee IN %s
-            """, (nm, d.to_date, add_from, tuple(add_who)), as_dict=True)
+            """, (nm, add_until or d.to_date, add_from, tuple(add_who)), as_dict=True)
             busy_names = []
             for b in busy:
                 busy_names.append((frappe.db.get_value("Employee", b.emp, "employee_name") or b.emp)
@@ -1355,7 +1380,13 @@ def wm_assigner(**kwargs):
                     SELECT COALESCE(MAX(idx),0) m FROM `tabWork Assignment Employee` WHERE parent=%s
                 """, (nm,), as_dict=True)
                 next_idx = (maxidx[0].m if maxidx else 0) + 1
-                wmg_log_backdate(nm, add_from)
+                if add_for:
+                    frappe.get_doc("Work Management Assigner", nm).add_comment("Comment",
+                        "Added late for payroll check " + add_for + " by " + str(frappe.session.user) + " (" +
+                        ", ".join(add_who) + ", " + str(add_from) + " to " + str(add_until) + "): " +
+                        (frappe.form_dict.get("backdate_reason") or "").strip())
+                else:
+                    wmg_log_backdate(nm, add_from)
                 added = []
                 for aw in add_who:
                     # the parent is submitted, so the row is inserted directly -- the
@@ -1368,8 +1399,12 @@ def wm_assigner(**kwargs):
                     child.employee = aw
                     child.employee_name = frappe.db.get_value("Employee", aw, "employee_name")
                     child.employment_type = frappe.db.get_value("Employee", aw, "employment_type")
-                    child.status = "Active"
+                    child.status = "Left" if add_until else "Active"
                     child.start_date = add_from
+                    if add_until:
+                        child.left_date = add_until
+                    if add_for:
+                        child.added_for_check = add_for
                     child.count_in_payroll = 1
                     child.db_insert()
                     added.append(aw)
