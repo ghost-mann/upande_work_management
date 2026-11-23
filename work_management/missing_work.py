@@ -70,12 +70,77 @@ def crew_days(rows, from_date, to_date):
 	return out
 
 
-def classify(presence, actuals, excuses, crews, home_farm):
-	"""One row per present day with no actuals:
-	{employee, day, farm, crews, excuse}, sorted by farm, day, employee."""
+def day_state(emp, day, L):
+	"""Where a worker-day stands. "none": not present. "open": present with no work
+	and no reason, or its reason was sent back. "waiting": its fix is in approval (a
+	missing-day record not yet CONFIRMED, or a reason not yet Approved). "cleared":
+	work in a normal record, a CONFIRMED missing-day record, or an Approved reason."""
+	key = (emp, day)
+	if key not in L["presence"]:
+		return "none"
+	if key in L["normal_actuals"]:
+		return "cleared"
+	fix = L["fix_states"].get(key)
+	if fix:
+		return "cleared" if fix == "CONFIRMED" else "waiting"
+	ex = L["excuses"].get(key)
+	if ex:
+		status = ex.get("status") or "Approved"
+		if status == "Approved":
+			return "cleared"
+		if status.startswith("Pending"):
+			return "waiting"
+	return "open"
+
+
+def grid_codes(emp, days, L):
+	"""One letter per day for the Missing work grid. Fix states first: M missing,
+	W waiting for approval, R "no work" approved. Then attendance: A absent (X when
+	HR has been asked to correct it), L leave, O off day / holiday, H half day,
+	P present, ? no record. Lower case: work is recorded that day."""
+	out = []
+	for day in days:
+		key = (emp, day)
+		state = day_state(emp, day, L)
+		worked = key in L["normal_actuals"] or key in L["fix_states"]
+		if state == "open":
+			out.append("M")
+			continue
+		if state == "waiting":
+			out.append("W")
+			continue
+		ex = L["excuses"].get(key)
+		if state == "cleared" and ex and not worked:
+			out.append("R")
+			continue
+		if key in L["absent"] and key not in L["present"]:
+			code = "X" if key in L["ar_open"] else "A"
+		elif key in L["leave_days"]:
+			code = "L"
+		elif key in L["holiday_days"]:
+			code = "O"
+		elif key in L["half"]:
+			code = "H"
+		elif key in L["scans"] or key in L["present"]:
+			code = "P"
+		else:
+			code = "?"
+		out.append(code.lower() if worked and code not in ("X",) else code)
+	return "".join(out)
+
+
+def classify(presence, actuals, excuses, crews, home_farm, fix_states=None):
+	"""One row per present day without work in a normal record:
+	{employee, day, farm, crews, excuse, fix, state}, sorted by farm, day, employee.
+	`state` is day_state's answer (open / waiting / cleared)."""
+	L = {"presence": set(presence), "normal_actuals": set(actuals), "fix_states": fix_states or {},
+		"excuses": excuses}
 	out = []
 	for emp, day in sorted(set(presence)):
 		if (emp, day) in actuals:
+			continue
+		state = day_state(emp, day, L)
+		if state == "cleared" and (emp, day) in L["fix_states"]:
 			continue
 		on = crews.get((emp, day)) or []
 		out.append({
@@ -84,6 +149,8 @@ def classify(presence, actuals, excuses, crews, home_farm):
 			"farm": on[0]["farm"] if on else home_farm.get(emp),
 			"crews": on,
 			"excuse": excuses.get((emp, day)),
+			"fix": L["fix_states"].get((emp, day)),
+			"state": state,
 		})
 	out.sort(key=lambda r: (r["farm"] or "", r["day"], r["employee"]))
 	return out
@@ -108,8 +175,11 @@ def task_worker_sql():
 	return "(" + (" OR ".join(conds) if conds else "e.employment_type = 'Task Worker'") + ")"
 
 
-def find(farms, from_date, to_date, include_excused=False):
-	"""Missing days for these farms between from_date and to_date (inclusive)."""
+def load(farms, from_date, to_date):
+	"""Everything the rules need for from_date..to_date, in a fixed number of
+	queries: task workers, presence, attendance, leave, holidays, work recorded
+	(normal records and missing-day records apart), crews, reasons, attendance
+	requests and sent-back missing-day records."""
 	f, t = str(from_date), str(to_date)
 	args = {"f": f, "t": t}
 	emps = frappe.db.sql("""
@@ -120,18 +190,18 @@ def find(farms, from_date, to_date, include_excused=False):
 	employees = {e.name: {"holiday_list": e.holiday_list, "joined": str(e.joined) if e.joined else None,
 		"relieved": str(e.relieved) if e.relieved else None} for e in emps}
 	home = {e.name: e.farm for e in emps}
-	if not employees:
-		return []
-	args["e"] = tuple(employees)
+	args["e"] = tuple(employees) or ("__none__",)
 
 	scans = {(r[0], str(r[1])) for r in frappe.db.sql("""
 		SELECT DISTINCT employee, DATE(`time`) FROM `tabEmployee Checkin`
 		WHERE employee IN %(e)s AND `time` >= %(f)s AND `time` < DATE_ADD(%(t)s, INTERVAL 1 DAY)""", args)}
-	present, absent = set(), set()
+	present, absent, half = set(), set(), set()
 	for emp, day, status in frappe.db.sql("""
 		SELECT employee, attendance_date, status FROM `tabAttendance`
 		WHERE docstatus = 1 AND employee IN %(e)s AND attendance_date BETWEEN %(f)s AND %(t)s""", args):
 		(present if status in PRESENT else absent if status == "Absent" else set()).add((emp, str(day)))
+		if status == "Half Day":
+			half.add((emp, str(day)))
 	lists = tuple({e["holiday_list"] for e in employees.values() if e["holiday_list"]}) or ("__none__",)
 	holidays = {(r[0], str(r[1])) for r in frappe.db.sql("""
 		SELECT parent, holiday_date FROM `tabHoliday`
@@ -145,10 +215,17 @@ def find(farms, from_date, to_date, include_excused=False):
 
 	presence = present_days(employees, scans, present, absent, holidays, leaves)
 
-	actuals = {(r[0], str(r[1])) for r in frappe.db.sql("""
-		SELECT DISTINCT we.employee, we.work_date FROM `tabWork Actuals Employee` we
+	normal_actuals, fix_states = set(), {}
+	fix_sql = "IFNULL(ac.missing_work_fix, 0)" if frappe.get_meta("Work Management Actuals").has_field(
+		"missing_work_fix") else "0"
+	for emp, day, fix, state in frappe.db.sql("""
+		SELECT we.employee, we.work_date, """ + fix_sql + """, ac.workflow_state FROM `tabWork Actuals Employee` we
 		INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
-		WHERE ac.docstatus < 2 AND we.employee IN %(e)s AND we.work_date BETWEEN %(f)s AND %(t)s""", args)}
+		WHERE ac.docstatus < 2 AND we.employee IN %(e)s AND we.work_date BETWEEN %(f)s AND %(t)s""", args):
+		if frappe.utils.cint(fix):
+			fix_states[(emp, str(day))] = state or "Draft"
+		else:
+			normal_actuals.add((emp, str(day)))
 	# Only crews the Actuals grid can still take entries on: not a plan closed early,
 	# not an assignment whose whole crew has been released. A day on such a crew is
 	# shown as "not on any crew", which offers Add to assignment.
@@ -157,7 +234,7 @@ def find(farms, from_date, to_date, include_excused=False):
 	crew_rows = frappe.db.sql("""
 		SELECT we.employee, a.name assignment, TRIM(a.farm) farm, IFNULL(tk.subject, a.task) task_name,
 			IFNULL(a.block_section, '') block, IFNULL(a.planner_request, '') planner,
-			IFNULL(pl.team_leader, '') team_leader, IFNULL(pl.master_plan, '') master_plan,
+			IFNULL(pl.team_leader, '') team_leader, IFNULL(pl.master_plan, '') master_plan, IFNULL(pl.uom, '') uom,
 			GREATEST(COALESCE(we.start_date, a.from_date), a.from_date) start,
 			LEAST(COALESCE(CASE WHEN IFNULL(we.status, 'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) end
 		FROM `tabWork Assignment Employee` we
@@ -172,15 +249,59 @@ def find(farms, from_date, to_date, include_excused=False):
 	excuses = {}
 	for r in frappe.db.sql("""
 		SELECT name, employee, work_date, reason, IFNULL(note, '') note, marked_by, marked_at,
-			IFNULL(payroll_check, '') payroll_check
+			IFNULL(payroll_check, '') payroll_check, IFNULL(status, 'Pending Farm Manager') status,
+			IFNULL(sent_back_by, '') sent_back_by, IFNULL(sent_back_reason, '') sent_back_reason
 		FROM `tabWork Missing Day Excuse`
 		WHERE employee IN %(e)s AND work_date BETWEEN %(f)s AND %(t)s""", args, as_dict=True):
 		excuses[(r.employee, str(r.work_date))] = {"name": r.name, "reason": r.reason, "note": r.note,
-			"marked_by": r.marked_by, "marked_at": str(r.marked_at or ""), "payroll_check": r.payroll_check}
+			"marked_by": r.marked_by, "marked_at": str(r.marked_at or ""), "payroll_check": r.payroll_check,
+			"status": r.status, "sent_back_by": r.sent_back_by, "sent_back_reason": r.sent_back_reason}
+	ar_open = set()
+	if frappe.db.exists("DocType", "Attendance Request"):
+		for emp, af, at in frappe.db.sql("""SELECT employee, from_date, to_date FROM `tabAttendance Request`
+			WHERE docstatus < 2 AND employee IN %(e)s AND from_date <= %(t)s AND to_date >= %(f)s""", args):
+			day = datetime.date.fromisoformat(str(max(str(af), f)))
+			last = datetime.date.fromisoformat(str(min(str(at), t)))
+			while day <= last:
+				ar_open.add((emp, day.isoformat()))
+				day = day + datetime.timedelta(days=1)
+	sent_back = {}
+	if frappe.get_meta("Work Management Deleted Actuals").has_field("missing_employee"):
+		for emp, day, by, why in frappe.db.sql("""SELECT missing_employee, missing_work_date, deleted_by, reason
+			FROM `tabWork Management Deleted Actuals` WHERE missing_employee IN %(e)s
+			AND missing_work_date BETWEEN %(f)s AND %(t)s ORDER BY deleted_on""", args):
+			sent_back[(emp, str(day))] = {"by": by, "reason": why}
+	holiday_days, leave_days = set(), set()
+	for emp, info in employees.items():
+		for (hl, day) in holidays:
+			if hl and hl == info["holiday_list"]:
+				holiday_days.add((emp, day))
+	for emp, spans in leaves.items():
+		for lf, lt in spans:
+			day = datetime.date.fromisoformat(max(lf, f))
+			last = datetime.date.fromisoformat(min(lt, t))
+			while day <= last:
+				leave_days.add((emp, day.isoformat()))
+				day = day + datetime.timedelta(days=1)
+	return {"employees": employees, "home": home, "rows": emps, "presence": presence, "scans": scans,
+		"present": present, "absent": absent, "half": half, "holiday_days": holiday_days,
+		"leave_days": leave_days, "normal_actuals": normal_actuals, "fix_states": fix_states, "crews": crews,
+		"excuses": excuses, "ar_open": ar_open, "sent_back": sent_back}
 
+
+def find(farms, from_date, to_date, include_excused=False):
+	"""Missing days for these farms between from_date and to_date (inclusive):
+	open days only; with include_excused, also days waiting for approval and days
+	cleared by an approved reason (the screens show those)."""
+	L = load(farms, from_date, to_date)
 	wanted = set(farms or [])
-	return [r for r in classify(presence, actuals, excuses, crews, home)
-		if r["farm"] in wanted and (include_excused or not r["excuse"])]
+	rows = [r for r in classify(L["presence"], L["normal_actuals"], L["excuses"], L["crews"], L["home"],
+		L["fix_states"]) if r["farm"] in wanted]
+	for r in rows:
+		sb = L["sent_back"].get((r["employee"], r["day"]))
+		if sb and r["state"] == "open":
+			r["sent_back"] = sb
+	return rows if include_excused else [r for r in rows if r["state"] == "open"]
 
 
 def counts(farms, from_date, to_date):
@@ -189,6 +310,35 @@ def counts(farms, from_date, to_date):
 	for r in find(farms, from_date, to_date):
 		out[r["farm"]] = out.get(r["farm"], 0) + 1
 	return out
+
+
+def grid(farm, from_date, to_date):
+	"""The Missing work grid for one farm: every task worker whose home farm it is,
+	plus anyone on its crews in the dates; one code per day (grid_codes). Workers
+	with open days first."""
+	L = load([farm], from_date, to_date)
+	day = datetime.date.fromisoformat(str(from_date))
+	last = datetime.date.fromisoformat(str(to_date))
+	days = []
+	while day <= last:
+		days.append(day.isoformat())
+		day = day + datetime.timedelta(days=1)
+	on_crew = {emp for (emp, d), cs in L["crews"].items() for c in cs if c["farm"] == farm}
+	workers = []
+	for e in L["rows"]:
+		if e.farm != farm and e.name not in on_crew:
+			continue
+		codes = grid_codes(e.name, days, L)
+		workers.append({"emp": e.name, "cells": codes, "open": codes.count("M"), "waiting": codes.count("W")})
+	names = {}
+	if workers:
+		for emp, nm, des in frappe.db.sql("SELECT name, employee_name, IFNULL(designation, '') FROM `tabEmployee` WHERE name IN %s",
+			(tuple(w["emp"] for w in workers),)):
+			names[emp] = (nm, des)
+	for w in workers:
+		w["name"], w["designation"] = names.get(w["emp"], (w["emp"], ""))
+	workers.sort(key=lambda w: (-w["open"], -w["waiting"], w["name"] or ""))
+	return {"days": days, "workers": workers, "L": L}
 
 
 # ---- who may do what ------------------------------------------------------------

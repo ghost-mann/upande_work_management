@@ -124,7 +124,7 @@ class TestBatched(unittest.TestCase):
 	def test_crews_that_cannot_take_entries_are_not_crews(self):
 		# the Actuals grid refuses entry on a plan closed early and on an assignment
 		# whose whole crew is released; such a day is offered "Add to assignment"
-		fn = SRC[SRC.index("def find("):SRC.index("def counts(")]
+		fn = SRC[SRC.index("def load("):SRC.index("def counts(")]
 		self.assertIn("custom_close_state", fn)
 		self.assertIn("IFNULL(w2.status, 'Active') != 'Left'", fn)
 
@@ -140,3 +140,77 @@ class TestBatched(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+def L(**kw):
+	"""A small load() result for the pure rules."""
+	base = {"presence": set(), "normal_actuals": set(), "fix_states": {}, "excuses": {}, "scans": set(),
+		"present": set(), "absent": set(), "half": set(), "holiday_days": set(), "leave_days": set(),
+		"ar_open": set(), "sent_back": {}, "crews": {}, "home": {}}
+	base.update(kw)
+	return base
+
+
+class TestDayState(unittest.TestCase):
+	K = ("E1", "2026-11-03")
+
+	def test_not_present_is_none(self):
+		self.assertEqual(mw.day_state("E1", "2026-11-03", L()), "none")
+
+	def test_present_no_work_is_open(self):
+		self.assertEqual(mw.day_state("E1", "2026-11-03", L(presence={self.K})), "open")
+
+	def test_normal_actuals_clear(self):
+		self.assertEqual(mw.day_state("E1", "2026-11-03", L(presence={self.K}, normal_actuals={self.K})), "cleared")
+
+	def test_pending_fix_is_waiting_confirmed_is_cleared(self):
+		self.assertEqual(mw.day_state("E1", "2026-11-03",
+			L(presence={self.K}, fix_states={self.K: "Pending HR Head"})), "waiting")
+		self.assertEqual(mw.day_state("E1", "2026-11-03",
+			L(presence={self.K}, fix_states={self.K: "CONFIRMED"})), "cleared")
+
+	def test_reason_states(self):
+		for status, want in (("Pending Farm Manager", "waiting"), ("Pending GM", "waiting"),
+				("Approved", "cleared"), ("Sent back", "open")):
+			self.assertEqual(mw.day_state("E1", "2026-11-03",
+				L(presence={self.K}, excuses={self.K: {"status": status}})), want, status)
+
+
+class TestGridCodes(unittest.TestCase):
+	DAYS = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08",
+		"2026-11-09", "2026-11-10"]
+
+	def test_codes(self):
+		e = "E1"
+		d = self.DAYS
+		l = L(presence={(e, d[0]), (e, d[1]), (e, d[2]), (e, d[3]), (e, d[8])},
+			scans={(e, d[0]), (e, d[1]), (e, d[2]), (e, d[3])}, present={(e, d[8])},
+			normal_actuals={(e, d[0])}, fix_states={(e, d[2]): "Pending Farm Manager"},
+			excuses={(e, d[3]): {"status": "Approved"}},
+			absent={(e, d[4]), (e, d[5])}, ar_open={(e, d[5])}, leave_days={(e, d[6])}, holiday_days={(e, d[7])})
+		# p: present with work, M missing, W waiting, R reason approved, A absent, X asked HR,
+		# L leave, O off, then P present-by-attendance with no work -> missing again
+		self.assertEqual(mw.grid_codes(e, d, l), "pMWRAXLOM")
+
+	def test_half_day_and_no_record(self):
+		l = L(presence={("E1", self.DAYS[0])}, half={("E1", self.DAYS[0])}, present={("E1", self.DAYS[0])},
+			normal_actuals={("E1", self.DAYS[0])})
+		self.assertEqual(mw.grid_codes("E1", self.DAYS[:2], l), "h?")
+
+
+class TestGridShape(unittest.TestCase):
+	def test_grid_lists_every_task_worker_and_sorts_open_first(self):
+		fn = SRC[SRC.index("def grid("):SRC.index("def ", SRC.index("def grid(") + 5)]
+		self.assertIn("home", fn)
+		self.assertIn("crews", fn)
+		self.assertIn('-w["open"]', fn)
+
+	def test_load_is_batched(self):
+		tree = ast.parse(SRC)
+		fn = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "load"][0]
+		for loop in [n for n in ast.walk(fn) if isinstance(n, (ast.For, ast.While))]:
+			for stmt in loop.body:
+				self.assertNotIn("frappe.db.sql", ast.unparse(stmt))
+
+	def test_crews_carry_uom(self):
+		self.assertIn("IFNULL(pl.uom, '') uom", SRC)
