@@ -21,7 +21,9 @@
   "worker_days",
   "amount",
   "section_snap",
-  "snapshot"
+  "snapshot",
+  "missing_employee",
+  "missing_work_date"
  ],
  "fields": [
   {
@@ -110,11 +112,23 @@
    "fieldtype": "Long Text",
    "label": "Snapshot (JSON)",
    "read_only": 1
+  },
+  {
+   "fieldname": "missing_employee",
+   "fieldtype": "Data",
+   "label": "Missing Day Employee",
+   "read_only": 1
+  },
+  {
+   "fieldname": "missing_work_date",
+   "fieldtype": "Date",
+   "label": "Missing Day",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-02 14:00:00.000000",
+ "modified": "2026-11-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Deleted Actuals",

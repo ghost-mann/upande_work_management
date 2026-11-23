@@ -96,6 +96,8 @@ FIELD_LABELS = (
 	("Work Management Approval Stand In", "farm", "{top_singular}"),
 	("Work Management Payroll Check Fix", "farm", "{top_singular}"),
 	("Work Missing Day Excuse", "farm", "{top_singular}"),
+	("Work Missing Day Excuse", "fm_by", "{top_singular} Manager Approved By"),
+	("Work Missing Day Excuse", "fm_at", "{top_singular} Manager Approved At"),
 	("Work Off Day Request", "farm", "{top_singular}"),
 	("Work Payment Line", "farm", "{top_singular}"),
 	("Work Payment Line", "block", "{unit_singular} / {section_singular}"),

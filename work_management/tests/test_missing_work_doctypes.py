@@ -64,3 +64,39 @@ class TestSettingsAndCrew(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestPartTwoFields(unittest.TestCase):
+	"""Missing work part 2: missing-day records and reason approvals."""
+
+	STATUSES = ["Pending Farm Manager", "Pending HR", "Pending GM", "Approved", "Sent back"]
+
+	def test_actuals_flag(self):
+		f = fields(load("work_management_actuals"))
+		self.assertEqual(f["missing_work_fix"]["fieldtype"], "Check")
+		self.assertEqual(f["missing_work_fix"].get("read_only"), 1)
+
+	def test_excuse_status(self):
+		f = fields(load("work_missing_day_excuse"))
+		self.assertEqual(f["status"]["fieldtype"], "Select")
+		self.assertEqual(f["status"]["options"], "\n".join(self.STATUSES))
+		self.assertEqual(f["status"].get("default"), "Pending Farm Manager")
+
+	def test_excuse_step_fields(self):
+		f = fields(load("work_missing_day_excuse"))
+		for k in ("fm_by", "hr_by", "gm_by", "sent_back_by"):
+			self.assertEqual(f[k]["fieldtype"], "Link", k)
+			self.assertEqual(f[k]["options"], "User", k)
+		for k in ("fm_at", "hr_at", "gm_at", "sent_back_at"):
+			self.assertEqual(f[k]["fieldtype"], "Datetime", k)
+		self.assertEqual(f["sent_back_reason"]["fieldtype"], "Small Text")
+
+	def test_deleted_log_remembers_the_day(self):
+		f = fields(load("work_management_deleted_actuals"))
+		self.assertEqual(f["missing_employee"]["fieldtype"], "Data")
+		self.assertEqual(f["missing_work_date"]["fieldtype"], "Date")
+
+	def test_field_order_complete(self):
+		for dt in ("work_management_actuals", "work_missing_day_excuse", "work_management_deleted_actuals"):
+			doc = load(dt)
+			self.assertEqual(set(doc["field_order"]), {x["fieldname"] for x in doc["fields"]}, dt)

@@ -18,7 +18,19 @@
   "section_who",
   "marked_by",
   "marked_at",
-  "payroll_check"
+  "payroll_check",
+  "section_approval",
+  "status",
+  "fm_by",
+  "fm_at",
+  "hr_by",
+  "hr_at",
+  "column_break_gm",
+  "gm_by",
+  "gm_at",
+  "sent_back_by",
+  "sent_back_at",
+  "sent_back_reason"
  ],
  "fields": [
   {
@@ -100,12 +112,89 @@
    "label": "Payroll Check",
    "read_only": 1,
    "description": "Set when the farm approves a payroll check covering this day; the excuse can no longer change."
+  },
+  {
+   "fieldname": "section_approval",
+   "fieldtype": "Section Break",
+   "label": "Approval"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending Farm Manager\nPending HR\nPending GM\nApproved\nSent back",
+   "default": "Pending Farm Manager",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "fm_by",
+   "fieldtype": "Link",
+   "label": "Farm Manager Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fm_at",
+   "fieldtype": "Datetime",
+   "label": "Farm Manager Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "hr_by",
+   "fieldtype": "Link",
+   "label": "HR Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "hr_at",
+   "fieldtype": "Datetime",
+   "label": "HR Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_gm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "gm_by",
+   "fieldtype": "Link",
+   "label": "GM Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gm_at",
+   "fieldtype": "Datetime",
+   "label": "GM Approved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_back_by",
+   "fieldtype": "Link",
+   "label": "Sent Back By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_back_at",
+   "fieldtype": "Datetime",
+   "label": "Sent Back At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_back_reason",
+   "fieldtype": "Small Text",
+   "label": "Sent Back Reason",
+   "read_only": 1
   }
  ],
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-23 09:00:00.000000",
+ "modified": "2026-11-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Missing Day Excuse",

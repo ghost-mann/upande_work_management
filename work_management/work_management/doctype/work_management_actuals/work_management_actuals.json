@@ -57,7 +57,8 @@
   "custom_gm_approved_at",
   "custom_hr_approved_at",
   "custom_salaried_qty",
-  "custom_submitted_at"
+  "custom_submitted_at",
+  "missing_work_fix"
  ],
  "fields": [
   {
@@ -390,12 +391,20 @@
    "fieldtype": "Date",
    "label": "FM Approval Date",
    "read_only": 1
+  },
+  {
+   "fieldname": "missing_work_fix",
+   "fieldtype": "Check",
+   "label": "Entered for a missing day",
+   "read_only": 1,
+   "default": "0",
+   "description": "Saved from Actuals > Missing work for one worker's forgotten day; approved on its own, outside the assignment's main record."
   }
  ],
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-17 10:00:00.000000",
+ "modified": "2026-11-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Actuals",
