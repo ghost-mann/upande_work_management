@@ -204,6 +204,14 @@ Tue 04 Nov
   - Team leaders who are employees without a login (see the per-farm TL
     list) are skipped, and the FM gets their part.
 - **Not-on-any-crew days** go to the farm manager(s) only.
+- **GM and HR** (requested by james@, 2026-11-23) get **one all-farms
+  summary** each morning. It is not a copy of every team leader's email.
+  - Contents: the counts per farm, then every missing worker grouped by
+    farm, day and crew, including the not-on-any-crew days.
+  - Recipients come from a new Settings field, `missing_work_notify`
+    (a list of emails). It is set on live to the GM
+    (koskey@lokitelaorchards.com) and HR (hro@endebesscoffee.com), the same
+    people the approval reminders use.
 - **One email per recipient**, listing workers by day and by crew, with a
   link to the Missing work tab.
 - **Nothing to report:** no email is sent.
