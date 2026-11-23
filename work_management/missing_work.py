@@ -182,3 +182,217 @@ def counts(farms, from_date, to_date):
 	for r in find(farms, from_date, to_date):
 		out[r["farm"]] = out.get(r["farm"], 0) + 1
 	return out
+
+
+# ---- who may do what ------------------------------------------------------------
+
+def may_record(cfg, roles, farm):
+	"""May someone holding `roles` record work (and so excuse a day) on `farm`?
+	The act_submit rule: System Manager, the enter_work grant, the GM, the HR
+	head, or that farm's own farm manager -- and only on a configured farm."""
+	if farm not in (cfg.get("farms") or []):
+		return False
+	held = set(roles or [])
+	if held & {"System Manager", "General Manager"}:
+		return True
+	if held & set(cfg.get("hr_head_roles") or []):
+		return True
+	if held & set((cfg.get("capabilities") or {}).get("enter_work") or []):
+		return True
+	return (cfg.get("farm_approver_role") or {}).get(farm) in held
+
+
+def may_add_late(cfg, roles, farm):
+	"""May someone add a worker to a crew late inside an open payroll check?
+	Only that farm's farm manager or the GM (the user's decision, 2026-11-23)."""
+	if farm not in (cfg.get("farms") or []):
+		return False
+	held = set(roles or [])
+	if held & {"System Manager", "General Manager"}:
+		return True
+	return (cfg.get("farm_approver_role") or {}).get(farm) in held
+
+
+def user_farms(cfg, roles, permitted):
+	"""The farms the Missing work tab shows: those this person may record work on,
+	narrowed to their Farm user permissions when they have any."""
+	farms = [f for f in cfg.get("farms") or [] if may_record(cfg, roles, f)]
+	if permitted:
+		farms = [f for f in farms if f in permitted]
+	return farms
+
+
+# ---- payroll check hooks ------------------------------------------------------------
+
+def open_check(farm, day):
+	"""The payroll check still with the farm managers that covers `day` and has
+	`farm` not yet approved, or None. Top-ups are not counted."""
+	rows = frappe.db.sql("""
+		SELECT c.name, c.period_from, c.period_to FROM `tabWork Management Payroll Check` c
+		INNER JOIN `tabWork Management Payroll Check Farm` f ON f.parent = c.name
+		WHERE c.status = 'Farm Review' AND IFNULL(c.is_top_up, 0) = 0
+		AND c.period_from <= %s AND c.period_to >= %s
+		AND f.farm = %s AND IFNULL(f.status, '') != 'Approved'
+		ORDER BY c.creation DESC LIMIT 1""", (day, day, farm), as_dict=True)
+	if not rows:
+		return None
+	return {"name": rows[0].name, "period_from": str(rows[0].period_from), "period_to": str(rows[0].period_to)}
+
+
+def current_check(farm):
+	"""The newest payroll check still with the farm managers that has `farm` not yet
+	approved, whatever its dates, or None. Top-ups are not counted."""
+	rows = frappe.db.sql("""
+		SELECT c.period_from FROM `tabWork Management Payroll Check` c
+		INNER JOIN `tabWork Management Payroll Check Farm` f ON f.parent = c.name
+		WHERE c.status = 'Farm Review' AND IFNULL(c.is_top_up, 0) = 0
+		AND f.farm = %s AND IFNULL(f.status, '') != 'Approved'
+		ORDER BY c.creation DESC LIMIT 1""", (farm,))
+	return open_check(farm, str(rows[0][0])) if rows else None
+
+
+def stamp_excuses(check, farm, period_from, period_to):
+	"""Lock this farm's excuses in the check's dates to the check (farm approved)."""
+	frappe.db.sql("""UPDATE `tabWork Missing Day Excuse` SET payroll_check = %s
+		WHERE IFNULL(payroll_check, '') = '' AND farm = %s AND work_date BETWEEN %s AND %s""",
+		(check, farm, period_from, period_to))
+	return frappe.db.sql("SELECT COUNT(*) FROM `tabWork Missing Day Excuse` WHERE payroll_check = %s", (check,))[0][0]
+
+
+def unstamp_excuses(check):
+	"""Free the excuses a check locked (sent back or cancelled)."""
+	n = frappe.db.sql("SELECT COUNT(*) FROM `tabWork Missing Day Excuse` WHERE payroll_check = %s", (check,))[0][0]
+	frappe.db.sql("UPDATE `tabWork Missing Day Excuse` SET payroll_check = '' WHERE payroll_check = %s", (check,))
+	return n
+
+
+# ---- the Actuals > Missing work endpoint ---------------------------------------------
+
+def permitted_farm_names(user):
+	return [r[0] for r in frappe.db.sql("""SELECT DISTINCT for_value FROM `tabUser Permission`
+		WHERE user = %s AND allow = 'Farm'""", (user,))]
+
+
+def parse_rows(raw):
+	if isinstance(raw, str):
+		raw = frappe.parse_json(raw or "[]")
+	return [r for r in raw or [] if r.get("employee") and r.get("day")]
+
+
+@frappe.whitelist()
+def wm_missing_work(**kwargs):
+	from work_management.api.config import get_config
+
+	cfg = get_config()
+	roles = frappe.get_roles()
+	action = kwargs.get("action") or frappe.form_dict.get("action")
+	farms = user_farms(cfg, roles, permitted_farm_names(frappe.session.user))
+	out = {}
+
+	if action == "mw_list":
+		farm = (kwargs.get("farm") or "").strip()
+		chosen = [farm] if farm else farms
+		chosen = [f for f in chosen if f in farms]
+		check = current_check(chosen[0]) if len(chosen) == 1 else None
+		from_date = kwargs.get("from_date") or (check or {}).get("period_from") or frappe.utils.add_days(
+			frappe.utils.today(), -14)
+		to_date = kwargs.get("to_date") or (check or {}).get("period_to") or frappe.utils.add_days(
+			frappe.utils.today(), -1)
+		rows = find(chosen, from_date, to_date, include_excused=True) if chosen else []
+		names = {r[0]: r[1] for r in frappe.db.sql("""SELECT name, employee_name FROM `tabEmployee`
+			WHERE name IN %s""", (tuple({r["employee"] for r in rows}) or ("__none__",),))}
+		scans = {}
+		if rows:
+			for emp, day, t1, t2 in frappe.db.sql("""SELECT employee, DATE(`time`), MIN(`time`), MAX(`time`)
+				FROM `tabEmployee Checkin` WHERE employee IN %s AND `time` >= %s
+				AND `time` < DATE_ADD(%s, INTERVAL 1 DAY) GROUP BY employee, DATE(`time`)""",
+				(tuple({r["employee"] for r in rows}), from_date, to_date)):
+				scans[(emp, str(day))] = (str(t1)[11:16], str(t2)[11:16])
+		for r in rows:
+			r["employee_name"] = names.get(r["employee"]) or r["employee"]
+			r["scan"] = scans.get((r["employee"], r["day"]))
+		out["rows"] = rows
+		out["counts"] = {f: len([r for r in rows if r["farm"] == f and not r["excuse"]]) for f in chosen}
+		out["farms"] = farms
+		out["from_date"] = str(from_date)
+		out["to_date"] = str(to_date)
+		out["open_check"] = check
+		out["can_excuse"] = bool(chosen)
+		out["late_farms"] = [f for f in chosen if may_add_late(cfg, roles, f)]
+		out["reasons"] = REASONS
+
+	elif action == "mw_excuse":
+		rows = parse_rows(kwargs.get("rows"))
+		reason = (kwargs.get("reason") or "").strip()
+		note = (kwargs.get("note") or "").strip()
+		err = None
+		if not rows:
+			err = "Pick at least one worker-day."
+		elif reason not in REASONS:
+			err = "Pick a reason."
+		elif reason == "Other" and not note:
+			err = "Say what happened when the reason is Other."
+		if not err:
+			days = sorted({r["day"] for r in rows})
+			missing = {(m["employee"], m["day"]): m for m in find(farms, days[0], days[-1], include_excused=True)}
+			for r in rows:
+				m = missing.get((r["employee"], r["day"]))
+				if not m:
+					err = r["employee"] + " on " + r["day"] + " is not a missing day (work is recorded, or not a farm of yours)."
+				elif not may_record(cfg, roles, m["farm"]):
+					err = "You may not record work on " + str(m["farm"]) + "."
+				elif m["excuse"] and m["excuse"].get("payroll_check"):
+					err = (r["employee"] + " on " + r["day"] + " is locked in payroll check " +
+						m["excuse"]["payroll_check"] + ".")
+				if err:
+					break
+		if err:
+			out["error"] = err
+		else:
+			now = frappe.utils.now()
+			for r in rows:
+				m = missing[(r["employee"], r["day"])]
+				if m["excuse"]:
+					frappe.db.set_value("Work Missing Day Excuse", m["excuse"]["name"], {"reason": reason,
+						"note": note, "marked_by": frappe.session.user, "marked_at": now})
+					continue
+				doc = frappe.new_doc("Work Missing Day Excuse")
+				doc.employee = r["employee"]
+				doc.farm = m["farm"]
+				doc.work_date = r["day"]
+				doc.reason = reason
+				doc.note = note
+				doc.assignment = m["crews"][0]["assignment"] if m["crews"] else None
+				doc.marked_by = frappe.session.user
+				doc.marked_at = now
+				doc.insert(ignore_permissions=True)
+			frappe.db.commit()
+			out["excused"] = len(rows)
+
+	elif action == "mw_unexcuse":
+		names = kwargs.get("names")
+		if isinstance(names, str):
+			names = frappe.parse_json(names or "[]")
+		err = None
+		docs = frappe.get_all("Work Missing Day Excuse", filters={"name": ["in", names or ["__none__"]]},
+			fields=["name", "farm", "payroll_check", "employee", "work_date"])
+		if not docs:
+			err = "Nothing to undo."
+		for d in docs:
+			if d.payroll_check:
+				err = d.employee + " on " + str(d.work_date) + " is locked in payroll check " + d.payroll_check + "."
+			elif not may_record(cfg, roles, d.farm):
+				err = "You may not record work on " + str(d.farm) + "."
+			if err:
+				break
+		if err:
+			out["error"] = err
+		else:
+			for d in docs:
+				frappe.delete_doc("Work Missing Day Excuse", d.name, ignore_permissions=True, force=True)
+			frappe.db.commit()
+			out["removed"] = len(docs)
+
+	else:
+		out["error"] = "unknown action: " + str(action)
+	return out

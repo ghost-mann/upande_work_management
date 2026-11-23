@@ -1,16 +1,12 @@
 """Missing work: which present task-worker days have no actuals, and whose farm they are."""
 
 import ast
-import sys
-import types
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = (ROOT / "missing_work.py").read_text()
 
-# missing_work imports frappe at module level; the pure functions never touch it.
-sys.modules.setdefault("frappe", types.ModuleType("frappe"))
 from work_management import missing_work as mw  # noqa: E402
 
 A = {"assignment": "ASG-1", "farm": "Vale", "task_name": "Weeding", "block": "B1",
