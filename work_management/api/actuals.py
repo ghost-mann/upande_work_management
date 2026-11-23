@@ -1187,7 +1187,7 @@ def wm_actuals(**kwargs):
         # Raw SQL (not get_all) so a low-privilege user without doctype read still loads the grid.
         draft = frappe.db.sql("""
             SELECT name, workflow_state FROM `tabWork Management Actuals`
-            WHERE assignment = %s AND workflow_state IN ('Draft','Rejected') LIMIT 1
+            WHERE assignment = %s AND workflow_state IN ('Draft','Rejected') AND IFNULL(missing_work_fix, 0) = 0 LIMIT 1
         """, (name,), as_dict=True)
         a["draft_name"] = draft[0].name if draft else None
         a["draft_state"] = draft[0].workflow_state if draft else None
@@ -1235,7 +1235,7 @@ def wm_actuals(**kwargs):
         # does not lock its own grid.
         live = frappe.db.sql("""
             SELECT name, workflow_state FROM `tabWork Management Actuals`
-            WHERE assignment = %s AND name != %s
+            WHERE assignment = %s AND name != %s AND IFNULL(missing_work_fix, 0) = 0
               AND workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
             ORDER BY FIELD(workflow_state, 'Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
             LIMIT 1
@@ -1261,6 +1261,11 @@ def wm_actuals(**kwargs):
         assignment = frappe.form_dict.get("assignment")
         payload = frappe.form_dict.get("rows")
         submit_now = frappe.form_dict.get("submit_now")
+        # A MISSING DAY (2026-11-23): one forgotten worker-day, sent from Actuals >
+        # Missing work as its own small record. It never resumes or waits for the
+        # assignment's main record and goes straight to approval; every other rule
+        # below (rate, plan cap, one worker one day, attendance) applies as it is.
+        mw_fix = frappe.utils.cint(frappe.form_dict.get("missing_fix"))
         err = None
         if not assignment: err = "Assignment is required"
         # WHO MAY RECORD WORK (2026-11-12): the enter_work grant, or the farm manager of
@@ -1306,6 +1311,32 @@ def wm_actuals(**kwargs):
             out["submit_blocked"] = ("Saved as a draft: only " + str(STAGE_ROLE["actuals_submit"]) +
                                      " can submit actuals for approval. Ask somebody holding "
                                      "that role to submit it.")
+        if mw_fix and not err:
+            if not submit_now:
+                err = ("Only " + str(STAGE_ROLE["actuals_submit"]) +
+                       " or the farm manager can send a missing day for approval.")
+            else:
+                mw_cells = [c.split("~") for c in str(payload or "").split("|") if c.strip()]
+                mw_emps = list({c[0] for c in mw_cells if len(c) >= 2})
+                mw_days = sorted({c[1] for c in mw_cells if len(c) >= 2})
+                if len(mw_emps) != 1 or not mw_days:
+                    err = "One worker per missing-day record: send each worker's day on its own."
+                else:
+                    mw_farm = str(frappe.db.get_value("Work Management Assigner", assignment, "farm") or "").strip()
+                    mw_open = {}
+                    for m in frappe.call("work_management.missing_work.find", farms=[mw_farm],
+                                         from_date=mw_days[0], to_date=mw_days[-1]):
+                        mw_open[(m["employee"], m["day"])] = m
+                    for mw_d in mw_days:
+                        m = mw_open.get((mw_emps[0], mw_d))
+                        if not m:
+                            err = (str(mw_emps[0]) + " on " + str(mw_d) + " is not a missing day: work is already "
+                                   "recorded, a fix is waiting for approval, or they were not present.")
+                        elif not m["crews"] or m["crews"][0]["assignment"] != assignment:
+                            err = (str(mw_emps[0]) + " was not on " + str(assignment) + "'s crew on " + str(mw_d) +
+                                   ". Add them to the crew first.")
+                        if err:
+                            break
         if err:
             out["error"] = err
         else:
@@ -1344,12 +1375,17 @@ def wm_actuals(**kwargs):
                         unit_value = snap_wage / frappe.utils.flt(pinfo0.daily_target)
             edit_doc = frappe.form_dict.get("edit_doc")  # approver editing a pending doc in place
             # ONE doc per assignment: resume existing Draft/Rejected, else create new.
+            # missing-day records (missing_work_fix) live beside the main record: never
+            # resumed by it and never locking it
             existing = frappe.db.get_all("Work Management Actuals",
-                filters={"assignment": assignment, "workflow_state": ["in", ["Draft", "Rejected"]]},
+                filters={"assignment": assignment, "workflow_state": ["in", ["Draft", "Rejected"]], "missing_work_fix": 0},
                 pluck="name", limit=1)
             live = frappe.db.get_all("Work Management Actuals",
-                filters={"assignment": assignment, "workflow_state": ["in", ["Pending Farm Manager","Pending HR Head","Pending GM","CONFIRMED"]]},
+                filters={"assignment": assignment, "workflow_state": ["in", ["Pending Farm Manager","Pending HR Head","Pending GM","CONFIRMED"]], "missing_work_fix": 0},
                 pluck="name", limit=1)
+            if mw_fix:
+                existing = []
+                live = []
             editing_pending = 0
             # EDITING A RECORD MID-APPROVAL (2026-11-12): only the approver of the step it
             # is at (the farm's manager at the FM step), only on its own assignment, and
@@ -1666,6 +1702,8 @@ def wm_actuals(**kwargs):
                 else:
                     d = frappe.new_doc("Work Management Actuals")
                     d.assignment = assignment
+                    if mw_fix:
+                        d.missing_work_fix = 1
                     is_new = 1
                 # enterer may have a User Permission on Employee excluding some workers on this
                 # actual; the workflow validator's check_permission("read") would throw. Doc-level
@@ -1862,6 +1900,10 @@ def wm_actuals(**kwargs):
                             d.custom_balance_qty = plan_target2 - projected2
                     if a_pr and not d.get("custom_balance_qty"):
                         d.custom_balance_qty = 0
+                    # a missing day is approved on its own, whatever the plan's progress
+                    if mw_fix:
+                        completed = 1
+                        submit_blocked_msg = None
                     if is_new:
                         d.insert(ignore_permissions=True)
                     elif editing_pending:
@@ -2284,15 +2326,37 @@ def wm_actuals(**kwargs):
         if rej_err:
             out["error"] = rej_err
         else:
-            # if submitted, "cancel" it by flipping docstatus to 2 (Cancelled) directly, then mark Rejected.
-            if cur.docstatus == 1:
-                frappe.db.set_value("Work Management Actuals", nm, "docstatus", 2, update_modified=False)
-                for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
-                    frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 2, update_modified=False)
-            frappe.db.set_value("Work Management Actuals", nm, "workflow_state", "Rejected", update_modified=False)
-            # who rejected, and when: the same timeline row Frappe's workflow writes for a
-            # desk rejection, so act_rejected answers "rejected by" for both routes
-            frappe.get_doc("Work Management Actuals", nm).add_comment("Workflow", "Rejected")
+            rj_fix = frappe.utils.cint(frappe.db.get_value("Work Management Actuals", nm, "missing_work_fix"))
+            if rj_fix:
+                # A MISSING-DAY RECORD SENT BACK (2026-11-23) is deleted, not left Rejected:
+                # a Rejected copy would hold the day (one worker, one day) while nobody
+                # resumes it. Logged with its worker and day, so Missing work shows the day
+                # as open again with who sent it back and why.
+                rj_full = frappe.db.get_value("Work Management Actuals", nm,
+                    ["name", "farm", "task", "assignment", "block_section", "entered_by", "owner",
+                     "from_date", "to_date"], as_dict=True)
+                rj_row = frappe.db.get_value("Work Actuals Employee", {"parent": nm}, ["employee", "work_date"],
+                                             as_dict=True)
+                rj_log = wmg_log_deleted(rj_full, (frappe.form_dict.get("reason") or "").strip() or "Sent back")
+                if rj_row:
+                    frappe.db.set_value("Work Management Deleted Actuals", rj_log, {"missing_employee": rj_row.employee,
+                        "missing_work_date": rj_row.work_date}, update_modified=False)
+                if cur.docstatus == 1:
+                    frappe.db.set_value("Work Management Actuals", nm, "docstatus", 0, update_modified=False)
+                    for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
+                        frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 0, update_modified=False)
+                frappe.delete_doc("Work Management Actuals", nm, ignore_permissions=True, force=1)
+                out["deleted"] = nm
+            else:
+                # if submitted, "cancel" it by flipping docstatus to 2 (Cancelled) directly, then mark Rejected.
+                if cur.docstatus == 1:
+                    frappe.db.set_value("Work Management Actuals", nm, "docstatus", 2, update_modified=False)
+                    for kid in frappe.db.get_all("Work Actuals Employee", filters={"parent": nm}, pluck="name"):
+                        frappe.db.set_value("Work Actuals Employee", kid, "docstatus", 2, update_modified=False)
+                frappe.db.set_value("Work Management Actuals", nm, "workflow_state", "Rejected", update_modified=False)
+                # who rejected, and when: the same timeline row Frappe's workflow writes for a
+                # desk rejection, so act_rejected answers "rejected by" for both routes
+                frappe.get_doc("Work Management Actuals", nm).add_comment("Workflow", "Rejected")
             asg = cur.assignment and frappe.db.get_value("Work Management Assigner", cur.assignment, "planner_request")
             if asg:
                 conf = frappe.db.sql("""
@@ -2311,7 +2375,7 @@ def wm_actuals(**kwargs):
                 frappe.db.set_value("Work Management Planner", asg, "fulfilment_pct", pct, update_modified=False)
                 frappe.db.set_value("Work Management Planner", asg, "over_target", over, update_modified=False)
             out["name"] = nm
-            out["workflow_state"] = "Rejected"
+            out["workflow_state"] = "Deleted" if rj_fix else "Rejected"
 
     # ===== PAYMENT (pay_) =====
     elif action == "act_close_roles":
