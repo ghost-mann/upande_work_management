@@ -1879,8 +1879,12 @@ def wm_actuals(**kwargs):
                                 INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
                                 WHERE a2.planner_request = %s
                                   AND ac.workflow_state IN ('Pending Farm Manager','Pending HR Head','Pending GM','CONFIRMED')
-                                  AND ac.assignment != %s
-                            """, (a_pr, assignment), as_dict=True)
+                                  AND (ac.assignment != %s OR IFNULL(ac.missing_work_fix, 0) = 1)
+                                  AND ac.name != %s
+                            """, (a_pr, assignment, d.name if not is_new else "__none__"), as_dict=True)
+                            # missing-day records on this same assignment count: the plan cap
+                            # counts them, so leaving them out here would leave the main record
+                            # short of its target for ever
                             other_done2 = frappe.utils.flt(odr[0].q) if odr else 0
                             projected2 = other_done2 + total_qty
                             # salaried-only actuals are paid a fixed wage, not qty x rate, so they
@@ -2549,6 +2553,8 @@ def wm_actuals(**kwargs):
         else:
             # 1) finalise any OPEN (Draft/Rejected) actuals on this plan's assignments to Confirmed.
             #    We only touch docs that actually have quantity; empty drafts are left alone.
+            # A missing-day record (missing_work_fix) is left to its own approvers until it
+            # reaches the GM: every fix passes the farm manager, HR and the GM (2026-11-23).
             open_acts = frappe.db.sql("""
                 SELECT ac.name nm, ac.total_actual_qty q, ac.docstatus ds, ac.workflow_state ws
                 FROM `tabWork Management Actuals` ac
@@ -2558,6 +2564,7 @@ def wm_actuals(**kwargs):
                         ac.workflow_state IN ('Draft','Rejected','Pending Farm Manager','Pending HR Head','Pending GM')
                         OR (ac.workflow_state = 'CONFIRMED' AND ac.docstatus = 0)
                       )
+                  AND NOT (IFNULL(ac.missing_work_fix, 0) = 1 AND ac.workflow_state != 'Pending GM')
             """, (plan,), as_dict=True)
             finalised = 0
             close_skipped = []

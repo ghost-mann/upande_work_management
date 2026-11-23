@@ -443,22 +443,46 @@ def reason_chain(stage_rows):
 		if r.get("key") in REASON_STATUS and frappe.utils.cint(r.get("on"))] or ["Pending Farm Manager"]
 
 
+REASON_ORDER = ["Pending Farm Manager", "Pending HR", "Pending GM"]
+# a reason step's row in Settings > Approval stand-ins
+STAND_IN_STAGE = {"Pending Farm Manager": "actuals_fm", "Pending HR": "actuals_hr", "Pending GM": "actuals_gm"}
+
+
 def next_status(status, chain):
-	"""The status after this step: the next step switched on, else Approved."""
-	if status in chain and chain.index(status) + 1 < len(chain):
-		return chain[chain.index(status) + 1]
+	"""The status after this step: the next step switched on, else Approved. A reason
+	sitting at a step switched off since goes on to the next step that is on."""
+	if status in chain:
+		i = chain.index(status)
+		return chain[i + 1] if i + 1 < len(chain) else "Approved"
+	if status in REASON_ORDER:
+		for later in REASON_ORDER[REASON_ORDER.index(status) + 1:]:
+			if later in chain:
+				return later
 	return "Approved"
 
 
-def may_step(status, roles, farm, cfg):
+def reason_stand_ins():
+	"""Settings > Approval stand-ins rows (stage, user, farm)."""
+	if not frappe.db.exists("DocType", "Work Management Approval Stand In"):
+		return []
+	return frappe.get_all("Work Management Approval Stand In", filters={"parenttype": "Work Management Settings"},
+		fields=["stage", "user", "farm"])
+
+
+def may_step(status, roles, farm, cfg, user=None, stand_ins=None):
 	"""May someone holding `roles` take the step a reason is waiting at? Farm manager
 	step: that farm's farm manager, or the GM. HR step: the HR head. GM step: the
-	General Manager. System Manager may take any step."""
+	General Manager. System Manager may take any step, and so may a stand-in listed
+	for that step (and farm) in Settings > Approval stand-ins."""
 	held = set(roles or [])
 	if status not in ("Pending Farm Manager", "Pending HR", "Pending GM"):
 		return False
 	if "System Manager" in held:
 		return True
+	for si in stand_ins or []:
+		if (user and si.get("user") == user and si.get("stage") == STAND_IN_STAGE[status]
+				and (not si.get("farm") or str(si.get("farm")).strip() == str(farm or "").strip())):
+			return True
 	if status == "Pending Farm Manager":
 		return "General Manager" in held or (cfg.get("farm_approver_role") or {}).get(farm) in held
 	if status == "Pending HR":
@@ -473,6 +497,8 @@ def two_people_err(excuse, user):
 		return "You marked this reason yourself, so somebody else must approve it."
 	if excuse.get("status") == "Pending GM" and user and user == excuse.get("hr_by"):
 		return "You took the HR step on this reason, so somebody else must give the GM approval."
+	if user and user in (excuse.get("fm_by"), excuse.get("hr_by")):
+		return "You already took a step on this reason, so somebody else must take this one."
 	return ""
 
 
@@ -653,6 +679,7 @@ def wm_missing_work(**kwargs):
 		chain = reason_chain(cfg.get("stage_rows"))
 		docs = frappe.get_all("Work Missing Day Excuse", filters={"name": ["in", names or ["__none__"]]},
 			fields=["name", "farm", "employee", "work_date", "status", "marked_by", "fm_by", "hr_by", "payroll_check"])
+		sis = reason_stand_ins()
 		err = None
 		if not docs:
 			err = "Nothing picked."
@@ -662,7 +689,7 @@ def wm_missing_work(**kwargs):
 			if err:
 				break
 			label = d.employee + " on " + str(d.work_date)
-			if not may_step(d.status, roles, d.farm, cfg):
+			if not may_step(d.status, roles, d.farm, cfg, frappe.session.user, sis):
 				err = label + ": waiting for the " + stage_label(d.status) + ", which is not you."
 			elif action == "mw_approve" and two_people_err(d, frappe.session.user):
 				err = label + ": " + two_people_err(d, frappe.session.user)
@@ -710,12 +737,13 @@ def wm_missing_work(**kwargs):
 				"amount": frappe.utils.flt(r.amount), "stage": stage, "stage_label": stage_label(stage),
 				"entered_by": entered, "can_act": 1 if can else 0})
 		reasons = []
+		sis = reason_stand_ins()
 		for r in frappe.db.sql("""
 			SELECT x.name, x.farm, x.employee, x.employee_name, x.work_date, x.reason, IFNULL(x.note, '') note,
 				x.status, x.marked_by, x.fm_by, x.hr_by
 			FROM `tabWork Missing Day Excuse` x
 			WHERE x.status LIKE 'Pending%%' AND x.farm IN %s ORDER BY x.status, x.work_date""", (chosen,), as_dict=True):
-			can = may_step(r.status, roles, r.farm, cfg) and not two_people_err(r, me)
+			can = may_step(r.status, roles, r.farm, cfg, me, sis) and not two_people_err(r, me)
 			reasons.append({"name": r.name, "farm": r.farm, "employee": r.employee, "employee_name": r.employee_name,
 				"day": str(r.work_date), "reason": r.reason, "note": r.note, "stage": r.status,
 				"stage_label": stage_label(r.status), "marked_by": r.marked_by, "can_act": 1 if can else 0})

@@ -354,26 +354,32 @@ def s4_send_back(ui, work_row, reason_row, period):
 
 def s5_refusals(day_rows):
 	(r1, r2, r3) = day_rows
+	other = r3 if r3["crews"] and r3["crews"][0]["assignment"] != r2["crews"][0]["assignment"] else None
+	if other:
+		o = actuals_api(CLERK, action="act_submit", assignment=r2["crews"][0]["assignment"], missing_fix=1, submit_now=1,
+			rows=other["employee"] + "~" + other["day"] + "~1")
+		check("5. a save for a worker not on that crew is refused", "crew" in (o.get("error") or ""), o)
 	mw(FM, action="mw_excuse", rows=json.dumps([{"employee": r1["employee"], "day": r1["day"]}]), reason="Rain / weather")
 	ex = excuse(r1["employee"], r1["day"])
 	o = mw(FM, action="mw_approve", names=json.dumps([ex.name]))
 	check("5. nobody approves a reason they gave", "yourself" in (o.get("error") or ""), o)
 	o = mw(HR, action="mw_approve", names=json.dumps([ex.name]))
 	check("5. HR cannot take the farm manager step", "not you" in (o.get("error") or ""), o)
-	mw(GM, action="mw_approve", names=json.dumps([ex.name]))
-	o = mw(GM, action="mw_approve", names=json.dumps([ex.name]))   # koskey holds HOD HR too: takes HR step
-	o2 = mw(GM, action="mw_approve", names=json.dumps([ex.name]))  # then may not take the GM step
-	check("5. the same person cannot take both the HR and the GM step", "HR step" in (o2.get("error") or ""), (o, o2))
+	o0 = mw(GM, action="mw_approve", names=json.dumps([ex.name]))  # GM takes the farm manager step
+	o1 = mw(GM, action="mw_approve", names=json.dumps([ex.name]))  # and may not take another step
+	check("5. nobody takes two steps on one reason (GM at the farm manager step, then again)",
+		not o0.get("error") and "already took a step" in (o1.get("error") or ""), (o0, o1))
+	mw(CLERK, action="mw_excuse", rows=json.dumps([{"employee": r3["employee"], "day": r3["day"]}]), reason="Rain / weather")
+	ex3 = excuse(r3["employee"], r3["day"])
+	mw(FM, action="mw_approve", names=json.dumps([ex3.name]))
+	o = mw(GM, action="mw_approve", names=json.dumps([ex3.name]))   # koskey holds HOD HR too: takes the HR step
+	o2 = mw(GM, action="mw_approve", names=json.dumps([ex3.name]))  # then may not take the GM step
+	check("5. the same person cannot take both the HR and the GM step", not o.get("error") and "HR step" in (o2.get("error") or ""), (o, o2))
 	o = mw(GM, action="mw_send_back", names=json.dumps([ex.name]))
 	check("5. send back needs a reason", "Say why" in (o.get("error") or ""), o)
 	o = actuals_api(CLERK, action="act_submit", assignment=r2["crews"][0]["assignment"], missing_fix=1, submit_now=1,
 		rows=r2["employee"] + "~2026-09-01~1")
 	check("5. a missing-day save for a day that is not missing is refused", "not a missing day" in (o.get("error") or ""), o)
-	other = r3 if r3["crews"] and r3["crews"][0]["assignment"] != r2["crews"][0]["assignment"] else None
-	if other:
-		o = actuals_api(CLERK, action="act_submit", assignment=r2["crews"][0]["assignment"], missing_fix=1, submit_now=1,
-			rows=other["employee"] + "~" + other["day"] + "~1")
-		check("5. a save for a worker not on that crew is refused", "crew" in (o.get("error") or ""), o)
 	o = actuals_api(CLERK, action="act_submit", assignment=r2["crews"][0]["assignment"], missing_fix=1, submit_now=1,
 		rows=r2["employee"] + "~" + r2["day"] + "~1|" + (other or r1)["employee"] + "~" + r2["day"] + "~1")
 	check("5. one worker per missing-day record", "One worker" in (o.get("error") or ""), o)
@@ -393,6 +399,26 @@ def s6_locked(ui, day_row, period):
 	d = actuals_api(CLERK, action="act_detail", assignment=asg).get("detail") or {}
 	check("6. the crew's grid is still locked by its main record, not by the fix",
 		d.get("live_name") and rec and d.get("live_name") != rec.name, d.get("live_name"))
+
+
+def s9_main_record_still_completes(pair):
+	"""A missing-day record on a crew whose main record is still a draft: the main
+	record must still be able to reach its target and go for approval."""
+	(r1, r2) = pair
+	asg = r1["crews"][0]["assignment"]
+	o = actuals_api(CLERK, action="act_submit", assignment=asg, missing_fix=1, submit_now=1,
+		rows=r1["employee"] + "~" + r1["day"] + "~1")
+	if not check("9. a missing day goes in on a crew with no main record yet", o.get("name"), o):
+		return
+	pr, room = plan_room(asg)
+	# the plan has exactly one unit left: the main record's one unit completes it
+	set_temp("Work Management Planner", pr, "quantity",
+		frappe.utils.flt(frappe.db.get_value("Work Management Planner", pr, "quantity")) - room + 1)
+	o = actuals_api(CLERK, action="act_submit", assignment=asg, submit_now=1, rows=r2["employee"] + "~" + r2["day"] + "~1")
+	check("9. the crew's main record still reaches its target and goes for approval",
+		o.get("workflow_state") == "Pending Farm Manager" and not o.get("submit_blocked"), o)
+	if o.get("name"):
+		CREATED.insert(0, ("Work Management Actuals", o["name"]))
 
 
 def s7_payroll_check(ui):
@@ -567,6 +593,20 @@ def main():
 				break
 		return got
 
+	# a crew with no main record yet and two different workers' open days on it
+	pair9 = None
+	by_asg = {}
+	for r in free:
+		by_asg.setdefault(r["crews"][0]["assignment"], []).append(r)
+	for asg, rs in by_asg.items():
+		emps = {}
+		for r in rs:
+			emps.setdefault(r["employee"], r)
+		if len(emps) >= 2:
+			pair9 = list(emps.values())[-2:]
+			break
+	for r in pair9 or []:
+		used.add((r["employee"], r["day"]))
 	print("test days: %d open on %s (%d on a crew, %d crews with an approved main record, %d no-crew with a crew to join)"
 		% (len(rows), FARM, len(on_crew), len(locked), len(no_crew)))
 	with sync_playwright() as p:
@@ -581,6 +621,7 @@ def main():
 				("5. refusals", lambda: s5_refusals(take(rows, 1) + take(on_crew, 2))),
 				("6. locked crew", lambda: s6_locked(ui, take(locked)[0], period) if locked else check("6. a locked crew", False, "none")),
 				("7. payroll check", lambda: s7_payroll_check(ui)),
+				("9. main record still completes", lambda: s9_main_record_still_completes(pair9) if pair9 else check("9. a crew with two open days", False, "none")),
 				("8. ask HR", lambda: s8_ask_hr(ui, period)),
 			):
 				print("\n== " + name)

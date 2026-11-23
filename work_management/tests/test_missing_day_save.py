@@ -52,6 +52,21 @@ class TestMissingDaySave(unittest.TestCase):
 		self.assertNotIn("mw_fix", SUBMIT[i:i + 1600])
 
 
+class TestMainRecordStillCompletes(unittest.TestCase):
+	def test_completion_counts_missing_day_records_on_the_same_assignment(self):
+		# the plan cap counts them, so the "target reached" check must too, or the
+		# main record can never reach its target and is stuck in Draft
+		i = SUBMIT.index("COMPLETION GATE")
+		gate = SUBMIT[i:i + 2200]
+		self.assertIn("IFNULL(ac.missing_work_fix, 0) = 1", gate)
+
+
+class TestCloseEarlyLeavesFixesToTheirApprovers(unittest.TestCase):
+	def test_close_confirm_skips_missing_day_records_not_at_gm(self):
+		body = block('elif action == "act_close_confirm"', 'elif action == "act_close_reject"')
+		self.assertIn("missing_work_fix", body)
+
+
 class TestGridIgnoresMissingDayRecords(unittest.TestCase):
 	def test_detail_lock_and_resume_skip_them(self):
 		self.assertGreaterEqual(DETAIL.count("IFNULL(missing_work_fix, 0) = 0"), 2)

@@ -49,6 +49,28 @@ class TestChain(unittest.TestCase):
 		self.assertEqual(mw.next_status("Pending Farm Manager", chain), "Pending GM")
 
 
+class TestChainChangesMidway(unittest.TestCase):
+	def test_a_reason_at_a_step_switched_off_goes_on_to_the_next_step(self):
+		# HR switched off while reasons sit with HR: approving moves them to the GM,
+		# never straight to Approved
+		self.assertEqual(mw.next_status("Pending HR", ["Pending Farm Manager", "Pending GM"]), "Pending GM")
+		self.assertEqual(mw.next_status("Pending Farm Manager", ["Pending GM"]), "Pending GM")
+		self.assertEqual(mw.next_status("Pending GM", ["Pending Farm Manager"]), "Approved")
+
+
+class TestStandIns(unittest.TestCase):
+	SI = [{"stage": "actuals_hr", "user": "standin@x", "farm": None},
+		{"stage": "actuals_fm", "user": "vale-si@x", "farm": "Vale"}]
+
+	def test_a_listed_stand_in_may_take_the_step(self):
+		self.assertTrue(mw.may_step("Pending HR", [], "Vale", CFG, user="standin@x", stand_ins=self.SI))
+		self.assertTrue(mw.may_step("Pending Farm Manager", [], "Vale", CFG, user="vale-si@x", stand_ins=self.SI))
+
+	def test_a_stand_in_only_for_their_step_and_farm(self):
+		self.assertFalse(mw.may_step("Pending GM", [], "Vale", CFG, user="standin@x", stand_ins=self.SI))
+		self.assertFalse(mw.may_step("Pending Farm Manager", [], "Endebess", CFG, user="vale-si@x", stand_ins=self.SI))
+
+
 class TestWhoMayStep(unittest.TestCase):
 	def test_farm_manager_step(self):
 		self.assertTrue(mw.may_step("Pending Farm Manager", ["Farm Manager Vale"], "Vale", CFG))
@@ -83,6 +105,14 @@ class TestTwoPeople(unittest.TestCase):
 	def test_hr_cannot_also_take_gm(self):
 		self.assertIn("HR step", mw.two_people_err(self.EX, "hr@x"))
 
+	def test_nobody_takes_two_steps_on_one_reason(self):
+		# e.g. the GM took the farm manager step, HR is switched off, and the GM is
+		# asked again at the GM step
+		ex = {"marked_by": "clerk@x", "fm_by": "gm@x", "hr_by": None, "status": "Pending GM"}
+		self.assertIn("already took a step", mw.two_people_err(ex, "gm@x"))
+		ex = {"marked_by": "clerk@x", "fm_by": "sm@x", "hr_by": None, "status": "Pending HR"}
+		self.assertIn("already took a step", mw.two_people_err(ex, "sm@x"))
+
 	def test_someone_else_is_fine(self):
 		self.assertEqual(mw.two_people_err(self.EX, "gm@x"), "")
 
@@ -91,6 +121,10 @@ class TestActions(unittest.TestCase):
 	def test_actions_exist(self):
 		for a in ("mw_approve", "mw_send_back", "mw_waiting", "mw_ask_hr", "mw_grid"):
 			self.assertIn("action == '" + a + "'", SRC.replace('"', "'"))
+
+	def test_stand_ins_are_read_for_approve_and_waiting(self):
+		self.assertIn("reason_stand_ins(", action("mw_approve"))
+		self.assertIn("reason_stand_ins(", action("mw_waiting"))
 
 	def test_approve_is_strict_and_checks_the_step(self):
 		s = action("mw_approve")
