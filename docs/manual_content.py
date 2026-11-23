@@ -232,6 +232,25 @@ def sections():
 			  "(absentees, crop finished early) are closed early via a close request, which the "
 			  "GM approves — the close queue shows live done/remaining figures."),
 
+		("h3", "Missing work"),
+		("p", "A task worker who was present (a scan, or a Present / Half Day attendance) but "
+			  "has no work recorded that day would simply go unpaid. The Missing work tab lists "
+			  "every such day, by day and by crew. Each one ends in one of two ways."),
+		("n", "Enter work: opens the assignment's grid with that worker's cell for the day "
+			  "selected. Enter work for N does the same for the whole crew."),
+		("n", "Not on any crew: the worker was never assigned that day. Add to assignment puts "
+			  "them on an approved assignment for that one day, then opens the grid. Days more "
+			  "than 7 days old need the GM, except inside an open payroll check, where the "
+			  "farm's own manager may add them with a reason; HR sees each one in the check "
+			  "as \"added late\"."),
+		("n", "No work given: tick the days, pick the reason (sent home, rain, sick, scanned but "
+			  "not working, or Other with a note) and mark them. Undo works until the farm "
+			  "approves a payroll check covering the day."),
+		("note", "The payroll check will not let a farm approve while it still has missing days "
+			  "in the check's dates. Approved leave, holidays and days marked Absent are never "
+			  "missing. Every morning at 07:30 team leaders and farm managers get yesterday's "
+			  "list, and the addresses in Settings (the GM and HR) get one summary for all farms."),
+
 		("h2", "Payment — workers are paid one at a time"),
 		("p", "The payment section is worker-centric. Each worker's confirmed earnings are sent "
 			  "to accounts as their own payment entry and released. The status ladder per "

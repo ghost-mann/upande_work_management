@@ -219,7 +219,8 @@ Tue 04 Nov
   for the approval reminders. The Kaitet default mailbox hits Gmail's daily
   cap.
 - **Settings:** an on/off Check field `missing_work_reminder` (default off,
-  switched on after deploy) and the send time.
+  switched on after deploy). The send time is a fixed cron, `30 7 * * *`
+  (builder's call, 2026-11-23), not a setting.
 
 ## Rollout and timing
 
