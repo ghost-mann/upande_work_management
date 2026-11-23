@@ -66,6 +66,11 @@ class TestEndpoint(unittest.TestCase):
 		for a in ("mw_list", "mw_excuse", "mw_unexcuse"):
 			self.assertIn("action == '" + a + "'", body("wm_missing_work"))
 
+	def test_short_name_is_routed(self):
+		# the screens call /api/method/wm_missing_work, as they do wm_actuals
+		hooks = (ROOT / "hooks.py").read_text()
+		self.assertIn('"wm_missing_work": "work_management.missing_work.wm_missing_work"', hooks)
+
 	def test_whitelisted(self):
 		self.assertIn("@frappe.whitelist()\ndef wm_missing_work", SRC)
 
@@ -91,6 +96,19 @@ class TestEndpoint(unittest.TestCase):
 		for k in ("'rows'", "'counts'", "'farms'", "'open_check'", "'can_excuse'", "'late_farms'"):
 			self.assertIn(k, s)
 		self.assertIn("include_excused=True", s)
+
+
+class TestAssignmentOptions(unittest.TestCase):
+	def test_list_returns_assignments_covering_the_dates(self):
+		s = action("mw_list")
+		self.assertIn("'assignments'", s)
+		self.assertIn("assignment_options(", s)
+
+	def test_options_are_assigned_with_an_active_crew(self):
+		s = body("assignment_options")
+		self.assertIn("workflow_state = 'Assigned'", s)
+		self.assertIn("IFNULL(w2.status, 'Active') != 'Left'", s)
+		self.assertIn("a.from_date <= %s AND a.to_date >= %s", s)
 
 
 class TestStamping(unittest.TestCase):

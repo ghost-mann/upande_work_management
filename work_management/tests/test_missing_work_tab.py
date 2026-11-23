@@ -34,6 +34,19 @@ class TestTab(unittest.TestCase):
 		i = JS.index("function onAsg(")
 		self.assertIn("return call({action:\"act_detail\",assignment:ST.asg})", JS[i:i + 1200])
 
+	def test_crew_button_starts_at_an_open_worker(self):
+		# "Enter work for N" must not land on a worker who already has a reason
+		i = JS.index("function renderMissing(")
+		body = JS[i:JS.index("\n  }\n", i)]
+		self.assertIn("firstOpen.employee", body)
+		self.assertNotIn("g.rows[0].employee", body)
+
+	def test_picker_offers_only_assignments_that_take_entries(self):
+		i = JS.index("function renderMissing(")
+		body = JS[i:JS.index("\n  }\n", i)]
+		self.assertIn("(d.assignments||[])", body)
+		self.assertNotIn("ST.asgList", body)
+
 	def test_reasons_come_from_the_server(self):
 		self.assertIn("d.reasons", JS)
 

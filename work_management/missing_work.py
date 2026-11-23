@@ -149,6 +149,11 @@ def find(farms, from_date, to_date, include_excused=False):
 		SELECT DISTINCT we.employee, we.work_date FROM `tabWork Actuals Employee` we
 		INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
 		WHERE ac.docstatus < 2 AND we.employee IN %(e)s AND we.work_date BETWEEN %(f)s AND %(t)s""", args)}
+	# Only crews the Actuals grid can still take entries on: not a plan closed early,
+	# not an assignment whose whole crew has been released. A day on such a crew is
+	# shown as "not on any crew", which offers Add to assignment.
+	closed_sql = (" AND IFNULL(pl.custom_close_state, '') != 'Closed'"
+		if frappe.get_meta("Work Management Planner").has_field("custom_close_state") else "")
 	crew_rows = frappe.db.sql("""
 		SELECT we.employee, a.name assignment, TRIM(a.farm) farm, IFNULL(tk.subject, a.task) task_name,
 			IFNULL(a.block_section, '') block, IFNULL(a.planner_request, '') planner,
@@ -160,7 +165,9 @@ def find(farms, from_date, to_date, include_excused=False):
 		LEFT JOIN `tabWork Management Planner` pl ON pl.name = a.planner_request
 		LEFT JOIN `tabTask` tk ON tk.name = a.task
 		WHERE a.docstatus < 2 AND a.workflow_state IN %(s)s AND we.employee IN %(e)s
-		AND a.from_date <= %(t)s AND a.to_date >= %(f)s""", dict(args, s=CREW_STATES), as_dict=True)
+		AND a.from_date <= %(t)s AND a.to_date >= %(f)s
+		AND EXISTS (SELECT 1 FROM `tabWork Assignment Employee` w2 WHERE w2.parent = a.name
+			AND IFNULL(w2.status, 'Active') != 'Left')""" + closed_sql, dict(args, s=CREW_STATES), as_dict=True)
 	crews = crew_days([dict(r) for r in crew_rows if r.start and r.end and r.start <= r.end], f, t)
 	excuses = {}
 	for r in frappe.db.sql("""
@@ -268,6 +275,23 @@ def unstamp_excuses(check):
 
 # ---- the Actuals > Missing work endpoint ---------------------------------------------
 
+def assignment_options(farm, from_date, to_date):
+	"""Approved assignments on `farm` overlapping the dates whose crew still has an
+	active worker -- where a worker who was on no crew can be added for a day. The
+	Enter Actuals list hides plans already at target; a forgotten worker's day may
+	belong to one of those."""
+	return [dict(r, from_date=str(r.from_date), to_date=str(r.to_date)) for r in frappe.db.sql("""
+		SELECT a.name, IFNULL(tk.subject, a.task) task_name, IFNULL(a.block_section, '') block,
+			a.from_date, a.to_date
+		FROM `tabWork Management Assigner` a
+		LEFT JOIN `tabTask` tk ON tk.name = a.task
+		WHERE a.docstatus < 2 AND a.workflow_state = 'Assigned' AND TRIM(a.farm) = %s
+		AND a.from_date <= %s AND a.to_date >= %s
+		AND EXISTS (SELECT 1 FROM `tabWork Assignment Employee` w2 WHERE w2.parent = a.name
+			AND IFNULL(w2.status, 'Active') != 'Left')
+		ORDER BY a.from_date, task_name""", (farm, to_date, from_date), as_dict=True)]
+
+
 def permitted_farm_names(user):
 	return [r[0] for r in frappe.db.sql("""SELECT DISTINCT for_value FROM `tabUser Permission`
 		WHERE user = %s AND allow = 'Farm'""", (user,))]
@@ -320,6 +344,7 @@ def wm_missing_work(**kwargs):
 		out["can_excuse"] = bool(chosen)
 		out["late_farms"] = [f for f in chosen if may_add_late(cfg, roles, f)]
 		out["reasons"] = REASONS
+		out["assignments"] = assignment_options(chosen[0], from_date, to_date) if len(chosen) == 1 else []
 
 	elif action == "mw_excuse":
 		rows = parse_rows(kwargs.get("rows"))

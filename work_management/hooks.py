@@ -115,6 +115,7 @@ override_whitelisted_methods = {
 	"wm_payment": "work_management.api.payment.wm_payment",
 	"wm_rates": "work_management.api.rates.wm_rates",
 	"wm_masterplan": "work_management.api.masterplan.wm_masterplan",
+	"wm_missing_work": "work_management.missing_work.wm_missing_work",
 }
 
 scheduler_events = {

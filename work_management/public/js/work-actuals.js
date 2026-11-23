@@ -1925,11 +1925,11 @@
     var late=(d.late_farms||[]).indexOf(MW.farm)>=0 && d.open_check;
     var h='<div class="pc-note"><b>'+fmt(open.length)+'</b> day(s) need work or a reason &middot; '+fmt(onCrew)+' on a crew &middot; '+fmt(open.length-onCrew)+' not on any crew'+
       (d.open_check?' &middot; payroll check <b>'+esc(d.open_check.name)+'</b> ('+esc(d.open_check.period_from)+' to '+esc(d.open_check.period_to)+') is waiting on these':'')+'</div>';
-    h+='<div class="pc-bar"><label class="fl" for="mw-reason">No work given &mdash; reason</label><select id="mw-reason"><option value="">— pick —</option>'+
-      (d.reasons||[]).map(function(x){ return '<option>'+esc(x)+'</option>'; }).join("")+'</select>'+
-      '<input id="mw-note" placeholder="Note (needed for Other)" style="min-width:220px">'+
+    h+='<div class="ws-pick" style="align-items:flex-end"><div><label class="fl" for="mw-reason">No work given &mdash; reason</label><select id="mw-reason" style="width:auto"><option value="">— pick —</option>'+
+      (d.reasons||[]).map(function(x){ return '<option>'+esc(x)+'</option>'; }).join("")+'</select></div>'+
+      '<div><label class="fl" for="mw-note">Note</label><input id="mw-note" placeholder="needed for Other" style="width:240px"></div>'+
       '<button type="button" class="btn" id="mw-mark">Mark selected: no work</button>'+
-      '<label style="font-size:12px"><input type="checkbox" id="mw-all"> select all</label></div>';
+      '<label style="font-size:12px;align-self:center"><input type="checkbox" id="mw-all" style="width:auto"> select all</label></div>';
     if(!rows.length){ el("mw-body").innerHTML=h+'<div class="empty">Nothing missing on '+esc(MW.farm)+' in these dates.</div>'; wireMissing(d); return; }
     var byDay={};
     rows.forEach(function(r){ (byDay[r.day]=byDay[r.day]||[]).push(r); });
@@ -1940,9 +1940,9 @@
       byDay[day].forEach(function(r){ var c=r.crews[0], k=c?c.assignment:""; if(!groups[k]){ groups[k]={crew:c, rows:[]}; order.push(k); } groups[k].rows.push(r); });
       order.sort(function(a,b){ return (a==="")-(b===""); });
       order.forEach(function(k){
-        var g=groups[k], c=g.crew, openN=g.rows.filter(function(r){ return !r.excuse; }).length;
+        var g=groups[k], c=g.crew, openRows=g.rows.filter(function(r){ return !r.excuse; }), openN=openRows.length, firstOpen=openRows[0]||{};
         h+='<div class="tablewrap"><div style="padding:6px 8px;font-weight:600">'+(c?esc(taskName(c.task_name))+' &middot; '+esc(c.block||"")+(c.team_leader?' &middot; TL '+esc(c.team_leader):'')+' <span style="opacity:.6">'+esc(c.assignment)+'</span>'+
-          (openN?' <button type="button" class="btn sm" data-mw-enter="'+esc(c.assignment)+'" data-mw-day="'+esc(day)+'" data-mw-emp="'+esc(g.rows[0].employee)+'">Enter work for '+fmt(openN)+'</button>':''):'Not on any crew')+'</div><table><tbody>';
+          (openN?' <button type="button" class="btn sm" data-mw-enter="'+esc(c.assignment)+'" data-mw-day="'+esc(day)+'" data-mw-emp="'+esc(firstOpen.employee)+'">Enter work for '+fmt(openN)+'</button>':''):'Not on any crew')+'</div><table><tbody>';
         g.rows.forEach(function(r){
           var key=r.employee+"|"+r.day, sc=r.scan?('scan '+esc(r.scan[0])+'&ndash;'+esc(r.scan[1])):'attendance only';
           if(r.excuse){
@@ -1956,10 +1956,10 @@
           h+='<tr><td><input type="checkbox" data-mw-sel="'+esc(key)+'"></td><td><b>'+esc(r.employee_name||r.employee)+'</b> <span style="font-size:11px">('+esc(r.employee)+')</span></td><td>'+sc+'</td><td>'+act+
             ' <button type="button" class="btn sm" data-mw-no="'+esc(key)+'">No work&hellip;</button></td><td></td></tr>';
           if(!c){
-            var opts=(ST.asgList||[]).filter(function(a){ return String(a.farm||"").trim()===r.farm && String(a.from_date)<=day && String(a.to_date)>=day; });
+            var opts=(d.assignments||[]).filter(function(a){ return String(a.from_date)<=day && String(a.to_date)>=day; });
             var needLate=day<oldest;
             h+='<tr class="mw-addrow" data-mw-addrow="'+esc(key)+'" style="display:none"><td></td><td colspan="4">'+
-              (opts.length?'<select data-mw-asg="'+esc(key)+'">'+opts.map(function(a){ return '<option value="'+esc(a.name)+'">'+esc(a.name)+' &middot; '+esc(taskName(a.task))+' &middot; '+esc(a.block_section||"")+'</option>'; }).join("")+'</select> '+
+              (opts.length?'<select data-mw-asg="'+esc(key)+'">'+opts.map(function(a){ return '<option value="'+esc(a.name)+'">'+esc(a.name)+' &middot; '+esc(taskName(a.task_name))+' &middot; '+esc(a.block||"")+'</option>'; }).join("")+'</select> '+
                 (needLate?(late?'<input data-mw-why="'+esc(key)+'" placeholder="Why were they not on a crew? (logged for HR)" style="min-width:260px"> ':'<span style="font-size:11px;color:var(--mute)">More than 7 days ago: only this '+esc(TX("top_singular","Farm").toLowerCase())+'\'s manager (inside the open payroll check) or the GM can add them.</span> '):'')+
                 ((!needLate||late)?'<button type="button" class="btn sm good" data-mw-addgo="'+esc(key)+'">Add for '+esc(day)+' and enter work</button>':'')
                 :'<span style="font-size:12px">No approved assignment on '+esc(r.farm)+' covers '+esc(day)+'. Raise one in the Assigner, or give a reason.</span>')+

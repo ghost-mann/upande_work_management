@@ -121,6 +121,13 @@ class TestBatched(unittest.TestCase):
 		for comp in [n for n in ast.walk(fn) if isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp))]:
 			self.assertNotIn("frappe.db.sql", ast.unparse(comp.elt if hasattr(comp, "elt") else comp.value))
 
+	def test_crews_that_cannot_take_entries_are_not_crews(self):
+		# the Actuals grid refuses entry on a plan closed early and on an assignment
+		# whose whole crew is released; such a day is offered "Add to assignment"
+		fn = SRC[SRC.index("def find("):SRC.index("def counts(")]
+		self.assertIn("custom_close_state", fn)
+		self.assertIn("IFNULL(w2.status, 'Active') != 'Left'", fn)
+
 	def test_task_worker_rule_matches_dashboard(self):
 		for t in ("Work Management Payable Employment Type", "Work Management Payable Designation",
 				"Work Management Payable Category", "e.employment_type = 'Task Worker'"):
