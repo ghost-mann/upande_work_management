@@ -42,6 +42,8 @@ HANDLES = re.compile(r"""action\s*==\s*["']([a-zA-Z0-9_]+)["']""")
 
 #: Actions a screen builds by name rather than writing literally. Each needs a
 #: reason, so this list cannot quietly become the place awkward cases go.
+APP_ONLY_ENDPOINTS = [os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "missing_work.py")]
+
 DYNAMIC = {
 	# work-planner.js picks the approve/reject action for the stage in hand
 }
@@ -62,6 +64,11 @@ def actions_served():
 	"""Every action any mirror script handles."""
 	served = set()
 	for path in glob.glob(os.path.join(MIRROR, "*.py")):
+		with open(path) as handle:
+			served.update(HANDLES.findall(handle.read()))
+	# app-only endpoints, which have no mirror script: Actuals > Missing work
+	# (wm_missing_work in work_management/missing_work.py)
+	for path in APP_ONLY_ENDPOINTS:
 		with open(path) as handle:
 			served.update(HANDLES.findall(handle.read()))
 	return served

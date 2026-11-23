@@ -138,7 +138,7 @@
   function monLabel(iso){ var d=new Date(iso+"T00:00:00"); return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()]; }
 
   function buildTabs(){
-    var tabs=[["enter","Enter Actuals"],["acmine","My Actuals"],["acrej","Rejected"],["acappr","Approvals"]];
+    var tabs=[["enter","Enter Actuals"],["acmine","My Actuals"],["acrej","Rejected"],["acappr","Approvals"],["missing","Missing work"]];
     var wsm=ST.ws||{};
     if(wsm.available && (wsm.view_farms||[]).length){ tabs.push(["hist","History"]); }
     var nav=el("ac-tabs"); nav.innerHTML="";
@@ -149,7 +149,8 @@
     showTab("enter");
   }
   function showTab(name){
-    ["enter","acmine","acrej","acappr","hist"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on",n===name); });
+    if(name==="missing") loadMissing();
+    ["enter","acmine","acrej","acappr","missing","hist"].forEach(function(n){ var p=el("p-"+n); if(p) p.classList.toggle("on",n===name); });
     document.querySelectorAll("#ac-tabs button").forEach(function(b){ b.setAttribute("aria-selected",b.getAttribute("data-tab")===name); });
     if(name==="acmine") loadMine();
     if(name==="acrej") loadRejected();
@@ -414,7 +415,7 @@
     ST.asg=val; ST.cells={}; ST.hours={}; ST.confirm={}; ST.detail=null;
     el("ac-grid").innerHTML='<div class="empty">Loading…</div>';
     if(!ST.asg){ el("ac-detail").style.display="none"; refresh(); return; }
-    call({action:"act_detail",assignment:ST.asg}).then(function(d){
+    return call({action:"act_detail",assignment:ST.asg}).then(function(d){
       var a=d.detail||{}; ST.detail=a;
       // if a live (in-review/confirmed) doc blocks entry, warn and lock
       renderDetail(a);
@@ -1867,6 +1868,160 @@
     document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },500);
   }
 
+  // ==== MISSING WORK (2026-11-23) ==========================================
+  // Task workers present (scan or attendance) with no actuals and no reason given.
+  // Each day is cleared by entering the work, by putting the worker on a crew
+  // first (no crew that day), or by saying why there was no work. The payroll
+  // check will not let a farm approve while it still has open days.
+  var MW={farm:"", from:"", to:"", data:null};
+  function openEntry(asg, day, emp){
+    // Enter Actuals for that assignment, with the worker's cell for that day focused
+    showTab("enter");
+    var sel=el("ac-asg"); if(sel) sel.value=asg;
+    var p=onAsg(asg);
+    if(p && p.then) p.then(function(){
+      var inp=document.querySelector('input[data-emp="'+String(emp).replace(/"/g,"")+'"][data-date="'+String(day).replace(/"/g,"")+'"]');
+      if(inp){ inp.scrollIntoView({block:"center", inline:"center"}); inp.focus(); inp.classList.add("mw-hit"); }
+      else toast("Opened "+asg+"; "+day+" is not open for entry on it.");
+    });
+  }
+  function mwPanel(){
+    var p=el("p-missing");
+    if(!p){
+      p=document.createElement("div"); p.className="panel"; p.id="p-missing";
+      var after=el("p-acappr"); after.parentNode.insertBefore(p, after.nextSibling);
+    }
+    return p;
+  }
+  function loadMissing(){
+    var p=mwPanel();
+    if(!el("mw-body")){
+      p.innerHTML='<div class="sech">Missing work &mdash; present, but no work recorded and no reason given</div>'+
+        '<div class="ws-pick"><div><label class="fl" for="mw-farm">'+esc(TX("top_singular","Farm"))+'</label><select id="mw-farm"></select></div>'+
+        '<div><label class="fl" for="mw-from">From</label><input type="date" id="mw-from"></div>'+
+        '<div><label class="fl" for="mw-to">To</label><input type="date" id="mw-to"></div>'+
+        '<button type="button" class="btn" id="mw-apply">Apply</button></div>'+
+        '<div id="mw-body" class="loading">Loading&hellip;</div>';
+      el("mw-apply").onclick=function(){ MW.farm=el("mw-farm").value; MW.from=el("mw-from").value; MW.to=el("mw-to").value; loadMissing(); };
+    }
+    el("mw-body").innerHTML='<div class="empty">Loading&hellip;</div>';
+    call({action:"mw_list", farm:MW.farm, from_date:MW.from, to_date:MW.to}, "wm_missing_work").then(function(d){
+      if(d.error){ el("mw-body").innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
+      MW.data=d;
+      var fs=el("mw-farm"); fs.innerHTML='';
+      (d.farms||[]).forEach(function(f){ var o=document.createElement("option"); o.value=f; o.textContent=f; fs.appendChild(o); });
+      if(!MW.farm && (d.farms||[]).length) MW.farm=d.farms[0];
+      if(MW.farm && !(d.farms||[]).length){ MW.farm=""; }
+      fs.value=MW.farm; MW.from=d.from_date||MW.from; MW.to=d.to_date||MW.to;
+      el("mw-from").value=MW.from; el("mw-to").value=MW.to;
+      if(MW.farm && (d.rows||[]).length && d.rows.some(function(r){ return r.farm!==MW.farm; })){ loadMissing(); return; }
+      renderMissing(d);
+    }).catch(function(e){ el("mw-body").innerHTML='<div class="empty">Could not load: '+esc(e&&e.message||e)+'</div>'; });
+  }
+  function renderMissing(d){
+    var rows=(d.rows||[]), open=rows.filter(function(r){ return !r.excuse; });
+    if(!(d.farms||[]).length){ el("mw-body").innerHTML='<div class="empty">You do not record work on any '+esc(TX("top_singular","Farm").toLowerCase())+'.</div>'; return; }
+    var onCrew=open.filter(function(r){ return r.crews.length; }).length;
+    var late=(d.late_farms||[]).indexOf(MW.farm)>=0 && d.open_check;
+    var h='<div class="pc-note"><b>'+fmt(open.length)+'</b> day(s) need work or a reason &middot; '+fmt(onCrew)+' on a crew &middot; '+fmt(open.length-onCrew)+' not on any crew'+
+      (d.open_check?' &middot; payroll check <b>'+esc(d.open_check.name)+'</b> ('+esc(d.open_check.period_from)+' to '+esc(d.open_check.period_to)+') is waiting on these':'')+'</div>';
+    h+='<div class="pc-bar"><label class="fl" for="mw-reason">No work given &mdash; reason</label><select id="mw-reason"><option value="">— pick —</option>'+
+      (d.reasons||[]).map(function(x){ return '<option>'+esc(x)+'</option>'; }).join("")+'</select>'+
+      '<input id="mw-note" placeholder="Note (needed for Other)" style="min-width:220px">'+
+      '<button type="button" class="btn" id="mw-mark">Mark selected: no work</button>'+
+      '<label style="font-size:12px"><input type="checkbox" id="mw-all"> select all</label></div>';
+    if(!rows.length){ el("mw-body").innerHTML=h+'<div class="empty">Nothing missing on '+esc(MW.farm)+' in these dates.</div>'; wireMissing(d); return; }
+    var byDay={};
+    rows.forEach(function(r){ (byDay[r.day]=byDay[r.day]||[]).push(r); });
+    var today=new Date(); var oldest=new Date(today.getTime()-7*86400000).toISOString().slice(0,10);
+    Object.keys(byDay).sort().forEach(function(day){
+      h+='<div class="sech" style="margin-top:14px">'+esc(dowShort(day))+' '+esc(day)+'</div>';
+      var groups={}, order=[];
+      byDay[day].forEach(function(r){ var c=r.crews[0], k=c?c.assignment:""; if(!groups[k]){ groups[k]={crew:c, rows:[]}; order.push(k); } groups[k].rows.push(r); });
+      order.sort(function(a,b){ return (a==="")-(b===""); });
+      order.forEach(function(k){
+        var g=groups[k], c=g.crew, openN=g.rows.filter(function(r){ return !r.excuse; }).length;
+        h+='<div class="tablewrap"><div style="padding:6px 8px;font-weight:600">'+(c?esc(taskName(c.task_name))+' &middot; '+esc(c.block||"")+(c.team_leader?' &middot; TL '+esc(c.team_leader):'')+' <span style="opacity:.6">'+esc(c.assignment)+'</span>'+
+          (openN?' <button type="button" class="btn sm" data-mw-enter="'+esc(c.assignment)+'" data-mw-day="'+esc(day)+'" data-mw-emp="'+esc(g.rows[0].employee)+'">Enter work for '+fmt(openN)+'</button>':''):'Not on any crew')+'</div><table><tbody>';
+        g.rows.forEach(function(r){
+          var key=r.employee+"|"+r.day, sc=r.scan?('scan '+esc(r.scan[0])+'&ndash;'+esc(r.scan[1])):'attendance only';
+          if(r.excuse){
+            h+='<tr style="opacity:.55"><td></td><td><b>'+esc(r.employee_name||r.employee)+'</b> <span style="font-size:11px">('+esc(r.employee)+')</span></td><td>'+sc+'</td>'+
+              '<td>No work: '+esc(r.excuse.reason)+(r.excuse.note?' &mdash; '+esc(r.excuse.note):'')+' <span style="font-size:11px">('+esc(r.excuse.marked_by||"")+')</span></td>'+
+              '<td>'+(r.excuse.payroll_check?'<span class="pc-chip ok">in '+esc(r.excuse.payroll_check)+'</span>':'<button type="button" class="btn sm" data-mw-undo="'+esc(r.excuse.name)+'">Undo</button>')+'</td></tr>';
+            return;
+          }
+          var act=c?'<button type="button" class="btn sm good" data-mw-enter="'+esc(c.assignment)+'" data-mw-day="'+esc(day)+'" data-mw-emp="'+esc(r.employee)+'">Enter work</button>':
+            '<button type="button" class="btn sm" data-mw-add="'+esc(key)+'">Add to assignment&hellip;</button>';
+          h+='<tr><td><input type="checkbox" data-mw-sel="'+esc(key)+'"></td><td><b>'+esc(r.employee_name||r.employee)+'</b> <span style="font-size:11px">('+esc(r.employee)+')</span></td><td>'+sc+'</td><td>'+act+
+            ' <button type="button" class="btn sm" data-mw-no="'+esc(key)+'">No work&hellip;</button></td><td></td></tr>';
+          if(!c){
+            var opts=(ST.asgList||[]).filter(function(a){ return String(a.farm||"").trim()===r.farm && String(a.from_date)<=day && String(a.to_date)>=day; });
+            var needLate=day<oldest;
+            h+='<tr class="mw-addrow" data-mw-addrow="'+esc(key)+'" style="display:none"><td></td><td colspan="4">'+
+              (opts.length?'<select data-mw-asg="'+esc(key)+'">'+opts.map(function(a){ return '<option value="'+esc(a.name)+'">'+esc(a.name)+' &middot; '+esc(taskName(a.task))+' &middot; '+esc(a.block_section||"")+'</option>'; }).join("")+'</select> '+
+                (needLate?(late?'<input data-mw-why="'+esc(key)+'" placeholder="Why were they not on a crew? (logged for HR)" style="min-width:260px"> ':'<span style="font-size:11px;color:var(--mute)">More than 7 days ago: only this '+esc(TX("top_singular","Farm").toLowerCase())+'\'s manager (inside the open payroll check) or the GM can add them.</span> '):'')+
+                ((!needLate||late)?'<button type="button" class="btn sm good" data-mw-addgo="'+esc(key)+'">Add for '+esc(day)+' and enter work</button>':'')
+                :'<span style="font-size:12px">No approved assignment on '+esc(r.farm)+' covers '+esc(day)+'. Raise one in the Assigner, or give a reason.</span>')+
+              '</td></tr>';
+          }
+        });
+        h+='</tbody></table></div>';
+      });
+    });
+    el("mw-body").innerHTML=h;
+    wireMissing(d);
+  }
+  function wireMissing(d){
+    var box=el("mw-body");
+    function excuse(keys){
+      var reason=el("mw-reason").value, note=(el("mw-note").value||"").trim();
+      if(!keys.length){ toast("Tick the workers first"); return; }
+      if(!reason){ toast("Pick the reason there was no work"); el("mw-reason").focus(); return; }
+      if(reason==="Other" && !note){ toast("Say what happened when the reason is Other"); el("mw-note").focus(); return; }
+      var rows=keys.map(function(k){ var p=k.split("|"); return {employee:p[0], day:p[1]}; });
+      call({action:"mw_excuse", rows:JSON.stringify(rows), reason:reason, note:note}, "wm_missing_work").then(function(x){
+        if(x.error){ toast("Error: "+x.error); return; }
+        toast(fmt(x.excused)+" day(s) marked: no work"); loadMissing();
+      });
+    }
+    if(el("mw-all")) el("mw-all").onchange=function(){ var on=this.checked; box.querySelectorAll("[data-mw-sel]").forEach(function(x){ x.checked=on; }); };
+    if(el("mw-mark")) el("mw-mark").onclick=function(){ var k=[]; box.querySelectorAll("[data-mw-sel]").forEach(function(x){ if(x.checked) k.push(x.getAttribute("data-mw-sel")); }); excuse(k); };
+    box.querySelectorAll("[data-mw-no]").forEach(function(b){ b.onclick=function(){ excuse([b.getAttribute("data-mw-no")]); }; });
+    box.querySelectorAll("[data-mw-enter]").forEach(function(b){ b.onclick=function(){ openEntry(b.getAttribute("data-mw-enter"), b.getAttribute("data-mw-day"), b.getAttribute("data-mw-emp")); }; });
+    box.querySelectorAll("[data-mw-undo]").forEach(function(b){ b.onclick=function(){
+      call({action:"mw_unexcuse", names:JSON.stringify([b.getAttribute("data-mw-undo")])}, "wm_missing_work").then(function(x){
+        if(x.error){ toast("Error: "+x.error); return; } toast("Reason removed"); loadMissing(); });
+    }; });
+    box.querySelectorAll("[data-mw-add]").forEach(function(b){ b.onclick=function(){
+      var row=box.querySelector('[data-mw-addrow="'+b.getAttribute("data-mw-add")+'"]'); if(row) row.style.display=row.style.display==="none"?"":"none"; }; });
+    box.querySelectorAll("[data-mw-addgo]").forEach(function(b){ b.onclick=function(){
+      var key=b.getAttribute("data-mw-addgo"), p=key.split("|"), emp=p[0], day=p[1];
+      var asg=(box.querySelector('[data-mw-asg="'+key+'"]')||{}).value;
+      var why=box.querySelector('[data-mw-why="'+key+'"]');
+      var args={action:"a_add_crew", assignment:asg, employees:emp, start_date:day, until:day};
+      if(why){
+        if(!(why.value||"").trim()){ toast("Say why they were not on a crew"); why.focus(); return; }
+        args.for_check=d.open_check.name; args.backdate_reason=why.value.trim();
+      }
+      b.disabled=true;
+      call({action:"a_add_crew", assignment:args.assignment, employees:args.employees, start_date:args.start_date, until:args.until,
+            for_check:args.for_check, backdate_reason:args.backdate_reason}, "wm_assigner").then(function(x){
+        if(x.error){ toast("Error: "+x.error); b.disabled=false; return; }
+        toast("Added to "+asg+" for "+day); openEntry(asg, day, emp);
+      });
+    }; });
+  }
+  function deepLink(){
+    var q=new URLSearchParams(window.location.search||"");
+    if(q.get("tab")==="missing"){
+      MW.farm=q.get("farm")||""; MW.from=q.get("from")||""; MW.to=q.get("to")||"";
+      showTab("missing");
+    } else if(q.get("assignment")){
+      openEntry(q.get("assignment"), q.get("date")||"", q.get("emp")||"");
+    }
+  }
+
   function boot(){
     var names = taskNamesReady();
     call({action:"a_roles"}).then(function(roles){
@@ -1874,7 +2029,7 @@
       el("ac-who").textContent=(roles.user||"")+(roles.is_hr_head?" · HR Head":"");
       // history: which farms this person sees
       var wsMeta=call({action:"hist_meta"}).then(function(d){ ST.ws=d||{}; }).catch(function(){ ST.ws={}; });
-      return names.then(function(){ return wsMeta; }).then(function(){ initEnter(); buildTabs(); });
+      return names.then(function(){ return wsMeta; }).then(function(){ initEnter(); buildTabs(); deepLink(); });
     }).catch(function(e){ el("ac-who").textContent="Could not load."; });
   }
   // No window.frappe check before booting -- see the note in work-planner.js. csrf()
