@@ -428,6 +428,58 @@ def unstamp_excuses(check):
 	return n
 
 
+# ---- approving "no work" reasons ----------------------------------------------------
+
+# a reason's status for each Actuals approval step, in the Settings chain's order
+REASON_STATUS = {"actuals_farm_manager": "Pending Farm Manager", "actuals_hr_head": "Pending HR",
+	"actuals_gm": "Pending GM"}
+
+
+def reason_chain(stage_rows):
+	"""The statuses a reason goes through: the Actuals approval steps switched on
+	in Settings, in order (farm manager, HR, GM)."""
+	return [REASON_STATUS[r["key"]] for r in stage_rows or []
+		if r.get("key") in REASON_STATUS and frappe.utils.cint(r.get("on"))] or ["Pending Farm Manager"]
+
+
+def next_status(status, chain):
+	"""The status after this step: the next step switched on, else Approved."""
+	if status in chain and chain.index(status) + 1 < len(chain):
+		return chain[chain.index(status) + 1]
+	return "Approved"
+
+
+def may_step(status, roles, farm, cfg):
+	"""May someone holding `roles` take the step a reason is waiting at? Farm manager
+	step: that farm's farm manager, or the GM. HR step: the HR head. GM step: the
+	General Manager. System Manager may take any step."""
+	held = set(roles or [])
+	if status not in ("Pending Farm Manager", "Pending HR", "Pending GM"):
+		return False
+	if "System Manager" in held:
+		return True
+	if status == "Pending Farm Manager":
+		return "General Manager" in held or (cfg.get("farm_approver_role") or {}).get(farm) in held
+	if status == "Pending HR":
+		return bool(held & set(cfg.get("hr_head_roles") or []))
+	return "General Manager" in held
+
+
+def two_people_err(excuse, user):
+	"""Strict two pairs of eyes on a reason: nobody approves a reason they gave,
+	and nobody takes the GM step after taking the HR step. "" when fine."""
+	if user and user == excuse.get("marked_by"):
+		return "You marked this reason yourself, so somebody else must approve it."
+	if excuse.get("status") == "Pending GM" and user and user == excuse.get("hr_by"):
+		return "You took the HR step on this reason, so somebody else must give the GM approval."
+	return ""
+
+
+def stage_label(status):
+	return {"Pending Farm Manager": "farm manager", "Pending HR": "HR", "Pending GM": "GM",
+		"Pending HR Head": "HR", "Draft": "the enterer"}.get(status, status)
+
+
 # ---- the Actuals > Missing work endpoint ---------------------------------------------
 
 def assignment_options(farm, from_date, to_date):
@@ -517,17 +569,24 @@ def wm_missing_work(**kwargs):
 		elif reason == "Other" and not note:
 			err = "Say what happened when the reason is Other."
 		if not err:
+			chain = reason_chain(cfg.get("stage_rows"))
 			days = sorted({r["day"] for r in rows})
 			missing = {(m["employee"], m["day"]): m for m in find(farms, days[0], days[-1], include_excused=True)}
 			for r in rows:
 				m = missing.get((r["employee"], r["day"]))
+				ex = (m or {}).get("excuse") or {}
 				if not m:
 					err = r["employee"] + " on " + r["day"] + " is not a missing day (work is recorded, or not a farm of yours)."
 				elif not may_record(cfg, roles, m["farm"]):
 					err = "You may not record work on " + str(m["farm"]) + "."
-				elif m["excuse"] and m["excuse"].get("payroll_check"):
+				elif m.get("fix"):
+					err = r["employee"] + " on " + r["day"] + " has work waiting for approval."
+				elif ex.get("payroll_check"):
 					err = (r["employee"] + " on " + r["day"] + " is locked in payroll check " +
-						m["excuse"]["payroll_check"] + ".")
+						ex["payroll_check"] + ".")
+				elif ex and ex.get("status") not in ("Sent back", chain[0]):
+					err = (r["employee"] + " on " + r["day"] + "'s reason is already approved by the " +
+						stage_label(chain[0]) + "; ask for it to be sent back to change it.")
 				if err:
 					break
 		if err:
@@ -537,8 +596,11 @@ def wm_missing_work(**kwargs):
 			for r in rows:
 				m = missing[(r["employee"], r["day"])]
 				if m["excuse"]:
+					# marked again (after a send back, or before anyone approved it): starts over
 					frappe.db.set_value("Work Missing Day Excuse", m["excuse"]["name"], {"reason": reason,
-						"note": note, "marked_by": frappe.session.user, "marked_at": now})
+						"note": note, "marked_by": frappe.session.user, "marked_at": now, "status": chain[0],
+						"sent_back_by": None, "sent_back_at": None, "sent_back_reason": None,
+						"fm_by": None, "fm_at": None, "hr_by": None, "hr_at": None, "gm_by": None, "gm_at": None})
 					continue
 				doc = frappe.new_doc("Work Missing Day Excuse")
 				doc.employee = r["employee"]
@@ -549,6 +611,7 @@ def wm_missing_work(**kwargs):
 				doc.assignment = m["crews"][0]["assignment"] if m["crews"] else None
 				doc.marked_by = frappe.session.user
 				doc.marked_at = now
+				doc.status = chain[0]
 				doc.insert(ignore_permissions=True)
 			frappe.db.commit()
 			out["excused"] = len(rows)
@@ -559,12 +622,15 @@ def wm_missing_work(**kwargs):
 			names = frappe.parse_json(names or "[]")
 		err = None
 		docs = frappe.get_all("Work Missing Day Excuse", filters={"name": ["in", names or ["__none__"]]},
-			fields=["name", "farm", "payroll_check", "employee", "work_date"])
+			fields=["name", "farm", "payroll_check", "employee", "work_date", "status"])
+		first = reason_chain(cfg.get("stage_rows"))[0]
 		if not docs:
 			err = "Nothing to undo."
 		for d in docs:
 			if d.payroll_check:
 				err = d.employee + " on " + str(d.work_date) + " is locked in payroll check " + d.payroll_check + "."
+			elif d.status not in (first, "Sent back"):
+				err = d.employee + " on " + str(d.work_date) + "'s reason is already approved by the " + stage_label(first) + "."
 			elif not may_record(cfg, roles, d.farm):
 				err = "You may not record work on " + str(d.farm) + "."
 			if err:
@@ -576,6 +642,175 @@ def wm_missing_work(**kwargs):
 				frappe.delete_doc("Work Missing Day Excuse", d.name, ignore_permissions=True, force=True)
 			frappe.db.commit()
 			out["removed"] = len(docs)
+
+	elif action == "mw_approve" or action == "mw_send_back":
+		names = kwargs.get("names")
+		if isinstance(names, str):
+			names = frappe.parse_json(names or "[]")
+		why = (kwargs.get("reason") or "").strip()
+		chain = reason_chain(cfg.get("stage_rows"))
+		docs = frappe.get_all("Work Missing Day Excuse", filters={"name": ["in", names or ["__none__"]]},
+			fields=["name", "farm", "employee", "work_date", "status", "marked_by", "fm_by", "hr_by", "payroll_check"])
+		err = None
+		if not docs:
+			err = "Nothing picked."
+		elif action == "mw_send_back" and not why:
+			err = "Say why it is being sent back."
+		for d in docs:
+			if err:
+				break
+			label = d.employee + " on " + str(d.work_date)
+			if not may_step(d.status, roles, d.farm, cfg):
+				err = label + ": waiting for the " + stage_label(d.status) + ", which is not you."
+			elif action == "mw_approve" and two_people_err(d, frappe.session.user):
+				err = label + ": " + two_people_err(d, frappe.session.user)
+		if err:
+			out["error"] = err
+		else:
+			now = frappe.utils.now()
+			for d in docs:
+				if action == "mw_send_back":
+					frappe.db.set_value("Work Missing Day Excuse", d.name, {"status": "Sent back",
+						"sent_back_by": frappe.session.user, "sent_back_at": now, "sent_back_reason": why})
+					continue
+				step = {"Pending Farm Manager": "fm", "Pending HR": "hr", "Pending GM": "gm"}[d.status]
+				frappe.db.set_value("Work Missing Day Excuse", d.name, {"status": next_status(d.status, chain),
+					step + "_by": frappe.session.user, step + "_at": now})
+			frappe.db.commit()
+			out["done"] = len(docs)
+
+	elif action == "mw_waiting":
+		farm = (kwargs.get("farm") or "").strip()
+		chosen = tuple([f for f in ([farm] if farm else farms) if f in farms]) or ("__none__",)
+		me = frappe.session.user
+		held = set(roles)
+		work = []
+		for r in frappe.db.sql("""
+			SELECT ac.name, ac.farm, ac.workflow_state stage, ac.entered_by, ac.owner, ac.hr_approved_by,
+				IFNULL(tk.subject, ac.task) task_name, we.employee, we.employee_name, we.work_date,
+				we.actual_quantity qty, we.amount, IFNULL(pl.uom, '') uom
+			FROM `tabWork Management Actuals` ac
+			INNER JOIN `tabWork Actuals Employee` we ON we.parent = ac.name
+			LEFT JOIN `tabTask` tk ON tk.name = ac.task
+			LEFT JOIN `tabWork Management Assigner` a ON a.name = ac.assignment
+			LEFT JOIN `tabWork Management Planner` pl ON pl.name = a.planner_request
+			WHERE ac.missing_work_fix = 1 AND ac.docstatus < 2 AND ac.workflow_state != 'CONFIRMED'
+			AND ac.farm IN %s ORDER BY ac.workflow_state, we.work_date""", (chosen,), as_dict=True):
+			entered = r.entered_by or r.owner
+			stage = r.stage
+			can = me != entered and (("System Manager" in held) or (
+				stage == "Pending Farm Manager" and ("General Manager" in held or
+					(cfg.get("farm_approver_role") or {}).get(r.farm) in held)) or (
+				stage == "Pending HR Head" and bool(held & set(cfg.get("hr_head_roles") or []))) or (
+				stage == "Pending GM" and "General Manager" in held and me != r.hr_approved_by))
+			work.append({"name": r.name, "farm": r.farm, "employee": r.employee, "employee_name": r.employee_name,
+				"day": str(r.work_date), "task_name": r.task_name, "qty": frappe.utils.flt(r.qty), "uom": r.uom,
+				"amount": frappe.utils.flt(r.amount), "stage": stage, "stage_label": stage_label(stage),
+				"entered_by": entered, "can_act": 1 if can else 0})
+		reasons = []
+		for r in frappe.db.sql("""
+			SELECT x.name, x.farm, x.employee, x.employee_name, x.work_date, x.reason, IFNULL(x.note, '') note,
+				x.status, x.marked_by, x.fm_by, x.hr_by
+			FROM `tabWork Missing Day Excuse` x
+			WHERE x.status LIKE 'Pending%%' AND x.farm IN %s ORDER BY x.status, x.work_date""", (chosen,), as_dict=True):
+			can = may_step(r.status, roles, r.farm, cfg) and not two_people_err(r, me)
+			reasons.append({"name": r.name, "farm": r.farm, "employee": r.employee, "employee_name": r.employee_name,
+				"day": str(r.work_date), "reason": r.reason, "note": r.note, "stage": r.status,
+				"stage_label": stage_label(r.status), "marked_by": r.marked_by, "can_act": 1 if can else 0})
+		out["work"] = work
+		out["reasons"] = reasons
+		out["your_turn"] = len([x for x in work if x["can_act"]]) + len([x for x in reasons if x["can_act"]])
+
+	elif action == "mw_ask_hr":
+		emp = (kwargs.get("employee") or "").strip()
+		day = str(kwargs.get("day") or "").strip()
+		efarm = str(frappe.db.get_value("Employee", emp, "custom_farm") or "").strip() if emp else ""
+		err = None
+		if not emp or not day:
+			err = "Pick the worker and the day."
+		elif not may_record(cfg, roles, efarm):
+			err = "You may not record work on " + (efarm or "that farm") + "."
+		elif frappe.db.get_value("Employee", emp, "status") != "Active":
+			err = (emp + " is no longer active, so an attendance request cannot be raised for them. "
+				"Ask HR to correct " + day + " directly.")
+		elif not frappe.db.sql("""SELECT 1 FROM `tabAttendance` WHERE employee = %s AND attendance_date = %s
+			AND docstatus = 1 AND status = 'Absent' LIMIT 1""", (emp, day)):
+			err = emp + " is not marked Absent on " + day + "."
+		elif frappe.db.sql("""SELECT 1 FROM `tabAttendance Request` WHERE employee = %s AND from_date <= %s
+			AND to_date >= %s AND docstatus < 2 LIMIT 1""", (emp, day, day)):
+			err = "HR was already asked to correct " + emp + "'s attendance on " + day + "."
+		if err:
+			out["error"] = err
+		else:
+			try:
+				ar = frappe.new_doc("Attendance Request")
+				ar.employee = emp
+				ar.company = frappe.db.get_value("Employee", emp, "company")
+				ar.from_date = day
+				ar.to_date = day
+				ar.reason = "On Duty"
+				ar.explanation = ("Marked Absent on " + day + " but at work, says " + frappe.session.user +
+					" (Actuals > Missing work). Approving this makes the day Present so the work can be recorded.")
+				ar.insert(ignore_permissions=True)
+				# into HR's queue: the state its own workflow moves a draft to when sent for approval
+				nxt = frappe.db.sql("""SELECT t.next_state FROM `tabWorkflow Transition` t
+					INNER JOIN `tabWorkflow` w ON w.name = t.parent
+					WHERE w.document_type = 'Attendance Request' AND w.is_active = 1
+					AND t.state = %s AND t.next_state IN (SELECT s.state FROM `tabWorkflow Document State` s
+						WHERE s.parent = w.name AND s.doc_status = '0')
+					AND t.next_state != t.state ORDER BY t.idx LIMIT 1""", (ar.get("workflow_state") or "",))
+				if nxt:
+					frappe.db.set_value("Attendance Request", ar.name, "workflow_state", nxt[0][0], update_modified=False)
+				frappe.db.commit()
+				out["request"] = ar.name
+			except Exception as exc:
+				frappe.db.rollback()
+				frappe.log_error(frappe.get_traceback(), "Missing work: attendance request for " + emp + " " + day)
+				out["error"] = ("The attendance request could not be raised: " +
+					frappe.utils.strip_html(str(exc)).strip().rstrip(".") + ". Ask HR to correct " + day + " directly.")
+
+	elif action == "mw_grid":
+		farm = (kwargs.get("farm") or "").strip()
+		chosen = farm if farm in farms else (farms[0] if farms else "")
+		if not chosen:
+			out["farms"] = []
+			out["workers"] = []
+			return out
+		check = current_check(chosen)
+		from_date = kwargs.get("from_date") or (check or {}).get("period_from") or frappe.utils.add_days(
+			frappe.utils.today(), -14)
+		to_date = kwargs.get("to_date") or (check or {}).get("period_to") or frappe.utils.add_days(
+			frappe.utils.today(), -1)
+		g = grid(chosen, from_date, to_date)
+		L = g.pop("L")
+		rows = classify(L["presence"], L["normal_actuals"], L["excuses"], L["crews"], L["home"], L["fix_states"])
+		out["farm_counts"] = {f: len([r for r in rows if r["farm"] == f and r["state"] == "open"]) for f in farms}
+		# what a click on a cell needs: the worker-days with something to show
+		details = {}
+		for r in rows:
+			if r["farm"] == chosen:
+				details[r["employee"] + "|" + r["day"]] = {"crews": r["crews"], "excuse": r["excuse"], "fix": r["fix"],
+					"state": r["state"], "sent_back": L["sent_back"].get((r["employee"], r["day"]))}
+		wanted = [w["emp"] for w in g["workers"]]
+		if wanted:
+			for emp, day, t1, t2 in frappe.db.sql("""SELECT employee, DATE(`time`), MIN(`time`), MAX(`time`)
+				FROM `tabEmployee Checkin` WHERE employee IN %s AND `time` >= %s
+				AND `time` < DATE_ADD(%s, INTERVAL 1 DAY) GROUP BY employee, DATE(`time`)""",
+				(tuple(wanted), from_date, to_date)):
+				k = emp + "|" + str(day)
+				if k in details:
+					details[k]["scan"] = [str(t1)[11:16], str(t2)[11:16]]
+		out.update(g)
+		out["details"] = details
+		out["farm"] = chosen
+		out["farms"] = farms
+		out["from_date"] = str(from_date)
+		out["to_date"] = str(to_date)
+		out["open_check"] = check
+		out["assignments"] = assignment_options(chosen, from_date, to_date)
+		out["late_farms"] = [chosen] if may_add_late(cfg, roles, chosen) else []
+		out["reasons"] = REASONS
+		out["can_ask_hr"] = 1 if may_record(cfg, roles, chosen) else 0
 
 	else:
 		out["error"] = "unknown action: " + str(action)
