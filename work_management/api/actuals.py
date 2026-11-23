@@ -11,7 +11,7 @@ import json
 
 import frappe
 
-from work_management import bulk, chain, day_guard, notify, presence, self_approval, stage_pills
+from work_management import actuals_pay, bulk, chain, day_guard, notify, presence, self_approval, stage_pills
 from work_management.api.config import chain_states, get_config, sql_in
 
 
@@ -872,33 +872,13 @@ def wm_actuals(**kwargs):
             rate = 0
             unit_value = 0
             if a_pr:
-                pinfo0 = frappe.db.get_value("Work Management Planner", a_pr,
-                    ["rate", "daily_target", "task", "from_date"], as_dict=True)
-                rate = frappe.utils.flt(pinfo0.rate) if pinfo0 else 0
-                unit_value = rate
+                rate = frappe.utils.flt(frappe.db.get_value("Work Management Planner", a_pr, "rate"))
                 # WAGE SNAP: a rate stored with too few decimals makes a full day pay
-                # 340.50 / 387.60 instead of the intended wage. Snap to the wage the
-                # task's rate period is actually derived from — the old code hardcoded
-                # 340, which silently became wrong the day the wage moved to 387.
-                # Rates are stored at 6dp since 2026-08-04, so this normally no-ops.
-                if pinfo0 and frappe.utils.flt(pinfo0.daily_target) > 0 and rate > 0:
-                    dw0 = rate * frappe.utils.flt(pinfo0.daily_target)
-                    snap_wage = 0
-                    if pinfo0.task:
-                        wrow = frappe.db.sql("""
-                            SELECT daily_wage_basis b FROM `tabWork Task Rate`
-                            WHERE task = %(t)s AND derived = 1
-                              AND valid_from <= %(d)s
-                              AND (valid_to IS NULL OR valid_to >= %(d)s)
-                            ORDER BY valid_from DESC LIMIT 1
-                        """, {"t": pinfo0.task,
-                              "d": pinfo0.from_date or frappe.utils.today()}, as_dict=True)
-                        if wrow and frappe.utils.flt(wrow[0].b) > 0:
-                            snap_wage = frappe.utils.flt(wrow[0].b)
-                    if not snap_wage:
-                        snap_wage = 340.0
-                    if abs(dw0 - snap_wage) <= snap_wage * 0.01 and abs(dw0 - snap_wage) > 0.001:
-                        unit_value = snap_wage / frappe.utils.flt(pinfo0.daily_target)
+                # 340.50 / 387.60 instead of the intended wage. The rule lives in
+                # actuals_pay.unit_value, which the Actuals controller re-prices
+                # every save with -- one rule, so this screen and the controller
+                # can never disagree about a row's amount.
+                unit_value = actuals_pay.unit_value(rate, a_pr)
             edit_doc = frappe.form_dict.get("edit_doc")  # approver editing a pending doc in place
             # ONE doc per assignment: resume existing Draft/Rejected, else create new.
             existing = frappe.db.get_all("Work Management Actuals",
@@ -1108,6 +1088,10 @@ def wm_actuals(**kwargs):
                 if editing_pending:
                     # approver updates the pending doc in place, KEEPING its workflow_state
                     d = frappe.get_doc("Work Management Actuals", edit_doc)
+                    # the approver's edit-in-place from this screen: re-priced
+                    # from the grid below and by the controller. The desk form
+                    # carries no such flag and is refused on a pending entry.
+                    d.flags[actuals_pay.APPROVER_EDIT_FLAG] = True
                     d.set("employees", [])
                 elif existing:
                     d = frappe.get_doc("Work Management Actuals", existing[0])
