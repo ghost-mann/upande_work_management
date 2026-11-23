@@ -4212,8 +4212,12 @@ def wm_payment(**kwargs):
             # are blocks, cleared by entering the work or a reason, never acknowledged.
             if not keys and not frappe.utils.cint(c.is_top_up):
                 mw_farms = [farm] if farm else [x.farm for x in (c.get("farms") or [])]
-                mw_rows = frappe.call("work_management.missing_work.find", farms=mw_farms,
-                                      from_date=c.period_from, to_date=c.period_to) if mw_farms else []
+                # open days, and days whose "no work" reason is still being approved (work
+                # still in approval is already an unfinished record, below)
+                mw_rows = [m for m in (frappe.call("work_management.missing_work.find", farms=mw_farms,
+                                                   from_date=c.period_from, to_date=c.period_to,
+                                                   include_excused=True) if mw_farms else [])
+                           if m["state"] == "open" or (m["state"] == "waiting" and not m.get("fix"))]
                 mw_names = {}
                 if mw_rows:
                     for nm_r in frappe.db.sql("""SELECT name, employee_name FROM `tabEmployee` WHERE name IN %s""",
@@ -4227,7 +4231,9 @@ def wm_payment(**kwargs):
                                   "employee_name": mw_names.get(m["employee"]) or m["employee"],
                                   "work_date": m["day"], "amount": 0, "qty": 0,
                                   "detail": ("on " + str(crew["task_name"]) + " (" + str(crew["assignment"]) + ")"
-                                             if crew else "not on any crew") + "; present, no actuals, no reason given",
+                                             if crew else "not on any crew") + ("; present, no actuals, no reason given"
+                                             if m["state"] == "open" else "; reason waiting for " +
+                                             str((m.get("excuse") or {}).get("status") or "approval").replace("Pending ", "the ")),
                                   "acked": 0, "acked_by": None, "ack_reason": None})
             return found
 
@@ -4427,6 +4433,7 @@ def wm_payment(**kwargs):
             # "no work given" reasons in the check's dates, for HR and the GM: not blocking
             out["excused"] = frappe.db.sql("""SELECT x.farm, x.reason, x.marked_by, COUNT(*) n
                 FROM `tabWork Missing Day Excuse` x WHERE x.work_date BETWEEN %s AND %s AND x.farm IN %s
+                AND x.status = 'Approved'
                 AND NOT EXISTS (SELECT 1 FROM `tabWork Actuals Employee` we
                     INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
                     WHERE ac.docstatus < 2 AND we.employee = x.employee AND we.work_date = x.work_date)

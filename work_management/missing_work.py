@@ -413,7 +413,8 @@ def stamp_excuses(check, farm, period_from, period_to):
 	# an excuse whose day has since had work entered is stale: actuals win, so it is
 	# neither locked into the check nor counted as an idle day
 	frappe.db.sql("""UPDATE `tabWork Missing Day Excuse` x SET x.payroll_check = %s
-		WHERE IFNULL(x.payroll_check, '') = '' AND x.farm = %s AND x.work_date BETWEEN %s AND %s
+		WHERE IFNULL(x.payroll_check, '') = '' AND x.status = 'Approved' AND x.farm = %s
+		AND x.work_date BETWEEN %s AND %s
 		AND NOT EXISTS (SELECT 1 FROM `tabWork Actuals Employee` we
 			INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
 			WHERE ac.docstatus < 2 AND we.employee = x.employee AND we.work_date = x.work_date)""",

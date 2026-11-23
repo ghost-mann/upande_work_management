@@ -73,6 +73,23 @@ class TestApproval(unittest.TestCase):
 		self.assertIn("`tabWork Missing Day Excuse`", body)
 
 
+class TestPartTwo(unittest.TestCase):
+	def test_waiting_reason_still_blocks_farm(self):
+		body = between("def wmi_issues(", "return found")
+		self.assertIn("include_excused=True", body)
+		self.assertIn("reason waiting for", body)
+
+	def test_only_approved_reasons_counted_in_summary(self):
+		body = between('action == "chk_detail"', 'action == "chk_fix_dup"')
+		i = body.index('out["excused"]')
+		self.assertIn("x.status = 'Approved'", body[i:i + 900])
+
+	def test_only_approved_reasons_stamped(self):
+		src = (ROOT / "missing_work.py").read_text()
+		fn = src[src.index("def stamp_excuses("):src.index("def unstamp_excuses(")]
+		self.assertIn("x.status = 'Approved'", fn)
+
+
 class TestScreen(unittest.TestCase):
 	def test_js_links_to_missing_tab(self):
 		self.assertIn("/work-actuals?tab=missing", JS)
