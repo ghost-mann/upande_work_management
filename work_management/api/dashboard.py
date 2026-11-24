@@ -268,6 +268,50 @@ def wm_dashboard(**kwargs):
         return frappe.utils.add_days(d, -d.weekday())
 
 
+    # PAYROLL PAY (2026-11-24). Every KES figure on this dashboard that stands for
+    # pay counts the rows payroll counts: confirmed work, counted in payroll, above
+    # zero, by an employee on the payable lists in Settings (else 'Task Worker') --
+    # what wm_payment's wmpc_payable_conds puts into a payroll check. For 21 Oct -
+    # 20 Nov 2026 Field intelligence read KES 21,449 above the check because it also
+    # added the WM amounts of salaried supervisors and a clerk, who are paid by
+    # salary, and the timeline did the same.
+    def wmpay_clause(sources, alias):
+        """SQL that is true when the row's employee is paid by the task. `sources` is
+        [(Employee column, [payable values])]; blank lists never leave it open."""
+        parts = []
+        for col, vals in sources:
+            keep = [str(v or "").strip() for v in (vals or [])]
+            keep = [v for v in keep if v]
+            if keep:
+                parts.append("pye." + col + " IN (" + ", ".join(["'" + v.replace("'", "''").replace("%", "%%") + "'" for v in keep]) + ")")
+        if not parts:
+            parts = ["pye.employment_type = 'Task Worker'"]
+        return ("EXISTS (SELECT 1 FROM `tabEmployee` pye WHERE pye.name = " + alias + ".employee AND ("
+                + " OR ".join(parts) + "))")
+
+
+    def wmpay_row(we, ac, payable):
+        """One worker-day row is payroll pay."""
+        return ("(" + ac + ".workflow_state = 'CONFIRMED' AND IFNULL(" + we + ".count_in_payroll, 0) = 1 AND "
+                + we + ".amount > 0 AND " + payable + ")")
+    # -- end payroll pay --
+
+
+    def wmpay_payable(alias):
+        """wmpay_clause with this site's lists from Settings. Only columns the site
+        has: naming a missing custom_category kills the query rather than narrowing it."""
+        srcs = []
+        emeta = frappe.get_meta("Employee")
+        for col, child, cf in (("employment_type", "Work Management Payable Employment Type", "employment_type"),
+                               ("designation", "Work Management Payable Designation", "designation"),
+                               ("custom_category", "Work Management Payable Category", "category")):
+            if not emeta.get_field(col) or not frappe.db.exists("DocType", child):
+                continue
+            srcs.append((col, [r.get(cf) for r in frappe.get_all(child,
+                filters={"parenttype": "Work Management Settings"}, fields=[cf])]))
+        return wmpay_clause(srcs, alias)
+
+
     action = frappe.form_dict.get("action") or "meta"
     out = {}
 
@@ -1311,8 +1355,12 @@ def wm_dashboard(**kwargs):
         if tfarm:
             aconds = aconds + " AND ac.farm = %s"
             aparams.append(tfarm)
+        # quantity is everything delivered; KES is payroll pay (wmpay_row), so the
+        # delivered value agrees with the payroll check and Field intelligence
         arows = frappe.db.sql("""
-            SELECT we.work_date d, COALESCE(SUM(we.actual_quantity),0) qty, COALESCE(SUM(we.amount),0) val
+            SELECT we.work_date d, COALESCE(SUM(we.actual_quantity),0) qty,
+                   COALESCE(SUM(CASE WHEN """ + wmpay_row("we", "ac", wmpay_payable("we")) + """
+                                     THEN we.amount ELSE 0 END),0) val
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
             WHERE """ + aconds + """
@@ -3160,10 +3208,11 @@ def wm_dashboard(**kwargs):
         # Read per plan AND per week, then rolled up per plan below: the table wants
         # the plan totals, the graphs want the weeks, and one query keeps the two
         # from ever disagreeing about what a man-day is.
+        fi_pay = wmpay_row("we", "ac", wmpay_payable("we"))
         fi_week_rows = frappe.db.sql("""
             SELECT a2.planner_request pr, ac.farm farm,
                    DATE_SUB(we.work_date, INTERVAL WEEKDAY(we.work_date) DAY) wk,
-                   COALESCE(SUM(
+                   COALESCE(SUM(CASE WHEN we.actual_quantity > 0 THEN
                      COALESCE(NULLIF(we.hours, 0), CASE DAYOFWEEK(we.work_date)
                         WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END)
                      / NULLIF(
@@ -3173,17 +3222,21 @@ def wm_dashboard(**kwargs):
                               ELSE CASE DAYOFWEEK(we.work_date)
                                      WHEN 7 THEN %(sat)s WHEN 1 THEN %(sun)s ELSE %(wk)s END
                          END, 0)
-                   ), 0) mandays,
-                   COALESCE(SUM(we.amount), 0) pay
+                   ELSE 0 END), 0) mandays,
+                   -- pay and paid days are payroll's (wmpay_row): the same rows a
+                   -- payroll check takes, so Cost KES and Paid days equal the check
+                   COALESCE(SUM(CASE WHEN """ + fi_pay + """ THEN we.amount ELSE 0 END), 0) pay,
+                   COALESCE(SUM(CASE WHEN """ + fi_pay + """ THEN 1 ELSE 0 END), 0) paid_days
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-            INNER JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
+            -- LEFT: confirmed work with no assignment is still pay and still labour
+            LEFT JOIN `tabWork Management Assigner` a2 ON ac.assignment = a2.name
             -- for the unit and the daily target: an hourly task's day is its own
             -- length, not the site's. LEFT, so a row whose plan has gone still counts
             -- against the standard day rather than vanishing from the figure.
             LEFT JOIN `tabWork Management Planner` p2 ON a2.planner_request = p2.name
             WHERE ac.workflow_state = 'CONFIRMED'
-              AND we.work_date BETWEEN %(f)s AND %(t)s AND we.actual_quantity > 0
+              AND we.work_date BETWEEN %(f)s AND %(t)s AND (we.actual_quantity > 0 OR we.amount > 0)
             GROUP BY a2.planner_request, ac.farm, wk
         """, {"f": fifrom, "t": fito,
               "wk": frappe.utils.flt(STANDARD_DAY.get("weekday")),
@@ -3195,11 +3248,12 @@ def wm_dashboard(**kwargs):
             pk = (r.pr or "") + "|" + (r.farm or "")
             pr_row = plan_row_at.get(pk)
             if pr_row is None:
-                pr_row = {"pr": r.pr, "farm": r.farm, "mandays": 0, "pay": 0}
+                pr_row = {"pr": r.pr, "farm": r.farm, "mandays": 0, "pay": 0, "paid_days": 0}
                 plan_row_at[pk] = pr_row
                 plan_rows.append(pr_row)
             pr_row["mandays"] = pr_row["mandays"] + frappe.utils.flt(r.mandays)
             pr_row["pay"] = pr_row["pay"] + frappe.utils.flt(r.pay)
+            pr_row["paid_days"] = pr_row["paid_days"] + frappe.utils.cint(r.paid_days)
         prs = [r["pr"] for r in plan_rows if r["pr"]]
         plan_info = {}
         plan_blocks = {}
@@ -3241,7 +3295,7 @@ def wm_dashboard(**kwargs):
                 parea = parea + all_blocks.get(b, 0)
             fe = farm_eff.get(r["farm"])
             if fe is None:
-                fe = {"farm": r["farm"], "area": 0, "mandays": 0, "cost": 0, "plans": 0}
+                fe = {"farm": r["farm"], "area": 0, "mandays": 0, "cost": 0, "plans": 0, "paid_days": 0}
                 farm_eff[r["farm"]] = fe
             # NOT fe["area"] + parea. Area was summed once per plan, so a block
             # planned twice counted its hectares twice -- inflating the area and
@@ -3250,6 +3304,7 @@ def wm_dashboard(**kwargs):
             # once, below.
             fe["mandays"] = fe["mandays"] + frappe.utils.cint(frappe.utils.flt(r["mandays"], 6))
             fe["cost"] = fe["cost"] + frappe.utils.flt(r["pay"])
+            fe["paid_days"] = fe["paid_days"] + frappe.utils.cint(r["paid_days"])
             fe["plans"] = fe["plans"] + 1
             tname = (plan_info.get(r["pr"]) or {}).get("task") or "—"
             te = task_eff.get(tname)
@@ -3317,9 +3372,9 @@ def wm_dashboard(**kwargs):
             SELECT ac.farm farm, COALESCE(SUM(we.amount),0) pay
             FROM `tabWork Actuals Employee` we
             INNER JOIN `tabWork Management Actuals` ac ON we.parent = ac.name
-            WHERE ac.workflow_state = 'CONFIRMED'
+            WHERE """ + fi_pay + """
             GROUP BY ac.farm
-        """, as_dict=True):
+        """, {}, as_dict=True):  # {} so the driver formats it: fi_pay's lists escape % as %%
             cum_pay[cr.farm] = frappe.utils.flt(cr.pay)
 
         farms_out = []
@@ -5239,6 +5294,26 @@ def wm_dashboard(**kwargs):
             am_today = str(frappe.utils.today())
             am_tw_only = frappe.utils.cint(frappe.form_dict.get("tw_only") if frappe.form_dict.get("tw_only") is not None else 1)
             am_emps = [e for e in pb_emps if (e.tw or not am_tw_only)]
+            # pay in these dates is payroll pay (wmpay_row), so the sheet's total
+            # agrees with the payroll check -- which pays a worker who has since left
+            # as well. List anyone not Active who has payroll pay in the range, or the
+            # sheet comes up short by their days (KES 24,381 for 21 Oct - 20 Nov 2026).
+            am_pay = wmpay_row("we", "ac", wmpay_payable("we"))
+            am_listed = {e.emp: 1 for e in am_emps}
+            for e in frappe.db.sql("""
+                SELECT e.name emp, e.employee_name name, TRIM(e.custom_farm) farm, e.designation, e.employment_type etype,
+                       """ + pb_cat + """ cat, e.holiday_list hl,
+                       CASE WHEN """ + pb_tw_sql + """ THEN 1 ELSE 0 END tw
+                FROM `tabEmployee` e
+                WHERE e.status != 'Active' AND TRIM(IFNULL(e.custom_farm, '')) IN %(farms)s
+                  AND EXISTS (SELECT 1 FROM `tabWork Actuals Employee` we
+                              INNER JOIN `tabWork Management Actuals` ac ON ac.name = we.parent
+                              WHERE we.employee = e.name AND we.work_date BETWEEN %(f)s AND %(t)s AND """ + am_pay + """)
+                ORDER BY TRIM(e.custom_farm), e.employee_name
+            """, {"farms": tuple(pb_farms), "f": am_from, "t": am_to}, as_dict=True):
+                if (e.tw or not am_tw_only) and not am_listed.get(e.emp):
+                    am_emps.append(e)
+                    am_listed[e.emp] = 1
             am_ids = tuple([e.emp for e in am_emps]) or ("__none__",)
             am_days = []
             am_d = am_from
@@ -5274,6 +5349,8 @@ def wm_dashboard(**kwargs):
                     am_off[r.parent + "|" + str(r.holiday_date)] = 1
             for r in frappe.db.sql("""
                     SELECT we.employee, we.work_date d, SUM(we.amount) amt, SUM(we.actual_quantity) q,
+                           SUM(CASE WHEN """ + am_pay + """ THEN we.amount ELSE 0 END) pay,
+                           SUM(CASE WHEN ac.workflow_state != 'CONFIRMED' THEN we.amount ELSE 0 END) pend,
                            GROUP_CONCAT(DISTINCT IFNULL(tk.subject, ac.task) SEPARATOR ', ') tasks,
                            MAX(IFNULL(we.presence_confirmed_by, '')) conf,
                            MIN(CASE WHEN ac.workflow_state = 'CONFIRMED' THEN 1 ELSE 0 END) all_conf
@@ -5287,6 +5364,8 @@ def wm_dashboard(**kwargs):
                     GROUP BY we.employee, we.work_date""", (am_ids, am_from, am_to), as_dict=True):
                 c = am_cells.setdefault(r.employee + "|" + str(r.d), {})
                 c["work"] = round(frappe.utils.flt(r.amt), 2)
+                c["pay"] = round(frappe.utils.flt(r.pay), 2)
+                c["pend"] = round(frappe.utils.flt(r.pend), 2)
                 c["tasks"] = r.tasks
                 if r.conf:
                     c["conf"] = r.conf
@@ -5296,7 +5375,7 @@ def wm_dashboard(**kwargs):
             for e in am_emps:
                 cells = []
                 tot = {"present": 0, "absent": 0, "leave": 0, "off": 0, "unknown": 0, "worked": 0, "pay": 0.0,
-                       "worked_no_presence": 0, "present_no_work": 0}
+                       "pending": 0.0, "worked_no_presence": 0, "present_no_work": 0}
                 for dd in am_days:
                     c = am_cells.get(e.emp + "|" + dd) or {}
                     if c.get("in") or c.get("att") in ("Present", "Work From Home"):
@@ -5326,7 +5405,9 @@ def wm_dashboard(**kwargs):
                         tot["unknown"] = tot["unknown"] + 1
                     if c.get("work") is not None:
                         tot["worked"] = tot["worked"] + 1
-                        tot["pay"] = tot["pay"] + frappe.utils.flt(c.get("work"))
+                        # payroll pay only; work still in approval is its own figure
+                        tot["pay"] = tot["pay"] + frappe.utils.flt(c.get("pay"))
+                        tot["pending"] = tot["pending"] + frappe.utils.flt(c.get("pend"))
                         if code in ("A", "?", "L") and not c.get("conf"):
                             c["flag"] = 1
                             tot["worked_no_presence"] = tot["worked_no_presence"] + 1
@@ -5334,6 +5415,7 @@ def wm_dashboard(**kwargs):
                         tot["present_no_work"] = tot["present_no_work"] + 1
                     cells.append(c)
                 tot["pay"] = round(tot["pay"], 2)
+                tot["pending"] = round(tot["pending"], 2)
                 am_rows.append({"emp": e.emp, "name": e.name, "farm": e.farm, "designation": e.designation,
                                 "cells": cells, "tot": tot})
             out["month"] = am_month

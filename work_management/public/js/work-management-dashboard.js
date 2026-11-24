@@ -1856,14 +1856,15 @@
   function ppPaintMonth(){
     var b=el("pp-body"), d=PP.month; if(!b||!d) return;
     var rows=(d.rows||[]).filter(function(r){ return !PP.q || (r.name+" "+r.emp+" "+(r.designation||"")).toLowerCase().indexOf(PP.q)>=0; });
-    var T={present:0,absent:0,worked:0,pay:0,flag:0,idle:0};
-    rows.forEach(function(r){ T.present+=r.tot.present; T.absent+=r.tot.absent; T.worked+=r.tot.worked; T.pay+=r.tot.pay; T.flag+=r.tot.worked_no_presence; T.idle+=r.tot.present_no_work; });
+    var T={present:0,absent:0,worked:0,pay:0,pend:0,flag:0,idle:0};
+    rows.forEach(function(r){ T.present+=r.tot.present; T.absent+=r.tot.absent; T.worked+=r.tot.worked; T.pay+=r.tot.pay; T.pend+=(r.tot.pending||0); T.flag+=r.tot.worked_no_presence; T.idle+=r.tot.present_no_work; });
     var h='<div class="pp-kpis">'+
       '<div class="pp-kpi"><b>'+fmt(rows.length)+'</b><span>'+(PP.tw?'task workers':'people')+'</span></div>'+
       '<div class="pp-kpi"><b>'+fmt(T.present)+'</b><span>days present</span></div>'+
       '<div class="pp-kpi"><b>'+fmt(T.absent)+'</b><span>days absent</span></div>'+
       '<div class="pp-kpi"><b>'+fmt(T.worked)+'</b><span>days with work</span></div>'+
-      '<div class="pp-kpi"><b>'+money(T.pay)+'</b><span>pay recorded KES</span></div>'+
+      '<div class="pp-kpi" title="confirmed pay to task workers \u2014 what payroll pays for these dates"><b>'+money(T.pay)+'</b><span>to payroll KES</span></div>'+
+      (T.pend>0?'<div class="pp-kpi" title="work recorded but not yet through approval: not in payroll until confirmed"><b style="color:var(--mute)">'+money(T.pend)+'</b><span>in approval KES</span></div>':'')+
       '<div class="pp-kpi" title="work recorded on a day with no scan, no Present attendance, or marked Absent/leave — and not confirmed by hand"><b style="color:#991b1b">'+fmt(T.flag)+'</b><span>work, no presence</span></div>'+
       '<div class="pp-kpi" title="present but no work recorded that day"><b style="color:#92400e">'+fmt(T.idle)+'</b><span>present, no work</span></div>'+
       '</div>'+
@@ -1891,10 +1892,10 @@
   }
   function ppCsv(){
     var d=PP.month; if(!d){ toast("Load the sheet first"); return; }
-    var lines=[["Employee","Name","Farm","Designation"].concat(d.days).concat(["Present","Absent","Leave","No record","Work days","Pay KES","Work no presence","Present no work"])];
+    var lines=[["Employee","Name","Farm","Designation"].concat(d.days).concat(["Present","Absent","Leave","No record","Work days","Pay KES","In approval KES","Work no presence","Present no work"])];
     (d.rows||[]).forEach(function(r){
       lines.push([r.emp,r.name,r.farm,r.designation||""].concat(r.cells.map(function(c){ return (c.c||"")+(c.work!=null?"+W":"")+(c.flag?"!":""); }))
-        .concat([r.tot.present,r.tot.absent,r.tot.leave,r.tot.unknown,r.tot.worked,r.tot.pay,r.tot.worked_no_presence,r.tot.present_no_work]));
+        .concat([r.tot.present,r.tot.absent,r.tot.leave,r.tot.unknown,r.tot.worked,r.tot.pay,r.tot.pending||0,r.tot.worked_no_presence,r.tot.present_no_work]));
     });
     var csv=lines.map(function(l){ return l.map(function(v){ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(","); }).join("\n");
     var a=document.createElement("a");
@@ -4069,10 +4070,10 @@
     if(!farms.length){ box.innerHTML='<div class="empty">No confirmed work in this window.</div>'; return; }
     function mdph(v){ return v>0? fmt(v,2) : "—"; }
     function cph(v){ return v>0? fmt(v,0) : "—"; }
-    var h='<div class="tablewrap"><table><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Area Ha</th><th class="n">Man-days</th><th class="n" title="Man-days ÷ Area: worker-days one hectare takes. Lower is leaner.">Man-days / Ha</th><th class="n">Cost KES</th><th class="n">Cost / Ha</th><th class="n">All-time KES</th></tr></thead><tbody>';
-    var ta=0,tm=0,tc=0;
+    var h='<div class="tablewrap"><table><thead><tr><th>'+esc(TX("top_singular","Farm"))+'</th><th class="n">Area Ha</th><th class="n">Man-days</th><th class="n" title="Man-days ÷ Area: worker-days one hectare takes. Lower is leaner.">Man-days / Ha</th><th class="n" title="Worker-days paid through payroll: task workers\u2019 confirmed days. The payroll check counts the same days.">Paid days</th><th class="n" title="Confirmed pay to task workers \u2014 what payroll pays, and what the payroll check carries">Cost KES</th><th class="n">Cost / Ha</th><th class="n">All-time KES</th></tr></thead><tbody>';
+    var ta=0,tm=0,tc=0,tp=0;
     farms.forEach(function(f){
-      ta+=f.area; tm+=f.mandays; tc+=f.cost;
+      ta+=f.area; tm+=f.mandays; tc+=f.cost; tp+=(f.paid_days||0);
       // an unset area is called out rather than shown as a dash: the two
       // ratios beside it are blank *because* nobody has entered one
       // say where the area came from: entered against the farm, or derived from
@@ -4083,12 +4084,12 @@
             : '')
         : '<span title="No area on this '+esc(TX("top_singular","Farm")).toLowerCase()+' and none on its '+esc(TX("unit_plural","Blocks")).toLowerCase()+'" style="color:#b45309">not set</span>';
       h+='<tr><td><b>'+esc(f.farm)+'</b></td><td class="n m">'+areaCell+'</td><td class="n m">'+fmt(f.mandays)+'</td>'+
-         '<td class="n m">'+mdph(f.mandays_per_ha)+'</td><td class="n m">'+fmt(f.cost,0)+'</td><td class="n m">'+cph(f.cost_per_ha)+'</td>'+
+         '<td class="n m">'+mdph(f.mandays_per_ha)+'</td><td class="n m">'+fmt(f.paid_days||0)+'</td><td class="n m">'+fmt(f.cost,0)+'</td><td class="n m">'+cph(f.cost_per_ha)+'</td>'+
          '<td class="n m" title="Everything confirmed to date, ignoring the date filter">'+fmt(f.cum_pay||0,0)+'</td></tr>';
     });
     var tcum=0; farms.forEach(function(f){ tcum+=(f.cum_pay||0); });
     h+='</tbody><tfoot><tr><th>TOTAL</th><th class="n">'+(ta>0?fmt(ta,1):"—")+'</th><th class="n">'+fmt(tm)+'</th>'+
-       '<th class="n">'+(ta>0&&tm>0?fmt(tm/ta,2):"—")+'</th><th class="n">'+fmt(tc,0)+'</th><th class="n">'+(ta>0?fmt(tc/ta,0):"—")+'</th>'+
+       '<th class="n">'+(ta>0&&tm>0?fmt(tm/ta,2):"—")+'</th><th class="n">'+fmt(tp)+'</th><th class="n">'+fmt(tc,0)+'</th><th class="n">'+(ta>0?fmt(tc/ta,0):"—")+'</th>'+
        '<th class="n">'+fmt(tcum,0)+'</th></tr></tfoot></table></div>';
     if(tasks.length){
       h+='<div class="sech" style="margin-top:12px;font-size:10px">By task &middot; top by man-days</div>'+
