@@ -234,3 +234,16 @@ class TestTheListShowsWhatCanBeSent(unittest.TestCase):
 		self.assertIn("THEN we.amount ELSE 0 END),0) payable_amt", block("pay_workers"))
 		self.assertIn("IFNULL(we.payment_ref,'')=''\"\"\" + CHECKED_ONLY + \"\"\" THEN we.amount ELSE 0 END),0) payable_amt",
 			block("pay_workers"))
+
+
+class TestTheNewestAcknowledgementCounts(unittest.TestCase):
+	"""2026-11-24: an acknowledgement is tied to the row or record as it was. After a
+	change (pay restored on a day HR corrected to Present) it is acknowledged again,
+	and that new acknowledgement must be the one compared -- reading the oldest left
+	the issue open however often it was acknowledged."""
+
+	def test_acks_are_read_oldest_first_so_the_newest_wins(self):
+		body = defined("payment", "wmi_issues")
+		i = body.index('"Work Management Payroll Check Fix"')
+		call = body[i:body.index("acks[(a1.issue, a1.kept_row)] = a1", i)]
+		self.assertIn('order_by="creation asc"', call)

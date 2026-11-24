@@ -4128,7 +4128,9 @@ def wm_payment(**kwargs):
             for i0 in range(0, len(ack_keys), 500):
                 for a1 in frappe.db.get_all("Work Management Payroll Check Fix",
                         filters={"kind": "acknowledged", "kept_row": ["in", ack_keys[i0:i0 + 500]]},
-                        fields=["issue", "kept_row", "row_hash", "fixed_by", "fixed_at", "reason"]):
+                        fields=["issue", "kept_row", "row_hash", "fixed_by", "fixed_at", "reason"],
+                        # oldest first, so a later acknowledgement (after the row changed) wins
+                        order_by="creation asc"):
                     acks[(a1.issue, a1.kept_row)] = a1
             found = []
             docs_seen = {}
