@@ -4409,8 +4409,10 @@ def wm_payment(**kwargs):
                 WHERE we.parenttype = 'Work Management Actuals' AND ac.workflow_state = 'CONFIRMED'
                   AND IFNULL(we.count_in_payroll, 0) = 1 AND we.amount > 0
                   AND we.work_date BETWEEN %s AND %s
+                  -- unstamped rows count only if a farm approval would take them:
+                  -- task workers (TW_ONLY), so the cards add up to the check's total
                   AND (IFNULL(we.payroll_check, '') = %s OR (IFNULL(we.payroll_check, '') = ''
-                       AND IFNULL(we.paid, 0) = 0 AND IFNULL(we.payment_ref, '') = ''))
+                       AND IFNULL(we.paid, 0) = 0 AND IFNULL(we.payment_ref, '') = ''""" + TW_ONLY + """))
                 GROUP BY ac.farm
             """, (pc.period_from, pc.period_to, pc.name), as_dict=True):
                 if x.farm in by:
