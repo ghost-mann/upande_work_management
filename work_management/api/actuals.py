@@ -2829,6 +2829,11 @@ def wm_actuals(**kwargs):
             rl.append(r.role)
         out["user"] = frappe.session.user
         out["off_day_requests"] = OD_ON
+        # REST DAYS (2026-11-25): with Settings "att_block_off" off, the grid no
+        # longer locks a worker's weekly off / holiday -- work on it is entered like
+        # any other day (submit already follows the same switch).
+        out["att_block_off"] = frappe.utils.cint(frappe.db.get_single_value(
+            "Work Management Settings", "att_block_off"))
         # Who enters work, and who works with payments, are capabilities set in
         # Settings -- they used to be these role names, compiled in.
         out["is_clerk"] = 1 if (("System Manager" in rl) or any(

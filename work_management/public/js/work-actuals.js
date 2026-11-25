@@ -98,6 +98,9 @@
     for(var i=0;i<offs.length;i++){ if(offs[i]===iso) return true; }
     return false;
   }
+  // rest days lock the grid only while Settings "att_block_off" is on; until
+  // the roles have loaded, assume it is (the old behaviour)
+  function offBlocks(){ return !(ST.roles && ST.roles.att_block_off===0); }
   // the latest off-day request for this worker and date, or null
   function odReq(w, iso){ return (w.off_requests||{})[iso] || null; }
   function odApproved(w, iso){ var r=odReq(w, iso); return !!(r && r.status==="Approved"); }
@@ -115,7 +118,8 @@
     var st=(w.status||"Active");
     if(w.start_date && iso < w.start_date) return false;   // replacement not started yet
     if(st==="Left" && w.left_date && iso > w.left_date) return false;  // left worker, after last day
-    if(offDay(w, iso) && !odApproved(w, iso)) return false;   // rest day / holiday, unless approved
+    // rest day / holiday, unless approved -- only while Settings blocks them (att_block_off)
+    if(offBlocks() && offDay(w, iso) && !odApproved(w, iso)) return false;
     if(leaveDay(w, iso)) return false; // approved leave blocks entry
     return true;
   }
