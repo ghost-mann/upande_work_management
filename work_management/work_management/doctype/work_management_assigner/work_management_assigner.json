@@ -37,7 +37,10 @@
   "custom_fm_approved_at",
   "custom_gm_approved_at",
   "custom_hr_approved_at",
-  "custom_submitted_at"
+  "custom_submitted_at",
+  "late_assignment",
+  "late_reason",
+  "late_note"
  ],
  "fields": [
   {
@@ -239,12 +242,34 @@
    "fieldtype": "Datetime",
    "label": "Submitted At",
    "read_only": 1
+  },
+  {
+   "fieldname": "late_assignment",
+   "fieldtype": "Check",
+   "label": "Assigned late",
+   "read_only": 1,
+   "default": "0",
+   "description": "Saved after the cut-off on the day before the start (Work Management Settings)."
+  },
+  {
+   "fieldname": "late_reason",
+   "fieldtype": "Data",
+   "label": "Late reason",
+   "read_only": 1,
+   "depends_on": "late_assignment"
+  },
+  {
+   "fieldname": "late_note",
+   "fieldtype": "Small Text",
+   "label": "Late note",
+   "read_only": 1,
+   "depends_on": "late_assignment"
   }
  ],
  "idx": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-07-23 00:00:00.000000",
+ "modified": "2026-11-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Assigner",

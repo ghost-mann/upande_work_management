@@ -137,6 +137,11 @@ scheduler_events = {
 		"30 7 * * *": [
 			"work_management.missing_work.send_reminders",
 		],
+		# Tomorrow's approved plans with no crew yet, to farm managers before the
+		# cut-off (Work Management Settings > Assign the day before).
+		"0 16 * * *": [
+			"work_management.assign_ahead.send_reminder",
+		],
 	},
 }
 

@@ -102,6 +102,12 @@
   "missing_work_reminder",
   "missing_work_notify",
   "max_backdate_days",
+  "section_assign_ahead",
+  "assign_day_before",
+  "assign_cutoff_time",
+  "column_break_assign_ahead",
+  "assign_reminder",
+  "assign_reminder_notify",
   "qty_flag_multiple",
   "qty_refuse_multiple",
   "sb_payroll_pack",
@@ -801,6 +807,43 @@
    "description": "A worker may be put on an assignment starting at most this many days ago. Earlier needs the GM, with a reason."
   },
   {
+   "fieldname": "section_assign_ahead",
+   "fieldtype": "Section Break",
+   "label": "Assign the day before",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "assign_day_before",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Ask a reason for assigning late",
+   "description": "On: an assignment saved after the cut-off on the day before its start needs a reason (replacing absent worker, weather, urgent work, other). The farm manager sees it when approving, and the dashboard counts late assignments by team leader and by who saved them."
+  },
+  {
+   "fieldname": "assign_cutoff_time",
+   "fieldtype": "Time",
+   "default": "18:00:00",
+   "label": "Cut-off on the day before",
+   "description": "Work starting tomorrow should be assigned before this time today."
+  },
+  {
+   "fieldname": "column_break_assign_ahead",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "assign_reminder",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Email tomorrow's unassigned plans at 16:00",
+   "description": "On: at 16:00 each farm manager (Assigner: Farm Manager approvers) and the addresses below get tomorrow's approved plans that have no crew yet."
+  },
+  {
+   "fieldname": "assign_reminder_notify",
+   "fieldtype": "Small Text",
+   "label": "Unassigned plans summary to",
+   "description": "Comma-separated emails who get every farm's list."
+  },
+  {
    "fieldname": "qty_flag_multiple",
    "fieldtype": "Float",
    "label": "Ask for a reason above this many times the daily target",
@@ -839,7 +882,7 @@
  "idx": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-23 09:00:00.000000",
+ "modified": "2026-11-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Work Management",
  "name": "Work Management Settings",
