@@ -243,7 +243,7 @@
   //   Efficiency  earned man-days / worker-days actually recorded
   //   Master plan progress & backlog on the activities they own
   //   Quality     Good / Fair / Rework shares of the approver's scores
-  var TLK={from:null, to:null, farm:"", who:"", seq:0, d:null};
+  var TLK={from:null, to:null, farm:"", who:"", seq:0, d:null, tab:"perf", lv:"leader", open:""};
   function tlDefaults(){
     if(!TLK.to){ var t=new Date(); TLK.to=t.toISOString().slice(0,10);
       var f=new Date(t.getTime()-55*86400000); TLK.from=f.toISOString().slice(0,10); }
@@ -312,7 +312,7 @@
     return '<div class="pex-filters" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
       '<input type="date" id="tlk-from" value="'+esc(TLK.from)+'"> → <input type="date" id="tlk-to" value="'+esc(TLK.to)+'">'+
       ((TLK.d && TLK.d.can_see_all) ? '<select id="tlk-farm">'+farmOptions(TLK.farm)+'</select>' : '')+
-      (TLK.who && TLK.d && TLK.d.can_see_all ? '<button type="button" class="btn sm" id="tlk-back">← All team leaders</button>' : '')+
+      (TLK.who && TLK.d && TLK.d.can_see_all && TLK.tab!=="people" ? '<button type="button" class="btn sm" id="tlk-back">← All team leaders</button>' : '')+
       '</div>';
   }
   function tlWire(box){
@@ -321,14 +321,27 @@
     if(t) t.onchange=function(){ TLK.to=t.value; tlLoad(); };
     if(fm) fm.onchange=function(){ TLK.farm=fm.value; tlLoad(); };
     if(bk) bk.onclick=function(){ TLK.who=""; tlLoad(); };
+    box.querySelectorAll("[data-tlt]").forEach(function(b){
+      b.onclick=function(){ TLK.tab=b.getAttribute("data-tlt"); TLK.open=""; tlLoad(); };
+    });
     box.querySelectorAll("[data-tl]").forEach(function(tr){
       tr.style.cursor="pointer";
       tr.onclick=function(){ TLK.who=tr.getAttribute("data-tl"); tlLoad(); };
     });
   }
+  // three tabs on the team leader card (2026-11-26): Performance (the table and
+  // scorecard), Late assigning (work assigned after the cut-off the day before,
+  // by team leader and by who saved it) and People (who is on a leader's crews)
+  function tlTabs(){
+    var t=TLK.tab||"perf";
+    var b=function(k,l){ return '<button type="button" data-tlt="'+k+'"'+(t===k?' class="on"':'')+'>'+l+'</button>'; };
+    return '<div class="pex-tabs" style="margin-bottom:10px">'+b("perf","Performance")+b("late","Late assigning")+b("people","People")+'</div>';
+  }
   function tlLoad(){
     var box=el("wm-tlk"); if(!box) return;
     tlDefaults();
+    if(TLK.tab==="late") return tlLateLoad(box);
+    if(TLK.tab==="people") return tlPeopleLoad(box);
     var args={action:"tl_kpis", from_date:TLK.from, to_date:TLK.to};
     if(TLK.farm) args.farm=TLK.farm;
     if(TLK.who) args.team_leader=TLK.who;
@@ -338,9 +351,108 @@
       if(d.error){ box.innerHTML='<div class="empty">'+esc(d.error)+'</div>'; return; }
       TLK.d=d;
       if(!d.can_see_all) TLK.who=d.team_leader||d.me;
-      box.innerHTML = TLK.who ? tlCard(d) : tlTable(d);
+      box.innerHTML = tlTabs() + (TLK.who ? tlCard(d) : tlTable(d));
       tlWire(box);
     }).catch(function(){ if(seq===TLK.seq) box.innerHTML='<div class="empty">Could not load team leader KPIs.</div>'; });
+  }
+  function tlLateLoad(box){
+    var args={action:"tl_late", from_date:TLK.from, to_date:TLK.to};
+    if(TLK.farm) args.farm=TLK.farm;
+    if(TLK.who) args.team_leader=TLK.who;
+    var seq=++TLK.seq;
+    box.innerHTML=tlTabs()+'<div class="loading">Reading assignments&hellip;</div>';
+    tlWire(box);
+    call(args).then(function(d){
+      if(seq!==TLK.seq) return;
+      if(d.error){ box.innerHTML=tlTabs()+'<div class="empty">'+esc(d.error)+'</div>'; tlWire(box); return; }
+      TLK.d=d; TLK.late=d;
+      box.innerHTML=tlTabs()+tlLate(d);
+      tlWire(box); tlLateWire(box);
+    }).catch(function(){ if(seq===TLK.seq){ box.innerHTML=tlTabs()+'<div class="empty">Could not load late assigning.</div>'; tlWire(box); } });
+  }
+  function tlLate(d){
+    var lv=TLK.lv||"leader", rows=(lv==="saver"?d.by_saver:d.by_leader)||[];
+    var h=tlControls();
+    h+='<div class="pex-tabs" style="margin:0 0 8px 0">'+
+      '<button type="button" data-tllv="leader"'+(lv==="leader"?' class="on"':'')+'>By team leader</button>'+
+      '<button type="button" data-tllv="saver"'+(lv==="saver"?' class="on"':'')+'>By who saved</button></div>';
+    h+='<div class="hint" style="font-size:11px;margin-bottom:8px">Work is due by <b>'+esc(d.cutoff||"18:00")+'</b> the day before it starts, so the crew knows its job when they arrive. '+
+      '‘Plan approved late’ is counted apart — the plan itself came after the cut-off, so nobody could have assigned it sooner.'+
+      (d.switch_on?'':' The reason is asked only once <i>Ask a reason for assigning late</i> is on in Work Management Settings; until then late work shows ‘No reason given’.')+'</div>';
+    if(!rows.length) return h+'<div class="empty">No assignments start in these dates.</div>';
+    h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>'+(lv==="saver"?"Saved by":"Team leader")+'</th>'+
+      '<th class="n">Assignments</th><th class="n">Late</th><th class="n">% late</th><th class="n" title="the plan was approved after the cut-off">Plan approved late</th><th>Main reason</th></tr></thead><tbody>';
+    rows.forEach(function(r,i){
+      var open=TLK.open===r.key;
+      h+='<tr data-tll="'+esc(r.key)+'" style="cursor:pointer"><td class="m">'+(i+1)+'</td><td><b>'+esc(r.name)+'</b></td>'+
+        '<td class="n m">'+fmt(r.total)+'</td><td class="n m">'+fmt(r.late)+'</td>'+
+        '<td class="n m" style="'+tlTone(r.pct_late==null?null:100-r.pct_late,90,70)+'">'+tlPct(r.pct_late)+'</td>'+
+        '<td class="n m">'+(r.plan_late?fmt(r.plan_late):'<span class="hint">—</span>')+'</td>'+
+        '<td>'+(r.top_reason?esc(r.top_reason):'<span class="hint">—</span>')+'</td></tr>';
+      if(open) h+='<tr><td></td><td colspan="6">'+tlLateRows(d, r.key, lv)+'</td></tr>';
+    });
+    return h+'</tbody></table></div><div class="hint" style="margin-top:6px;font-size:10.5px">Click a row for its late assignments.</div>';
+  }
+  function tlLateRows(d, key, lv){
+    var rows=(d.late_rows||[]).filter(function(x){ return (lv==="saver"?x.saver:x.tl)===key; });
+    if(!rows.length) return '<div class="hint">Nothing late.</div>';
+    var h='<table style="font-size:11.5px"><thead><tr><th>Starts</th><th>Saved</th><th>Due by</th><th>Ref</th><th>Activity</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>'+(lv==="saver"?"Team leader":"Saved by")+'</th><th>Reason</th></tr></thead><tbody>';
+    rows.forEach(function(x){
+      h+='<tr><td class="m">'+esc(x.start)+'</td><td class="m">'+esc(x.created)+'</td><td class="m">'+esc(String(x.deadline||"").slice(0,16))+'</td>'+
+        '<td class="m">'+esc(x.asg)+'</td><td>'+esc(x.task_label||"")+'</td><td>'+esc(x.block||"")+'</td>'+
+        '<td>'+esc(lv==="saver"?(x.tl_name||"—"):(x.saver_name||""))+'</td>'+
+        '<td'+(x.plan_late?' class="hint"':'')+'>'+esc(x.reason||"")+(x.note?' <span class="hint">— '+esc(x.note)+'</span>':'')+'</td></tr>';
+    });
+    return h+'</tbody></table>';
+  }
+  function tlLateWire(box){
+    box.querySelectorAll("[data-tllv]").forEach(function(b){
+      b.onclick=function(){ TLK.lv=b.getAttribute("data-tllv"); TLK.open=""; box.innerHTML=tlTabs()+tlLate(TLK.late); tlWire(box); tlLateWire(box); };
+    });
+    box.querySelectorAll("[data-tll]").forEach(function(tr){
+      tr.onclick=function(){ var k=tr.getAttribute("data-tll"); TLK.open=(TLK.open===k?"":k); box.innerHTML=tlTabs()+tlLate(TLK.late); tlWire(box); tlLateWire(box); };
+    });
+  }
+  function tlPeopleLoad(box){
+    var args={action:"tl_people", from_date:TLK.from, to_date:TLK.to};
+    if(TLK.farm) args.farm=TLK.farm;
+    if(TLK.who) args.team_leader=TLK.who;
+    var seq=++TLK.seq;
+    box.innerHTML=tlTabs()+'<div class="loading">Reading crews&hellip;</div>';
+    tlWire(box);
+    call(args).then(function(d){
+      if(seq!==TLK.seq) return;
+      if(d.error){ box.innerHTML=tlTabs()+'<div class="empty">'+esc(d.error)+'</div>'; tlWire(box); return; }
+      TLK.d=d;
+      if(!d.can_see_all) TLK.who=d.team_leader||d.me;
+      box.innerHTML=tlTabs()+tlPeople(d);
+      tlWire(box);
+      var pk=el("tlk-pick");
+      if(pk) pk.onchange=function(){ TLK.who=pk.value; tlLoad(); };
+    }).catch(function(){ if(seq===TLK.seq){ box.innerHTML=tlTabs()+'<div class="empty">Could not load people.</div>'; tlWire(box); } });
+  }
+  function tlPeople(d){
+    var h=tlControls();
+    if(d.can_see_all){
+      h+='<div style="margin-bottom:8px"><select id="tlk-pick"><option value="">— pick a team leader —</option>'+
+        (d.leaders||[]).map(function(l){ return '<option value="'+esc(l.key)+'"'+(l.key===TLK.who?' selected':'')+'>'+esc(l.name)+'</option>'; }).join("")+'</select></div>';
+    }
+    if(!TLK.who) return h+'<div class="empty">Pick a team leader to see the people on their crews.</div>';
+    var ppl=d.people||[];
+    if(!ppl.length) return h+'<div class="empty">Nobody on '+esc(d.team_leader_name||TLK.who)+'’s crews in these dates.</div>';
+    var onToday=0, present=0;
+    ppl.forEach(function(p){ if(p.on_today){ onToday++; if(p.status==="Present") present++; } });
+    var tone={"Present":"color:#166534","Absent":"color:#991b1b","Leave":"color:#92400e"};
+    h+='<div style="font-weight:600;margin-bottom:6px">'+esc(d.team_leader_name||TLK.who)+' · '+fmt(ppl.length)+' people in these dates · '+
+      fmt(onToday)+' on a crew today · '+fmt(present)+' of them present</div>';
+    h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Worker</th><th>Activities</th><th class="n">Days worked</th><th>Today ('+esc(d.date||"")+')</th></tr></thead><tbody>';
+    ppl.forEach(function(p,i){
+      var acts=(p.acts||[]).map(function(a){ return esc(a.task_label||"")+(a.block?' · '+esc(a.block):'')+' <span class="hint">'+esc(a.since)+' → '+esc(a.until)+'</span>'; }).join('<br>');
+      h+='<tr><td class="m">'+(i+1)+'</td><td><b>'+esc(p.name)+'</b> <span class="hint">'+esc(p.emp)+'</span></td><td style="font-size:11.5px">'+acts+'</td>'+
+        '<td class="n m">'+fmt(p.days)+'</td>'+
+        '<td style="'+(p.on_today?(tone[p.status]||"color:var(--mute)"):"color:var(--mute)")+'">'+(p.on_today?esc(p.status)+(p.scan?' <span class="hint">'+esc(p.scan)+'</span>':''):'<span class="hint">not on a crew today</span>')+'</td></tr>';
+    });
+    return h+'</tbody></table></div>';
   }
   function tlTable(d){
     var rows=d.leaders||[];
@@ -1964,7 +2076,7 @@
       // ===== team leaders: completion, efficiency, backlog, quality =====
       '<div class="sech">Team leaders &mdash; completion, efficiency, backlog &amp; quality</div>'+
       '<div class="card"><div class="hd"><h3>How each team leader is doing</h3>'+
-        '<div class="cap">weekly plans they ran against what was planned &middot; the master plan work they own &middot; the approver&rsquo;s quality scores</div></div>'+
+        '<div class="cap">weekly plans they ran against what was planned &middot; the master plan work they own &middot; the approver&rsquo;s quality scores &middot; who assigns work late &middot; the people on their crews</div></div>'+
         '<div class="bd" id="wm-tlk"><div class="loading">Reading team leaders&hellip;</div></div></div>'+
       // ===== activities, people & blocks, in depth =====
       '<div class="sech">Activities, people &amp; '+esc(TX("unit_plural","Blocks")).toLowerCase()+'</div>'+

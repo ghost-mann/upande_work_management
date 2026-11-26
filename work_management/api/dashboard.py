@@ -4195,6 +4195,44 @@ def wm_dashboard(**kwargs):
             out["plans"] = tl_rows
             out["mp_rows"] = tl_mp_rows
 
+    elif action == "tl_late" or action == "tl_people":
+        # TEAM LEADER CARD, two more tabs (2026-11-26). Late assigning: assignments
+        # saved after the cut-off the day before their start, counted against the
+        # activity's team leader and against whoever saved them. People: the workers
+        # on the crews of the activities a team leader leads. The rules are
+        # work_management/assign_ahead.py. Who sees what is tl_kpis' rule: farm
+        # managers, HR heads, the GM and System Managers every leader on their farms,
+        # anyone else only themselves.
+        tq_rl = frappe.db.get_all("Has Role", filters={"parent": frappe.session.user}, pluck="role")
+        tq_all = 0
+        for tq_r in tq_rl:
+            if (tq_r in ("System Manager", "General Manager", "HOD HR", "HR Manager Kaitet")
+                    or tq_r.startswith("Farm Manager")):
+                tq_all = 1
+        tq_from = frappe.form_dict.get("from_date") or str(frappe.utils.add_days(frappe.utils.today(), -55))
+        tq_to = frappe.form_dict.get("to_date") or frappe.utils.today()
+        tq_farm = frappe.form_dict.get("farm") or ""
+        if tq_farm and tq_farm not in FARMS:
+            tq_farm = "__none__"
+        tq_who = frappe.form_dict.get("team_leader") or ""
+        if not tq_all:
+            tq_who = frappe.session.user
+        tq_farms = [tq_farm] if tq_farm else list(FARMS)
+        if action == "tl_late":
+            out.update(frappe.call("work_management.assign_ahead.late_report", farms=tq_farms, from_date=tq_from,
+                                   to_date=tq_to, farm=tq_farm or None, team_leader=tq_who or None))
+        else:
+            out["leaders"] = frappe.call("work_management.assign_ahead.leaders_in", farms=tq_farms,
+                                         from_date=tq_from, to_date=tq_to, farm=tq_farm or None) if tq_all else []
+            if tq_who:
+                out.update(frappe.call("work_management.assign_ahead.crew_people", farms=tq_farms, from_date=tq_from,
+                                       to_date=tq_to, team_leader=tq_who))
+            else:
+                out["people"] = []
+        out["can_see_all"] = tq_all
+        out["me"] = frappe.session.user
+        out["window"] = {"from": tq_from, "to": tq_to}
+
     elif action == "plan_completion":
         # EVERY MASTER PLAN IN A DATE RANGE, AND HOW MUCH OF IT ACTUALLY HAPPENED.
         # Three numbers describe a plan and they are routinely confused: what was

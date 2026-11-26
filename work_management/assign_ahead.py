@@ -212,7 +212,7 @@ def late_report(farms, from_date, to_date, farm=None, team_leader=None):
 	data = []
 	for r in rows:
 		data.append({"asg": r.asg, "start": str(r.start), "created": str(r.created), "farm": r.farm,
-			"task": r.task_label or r.task, "block": r.block, "state": r.state,
+			"task_label": r.task_label or r.task, "block": r.block, "state": r.state,
 			"reason": r.reason, "note": r.note,
 			"approved_at": approved_at_of(r.custom_approved_at, r.approval_date),
 			"tl": r.tl, "tl_name": names.get(r.tl) if r.tl else "",
@@ -251,7 +251,7 @@ def crew_people(farms, from_date, to_date, team_leader, day=None):
 		if p is None:
 			p = {"emp": r.emp, "name": r.name or r.emp, "farm": r.farm, "acts": [], "days": 0, "on_today": 0}
 			people[r.emp] = p
-		p["acts"].append({"asg": r.asg, "task": r.task_label, "block": r.block,
+		p["acts"].append({"asg": r.asg, "task_label": r.task_label, "block": r.block,
 			"since": str(r.since), "until": str(r.until)})
 		if str(r.since) <= day <= str(r.until):
 			p["on_today"] = 1
@@ -284,6 +284,20 @@ def crew_people(farms, from_date, to_date, team_leader, day=None):
 		p["scan"] = scan.get(p["emp"])
 	return {"people": sorted(people.values(), key=lambda x: (-x["on_today"], x["name"])), "date": day,
 		"team_leader": team_leader, "team_leader_name": display_names([team_leader]).get(team_leader, team_leader)}
+
+
+def leaders_in(farms, from_date, to_date, farm=None):
+	"""Team leaders on weekly plans overlapping the dates: [{key, name}] by name."""
+	args = {"a": from_date, "b": to_date, "fms": tuple(farms) or ("__none__",)}
+	where = " AND farm IN %(fms)s"
+	if farm:
+		where += " AND farm = %(fm)s"
+		args["fm"] = farm
+	keys = [r[0] for r in frappe.db.sql("""SELECT DISTINCT team_leader FROM `tabWork Management Planner`
+		WHERE IFNULL(team_leader, '') != '' AND IFNULL(workflow_state, '') NOT IN ('Rejected', 'Draft')
+		AND from_date <= %(b)s AND to_date >= %(a)s""" + where, args)]
+	names = display_names(keys)
+	return sorted([{"key": k, "name": names.get(k, k)} for k in keys], key=lambda x: x["name"])
 
 
 # ---- 16:00 reminder ------------------------------------------------------------
