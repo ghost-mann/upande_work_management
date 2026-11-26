@@ -280,6 +280,38 @@ def wm_assigner(**kwargs):
                 "Backdated to " + str(start) + " by " + str(frappe.session.user) + ": " + reason)
 
 
+    # ASSIGN THE DAY BEFORE (2026-11-26). Crews should know their job before they
+    # arrive: work starting on D is due before the cut-off on D-1 (Settings). Later
+    # is allowed with a reason, which the farm manager sees and the dashboard's team
+    # leader card counts. The rule is work_management/assign_ahead.py. A plan
+    # approved after the cut-off fills the reason in itself ("Plan approved late").
+    def wmg_late(start, planner):
+        """{late, deadline, auto_reason, ask, err, reason, note} for work starting on
+        `start`, saved now. ask=1: late and no late_reason sent yet."""
+        lt = frappe.call("work_management.assign_ahead.check", start=str(start) if start else None, planner=planner)
+        lt["ask"] = 0
+        lt["err"] = ""
+        lt["reason"] = lt.get("auto_reason")
+        lt["note"] = ""
+        if not lt.get("late") or lt.get("auto_reason"):
+            return lt
+        lt["reason"] = (frappe.form_dict.get("late_reason") or "").strip()
+        lt["note"] = (frappe.form_dict.get("late_note") or "").strip()
+        if not lt["reason"]:
+            lt["ask"] = 1
+        else:
+            lt["err"] = frappe.call("work_management.assign_ahead.reason_err", reason=lt["reason"], note=lt["note"])
+        return lt
+
+
+    def wmg_late_comment(asg_name, lt, what):
+        """Log a late save on the assignment's timeline."""
+        if asg_name and lt and lt.get("late"):
+            frappe.get_doc("Work Management Assigner", asg_name).add_comment("Comment",
+                what + " after the cut-off (" + str(lt.get("deadline")) + ") by " + str(frappe.session.user) + ": " +
+                str(lt.get("reason") or "") + ((" - " + lt["note"]) if lt.get("note") else ""))
+
+
     # STAND-INS AND TWO PAIRS OF EYES (2026-11-12). Nobody approves their own entry,
     # and nobody takes two steps on one record. When the usual approver is the one
     # who already acted, a stand-in listed in Settings takes the step -- they may
@@ -693,7 +725,8 @@ def wm_assigner(**kwargs):
         out["pending"] = frappe.db.get_all("Work Management Assigner",
             filters=fmflt,
             fields=["name","planner_request","farm","task","block_section","from_date","to_date","planned_people",
-                    "assigned_count","variance","planned_cost","assigned_by","assign_date"],
+                    "assigned_count","variance","planned_cost","assigned_by","assign_date",
+                    "late_assignment","late_reason","late_note"],
             order_by="assign_date desc", limit=200)
 
     elif action == "a_submit":
@@ -933,8 +966,22 @@ def wm_assigner(**kwargs):
                     if reasons_map.get(ce):
                         cnm = frappe.db.get_value("Employee", ce, "employee_name") or ce
                         att_conflicts.append({"employee": ce, "name": cnm, "reasons": reasons_map[ce]})
+        # late? asked only when the record is first made -- editing a draft or a
+        # pending assignment never asks again (lateness is when the crew was first set)
+        lt_info = None
+        if not err and planner and not sb_pending:
+            lt_new = 1
+            if asg_name and frappe.db.get_value("Work Management Assigner", asg_name, "workflow_state") in (
+                    "Draft", "Rejected", "Pending Farm Manager", "Pending HR Head", "Pending GM"):
+                lt_new = 0
+            if lt_new:
+                lt_info = wmg_late(bd_start, planner)
+                err = lt_info["err"] or None
         if err:
             out["error"] = err
+        elif lt_info and lt_info["ask"]:
+            out["needs_late_reason"] = 1
+            out["deadline"] = lt_info["deadline"]
         elif att_conflicts and not att_override:
             out["needs_att_override"] = 1
             out["att_conflicts"] = att_conflicts
@@ -968,6 +1015,10 @@ def wm_assigner(**kwargs):
             d.flags.ignore_permissions = True
             if not editing:
                 d.assigned_by = frappe.session.user; d.assign_date = frappe.utils.today()
+                if lt_info and lt_info.get("late"):
+                    d.late_assignment = 1
+                    d.late_reason = lt_info["reason"]
+                    d.late_note = lt_info["note"]
             if editing:
                 if not submit_now and not editing_pending:
                     d.workflow_state = "Draft"
@@ -1006,6 +1057,9 @@ def wm_assigner(**kwargs):
                 out["att_overridden"] = len(att_conflicts)
             out["name"] = d.name; out["workflow_state"] = d.workflow_state
             wmg_log_backdate(d.name, bd_start)
+            if not editing:
+                wmg_late_comment(d.name, lt_info, "Assigned")
+                out["late"] = 1 if (lt_info and lt_info.get("late")) else 0
             out["assigned_count"] = d.assigned_count; out["variance"] = d.variance
             out["editing"] = editing; out["editing_pending"] = editing_pending
 
@@ -1347,8 +1401,16 @@ def wm_assigner(**kwargs):
                 err = ("Not task workers under the current Work Management Settings, so "
                     "their work could never be paid through this system: " +
                     ", ".join(not_tw[:6]) + ".")
+        # late? (adding for a payroll check already carries its own reason)
+        ac_late = None
+        if not err and not add_for:
+            ac_late = wmg_late(add_from, d.planner_request)
+            err = ac_late["err"] or None
         if err:
             out["error"] = err
+        elif ac_late and ac_late["ask"]:
+            out["needs_late_reason"] = 1
+            out["deadline"] = ac_late["deadline"]
         else:
             # BUSY ELSEWHERE. Refused, or reported, exactly as the assign screen does
             # -- the switch is the one place that decides whether a shared day is a
@@ -1389,6 +1451,7 @@ def wm_assigner(**kwargs):
                         (frappe.form_dict.get("backdate_reason") or "").strip())
                 else:
                     wmg_log_backdate(nm, add_from)
+                    wmg_late_comment(nm, ac_late, "Added " + ", ".join(add_who) + " from " + str(add_from))
                 added = []
                 for aw in add_who:
                     # the parent is submitted, so the row is inserted directly -- the
@@ -1661,8 +1724,15 @@ def wm_assigner(**kwargs):
                       str(start_date) if start_date and str(start_date) > str(rdates.from_date) else rdates.from_date), as_dict=True)
                 if clash:
                     err = "Replacement is already assigned elsewhere for an overlapping period (" + str(clash[0].asg) + "). Pick someone else."
+        su_late = None
+        if not err:
+            su_late = wmg_late(start_date, d.planner_request)
+            err = su_late["err"] or None
         if err:
             out["error"] = err
+        elif su_late and su_late["ask"]:
+            out["needs_late_reason"] = 1
+            out["deadline"] = su_late["deadline"]
         else:
             # find the outgoing ACTIVE child row (by its child docname)
             out_rowname = None
@@ -1676,6 +1746,7 @@ def wm_assigner(**kwargs):
                 # so we edit the child rows + parent counts via direct DB writes (allowed, no re-approval).
                 rep_name = frappe.db.get_value("Employee", replacement, "employee_name")
                 wmg_log_backdate(nm, start_date)
+                wmg_late_comment(nm, su_late, "Swapped in " + str(replacement) + " from " + str(start_date))
                 # 1) mark outgoing row Left + left_date
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "status", "Left", update_modified=False)
                 frappe.db.set_value("Work Assignment Employee", out_rowname, "left_date", left_date, update_modified=False)

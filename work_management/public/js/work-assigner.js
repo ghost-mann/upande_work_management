@@ -130,6 +130,46 @@
     };
   }
 
+  // ASSIGN THE DAY BEFORE (2026-11-26): work starting tomorrow is due before the
+  // cut-off today. Saved later, the server answers needs_late_reason and this asks
+  // why; the farm manager sees the reason when approving. Same list as
+  // work_management/assign_ahead.py REASONS.
+  var LATE_REASONS=["Replacing absent worker","Weather","Urgent work","Other"];
+  function askLate(d, onReason, onCancel){
+    var old=el("wa-late"); if(old) old.parentNode.removeChild(old);
+    var box=document.createElement("div");
+    box.id="wa-late";
+    box.style.cssText="position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:2147483600;display:flex;align-items:center;justify-content:center";
+    var due=String(d.deadline||"").slice(0,16);
+    box.innerHTML=
+      '<div style="background:#fff;max-width:440px;width:92%;border:2px solid var(--ink)">'+
+        '<div style="padding:14px 18px;border-bottom:1px solid var(--faint);font-size:13px;font-weight:700">Assigned after the cut-off</div>'+
+        '<div style="padding:16px 18px">'+
+          '<div style="font-size:12px;color:#444;margin-bottom:10px">This work should have been assigned by <b>'+esc(due)+'</b>, the day before it starts, so the crew knows its job when they arrive. Say why it is late &mdash; the farm manager sees this when approving.</div>'+
+          '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:5px">Reason</label>'+
+          '<select id="wl-reason" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:7px 10px;background:#fff;width:100%"><option value="">— pick a reason —</option>'+
+            LATE_REASONS.map(function(r){ return '<option>'+esc(r)+'</option>'; }).join("")+'</select>'+
+          '<label style="display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:10px 0 5px">Note <span id="wl-req" style="text-transform:none;letter-spacing:0">(optional)</span></label>'+
+          '<textarea id="wl-note" rows="2" style="font-family:inherit;font-size:13px;border:1px solid var(--line);padding:8px 10px;width:100%;background:#fff;color:var(--ink);resize:vertical"></textarea>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--faint)">'+
+          '<button type="button" class="btn" id="wl-cancel">Cancel</button>'+
+          '<button type="button" class="btn solid" id="wl-go" disabled>Save with reason</button>'+
+        '</div>'+
+      '</div>';
+    document.body.appendChild(box);
+    var sel=el("wl-reason"), note=el("wl-note"), go=el("wl-go");
+    function ready(){
+      var other=sel.value==="Other";
+      el("wl-req").textContent=other?"(required for Other)":"(optional)";
+      go.disabled=!sel.value || (other && !note.value.trim());
+    }
+    sel.onchange=ready; note.oninput=ready;
+    function shut(){ if(box.parentNode) box.parentNode.removeChild(box); }
+    el("wl-cancel").onclick=function(){ shut(); if(typeof onCancel==="function") onCancel(); };
+    go.onclick=function(){ var r=sel.value, n=note.value.trim(); shut(); onReason(r, n); };
+  }
+
   function buildTabs(){
     var tabs=[["assign","Assign"],["amine","My Assignments"],["arej","Rejected"],["aappr","Approvals"]];
     var nav=el("wa-tabs"); nav.innerHTML="";
@@ -541,27 +581,34 @@
     if(submitNow) args.submit_now=1;
     if(ST.editingAsg) args.assignment=ST.editingAsg;   // update the existing draft
     el("b-adraft").disabled=true; el("b-asubmit").disabled=true;
-    call(args).then(function(d){
+    var fail=function(e){ toast(e && e.message ? e.message : "Failed to save"); refreshCounts(); };
+    var handle=function(d){
+      if(d.needs_late_reason){
+        // assigned after the cut-off the day before: ask why, then resend
+        askLate(d, function(reason, note){
+          args.late_reason=reason; args.late_note=note;
+          call(args).then(handle).catch(fail);
+        }, refreshCounts);
+        return;
+      }
       if(d.needs_att_override){
         // server-side attendance gate: show every conflict, ask once, resend
         var lines=(d.att_conflicts||[]).map(function(c){ return "• "+(c.name||c.employee)+": "+(c.reasons||[]).join("; "); });
         if(window.confirm("Attendance check — these workers have conflicts:\n\n"+lines.join("\n")+"\n\nAssign anyway? The override is recorded on the assignment.")){
           args.att_override=1;
-          call(args).then(function(d2){
-            if(d2.error){ toast("Error: "+d2.error); refreshCounts(); return; }
-            afterSubmit(d2, submitNow);
-          }).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); refreshCounts(); });
+          call(args).then(handle).catch(fail);
         } else { refreshCounts(); }
         return;
       }
       if(d.error){ toast("Error: "+d.error); refreshCounts(); return; }
       afterSubmit(d, submitNow);
-    }).catch(function(e){ toast(e && e.message ? e.message : "Failed to save"); refreshCounts(); });
+    };
+    call(args).then(handle).catch(fail);
   }
 
   function afterSubmit(d, submitNow){
     var verb = d.editing ? (submitNow?"Updated & submitted ":"Draft updated ") : (submitNow?"Submitted ":"Draft saved ");
-    toast(verb+d.name+" · "+d.workflow_state+(d.att_overridden?(" · attendance override logged for "+d.att_overridden):""));
+    toast(verb+d.name+" · "+d.workflow_state+(d.late?" · marked late":"")+(d.att_overridden?(" · attendance override logged for "+d.att_overridden):""));
     clearEdit();
     ST.plan=null; ST.picked={}; ST.planDetail=null; ST.employees=[];
     el("a-plan").value=""; el("a-detail").style.display="none";
@@ -835,11 +882,20 @@
       if(!outgoing||!replacement){ toast("Pick both workers"); return; }
       if(!leftd||!startd){ toast("Pick both dates"); return; }
       el("sub-confirm").disabled=true;
-      call({action:"a_substitute", assignment:a.name, outgoing:outgoing, replacement:replacement, left_date:leftd, start_date:startd}).then(function(r){
-        if(r.error){ toast("Error: "+r.error); el("sub-confirm").disabled=false; return; }
-        toast("Substituted · "+r.active_count+" active");
-        close(); loadMine();
-      }).catch(function(e){ toast("Substitution failed"); el("sub-confirm").disabled=false; });
+      var subArgs={action:"a_substitute", assignment:a.name, outgoing:outgoing, replacement:replacement, left_date:leftd, start_date:startd};
+      var subGo=function(){
+        call(subArgs).then(function(r){
+          if(r.needs_late_reason){
+            askLate(r, function(reason, note){ subArgs.late_reason=reason; subArgs.late_note=note; subGo(); },
+              function(){ el("sub-confirm").disabled=false; });
+            return;
+          }
+          if(r.error){ toast("Error: "+r.error); el("sub-confirm").disabled=false; return; }
+          toast("Substituted · "+r.active_count+" active");
+          close(); loadMine();
+        }).catch(function(e){ toast("Substitution failed"); el("sub-confirm").disabled=false; });
+      };
+      subGo();
     };
     // ---- add-a-worker wiring (same FM/HR/GM gate as release; the server
     //      enforces it too, because a gate in the browser is not a gate) ----
@@ -850,8 +906,14 @@
         if(!emp){ toast("Pick a worker to add"); return; }
         if(!from){ toast("Pick the date they start"); return; }
         addBtn.disabled=true;
-        call({action:"a_add_crew", assignment:a.name, employees:emp, start_date:from})
+        var addArgs={action:"a_add_crew", assignment:a.name, employees:emp, start_date:from};
+        var addGo=function(){ call(addArgs)
           .then(function(r){
+            if(r.needs_late_reason){
+              askLate(r, function(reason, note){ addArgs.late_reason=reason; addArgs.late_note=note; addGo(); },
+                function(){ addBtn.disabled=false; });
+              return;
+            }
             if(r.error){ toast("Error: "+r.error); addBtn.disabled=false; return; }
             var notes=[];
             if(r.cap_warning) notes.push(r.cap_warning);
@@ -860,7 +922,8 @@
             else toast(r.message||"Added to crew");
             close(); loadMine();
           })
-          .catch(function(e){ toast("Could not add"); addBtn.disabled=false; });
+          .catch(function(e){ toast("Could not add"); addBtn.disabled=false; }); };
+        addGo();
       };
     }
     // ---- release-workers wiring (FM/HR/GM only; controls exist only when canRelease) ----
@@ -916,7 +979,7 @@
       if(!rows.length){ body.innerHTML='<div class="empty">Nothing matches these filters.</div>'; return; }
       var h='<table><thead><tr><th>Ref</th><th>'+esc(TX("top_singular","Farm"))+'</th><th>'+esc(TX("unit_singular","Block"))+'</th><th>Task</th><th class="n">Planned</th><th class="n">Assigned</th><th>Var</th><th class="n">Cost</th><th>By</th><th>Action</th></tr></thead><tbody>';
       rows.forEach(function(r){
-        h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
+        h+='<tr data-xa="'+esc(r.name)+'"><td>'+esc(r.name)+(r.late_assignment?' <span title="Assigned after the cut-off: '+esc((r.late_reason||"")+(r.late_note?" - "+r.late_note:""))+'" style="display:inline-block;margin-left:4px;padding:1px 7px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:10px;font-weight:700;cursor:help">Late · '+esc(r.late_reason||"")+'</span>':'')+'</td><td>'+esc(r.farm)+'</td><td>'+esc(lbl(r.block_section))+'</td><td>'+esc(taskName(r.task))+'</td><td class="n">'+fmt(r.planned_people)+'</td><td class="n">'+fmt(r.assigned_count)+'</td><td>'+varTag(r.variance)+'</td><td class="n">'+fmt(r.planned_cost)+'</td><td>'+esc(r.assigned_by)+'</td><td><div class="ib"><button class="btn" data-edit="'+esc(r.name)+'">Edit</button><button class="btn solid" data-app="'+esc(r.name)+'">Approve</button><button class="btn" data-rej="'+esc(r.name)+'">Reject</button></div></td></tr>';
       });
       body.innerHTML=h+'</tbody></table>';
       wireExpandAsg(body, 10);
