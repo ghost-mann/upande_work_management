@@ -103,6 +103,13 @@ class TestEveryWayOntoWork(unittest.TestCase):
 			self.assertIn('"' + f + '"', body)
 
 
+class TestPlanApprovalTime(unittest.TestCase):
+	def test_approve_stamps_the_time_and_reject_clears_it(self):
+		src = source("planner")
+		self.assertIn('"custom_approved_at", frappe.utils.now()', src)
+		self.assertIn('"custom_approved_at", None', action(src, "reject"))
+
+
 class TestScreen(unittest.TestCase):
 	def setUp(self):
 		with open(JS) as h:

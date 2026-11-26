@@ -936,6 +936,9 @@ def wm_planner(**kwargs):
             frappe.db.set_value("Work Management Planner", nm, "docstatus", 1, update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approved_by", frappe.session.user, update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approval_date", frappe.utils.today(), update_modified=False)
+            # the time too: a plan approved after the cut-off the day before its start
+            # could not have been assigned on time (assign_ahead, "Plan approved late")
+            frappe.db.set_value("Work Management Planner", nm, "custom_approved_at", frappe.utils.now(), update_modified=False)
             out["name"] = nm; out["workflow_state"] = STAGE_NEXT["planner_farm_approval"]
 
     elif action == "reject":
@@ -955,6 +958,7 @@ def wm_planner(**kwargs):
             frappe.db.set_value("Work Management Planner", nm, "workflow_state", "Rejected", update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approved_by", None, update_modified=False)
             frappe.db.set_value("Work Management Planner", nm, "approval_date", None, update_modified=False)
+            frappe.db.set_value("Work Management Planner", nm, "custom_approved_at", None, update_modified=False)
             out["name"] = nm; out["workflow_state"] = "Rejected"
 
     # ===== ASSIGNER (a_) =====

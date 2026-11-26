@@ -157,7 +157,7 @@
           '<button type="button" class="btn solid" id="wl-go" disabled>Save with reason</button>'+
         '</div>'+
       '</div>';
-    document.body.appendChild(box);
+    (el("wap")||document.body).appendChild(box);   // inside the page root, so its fonts and buttons apply
     var sel=el("wl-reason"), note=el("wl-note"), go=el("wl-go");
     function ready(){
       var other=sel.value==="Other";

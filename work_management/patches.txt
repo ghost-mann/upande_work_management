@@ -22,3 +22,4 @@ work_management.patches.v1_0.seed_payroll_pack_recipients
 work_management.patches.v1_0.seed_repair_payments_capability
 work_management.patches.v1_0.seed_pay_integrity_settings
 work_management.patches.v1_0.switch_on_no_work_on_absent_days
+work_management.patches.v1_0.seed_assign_cutoff_time

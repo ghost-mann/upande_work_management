@@ -212,6 +212,12 @@ class TestReminder(unittest.TestCase):
 		self.assertIn("Assigner: Farm Manager", s)
 		self.assertIn("assign_reminder_notify", s)
 
+	def test_render_takes_numbers(self):
+		html = aa.render_reminder({"Vale": [{"name": "P1", "task_label": "Weeding <b>", "block_section": "B1",
+			"people_per_day": 20, "tl_name": "Jane"}]}, "2026-11-27", "http://x/work-assigner")
+		self.assertIn(">20<", html)
+		self.assertIn("Weeding &lt;b&gt;", html)
+
 	def test_hook_registered(self):
 		hooks = (ROOT / "hooks.py").read_text()
 		self.assertIn('"0 16 * * *": [', hooks)
@@ -233,6 +239,10 @@ class TestFields(unittest.TestCase):
 		self.assertEqual(f["assign_cutoff_time"]["fieldtype"], "Time")
 		self.assertEqual(f["assign_cutoff_time"]["default"], "18:00:00")
 		self.assertEqual(f["assign_reminder"]["default"], "0")
+
+	def test_cutoff_seeded_on_running_sites(self):
+		self.assertIn("work_management.patches.v1_0.seed_assign_cutoff_time", (ROOT / "patches.txt").read_text())
+		self.assertIn('"18:00:00"', (ROOT / "patches" / "v1_0" / "seed_assign_cutoff_time.py").read_text())
 
 	def test_assigner(self):
 		f, order = self.fields("work_management_assigner")

@@ -316,7 +316,7 @@ def render_reminder(by_farm, day, url):
 		for p in by_farm[farm]:
 			h.append("<tr><td>" + esc(p["name"]) + "</td><td>" + esc(p.get("task_label") or p.get("task") or "") +
 				"</td><td>" + esc(p.get("block_section") or "") + "</td><td align=\"right\">" +
-				esc(p.get("people_per_day") or "") + "</td><td>" + esc(p.get("tl_name") or "") + "</td></tr>")
+				esc(str(p.get("people_per_day") or "")) + "</td><td>" + esc(p.get("tl_name") or "") + "</td></tr>")
 		h.append("</table>")
 	h.append("</div>")
 	return "".join(h)
