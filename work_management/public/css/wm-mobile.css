@@ -1,0 +1,132 @@
+/* ============================================================
+   Work Management on phones (2026-11-27)
+   Every rule sits under max-width 767px, so desktop is untouched.
+   wm-mobile.js adds the classes used here (wm-m-cards, wm-m-wide, the
+   bottom bar, the filter toggle) on phones only.
+   Spec: docs/superpowers/specs/2026-11-27-wm-mobile-web-design.md
+   ============================================================ */
+@media (max-width: 767px) {
+  html, body { overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) {
+    padding: 0 12px 96px !important; max-width: 100% !important; font-size: 14px;
+  }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) img, :is(#wmp, #wpp, #wap, #acp, #wpay) svg { max-width: 100%; }
+
+  /* ---- header: brand + account only; the sections move to the bottom bar ---- */
+  .wm-top { position: sticky; top: 0; z-index: 50; border-radius: 0 0 18px 18px !important; margin: 0 -12px 12px !important;
+    padding: 10px 14px !important; flex-wrap: nowrap !important; gap: 10px !important; }
+  .wm-top__nav { display: none !important; }
+  .wm-top__divider, .wm-top__product small { display: none !important; }
+  .wm-top__product { font-size: 14px !important; }
+  .wm-top__right { margin-left: auto !important; gap: 8px !important; }
+  .wm-top__right .who { display: none !important; }
+  .wm-menu { right: 0; left: auto; max-width: calc(100vw - 24px); }
+
+  /* page titles */
+  :is(#wmp, #wpp, #wap, #acp, #wpay) h1 { font-size: 26px !important; line-height: 1.15 !important; margin: 6px 0 4px !important; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) h2 { font-size: 19px !important; }
+
+  /* ---- bottom bar ---- */
+  .wm-mbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 900; display: flex; justify-content: space-around;
+    background: rgba(255,255,255,.97); border-top: 1px solid #e2e8f0; box-shadow: 0 -4px 18px rgba(15,23,42,.08);
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); backdrop-filter: blur(8px); }
+  .wm-mbar a { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 4px;
+    color: #64748b; text-decoration: none !important; font: 600 10.5px/1.1 "Poppins", system-ui, sans-serif; border-radius: 12px; min-height: 48px; justify-content: center; }
+  .wm-mbar a svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  body.wm-m-dialog .wm-mbar { display: none !important; }
+  .wm-mbar a.on { color: #0a0a0a; background: #f1f5f9; }
+  .wm-mbar a:active { background: #e2e8f0; }
+
+  /* ---- touch: 44px targets, 16px inputs (no zoom on focus) ---- */
+  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(button, .btn, select, input[type=date], input[type=text], input[type=number], input[type=search], input:not([type]), textarea) {
+    min-height: 42px; font-size: 16px !important;
+  }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) input[type=checkbox], :is(#wmp, #wpp, #wap, #acp, #wpay) input[type=radio] { width: 20px; height: 20px; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) .btn.sm, :is(#wmp, #wpp, #wap, #acp, #wpay) button.sm { min-height: 36px; }
+
+  /* ---- tab bars scroll sideways, never wrap into a block ---- */
+  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(.tabs, .pex-tabs, .subtabs, [id$="-tabs"]) {
+    display: flex !important; flex-wrap: nowrap !important; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; max-width: 100%; justify-content: flex-start !important; border-radius: 14px !important;
+  }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(.tabs, .pex-tabs, .subtabs, [id$="-tabs"])::-webkit-scrollbar { display: none; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(.tabs, .pex-tabs, .subtabs, [id$="-tabs"]) > * { flex: 0 0 auto !important; white-space: nowrap; }
+
+  /* ---- filter rows fold behind a button ---- */
+  .wm-m-filters { width: 100%; }
+  .wm-m-filters.wm-m-folded > :not(.wm-m-ftoggle) { display: none !important; }
+  .wm-m-filters:not(.wm-m-folded) { display: flex !important; flex-direction: column; align-items: stretch !important; gap: 8px !important; }
+  .wm-m-filters:not(.wm-m-folded) > * { width: 100% !important; max-width: 100% !important; margin: 0 !important; }
+  .wm-m-filters:not(.wm-m-folded) label { display: flex; flex-direction: column; gap: 4px; }
+  .wm-m-ftoggle { display: inline-flex !important; align-items: center; gap: 6px; width: auto !important; border: 1px solid #e2e8f0;
+    background: #fff; border-radius: 999px; padding: 8px 14px; font: 600 12.5px "Poppins", sans-serif; color: #0a0a0a; margin-bottom: 8px !important; }
+  .wm-m-ftoggle .n { background: #0a0a0a; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; }
+
+  /* ---- multi-column layouts stack ---- */
+  .wm-m-stack { grid-template-columns: 1fr !important; }
+  .wm-m-two { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .wm-m-wrap { flex-wrap: wrap !important; }
+  .wm-m-full { width: 100% !important; min-width: 0 !important; max-width: 100% !important; flex: 1 1 100% !important; }
+
+  /* ---- tables as cards ---- */
+  table.wm-m-cards, table.wm-m-cards tbody { display: block; width: 100% !important; border: 0 !important; }
+  table.wm-m-cards thead { display: none !important; }
+  table.wm-m-cards tfoot { display: block; }
+  table.wm-m-cards tr { display: block; background: #fff; border: 1px solid #e2e8f0 !important; border-radius: 14px; margin: 0 0 10px;
+    padding: 8px 12px; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+  table.wm-m-cards td, table.wm-m-cards tfoot th { display: flex !important; justify-content: space-between; align-items: flex-start; gap: 12px;
+    padding: 5px 0 !important; border: 0 !important; text-align: right !important; width: auto !important; min-width: 0; white-space: normal !important; word-break: break-word; }
+  table.wm-m-cards td::before { content: attr(data-label); flex: 0 0 38%; text-align: left; color: #64748b; font-size: 11.5px; font-weight: 600;
+    letter-spacing: .02em; text-transform: none; }
+  table.wm-m-cards td[data-label=""]::before, table.wm-m-cards td.wm-m-head::before { display: none; }
+  table.wm-m-cards td.wm-m-head { font-weight: 700; font-size: 15px; text-align: left !important; justify-content: flex-start; padding-bottom: 6px !important; border-bottom: 1px solid #f1f5f9 !important; margin-bottom: 4px; }
+  table.wm-m-cards td.wm-m-actions { justify-content: flex-end; flex-wrap: wrap; padding-top: 8px !important; }
+  table.wm-m-cards td.wm-m-actions::before { display: none; }
+  table.wm-m-cards td.wm-m-actions :is(button, .btn) { flex: 1 1 auto; }
+  table.wm-m-cards td[colspan] { display: block !important; text-align: left !important; }
+  table.wm-m-cards td[colspan]::before { display: none; }
+  table.wm-m-cards td > table { width: 100% !important; }
+
+  /* ---- wide grids scroll inside their box, first column pinned ---- */
+  .wm-m-scroll { overflow-x: auto !important; -webkit-overflow-scrolling: touch; max-width: 100%; }
+  table.wm-m-wide { min-width: max-content; }
+  table.wm-m-wide :is(th, td):first-child { position: sticky; left: 0; z-index: 2; background: #fff; box-shadow: 1px 0 0 #e2e8f0;
+    width: 40vw !important; min-width: 40vw !important; max-width: 40vw !important; white-space: normal !important; font-size: 12.5px; }
+  table.wm-m-wide :is(th, td):first-child * { white-space: normal !important; }
+  table.wm-m-wide input { min-width: 64px; }
+  table.wm-m-wide thead :is(th, td):first-child { z-index: 3; }
+
+  /* ---- dialogs and sheets: full screen ---- */
+  :is(.modal-card, .submodal-card, .pex-sheet, .sub-full) {
+    width: 100vw !important; max-width: 100vw !important; height: 100dvh !important; max-height: 100dvh !important;
+    margin: 0 !important; border-radius: 0 !important; overflow-y: auto !important; left: 0 !important; top: 0 !important; transform: none !important;
+  }
+  :is(.modal, .submodal, .pex-modal) { padding: 0 !important; align-items: stretch !important; }
+  :is(.modal-foot) { position: sticky; bottom: 0; background: #fff; z-index: 3; padding-bottom: calc(12px + env(safe-area-inset-bottom)) !important; }
+  #wa-subdialog .sub-grid, .sub-grid { grid-template-columns: 1fr !important; }
+  #wa-subdialog .sub-col { border-right: none !important; border-bottom: 1px solid #eef2f6; padding: 16px !important; }
+  #wa-subdialog .sub-bar { padding: 12px 16px !important; }
+  #wa-late > div, [id$="subdialog"] > div[style*="max-width"] { max-width: 100vw !important; width: 100vw !important; min-height: 100dvh; border-radius: 0 !important; }
+
+  /* toasts sit above the bottom bar */
+  :is(#wmp, #wpp, #wap, #acp, #wpay) .toast { bottom: calc(76px + env(safe-area-inset-bottom)) !important; max-width: calc(100vw - 32px); white-space: normal; text-align: center; }
+
+  /* card headers: title above its caption */
+  :is(#wmp, #wpp, #wap, #acp, #wpay) .card .hd { flex-direction: column !important; align-items: flex-start !important; gap: 4px; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) .card .hd .cap { text-align: left !important; max-width: 100% !important; }
+  .wm-beta-ribbon { display: none !important; }
+  table.wm-m-cards tfoot tr { background: #f8fafc; }
+  table.wm-m-cards tfoot :is(td, th)::before { content: attr(data-label); flex: 0 0 38%; text-align: left; color: #64748b; font-size: 11.5px; font-weight: 600; }
+  table.wm-m-cards tfoot :is(td, th) { display: flex !important; justify-content: space-between; padding: 5px 0 !important; border: 0 !important; text-align: right !important; }
+
+  /* summary tiles two to a row */
+  :is(#wmp, #wpp, #wap, #acp, #wpay) .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) .kpis > .kpi { padding: 12px 14px !important; min-width: 0; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) .kpis > .kpi:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(select, input, textarea) { max-width: 100%; }
+
+  /* inside the phone app the desk links lead nowhere useful */
+  .wm-in-app .wm-top__nav a.desk, .wm-in-app #wm-account-desk { display: none !important; }
+  /* leave room for the app's own menu button (top right) */
+  .wm-in-app .wm-top { padding-right: 64px !important; }
+}

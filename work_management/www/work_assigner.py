@@ -1,7 +1,7 @@
 import frappe
 
 from work_management.api.config import get_config
-from work_management.assets import screen_js
+from work_management.assets import mobile_assets, screen_js
 
 
 def get_context(context):
@@ -18,4 +18,5 @@ def get_context(context):
 	# never changed, so every deploy left readers on the old script.
 	context.screen_js = screen_js('work-assigner.js')
 
+	mobile_assets(context)
 	return context

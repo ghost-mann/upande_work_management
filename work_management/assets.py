@@ -50,3 +50,16 @@ def screen_js(name):
 	is one thing to get right instead of a path and a token to keep in step.
 	"""
 	return "/assets/%s/js/%s?v=%s" % (APP, name, asset_version("js/" + name))
+
+
+def asset_url(relative):
+	"""/assets/work_management/<relative>, cache-busted the same way as screen_js."""
+	return "/assets/%s/%s?v=%s" % (APP, relative, asset_version(relative))
+
+
+def mobile_assets(context):
+	"""The phone layer every screen loads (css/wm-mobile.css, js/wm-mobile.js).
+	Spec: docs/superpowers/specs/2026-11-27-wm-mobile-web-design.md"""
+	context.mobile_css = asset_url("css/wm-mobile.css")
+	context.mobile_js = asset_url("js/wm-mobile.js")
+	return context
