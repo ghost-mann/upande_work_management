@@ -313,6 +313,7 @@
       '<input type="date" id="tlk-from" value="'+esc(TLK.from)+'"> → <input type="date" id="tlk-to" value="'+esc(TLK.to)+'">'+
       ((TLK.d && TLK.d.can_see_all) ? '<select id="tlk-farm">'+farmOptions(TLK.farm)+'</select>' : '')+
       (TLK.who && TLK.d && TLK.d.can_see_all ? '<button type="button" class="btn sm" id="tlk-back">← All team leaders</button>' : '')+
+      (TLK.tab==="people" ? '<button type="button" class="btn sm" id="tlk-xlsx" style="margin-left:auto">Download Excel</button>' : '')+
       '</div>';
   }
   function tlWire(box){
@@ -321,6 +322,7 @@
     if(t) t.onchange=function(){ TLK.to=t.value; tlLoad(); };
     if(fm) fm.onchange=function(){ TLK.farm=fm.value; tlLoad(); };
     if(bk) bk.onclick=function(){ TLK.who=""; tlLoad(); };
+    var xb=el("tlk-xlsx"); if(xb) xb.onclick=function(){ tlPeopleExcel(xb); };
     box.querySelectorAll("[data-tlt]").forEach(function(b){
       b.onclick=function(){ TLK.tab=b.getAttribute("data-tlt"); TLK.open=""; tlLoad(); };
     });
@@ -430,7 +432,7 @@
       if(seq!==TLK.seq) return;
       var d=res[0], kp=res[1]||{};
       if(d.error){ box.innerHTML=tlTabs()+'<div class="empty">'+esc(d.error)+'</div>'; tlWire(box); return; }
-      TLK.d=d;
+      TLK.d=d; TLK.kp=kp;
       if(!d.can_see_all) TLK.who=d.team_leader||d.me;
       box.innerHTML=tlTabs()+(TLK.who ? tlPeople(d, kp) : tlPeopleList(d, kp));
       tlWire(box);
@@ -466,12 +468,16 @@
     (kp.leaders||[]).forEach(function(r){ m[r.user]=r; });
     return m;
   }
-  function tlPeopleList(d, kp){
-    var h=tlControls(), km=tlKpiMap(kp);
-    var seen={}, rows=[];
-    (d.leaders||[]).forEach(function(l){ seen[l.key]=1; rows.push({key:l.key, name:l.name, k:km[l.key]||{}}); });
-    (kp.leaders||[]).forEach(function(r){ if(!seen[r.user]){ seen[r.user]=1; rows.push({key:r.user, name:r.full_name||r.user, k:r}); } });
+  // every team leader in the dates: those with crews (tl_people) and those with KPIs
+  function tlLeaderRows(d, kp){
+    var km=tlKpiMap(kp||{}), seen={}, rows=[];
+    ((d||{}).leaders||[]).forEach(function(l){ seen[l.key]=1; rows.push({key:l.key, name:l.name, k:km[l.key]||{}}); });
+    ((kp||{}).leaders||[]).forEach(function(r){ if(!seen[r.user]){ seen[r.user]=1; rows.push({key:r.user, name:r.full_name||r.user, k:r}); } });
     rows.sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+    return rows;
+  }
+  function tlPeopleList(d, kp){
+    var h=tlControls(), rows=tlLeaderRows(d, kp);
     if(!rows.length) return h+'<div class="empty">No team leaders in these dates. Name them per activity on the master plan; their weekly plans count from then on.</div>';
     h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Team leader</th><th class="n">Weekly plans</th>'+
        '<th class="n">Completion</th><th class="n">Efficiency</th><th>Quality</th></tr></thead><tbody>';
@@ -521,6 +527,95 @@
         '<td style="'+(p.on_today?(tone[p.status]||"color:var(--mute)"):"color:var(--mute)")+'">'+(p.on_today?esc(p.status)+(p.scan?' <span class="hint">'+esc(p.scan)+'</span>':''):'<span class="hint">not on a crew today</span>')+'</td></tr>';
     });
     return h+'</tbody></table></div>';
+  }
+  // Download Excel on the People tab (2026-11-27). The list exports every team
+  // leader and the people on their crews (one tl_people call per leader, four at
+  // a time); an opened team leader exports their own. Two sheets: Team leaders
+  // (averages + crew today) and People (one row per worker). Pure, so the tests
+  // run it under node.
+  // leaders [{key,name}]; people[i] = tl_people answer for leaders[i]; kpis {key: tl_kpis row}
+  function tlPeopleSheets(leaders, people, kpis){
+    var r1=function(v){ return v==null||v===""||isNaN(v) ? "" : Math.round(Number(v)*10)/10; };
+    var L=[["Team leader","Weekly plans","Completion %","Efficiency %","Earned man-days","Worker man-days",
+      "Checks scored","Good %","Fair %","Rework %","People on crews","On a crew today","Present","Absent","Leave","No scan yet"]];
+    var P=[["Team leader","Worker","Employee ID","Farm","Activities","Days worked","Today","First scan"]];
+    (leaders||[]).forEach(function(l, i){
+      var k=(kpis||{})[l.key]||{}, ppl=((people||[])[i]||{}).people||[];
+      var st={Present:0, Absent:0, Leave:0, other:0}, on=0;
+      ppl.forEach(function(p){
+        if(!p.on_today) return;
+        on++;
+        if(p.status==="Present"||p.status==="Absent"||p.status==="Leave") st[p.status]++; else st.other++;
+      });
+      var sc=k.scored ? 1 : 0;
+      L.push([l.name, k.plans==null?"":k.plans, r1(k.completion), r1(k.efficiency), r1(k.earned_md), r1(k.worked_md),
+        k.scored||"", sc?r1(k.good):"", sc?r1(k.fair):"", sc?r1(k.rework):"",
+        ppl.length, on, st.Present, st.Absent, st.Leave, st.other]);
+      ppl.forEach(function(p){
+        var acts=(p.acts||[]).map(function(a){
+          return (a.task_label||"")+(a.block?" · "+a.block:"")+" ("+(a.since||"")+" → "+(a.until||"")+")";
+        }).join("; ");
+        P.push([l.name, p.name||p.emp, p.emp||"", p.farm||"", acts, p.days||0,
+          p.on_today ? (p.status||"") : "Not on a crew today", p.on_today ? (p.scan||"") : ""]);
+      });
+    });
+    return {leaders:L, people:P};
+  }
+  function tlEnsureXLSX(cb){
+    if(window.XLSX){ cb(true); return; }
+    var s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload=function(){ cb(!!window.XLSX); };
+    s.onerror=function(){ cb(false); };
+    document.head.appendChild(s);
+  }
+  function tlPeopleExcel(btn){
+    var d=TLK.d||{}, kp=TLK.kp||{}, km=tlKpiMap(kp);
+    var old=btn.textContent; btn.textContent="Preparing…"; btn.disabled=true;
+    var done=function(){ btn.textContent=old; btn.disabled=false; };
+    var leaders = TLK.who
+      ? [{key:TLK.who, name:d.team_leader_name||(km[TLK.who]||{}).full_name||TLK.who}]
+      : tlLeaderRows(d, kp).map(function(r){ return {key:r.key, name:r.name}; });
+    if(!leaders.length){ done(); toast("No team leaders in these dates"); return; }
+    var people=new Array(leaders.length), next=0, failed=0;
+    var one=function(){
+      if(next>=leaders.length) return Promise.resolve();
+      var i=next++;
+      if(TLK.who && d.people){ people[i]=d; return one(); }
+      var a={action:"tl_people", from_date:TLK.from, to_date:TLK.to, team_leader:leaders[i].key};
+      if(TLK.farm) a.farm=TLK.farm;
+      return call(a).then(function(r){ people[i]=r||{}; if(r&&r.error) failed++; },
+        function(){ people[i]={people:[]}; failed++; }).then(one);
+    };
+    var pool=[]; for(var w=0; w<Math.min(4, leaders.length); w++) pool.push(one());
+    Promise.all(pool).then(function(){
+      var s=tlPeopleSheets(leaders, people, km);
+      var base="Team_leaders_people_"+TLK.from+"_to_"+TLK.to+(TLK.farm?"_"+TLK.farm:"")+
+        (TLK.who?"_"+String(leaders[0].name).replace(/[^A-Za-z0-9]+/g,"_"):"");
+      tlEnsureXLSX(function(ok){
+        try{
+          if(!ok) throw new Error("no XLSX");
+          var wb=window.XLSX.utils.book_new();
+          var add=function(rows, name, widths){
+            var ws=window.XLSX.utils.aoa_to_sheet(rows);
+            ws["!cols"]=widths.map(function(c){ return {wch:c}; });
+            ws["!autofilter"]={ref:window.XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:rows.length-1, c:rows[0].length-1}})};
+            window.XLSX.utils.book_append_sheet(wb, ws, name);
+          };
+          add(s.leaders, "Team leaders", [26,12,13,13,15,15,13,9,9,10,15,15,9,9,9,12]);
+          add(s.people, "People", [26,28,13,12,70,12,20,11]);
+          window.XLSX.writeFile(wb, base+".xlsx");
+        }catch(e){
+          var csv=s.people.map(function(l){ return l.map(function(v){ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(","); }).join("\r\n");
+          var a=document.createElement("a");
+          a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));
+          a.download=base+".csv"; document.body.appendChild(a); a.click(); a.remove();
+          toast("Excel library could not load — downloaded the people as CSV");
+        }
+        if(failed) toast(failed+" team leader"+(failed===1?"":"s")+" could not be read — their people are missing");
+        done();
+      });
+    }, function(){ done(); toast("Could not read the crews"); });
   }
   function tlTable(d){
     var rows=d.leaders||[];
