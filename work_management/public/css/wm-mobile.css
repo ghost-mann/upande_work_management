@@ -50,7 +50,8 @@
     scrollbar-width: none; max-width: 100%; justify-content: flex-start !important; border-radius: 14px !important;
   }
   :is(#wmp, #wpp, #wap, #acp, #wpay) :is(.tabs, .pex-tabs, .subtabs, [id$="-tabs"])::-webkit-scrollbar { display: none; }
-  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(.tabs, .pex-tabs, .subtabs, [id$="-tabs"]) > * { flex: 0 0 auto !important; white-space: nowrap; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(button, .btn) { max-width: 100%; white-space: normal !important; overflow-wrap: anywhere; text-align: left; height: auto; }
+  :is(#wmp, #wpp, #wap, #acp, #wpay) :is(.tabs, .pex-tabs, .subtabs, [id$="-tabs"]) > * { flex: 0 0 auto !important; white-space: nowrap !important; max-width: none; text-align: center; }
 
   /* ---- filter rows fold behind a button ---- */
   .wm-m-filters { width: 100%; }
