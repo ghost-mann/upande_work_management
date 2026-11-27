@@ -312,7 +312,7 @@
     return '<div class="pex-filters" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
       '<input type="date" id="tlk-from" value="'+esc(TLK.from)+'"> → <input type="date" id="tlk-to" value="'+esc(TLK.to)+'">'+
       ((TLK.d && TLK.d.can_see_all) ? '<select id="tlk-farm">'+farmOptions(TLK.farm)+'</select>' : '')+
-      (TLK.who && TLK.d && TLK.d.can_see_all && TLK.tab!=="people" ? '<button type="button" class="btn sm" id="tlk-back">← All team leaders</button>' : '')+
+      (TLK.who && TLK.d && TLK.d.can_see_all ? '<button type="button" class="btn sm" id="tlk-back">← All team leaders</button>' : '')+
       '</div>';
   }
   function tlWire(box){
@@ -413,38 +413,106 @@
       tr.onclick=function(){ var k=tr.getAttribute("data-tll"); TLK.open=(TLK.open===k?"":k); box.innerHTML=tlTabs()+tlLate(TLK.late); tlWire(box); tlLateWire(box); };
     });
   }
+  // People tab (2026-11-27): every team leader in a list with their average
+  // completion, efficiency and quality; clicking one opens their detail -- the
+  // averages as donuts, today's crew attendance, and the people on their crews.
+  // Team leaders who may only see themselves go straight to their own detail.
   function tlPeopleLoad(box){
-    var args={action:"tl_people", from_date:TLK.from, to_date:TLK.to};
+    var args={from_date:TLK.from, to_date:TLK.to};
     if(TLK.farm) args.farm=TLK.farm;
     if(TLK.who) args.team_leader=TLK.who;
     var seq=++TLK.seq;
     box.innerHTML=tlTabs()+'<div class="loading">Reading crews&hellip;</div>';
     tlWire(box);
-    call(args).then(function(d){
+    var pa={action:"tl_people"}, ka={action:"tl_kpis"};
+    for(var k in args){ pa[k]=args[k]; ka[k]=args[k]; }
+    Promise.all([call(pa), call(ka).catch(function(){ return {}; })]).then(function(res){
       if(seq!==TLK.seq) return;
+      var d=res[0], kp=res[1]||{};
       if(d.error){ box.innerHTML=tlTabs()+'<div class="empty">'+esc(d.error)+'</div>'; tlWire(box); return; }
       TLK.d=d;
       if(!d.can_see_all) TLK.who=d.team_leader||d.me;
-      box.innerHTML=tlTabs()+tlPeople(d);
+      box.innerHTML=tlTabs()+(TLK.who ? tlPeople(d, kp) : tlPeopleList(d, kp));
       tlWire(box);
-      var pk=el("tlk-pick");
-      if(pk) pk.onchange=function(){ TLK.who=pk.value; tlLoad(); };
     }).catch(function(){ if(seq===TLK.seq){ box.innerHTML=tlTabs()+'<div class="empty">Could not load people.</div>'; tlWire(box); } });
   }
-  function tlPeople(d){
+  // a donut: segs [{v, color, label, txt}], drawn as stroked arcs from 12 o'clock
+  function tlDonut(title, segs, center, sub){
+    var R=34, C=2*Math.PI*R, tot=0, off=0, arcs="";
+    segs.forEach(function(sg){ tot+=Math.max(0, sg.v||0); });
+    if(tot>0) segs.forEach(function(sg){
+      var v=Math.max(0, sg.v||0); if(!v) return;
+      var len=v/tot*C;
+      arcs+='<circle r="'+R+'" cx="45" cy="45" fill="none" stroke="'+sg.color+'" stroke-width="14" stroke-dasharray="'+
+        len.toFixed(2)+' '+(C-len).toFixed(2)+'" stroke-dashoffset="'+(-off).toFixed(2)+'" transform="rotate(-90 45 45)"/>';
+      off+=len;
+    });
+    var leg=segs.filter(function(sg){ return sg.label; }).map(function(sg){
+      return '<div style="display:flex;align-items:center;gap:5px;font-size:10.5px;white-space:nowrap">'+
+        '<i style="width:9px;height:9px;border-radius:2px;background:'+sg.color+'"></i>'+esc(sg.label)+
+        (sg.txt!=null?' <b style="margin-left:auto;padding-left:6px">'+sg.txt+'</b>':'')+'</div>';
+    }).join("");
+    return '<div style="flex:1;min-width:190px;border:1px solid var(--line,#e5e7eb);border-radius:8px;padding:10px 12px">'+
+      '<div class="hint" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">'+title+'</div>'+
+      '<div style="display:flex;align-items:center;gap:10px">'+
+        '<svg width="90" height="90" viewBox="0 0 90 90" style="flex:0 0 90px;width:90px;height:90px;max-width:90px"><circle r="'+R+'" cx="45" cy="45" fill="none" stroke="#eee" stroke-width="14"/>'+arcs+
+        '<text x="45" y="50" text-anchor="middle" font-size="15" font-weight="650" fill="currentColor">'+center+'</text></svg>'+
+        '<div style="display:flex;flex-direction:column;gap:3px;min-width:0">'+leg+'</div></div>'+
+      (sub?'<div class="hint" style="font-size:10.5px;margin-top:4px">'+sub+'</div>':'')+'</div>';
+  }
+  function tlPctTxt(v){ return v==null ? "—" : fmt(v,0)+"%"; }
+  function tlKpiMap(kp){
+    var m={};
+    (kp.leaders||[]).forEach(function(r){ m[r.user]=r; });
+    return m;
+  }
+  function tlPeopleList(d, kp){
+    var h=tlControls(), km=tlKpiMap(kp);
+    var seen={}, rows=[];
+    (d.leaders||[]).forEach(function(l){ seen[l.key]=1; rows.push({key:l.key, name:l.name, k:km[l.key]||{}}); });
+    (kp.leaders||[]).forEach(function(r){ if(!seen[r.user]){ seen[r.user]=1; rows.push({key:r.user, name:r.full_name||r.user, k:r}); } });
+    rows.sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+    if(!rows.length) return h+'<div class="empty">No team leaders in these dates. Name them per activity on the master plan; their weekly plans count from then on.</div>';
+    h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Team leader</th><th class="n">Weekly plans</th>'+
+       '<th class="n">Completion</th><th class="n">Efficiency</th><th>Quality</th></tr></thead><tbody>';
+    rows.forEach(function(r,i){
+      var k=r.k;
+      h+='<tr data-tl="'+esc(r.key)+'"><td class="m">'+(i+1)+'</td><td><b>'+esc(r.name)+'</b></td>'+
+         '<td class="n m">'+(k.plans!=null?fmt(k.plans):'<span class="hint">—</span>')+'</td>'+
+         '<td class="n m" style="'+tlTone(k.completion,95,80)+'">'+tlPct(k.completion)+'</td>'+
+         '<td class="n m" style="'+tlTone(k.efficiency,95,80)+'">'+tlPct(k.efficiency)+'</td>'+
+         '<td>'+tlQual(k)+'</td></tr>';
+    });
+    return h+'</tbody></table></div><div class="hint" style="margin-top:6px;font-size:10.5px">'+fmt(rows.length)+
+      ' team leaders in these dates. Click one for their averages and the people on their crews.</div>';
+  }
+  function tlPeople(d, kp){
     var h=tlControls();
-    if(d.can_see_all){
-      h+='<div style="margin-bottom:8px"><select id="tlk-pick"><option value="">— pick a team leader —</option>'+
-        (d.leaders||[]).map(function(l){ return '<option value="'+esc(l.key)+'"'+(l.key===TLK.who?' selected':'')+'>'+esc(l.name)+'</option>'; }).join("")+'</select></div>';
-    }
-    if(!TLK.who) return h+'<div class="empty">Pick a team leader to see the people on their crews.</div>';
+    var r=tlKpiMap(kp||{})[TLK.who] || ((kp||{}).leaders||[])[0] || {};
+    var nm=d.team_leader_name||r.full_name||TLK.who;
     var ppl=d.people||[];
-    if(!ppl.length) return h+'<div class="empty">Nobody on '+esc(d.team_leader_name||TLK.who)+'’s crews in these dates.</div>';
-    var onToday=0, present=0;
-    ppl.forEach(function(p){ if(p.on_today){ onToday++; if(p.status==="Present") present++; } });
+    var onToday=0, st={Present:0, Absent:0, Leave:0, other:0};
+    ppl.forEach(function(p){
+      if(!p.on_today) return;
+      onToday++;
+      if(st[p.status]!=null && p.status!=="other") st[p.status]++; else st.other++;
+    });
+    h+='<div style="font-weight:600;margin-bottom:8px">'+esc(nm)+'</div>';
+    var c=r.completion, e=r.efficiency;
+    var cDone=c==null?0:Math.min(100,c), eDone=e==null?0:Math.min(100,e);
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'+
+      tlDonut("Completion", [{v:cDone,color:"#2563eb",label:"Done",txt:tlPctTxt(c)},{v:c==null?0:100-cDone,color:"#dbeafe",label:"Still to do",txt:c==null?"—":fmt(100-cDone,0)+"%"}],
+        tlPctTxt(c), "planned work done on their weekly plans"+(r.mp_progress!=null?" · master plan "+fmt(r.mp_progress,0)+"%":""))+
+      tlDonut("Efficiency", [{v:eDone,color:"#7c3aed",label:"Earned",txt:r.earned_md!=null?fmt(r.earned_md,1)+" md":null},{v:e==null?0:100-eDone,color:"#ede9fe",label:"Worker-days",txt:r.worked_md!=null?fmt(r.worked_md,1)+" md":null}],
+        tlPctTxt(e), "work done against worker-days used"+(e!=null&&e>100?" · beat the target":""))+
+      tlDonut("Quality", [{v:r.good||0,color:"#16a34a",label:"Good",txt:r.scored?fmt(r.good,0)+"%":null},{v:r.fair||0,color:"#f59e0b",label:"Fair",txt:r.scored?fmt(r.fair,0)+"%":null},{v:r.rework||0,color:"#dc2626",label:"Rework",txt:r.scored?fmt(r.rework,0)+"%":null}],
+        r.scored?fmt(r.good,0)+"%":"—", r.scored?(fmt(r.scored)+" scored by the approver"):"nothing scored in these dates")+
+      tlDonut("Crew today", [{v:st.Present,color:"#16a34a",label:"Present",txt:fmt(st.Present)},{v:st.Absent,color:"#dc2626",label:"Absent",txt:fmt(st.Absent)},{v:st.Leave,color:"#f59e0b",label:"Leave",txt:fmt(st.Leave)},{v:st.other,color:"#9ca3af",label:"No scan yet",txt:fmt(st.other)}],
+        fmt(onToday), "on a crew today ("+esc(d.date||"")+")")+
+      '</div>';
+    if(!ppl.length) return h+'<div class="empty">Nobody on '+esc(nm)+'’s crews in these dates.</div>';
     var tone={"Present":"color:#166534","Absent":"color:#991b1b","Leave":"color:#92400e"};
-    h+='<div style="font-weight:600;margin-bottom:6px">'+esc(d.team_leader_name||TLK.who)+' · '+fmt(ppl.length)+' people in these dates · '+
-      fmt(onToday)+' on a crew today · '+fmt(present)+' of them present</div>';
+    h+='<div class="sech" style="font-size:12px">People on their crews · '+fmt(ppl.length)+' in these dates</div>';
     h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Worker</th><th>Activities</th><th class="n">Days worked</th><th>Today ('+esc(d.date||"")+')</th></tr></thead><tbody>';
     ppl.forEach(function(p,i){
       var acts=(p.acts||[]).map(function(a){ return esc(a.task_label||"")+(a.block?' · '+esc(a.block):'')+' <span class="hint">'+esc(a.since)+' → '+esc(a.until)+'</span>'; }).join('<br>');
