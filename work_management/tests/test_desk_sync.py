@@ -519,3 +519,20 @@ class TestTheAnimatedLogoIsRealSvg(unittest.TestCase):
 			desk.LOGO_URL.replace("/assets/work_management/", "public/"))).read()
 		self.assertIn("prefers-reduced-motion", src)
 		self.assertIn('class="arrow"', src)
+
+
+class TestTheTileIsNotAFolder(unittest.TestCase):
+	"""A fresh install files one icon per sub-workspace under our tile, which makes the
+	desk open a folder of grey squares instead of the workspace and its sidebar."""
+
+	def test_icons_under_our_tile_are_dropped(self):
+		rows = [
+			{"name": "Work Delivery", "parent_icon": "Work Management"},
+			{"name": "Work Planning", "parent_icon": "Work Management"},
+			{"name": "Leaves", "parent_icon": "Frappe HR"},
+			{"name": "Work Management", "parent_icon": None},
+		]
+		self.assertEqual(desk.child_icons_to_drop(rows), ["Work Delivery", "Work Planning"])
+
+	def test_the_tile_itself_is_never_dropped(self):
+		self.assertEqual(desk.child_icons_to_drop([{"name": "Work Management", "parent_icon": "Work Management"}]), [])

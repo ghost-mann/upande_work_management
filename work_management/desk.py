@@ -407,9 +407,29 @@ def ensure_desktop_icon():
 	doc.update(fields)
 	doc.flags.ignore_permissions = True
 	doc.save()
+	drop_child_icons()
 	reach_saved_layouts(doc)
 	frappe.db.commit()
 	return WORKSPACE
+
+
+def child_icons_to_drop(rows):
+	"""Names of Desktop Icons filed under our tile, which turn it into a folder.
+
+	On a fresh install Frappe's create_desktop_icons() adds one "Link" icon per
+	sub-workspace sidebar (Work Delivery, Work Planning, ...) with parent_icon
+	"Work Management". The desk then draws our tile as a folder of grey "W"
+	squares instead of opening the workspace, where the sidebar already lists
+	every one of them. Live (migrated, never freshly installed) has none.
+	Pure, so it can be checked without a site.
+	"""
+	return [r["name"] for r in rows if r.get("parent_icon") == WORKSPACE and r.get("name") != WORKSPACE]
+
+
+def drop_child_icons():
+	rows = frappe.get_all("Desktop Icon", filters={"parent_icon": WORKSPACE}, fields=["name", "parent_icon"])
+	for name in child_icons_to_drop(rows):
+		frappe.delete_doc("Desktop Icon", name, force=True, ignore_permissions=True)
 
 
 # What the app decides about its tile. Everything else on a saved entry -- hidden,
