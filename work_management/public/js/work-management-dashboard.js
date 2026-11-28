@@ -2180,11 +2180,17 @@
   }
   function render(D){
     el("wm-body").innerHTML=
-      // ===== delivery timeline, first: its Graph dropdown carries the cost graphs =====
+      // ===== delivery timeline + field intelligence, one tabbed card first: the Graph dropdown carries the cost graphs =====
       '<div class="sech">Delivery timeline &mdash; planned vs staffed vs delivered &middot; field intelligence</div>'+
-      '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch">'+
-      '<div class="card" style="flex:3;min-width:480px;margin-bottom:0"><div class="hd"><h3 id="wm-tl-h3">Plans, assignments &amp; actuals over time</h3><div class="cap" id="wm-tl-cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
+      // one card, three tabs: the timeline (with its Graph dropdown), efficiency, available workers
+      '<div class="card"><div class="hd"><h3 id="wm-tl-h3">Plans, assignments &amp; actuals over time</h3><div class="cap" id="wm-tl-cap">daily &middot; planned share of approved plans, the staffed share, and confirmed output</div></div>'+
         '<div class="bd">'+
+          '<div class="subtabs" id="wm-fi-tabs" style="margin-bottom:12px">'+
+            '<button type="button" class="subtab on" data-fi="tl">Timeline</button>'+
+            '<button type="button" class="subtab" data-fi="eff">Efficiency</button>'+
+            '<button type="button" class="subtab" data-fi="avail">Available workers</button>'+
+          '</div>'+
+          '<div id="wm-fi-tl">'+
           '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">'+
             '<div><div class="tl-lab">Graph</div><select id="wm-tl-view" class="tl-in">'+
               TL_VIEWS.map(function(v){ return '<option value="'+v.k+'">'+esc(v.label)+'</option>'; }).join("")+
@@ -2200,14 +2206,8 @@
             '</div>'+
           '</div>'+
           '<div id="wm-tl-chart" style="min-height:240px"><div class="empty">Loading timeline&hellip;</div></div>'+
-        '</div></div>'+
-      '<div class="card" style="flex:2;min-width:380px;margin-bottom:0"><div class="hd"><h3>Field intelligence</h3><div class="cap">efficiency per '+esc(TX("top_singular","Farm")).toLowerCase()+' &middot; who is free to work, any day</div></div>'+
-        '<div class="bd">'+
-          '<div class="subtabs" id="wm-fi-tabs" style="margin-bottom:10px">'+
-            '<button type="button" class="subtab on" data-fi="eff">Efficiency</button>'+
-            '<button type="button" class="subtab" data-fi="avail">Available workers</button>'+
           '</div>'+
-          '<div id="wm-fi-eff">'+
+          '<div id="wm-fi-eff" style="display:none">'+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
               '<div><div class="tl-lab">From</div><input type="date" id="wm-fi-from" class="tl-in"></div>'+
               '<div><div class="tl-lab">To</div><input type="date" id="wm-fi-to" class="tl-in"></div>'+
@@ -2225,7 +2225,6 @@
             '<div id="wm-fi-avail-body"><div class="empty">Loading&hellip;</div></div>'+
           '</div>'+
         '</div></div>'+
-      '</div>'+
       // ===== people: who is where, who is free, crews, the month's attendance =====
       '<div class="sech">People &mdash; who is where, who is free &amp; attendance</div>'+
       '<div class="card"><div class="hd"><h3>Every worker, every activity</h3>'+
@@ -4108,8 +4107,22 @@
       b.onclick=function(){
         tabs.querySelectorAll(".subtab").forEach(function(x){ x.classList.toggle("on", x===b); });
         var k=b.getAttribute("data-fi");
+        el("wm-fi-tl").style.display=(k==="tl")?"":"none";
         el("wm-fi-eff").style.display=(k==="eff")?"":"none";
         el("wm-fi-avail").style.display=(k==="avail")?"":"none";
+        // the card's heading follows the tab; the timeline's own view sets it back
+        if(k==="tl"){
+          var vw=tlView(); el("wm-tl-h3").innerHTML=esc(vw.title); el("wm-tl-cap").innerHTML=vw.cap;
+          if(vw.k==="tl") renderTimeline(); else loadFiGraph(); // drawn while hidden it had no width
+        } else if(k==="eff"){
+          el("wm-tl-h3").innerHTML="Efficiency per "+esc(TX("top_singular","Farm")).toLowerCase();
+          el("wm-tl-cap").innerHTML="output and cost against the work done, over the dates you pick";
+          if(FI.data) renderFiEff();
+        } else {
+          el("wm-tl-h3").innerHTML="Available workers";
+          el("wm-tl-cap").innerHTML="who is free to work on a day &middot; search by name";
+          if(FI.data) renderFiAvail();
+        }
       };
     });
     var d=new Date(); d.setDate(d.getDate()-30);
