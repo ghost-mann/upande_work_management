@@ -80,6 +80,52 @@ class TestLateReport(unittest.TestCase):
 		self.assertEqual(args["tl"], "EMP-0042")
 
 
+class TestCrewOnDay(unittest.TestCase):
+	"""People tab list (2026-11-28): per leader, assigned and present on a picked day."""
+
+	def setUp(self):
+		self.db = FakeDb({
+			"FROM `tabWork Assignment Employee`": [
+				{"tl": "EMP-0042", "emp": "W1"}, {"tl": "EMP-0042", "emp": "W2"},
+				{"tl": "EMP-0042", "emp": "W3"}, {"tl": "EMP-0042", "emp": "W4"},
+				{"tl": "tl@x", "emp": "W1"},
+			],
+			"FROM `tabEmployee Checkin`": [("W1", "2026-11-20 06:58:00")],
+			"FROM `tabAttendance`": [("W2", "Absent"), ("W3", "Present")],
+			"FROM `tabLeave Application`": [("W4", "Annual Leave")],
+			"FROM `tabUser`": [("tl@x", "Tom Leader")],
+			"FROM `tabEmployee`": [("EMP-0042", "Jane Leader")],
+		})
+
+	def run(self, result=None):
+		with mock.patch.object(aa.frappe.utils, "today", return_value="2026-11-28"):
+			return super().run(result)
+
+	def test_counts_per_leader(self):
+		with patched(self.db):
+			out = aa.crew_on_day(["Vale"], "2026-11-20")
+		jane = out["EMP-0042"]
+		self.assertEqual((jane["assigned"], jane["present"], jane["absent"], jane["leave"], jane["not_scanned"]),
+			(4, 2, 1, 1, 0))
+		self.assertEqual(jane["name"], "Jane Leader")
+		self.assertEqual((out["tl@x"]["assigned"], out["tl@x"]["present"]), (1, 1))  # one worker, two leaders
+
+	def test_day_and_farm_reach_the_query(self):
+		with patched(self.db):
+			aa.crew_on_day(["Vale"], "2026-11-20", farm="Vale")
+		q, args = self.db.queries[0]
+		self.assertEqual(args["d"], "2026-11-20")
+		self.assertIn("a.farm = %(fm)s", q)
+		self.assertIn("<= %(d)s", q)
+		self.assertIn(">= %(d)s", q)
+
+	def test_future_day_reads_no_scans(self):
+		with patched(self.db):
+			out = aa.crew_on_day(["Vale"], "2999-01-01")
+		self.assertEqual(out["EMP-0042"]["present"], 0)
+		self.assertFalse(any("Checkin" in q for q, _ in self.db.queries))
+
+
 class TestDashboardActions(unittest.TestCase):
 	def setUp(self):
 		self.src = source("dashboard")
@@ -93,7 +139,7 @@ class TestDashboardActions(unittest.TestCase):
 		self.assertIn("tq_farm not in FARMS", self.body)
 
 	def test_calls_the_rules(self):
-		for fn in ("late_report", "crew_people", "leaders_in"):
+		for fn in ("late_report", "crew_people", "leaders_in", "crew_on_day"):
 			self.assertIn("work_management.assign_ahead." + fn, self.body)
 
 
@@ -109,6 +155,12 @@ class TestScreen(unittest.TestCase):
 	def test_calls_the_actions(self):
 		self.assertIn('action:"tl_late"', self.js)
 		self.assertIn('action:"tl_people"', self.js)
+
+	def test_people_day_columns(self):
+		self.assertIn('id="tlk-day"', self.js)
+		self.assertIn('action:"tl_people", day:TLK.day', self.js)
+		self.assertIn("day_counts", self.js)
+		self.assertIn("Assigned ", self.js)
 
 	def test_both_late_views(self):
 		self.assertIn("By team leader", self.js)

@@ -224,6 +224,72 @@ def late_report(farms, from_date, to_date, farm=None, team_leader=None):
 	return out
 
 
+def day_statuses(emps, day):
+	"""({emp: first scan HH:MM}, {emp: day_status}) for these workers on one day.
+	Scans and attendance are read only for today or earlier; leave for any day."""
+	ids = tuple(emps) or ("__none__",)
+	scan, att, leave = {}, {}, {}
+	if day <= str(frappe.utils.today()):
+		for emp, t1 in frappe.db.sql("""SELECT employee, MIN(`time`) FROM `tabEmployee Checkin`
+				WHERE employee IN %s AND `time` >= %s AND `time` < DATE_ADD(%s, INTERVAL 1 DAY)
+				GROUP BY employee""", (ids, day, day)):
+			scan[emp] = str(t1)[11:16]
+		for emp, status in frappe.db.sql("""SELECT employee, status FROM `tabAttendance`
+				WHERE docstatus = 1 AND attendance_date = %s AND employee IN %s""", (day, ids)):
+			if att.get(emp) not in PRESENT:
+				att[emp] = status
+	for emp, lt in frappe.db.sql("""SELECT employee, leave_type FROM `tabLeave Application`
+			WHERE docstatus = 1 AND status = 'Approved' AND from_date <= %s AND to_date >= %s
+			AND employee IN %s""", (day, day, ids)):
+		leave[emp] = lt or "Leave"
+	return scan, {e: day_status(scan.get(e), att.get(e), leave.get(e)) for e in emps}
+
+
+def crew_on_day(farms, day, farm=None):
+	"""People tab list: per team leader, the workers on their crews on one day
+	(assigned) and how many of them were present, absent or on leave. A worker on
+	two of one leader's crews counts once. {leader: {assigned, present, absent,
+	leave, not_scanned, name}}."""
+	day = str(day or frappe.utils.today())
+	args = {"d": day, "st": LIVE_STATES, "fms": tuple(farms) or ("__none__",)}
+	where = ""
+	if farm:
+		where = " AND a.farm = %(fm)s"
+		args["fm"] = farm
+	rows = frappe.db.sql("""
+		SELECT DISTINCT p.team_leader tl, we.employee emp
+		FROM `tabWork Assignment Employee` we
+		INNER JOIN `tabWork Management Assigner` a ON a.name = we.parent
+		INNER JOIN `tabWork Management Planner` p ON p.name = a.planner_request
+		WHERE IFNULL(p.team_leader, '') != '' AND a.docstatus < 2 AND a.workflow_state IN %(st)s
+			AND a.farm IN %(fms)s""" + where + """
+			AND COALESCE(we.start_date, a.from_date) <= %(d)s
+			AND LEAST(COALESCE(CASE WHEN IFNULL(we.status,'Active') = 'Left' THEN we.left_date END, a.to_date), a.to_date) >= %(d)s""",
+		args, as_dict=True)
+	crews = {}
+	for r in rows:
+		crews.setdefault(r.tl, set()).add(r.emp)
+	emps = sorted({e for s in crews.values() for e in s})
+	st = day_statuses(emps, day)[1] if emps else {}
+	names = display_names(list(crews))
+	out = {}
+	for tl, members in crews.items():
+		c = {"assigned": len(members), "present": 0, "absent": 0, "leave": 0, "not_scanned": 0,
+			"name": names.get(tl, tl)}
+		for e in members:
+			s = st.get(e, "Not scanned")
+			if s == "Present":
+				c["present"] += 1
+			elif s in ("Leave", "On Leave"):
+				c["leave"] += 1
+			elif s == "Not scanned":
+				c["not_scanned"] += 1
+			else:
+				c["absent"] += 1
+		out[tl] = c
+	return out
+
+
 def crew_people(farms, from_date, to_date, team_leader, day=None):
 	"""People tab: workers on the crews of activities this team leader leads, in the dates."""
 	day = str(day or frappe.utils.today())
@@ -264,23 +330,9 @@ def crew_people(farms, from_date, to_date, team_leader, day=None):
 			GROUP BY ae.employee""", {"asg": tuple(asgs), "a": from_date, "b": to_date}):
 			if emp in people:
 				people[emp]["days"] = int(n or 0)
-	ids = tuple(people) or ("__none__",)
-	scan, att, leave = {}, {}, {}
-	if day <= str(frappe.utils.today()):
-		for emp, t1 in frappe.db.sql("""SELECT employee, MIN(`time`) FROM `tabEmployee Checkin`
-				WHERE employee IN %s AND `time` >= %s AND `time` < DATE_ADD(%s, INTERVAL 1 DAY)
-				GROUP BY employee""", (ids, day, day)):
-			scan[emp] = str(t1)[11:16]
-		for emp, status in frappe.db.sql("""SELECT employee, status FROM `tabAttendance`
-				WHERE docstatus = 1 AND attendance_date = %s AND employee IN %s""", (day, ids)):
-			if att.get(emp) not in PRESENT:
-				att[emp] = status
-	for emp, lt in frappe.db.sql("""SELECT employee, leave_type FROM `tabLeave Application`
-			WHERE docstatus = 1 AND status = 'Approved' AND from_date <= %s AND to_date >= %s
-			AND employee IN %s""", (day, day, ids)):
-		leave[emp] = lt or "Leave"
+	scan, st = day_statuses(list(people), day)
 	for p in people.values():
-		p["status"] = day_status(scan.get(p["emp"]), att.get(p["emp"]), leave.get(p["emp"]))
+		p["status"] = st.get(p["emp"], "Not scanned")
 		p["scan"] = scan.get(p["emp"])
 	return {"people": sorted(people.values(), key=lambda x: (-x["on_today"], x["name"])), "date": day,
 		"team_leader": team_leader, "team_leader_name": display_names([team_leader]).get(team_leader, team_leader)}

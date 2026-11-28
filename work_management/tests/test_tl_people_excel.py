@@ -66,7 +66,7 @@ class TestSheets(unittest.TestCase):
 		self.assertEqual(head[0], "Team leader")
 		self.assertEqual(jane[:5], ["Jane Leader", 3, 92.3, 104.1, 31.3])
 		self.assertEqual(jane[head.index("People on crews")], 3)
-		self.assertEqual(jane[head.index("On a crew today")], 2)
+		self.assertEqual(jane[head.index("Assigned on the day")], 2)
 		self.assertEqual(jane[head.index("Present")], 1)
 		self.assertEqual(jane[head.index("No scan yet")], 1)
 		# no KPIs: blanks, not zeros
@@ -83,9 +83,9 @@ class TestSheets(unittest.TestCase):
 		self.assertEqual(ann[head.index("Days worked")], 5)
 		self.assertEqual(ann[head.index("Activities")],
 						 "Weeding · B1 (2026-11-02 → 2026-11-08); Pruning (2026-11-09 → 2026-11-15)")
-		self.assertEqual(ann[head.index("Today")], "Present")
+		self.assertEqual(ann[head.index("On the day")], "Present")
 		self.assertEqual(ann[head.index("First scan")], "06:58")
-		self.assertEqual(rows[2][head.index("Today")], "Not on a crew today")
+		self.assertEqual(rows[2][head.index("On the day")], "Not on a crew that day")
 		self.assertEqual(rows[2][head.index("Activities")], "")
 
 

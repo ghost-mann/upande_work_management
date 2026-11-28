@@ -243,10 +243,11 @@
   //   Efficiency  earned man-days / worker-days actually recorded
   //   Master plan progress & backlog on the activities they own
   //   Quality     Good / Fair / Rework shares of the approver's scores
-  var TLK={from:null, to:null, farm:"", who:"", seq:0, d:null, tab:"perf", lv:"leader", open:""};
+  var TLK={from:null, to:null, day:"", farm:"", who:"", seq:0, d:null, tab:"perf", lv:"leader", open:""};
   function tlDefaults(){
     if(!TLK.to){ var t=new Date(); TLK.to=t.toISOString().slice(0,10);
       var f=new Date(t.getTime()-55*86400000); TLK.from=f.toISOString().slice(0,10); }
+    if(!TLK.day) TLK.day=TLK.to;
   }
   function tlPct(v){ return v==null ? '<span class="hint">—</span>' : fmt(v,0)+'%'; }
   function tlTone(v, good, warn){
@@ -313,11 +314,13 @@
       '<input type="date" id="tlk-from" value="'+esc(TLK.from)+'"> → <input type="date" id="tlk-to" value="'+esc(TLK.to)+'">'+
       ((TLK.d && TLK.d.can_see_all) ? '<select id="tlk-farm">'+farmOptions(TLK.farm)+'</select>' : '')+
       (TLK.who && TLK.d && TLK.d.can_see_all ? '<button type="button" class="btn sm" id="tlk-back">← All team leaders</button>' : '')+
+      (TLK.tab==="people" ? '<label class="hint" style="display:flex;align-items:center;gap:4px;font-size:11px" title="the day the Assigned and Present columns and the crew count on">Crew on <input type="date" id="tlk-day" value="'+esc(TLK.day)+'"></label>' : '')+
       (TLK.tab==="people" ? '<button type="button" class="btn sm" id="tlk-xlsx" style="margin-left:auto">Download Excel</button>' : '')+
       '</div>';
   }
   function tlWire(box){
-    var f=el("tlk-from"), t=el("tlk-to"), fm=el("tlk-farm"), bk=el("tlk-back");
+    var f=el("tlk-from"), t=el("tlk-to"), fm=el("tlk-farm"), bk=el("tlk-back"), dy=el("tlk-day");
+    if(dy) dy.onchange=function(){ if(dy.value){ TLK.day=dy.value; tlLoad(); } };
     if(f) f.onchange=function(){ TLK.from=f.value; tlLoad(); };
     if(t) t.onchange=function(){ TLK.to=t.value; tlLoad(); };
     if(fm) fm.onchange=function(){ TLK.farm=fm.value; tlLoad(); };
@@ -426,7 +429,7 @@
     var seq=++TLK.seq;
     box.innerHTML=tlTabs()+'<div class="loading">Reading crews&hellip;</div>';
     tlWire(box);
-    var pa={action:"tl_people"}, ka={action:"tl_kpis"};
+    var pa={action:"tl_people", day:TLK.day}, ka={action:"tl_kpis"};
     for(var k in args){ pa[k]=args[k]; ka[k]=args[k]; }
     Promise.all([call(pa), call(ka).catch(function(){ return {}; })]).then(function(res){
       if(seq!==TLK.seq) return;
@@ -473,24 +476,37 @@
     var km=tlKpiMap(kp||{}), seen={}, rows=[];
     ((d||{}).leaders||[]).forEach(function(l){ seen[l.key]=1; rows.push({key:l.key, name:l.name, k:km[l.key]||{}}); });
     ((kp||{}).leaders||[]).forEach(function(r){ if(!seen[r.user]){ seen[r.user]=1; rows.push({key:r.user, name:r.full_name||r.user, k:r}); } });
+    var dc=(d||{}).day_counts||{};
+    Object.keys(dc).forEach(function(u){ if(!seen[u]){ seen[u]=1; rows.push({key:u, name:dc[u].name||u, k:km[u]||{}}); } });
+    rows.forEach(function(r){ r.day=dc[r.key]||null; });
     rows.sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
     return rows;
   }
   function tlPeopleList(d, kp){
-    var h=tlControls(), rows=tlLeaderRows(d, kp);
+    var h=tlControls(), rows=tlLeaderRows(d, kp), dy=(d||{}).day||TLK.day;
     if(!rows.length) return h+'<div class="empty">No team leaders in these dates. Name them per activity on the master plan; their weekly plans count from then on.</div>';
     h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Team leader</th><th class="n">Weekly plans</th>'+
-       '<th class="n">Completion</th><th class="n">Efficiency</th><th>Quality</th></tr></thead><tbody>';
+       '<th class="n">Completion</th><th class="n">Efficiency</th><th>Quality</th>'+
+       '<th class="n" title="workers on their crews on '+esc(dy)+'">Assigned '+esc(shortDate(dy))+'</th>'+
+       '<th class="n" title="of those, present on '+esc(dy)+' (scan or present attendance)">Present</th></tr></thead><tbody>';
+    var tA=0, tP=0;
     rows.forEach(function(r,i){
-      var k=r.k;
+      var k=r.k, c=r.day;
+      if(c){ tA+=c.assigned||0; tP+=c.present||0; }
+      var miss=c ? (c.assigned||0)-(c.present||0) : 0;
+      var pTitle=c ? (fmt(c.present)+' present · '+fmt(c.absent)+' absent · '+fmt(c.leave)+' on leave · '+fmt(c.not_scanned)+' no scan') : '';
       h+='<tr data-tl="'+esc(r.key)+'"><td class="m">'+(i+1)+'</td><td><b>'+esc(r.name)+'</b></td>'+
          '<td class="n m">'+(k.plans!=null?fmt(k.plans):'<span class="hint">—</span>')+'</td>'+
          '<td class="n m" style="'+tlTone(k.completion,95,80)+'">'+tlPct(k.completion)+'</td>'+
          '<td class="n m" style="'+tlTone(k.efficiency,95,80)+'">'+tlPct(k.efficiency)+'</td>'+
-         '<td>'+tlQual(k)+'</td></tr>';
+         '<td>'+tlQual(k)+'</td>'+
+         '<td class="n m">'+(c&&c.assigned?fmt(c.assigned):'<span class="hint">—</span>')+'</td>'+
+         '<td class="n m" title="'+esc(pTitle)+'" style="'+(c&&c.assigned?(miss>0?"color:#991b1b":"color:#166534"):"")+'">'+
+           (c&&c.assigned?fmt(c.present)+(miss>0?' <span class="hint" style="font-size:10px">('+fmt(miss)+' not)</span>':''):'<span class="hint">—</span>')+'</td></tr>';
     });
-    return h+'</tbody></table></div><div class="hint" style="margin-top:6px;font-size:10.5px">'+fmt(rows.length)+
-      ' team leaders in these dates. Click one for their averages and the people on their crews.</div>';
+    h+='</tbody><tfoot><tr><td></td><td><b>Total</b></td><td colspan="4"></td><td class="n m"><b>'+fmt(tA)+'</b></td><td class="n m"><b>'+fmt(tP)+'</b></td></tr></tfoot>';
+    return h+'</table></div><div class="hint" style="margin-top:6px;font-size:10.5px">'+fmt(rows.length)+
+      ' team leaders in these dates. Assigned and Present count the crews on '+esc(dy)+' (pick another day above); a worker on two of one leader’s crews counts once. Click a leader for their averages and the people on their crews.</div>';
   }
   function tlPeople(d, kp){
     var h=tlControls();
@@ -513,18 +529,18 @@
         tlPctTxt(e), "work done against worker-days used"+(e!=null&&e>100?" · beat the target":""))+
       tlDonut("Quality", [{v:r.good||0,color:"#16a34a",label:"Good",txt:r.scored?fmt(r.good,0)+"%":null},{v:r.fair||0,color:"#f59e0b",label:"Fair",txt:r.scored?fmt(r.fair,0)+"%":null},{v:r.rework||0,color:"#dc2626",label:"Rework",txt:r.scored?fmt(r.rework,0)+"%":null}],
         r.scored?fmt(r.good,0)+"%":"—", r.scored?(fmt(r.scored)+" scored by the approver"):"nothing scored in these dates")+
-      tlDonut("Crew today", [{v:st.Present,color:"#16a34a",label:"Present",txt:fmt(st.Present)},{v:st.Absent,color:"#dc2626",label:"Absent",txt:fmt(st.Absent)},{v:st.Leave,color:"#f59e0b",label:"Leave",txt:fmt(st.Leave)},{v:st.other,color:"#9ca3af",label:"No scan yet",txt:fmt(st.other)}],
-        fmt(onToday), "on a crew today ("+esc(d.date||"")+")")+
+      tlDonut("Crew "+(d.date===new Date().toISOString().slice(0,10)?"today":esc(shortDate(d.date||""))), [{v:st.Present,color:"#16a34a",label:"Present",txt:fmt(st.Present)},{v:st.Absent,color:"#dc2626",label:"Absent",txt:fmt(st.Absent)},{v:st.Leave,color:"#f59e0b",label:"Leave",txt:fmt(st.Leave)},{v:st.other,color:"#9ca3af",label:"No scan yet",txt:fmt(st.other)}],
+        fmt(onToday), "on a crew on "+esc(d.date||""))+
       '</div>';
     if(!ppl.length) return h+'<div class="empty">Nobody on '+esc(nm)+'’s crews in these dates.</div>';
     var tone={"Present":"color:#166534","Absent":"color:#991b1b","Leave":"color:#92400e"};
     h+='<div class="sech" style="font-size:12px">People on their crews · '+fmt(ppl.length)+' in these dates</div>';
-    h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Worker</th><th>Activities</th><th class="n">Days worked</th><th>Today ('+esc(d.date||"")+')</th></tr></thead><tbody>';
+    h+='<div style="overflow:auto"><table><thead><tr><th>#</th><th>Worker</th><th>Activities</th><th class="n">Days worked</th><th>On '+esc(d.date||"")+'</th></tr></thead><tbody>';
     ppl.forEach(function(p,i){
       var acts=(p.acts||[]).map(function(a){ return esc(a.task_label||"")+(a.block?' · '+esc(a.block):'')+' <span class="hint">'+esc(a.since)+' → '+esc(a.until)+'</span>'; }).join('<br>');
       h+='<tr><td class="m">'+(i+1)+'</td><td><b>'+esc(p.name)+'</b> <span class="hint">'+esc(p.emp)+'</span></td><td style="font-size:11.5px">'+acts+'</td>'+
         '<td class="n m">'+fmt(p.days)+'</td>'+
-        '<td style="'+(p.on_today?(tone[p.status]||"color:var(--mute)"):"color:var(--mute)")+'">'+(p.on_today?esc(p.status)+(p.scan?' <span class="hint">'+esc(p.scan)+'</span>':''):'<span class="hint">not on a crew today</span>')+'</td></tr>';
+        '<td style="'+(p.on_today?(tone[p.status]||"color:var(--mute)"):"color:var(--mute)")+'">'+(p.on_today?esc(p.status)+(p.scan?' <span class="hint">'+esc(p.scan)+'</span>':''):'<span class="hint">not on a crew that day</span>')+'</td></tr>';
     });
     return h+'</tbody></table></div>';
   }
@@ -537,8 +553,8 @@
   function tlPeopleSheets(leaders, people, kpis){
     var r1=function(v){ return v==null||v===""||isNaN(v) ? "" : Math.round(Number(v)*10)/10; };
     var L=[["Team leader","Weekly plans","Completion %","Efficiency %","Earned man-days","Worker man-days",
-      "Checks scored","Good %","Fair %","Rework %","People on crews","On a crew today","Present","Absent","Leave","No scan yet"]];
-    var P=[["Team leader","Worker","Employee ID","Farm","Activities","Days worked","Today","First scan"]];
+      "Checks scored","Good %","Fair %","Rework %","People on crews","Assigned on the day","Present","Absent","Leave","No scan yet"]];
+    var P=[["Team leader","Worker","Employee ID","Farm","Activities","Days worked","On the day","First scan"]];
     (leaders||[]).forEach(function(l, i){
       var k=(kpis||{})[l.key]||{}, ppl=((people||[])[i]||{}).people||[];
       var st={Present:0, Absent:0, Leave:0, other:0}, on=0;
@@ -556,7 +572,7 @@
           return (a.task_label||"")+(a.block?" · "+a.block:"")+" ("+(a.since||"")+" → "+(a.until||"")+")";
         }).join("; ");
         P.push([l.name, p.name||p.emp, p.emp||"", p.farm||"", acts, p.days||0,
-          p.on_today ? (p.status||"") : "Not on a crew today", p.on_today ? (p.scan||"") : ""]);
+          p.on_today ? (p.status||"") : "Not on a crew that day", p.on_today ? (p.scan||"") : ""]);
       });
     });
     return {leaders:L, people:P};
@@ -582,7 +598,7 @@
       if(next>=leaders.length) return Promise.resolve();
       var i=next++;
       if(TLK.who && d.people){ people[i]=d; return one(); }
-      var a={action:"tl_people", from_date:TLK.from, to_date:TLK.to, team_leader:leaders[i].key};
+      var a={action:"tl_people", from_date:TLK.from, to_date:TLK.to, day:TLK.day, team_leader:leaders[i].key};
       if(TLK.farm) a.farm=TLK.farm;
       return call(a).then(function(r){ people[i]=r||{}; if(r&&r.error) failed++; },
         function(){ people[i]={people:[]}; failed++; }).then(one);
@@ -590,7 +606,7 @@
     var pool=[]; for(var w=0; w<Math.min(4, leaders.length); w++) pool.push(one());
     Promise.all(pool).then(function(){
       var s=tlPeopleSheets(leaders, people, km);
-      var base="Team_leaders_people_"+TLK.from+"_to_"+TLK.to+(TLK.farm?"_"+TLK.farm:"")+
+      var base="Team_leaders_people_"+TLK.from+"_to_"+TLK.to+"_crew_"+TLK.day+(TLK.farm?"_"+TLK.farm:"")+
         (TLK.who?"_"+String(leaders[0].name).replace(/[^A-Za-z0-9]+/g,"_"):"");
       tlEnsureXLSX(function(ok){
         try{

@@ -4222,13 +4222,20 @@ def wm_dashboard(**kwargs):
             out.update(frappe.call("work_management.assign_ahead.late_report", farms=tq_farms, from_date=tq_from,
                                    to_date=tq_to, farm=tq_farm or None, team_leader=tq_who or None))
         else:
+            # the day the People tab counts crews on (2026-11-28): the list shows, per
+            # leader, who was assigned and who was present that day; an opened leader's
+            # "Crew" donut and list read the same day
+            tq_day = frappe.form_dict.get("day") or frappe.utils.today()
             out["leaders"] = frappe.call("work_management.assign_ahead.leaders_in", farms=tq_farms,
                                          from_date=tq_from, to_date=tq_to, farm=tq_farm or None) if tq_all else []
             if tq_who:
                 out.update(frappe.call("work_management.assign_ahead.crew_people", farms=tq_farms, from_date=tq_from,
-                                       to_date=tq_to, team_leader=tq_who))
+                                       to_date=tq_to, team_leader=tq_who, day=tq_day))
             else:
                 out["people"] = []
+                out["day_counts"] = frappe.call("work_management.assign_ahead.crew_on_day", farms=tq_farms,
+                                                day=tq_day, farm=tq_farm or None) if tq_all else {}
+            out["day"] = str(tq_day)
         out["can_see_all"] = tq_all
         out["me"] = frappe.session.user
         out["window"] = {"from": tq_from, "to": tq_to}
